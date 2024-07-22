@@ -7,8 +7,6 @@ export class Source {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column('varchar')
-  uuid: string;
 
   @Column('varchar')
   label: string;
@@ -19,33 +17,33 @@ export class Source {
   @Column('varchar')
   name: string;
 
-  @Column('integer')
+  @Column('int')
   tables: number;
 
-  @Column('integer')
+  @Column('int')
   functions: number;
 
   @Column('text')
   source: string;
 
-  @Column('integer')
+  @Column('int')
   line: number;
 
-  @Column('integer')
+  @Column('int')
   blankLines: number;
 
-  @Column('integer')
+  @Column('int')
   commentedLines: number;
 
-  @Column('smallint')
+  @Column('smallint', { default: 0 })
   status: number;
 
   @Column('boolean')
   reserv: boolean;
 
-  @OneToMany(() => SourceFunction, sourceFunction => sourceFunction.source)
-  sourceFunctions: SourceFunction[];
+  @OneToMany(() => SourceFunction, sourceFunction => sourceFunction.Source)
+  Functions: SourceFunction[];
 
   @OneToMany(() => SourceTable, sourceTable => sourceTable.source)
-  sourceTables: SourceTable[];
+  Tables: SourceTable[];
 }

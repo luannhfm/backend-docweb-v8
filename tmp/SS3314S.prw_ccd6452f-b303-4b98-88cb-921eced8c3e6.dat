@@ -1,0 +1,1038 @@
+ #include 'protheus.ch'
+#include 'parmtype.ch'
+#include "apwizard.ch"
+#include "fileio.ch"
+#Include 'Topconn.ch'
+#INCLUDE 'FWMVCDEF.CH'
+
+User Function SS3314S()
+	Local oNo              := LoadBitmap ( GetResources(), "LBNO" )
+	Local oOk              := LoadBitmap ( GetResources(), "LBTIK" )
+	Local oWizard
+	Local nPanel
+	Local oGet2, oGet3
+	Local oLeg1, oLeg2, oLeg3
+	Local cGet1   := "          "
+	Local cGet3   := "                        "
+	Local cLeg1   := "                                     "
+	Local cLeg2   := "          "
+	Local aWiz    := {{.F.,""}}
+	Local oLbxWiz
+	Local oChkTWiz
+	Local oChkIWiz
+	Local lChkTWiz := .F.
+	Local lChkIWiz := .F.
+	Local lWiz     := .F.
+
+	Private cGet2   := "    "
+	Private cLeg3   := "          "
+
+	DEFINE WIZARD oWizard TITLE "Wizard" HEADER "Wizard para Geração Importação dos dados para o SMD" MESSAGE " ";
+	TEXT "Este programa gera o arquivo de importação do SAS para o SMD. " PANEL;
+	NEXT {|| .T.} FINISH{||.T.}
+
+
+	//cria um novo passo (janela) para o wizard
+	CREATE PANEL oWizard HEADER "Passo 1 " MESSAGE "Selecione as configurações para a geração do arquivo para importação do SMD." PANEL;
+	BACK {|| .T.} NEXT {|| If(Empty(cLeg3), (MsgStop("Informe a Competencia"), .F.), If(cGet2 <= '2014', (msgStop("O ano deverá ser maior que 2014"), .F.), .T.))} FINISH {|| .T.} EXEC {|| .T.}
+	@ 010, 010 TO 125,280 OF oWizard:oMPanel[2] PIXEL
+
+	@ 40, 15 SAY oSay2 VAR "ANO: " OF oWizard:oMPanel[2] PIXEL
+	@ 40, 70 GET oGet2 VAR cGet2 PICTURE "@!"  OF oWizard:oMPanel[2] SIZE 50,004 PIXEL 
+
+	@ 20, 15 SAY oSay2 VAR "Competencia: " OF oWizard:oMPanel[2] PIXEL
+	@ 20, 70 MSCOMBOBOX oLeg3 VAR cLeg3 ITEMS{"JAN=Janeiro","FEV=Fevereiro","MAR=Marco","ABR=Abril","MAI=Maio","JUN=Junho","JUL=Julho","AGO=Agosto","SET=Setembro","OUT=Outubro","NOV=Novembro","DEZ=Dezembro"} SIZE 130, 010 OF oWizard:oMPanel[2] COLORS 0, 16777215 PIXEL
+
+	// PANEL 3
+	//cria um novo passo (janela) para o wizard
+	CREATE PANEL oWizard HEADER "Configuração de Legenda" MESSAGE "Selecione as configurações para a geração do arquivo para importação do SMD." PANEL;
+	BACK {|| oWizard:nPanel := 3, .T.} NEXT {|| .T.} FINISH {|| If(Empty(cLeg1) , (MsgStop('Selecione o Layout'), .F.), (lWiz := .T., .T.)) } EXEC {|| .T.}
+
+	@ 010, 010 TO 125,280 OF oWizard:oMPanel[3] PIXEL
+
+	@ 20, 15    SAY oSay4 VAR " Expressão "  OF oWizard:oMPanel[3] PIXEL
+	//@ 30, 15    GET oLeg1 VAR cLeg1 PICTURE "@!" OF oWizard:oMPanel[3] SIZE 130,009 PIXEL
+	@ 30,15 MSCOMBOBOX oLeg1 VAR cLeg1 ITEMS{"1=SAS"} SIZE 130, 010 OF oWizard:oMPanel[3] COLORS 0, 16777215 PIXEL 
+
+
+	//WJR 20190209 - Propriedade inexistente. --> oWizard:oDlg:lEscClose := .F.
+	ACTIVATE WIZARD oWizard CENTERED VALID {|| .T. }
+
+
+	If lWiz
+		Processa({||VERIMP()})
+	Else
+		MsgAlert("Rotina nao executada")
+	EndIf
+	
+return nil
+
+/*/{Protheus.doc} VerImp
+//TODO Descrição auto-gerada.
+@author sergio.salustiano
+@since 02/05/2016
+@version 6
+@return return, return_description
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function VERIMP()
+	Local _cQryTRB := " "
+	Local lRet
+
+	_cQryTRB := "SELECT COUNT (*) QUANT "
+	_cQryTRB += "FROM "      + RETSQLNAME("ZZ8") + " ZZ8 "
+	_cQryTRB += "WHERE ZZ8.D_E_L_E_T_ <> '*' "
+	_cQryTRB += "AND ZZ8_MES  = '"+cLeg3+"' "
+	_cQryTRB += "AND ZZ8_ANO  = '"+cGet2+"' "
+	_cQryTRB += "AND ZZ8_FILIAL   = '"+xFilial("ZZ8")+"' "
+
+
+	TCQUERY _cQryTRB NEW ALIAS "TRA"
+
+	DbSelectArea("TRA")
+
+	If (TRA->QUANT > 0)
+		lRet := MsgNoYes("Existe dados para o periodo " + cLeg3 + "/" + cGet2 + " ", "Deseja realizar uma nova importação?", "MsgNoYes")
+		TRA->(DbCloseArea())
+		If lRet = .T.
+			DBSelectArea('ZZ8')
+			DBSetOrder(2)
+			DBSeek(xFilial()+cLeg3+cGet2)
+
+			While .Not. ZZ8->( EOF() ) .AND. ZZ8->ZZ8_MES = cLeg3 .AND. ZZ8->ZZ8_ANO = cGet2
+				RecLock("ZZ8",.F.)
+				DbDelete()
+				MsUnLock()
+				ZZ8->(DbSkip())
+			EndDo
+			ImpSMD()
+
+		Else
+			GeraSmd()
+
+		EndIf
+	Else
+		TRA->(DbCloseArea())
+		ImpSMD()
+	EndIf
+	
+Return
+
+
+/*/{Protheus.doc} ImpSMD
+//TODO Descrição auto-gerada.
+@author sergio.salustiano
+@since 12/04/2016
+@version 6
+@return return, return_description
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ImpSMD()
+	Local lRet     := .T.
+	Local cQuery   := ' '
+	Local cFilPrt  := FWCODFIL()
+	Local cCompSMD := "0002050"
+	Local cFinanc  := "0000000"
+	Local cClient  := " "
+	Local cProjet  := "0000000"
+	Local cModal   := "0000000"
+	Local cProd    := " "
+	Local cSerie   := "0000100"
+	Local cCargaH  := "0000000"
+	Local cUnCont  := " "
+	Local cDtNasc  := " "
+	Local cNomResp := " "
+	Local CCNPJ    := " "
+	Local CPRODSMD := " "
+	Local nReg     := 0
+	Local nRegTot  := 0
+	Local cEmpAnt  := " "
+	Local cProdAnt := " "
+	Local _cQryTRB := " "
+
+	Private oModel, oAux, oStruct
+	Private nExec := 0 
+	Private aAux  := {}
+
+	//----------------------------------------------------|
+	// Seleciona o Codigo da Filial no SMD                |
+	//----------------------------------------------------|
+
+	If (cFilPrt = '02MT0006')
+		cFilSMD := '0004104'
+	ElseIf (cFilPrt = '02MT0008')
+		cFilSMD := '0004096'
+	ElseIf (cFilPrt = '02MT0011')
+		cFilSMD := '0004099'
+	ElseIf (cFilPrt = '02MT0014')
+		cFilSMD := '0004101'
+	ElseIf (cFilPrt = '02MT0015')
+		cFilSMD := '0004103'
+	EndIf
+
+	//----------------------------------------------------|
+	//De Para Competencia                                 |
+	//----------------------------------------------------|
+	If (cLeg3 = 'JAN')
+		dDtIni := cGet2 + "0101"   
+		dDtFim := cGet2 + "0131"
+	ElseIf (cLeg3 = 'FEV')
+		dDtIni := cGet2 + "0201"   
+		dDtFim := cGet2 + "0231"
+	ElseIf (cLeg3 = 'MAR')
+		dDtIni := cGet2 + "0301"   
+		dDtFim := cGet2 + "0331"
+	ElseIf (cLeg3 = 'ABR')
+		dDtIni := cGet2 + "0401"   
+		dDtFim := cGet2 + "0431"
+	ElseIf (cLeg3 = 'MAI')
+		dDtIni := cGet2 + "0501"   
+		dDtFim := cGet2 + "0531"
+	ElseIf (cLeg3 = 'JUN')
+		dDtIni := cGet2 + "0601"   
+		dDtFim := cGet2 + "0631"
+	ElseIf (cLeg3 = 'JUL')
+		dDtIni := cGet2 + "0701"   
+		dDtFim := cGet2 + "0731"
+	ElseIf (cLeg3 = 'AGO')
+		dDtIni := cGet2 + "0801"   
+		dDtFim := cGet2 + "0831"
+	ElseIf (cLeg3 = 'SET')
+		dDtIni := cGet2 + "0901"   
+		dDtFim := cGet2 + "0931"
+	ElseIf (cLeg3 = 'OUT')
+		dDtIni := cGet2 + "1001"   
+		dDtFim := cGet2 + "1031"	
+	ElseIf (cLeg3 = 'NOV')
+		dDtIni := cGet2 + "1101"   
+		dDtFim := cGet2 + "1131"
+	ElseIf (cLeg3 = 'DEZ')
+		dDtIni := cGet2 + "1201"   
+		dDtFim := cGet2 + "1231"
+	EndIf
+
+
+	_cQuery := " "
+	//_cQuery += "SELECT ZZM.ZZM_CNPJ, ZZM.ZZM_NOME, ZZM.ZZM_TRABAL, ZZ0.ZZ0_CPF, ZZ0.ZZ0_NOME, ZZF.ZZF_PRDSMD, ZZ1.ZZ1_FORM, ZZ1.ZZ1_CRSMD, ZZ1.ZZ1_UNCONT, ZZM.ZZM_TPATEN, SA1.A1_XCNAEIN, ZZ4.ZZ4_MODSMD, COUNT(ZZM_TPATEN) QUANT "
+	_cQuery += "SELECT ZZM.ZZM_CNPJ, ZZM.ZZM_NOME, ZZM.ZZM_TRABAL, ZZ0.ZZ0_CPF, ZZ0.ZZ0_NOME, ZZ0.ZZ0_NOMMAE, ZZ0.ZZ0_DTNASC, ZZF.ZZF_PRDSMD, ZZ1.ZZ1_FORM, ZZ1.ZZ1_CRSMD, ZZ1.ZZ1_UNCONT, ZZ1_SERIE, ZZM.ZZM_TPATEN, SA1.A1_XCNAEIN, ZZM.ZZM_TIPO "
+	_cQuery += "FROM "      + RETSQLNAME("ZZM") + " ZZM "
+	_cQuery += "INNER JOIN "+ RETSQLNAME("ZZN") + " ZZN ON ZZN.ZZN_FILIAL = ZZM.ZZM_FILIAL AND ZZN.ZZN_ATEND = ZZM.ZZM_ATEND "
+	_cQuery += "INNER JOIN "+ RETSQLNAME("ZZF") + " ZZF ON ZZF_CODIGO = ZZN_PROCED "
+	_cQuery += "INNER JOIN "+ RETSQLNAME("SA1") + " SA1 ON SA1.A1_CGC = ZZM.ZZM_CNPJ "
+	_cQuery += "INNER JOIN "+ RETSQLNAME("ZZ1") + " ZZ1 ON ZZF_PRDSMD = ZZ1_COD "
+	//_cQuery += "INNER JOIN "+ RETSQLNAME("ZZ4") + " ZZ4 ON ZZ4_CODIGO = ZZF_CLASSE "
+	_cQuery += "INNER JOIN "+ RETSQLNAME("ZZ0") + " ZZ0 ON ZZ0_CODIGO = ZZM_TRABAL "
+	_cQuery += "WHERE ZZM_FILIAL = '"+xFilial("ZZM")+"' "
+	_cQuery += "      AND ZZM_DATA >= '"+dDtIni+"' "
+	_cQuery += "      AND ZZM_DATA <= '"+dDtFim+"' "
+	_cQuery += " 		AND ZZM.D_E_L_E_T_ <> '*' 			"
+	_cQuery += "		AND ZZN.D_E_L_E_T_ <> '*'          "
+	_cQuery += "		AND ZZF.D_E_L_E_T_ <> '*' 			"
+	_cQuery += "     AND ZZ1.D_E_L_E_T_ <> '*'           "
+	_cQuery += "     AND SA1.D_E_L_E_T_ <> '*'          "
+	_cQuery += "     AND ZZ0.D_E_L_E_T_ <> '*'          "
+	_cQuery += "     AND ZZM.ZZM_TPATEN <> '8'          "
+	_cQuery += "     AND ZZM.ZZM_TPATEN <> '9'          "
+	//_cQuery += "     AND ZZ4.ZZ4_MODSMD <> ' '
+	//_cQuery += "GROUP BY ZZM.ZZM_CNPJ, ZZF.ZZF_PRDSMD, ZZM.ZZM_NOME, ZZM.ZZM_TRABAL, ZZ0.ZZ0_CPF, ZZ0.ZZ0_NOME, ZZ1.ZZ1_FORM, ZZ1.ZZ1_CRSMD, ZZ1.ZZ1_UNCONT, ZZM.ZZM_TPATEN, SA1.A1_XCNAEIN "
+	_cQuery += "ORDER BY ZZM.ZZM_CNPJ, ZZF_PRDSMD, ZZM.ZZM_TRABAL "
+
+	TCQUERY _cQuery NEW ALIAS "TRA"
+
+	DbSelectArea("TRA")
+
+	//nRegT := TRA->(RecCount())
+	Count To nRecTra	
+	ProcRegua(nRecTra)
+	DbGoTop()
+
+	While .Not. TRA->( EOF() )
+
+		IncProc("Registro " + StrZero(nReg,8) + "  /  "  + STRZERO(nRecTRA,8))
+		nReg++
+		nRegTot++
+
+
+
+		//---------------------------------------------||
+		//Seleciona Codigo do Produto                  ||
+		//          Formulario                         ||
+		//          Centro de Responsabilidade         ||  
+		//          Unidade de Controle                ||             
+		//---------------------------------------------||		
+
+		If(AllTrim(TRA->ZZF_PRDSMD) = '9999999')
+			DbSelectArea('ZZ1')
+			DbSetOrder(1)
+
+			If(TRA->ZZM_TPATEN = '1')
+				If MsSeek(xFilial() + '0013068')
+					cProd    := '0013068'
+					cForm    := ZZ1->ZZ1_FORM
+					cCrSMD   := ZZ1->ZZ1_CRSMD
+					cUnCont  := ZZ1->ZZ1_UNCONT
+				Else
+					Alert('TESTE')
+				EndIf
+
+			ElseIf(TRA->ZZM_TPATEN = '2')
+				If MsSeek(xFilial() + '0013072')
+					cProd    := '0013072'
+					cForm    := ZZ1->ZZ1_FORM
+					cCrSMD   := ZZ1->ZZ1_CRSMD
+					cUnCont  := ZZ1->ZZ1_UNCONT
+				Else
+					Alert('TESTE')
+				EndIf
+
+			ElseIf(TRA->ZZM_TPATEN = '3')
+				If MsSeek(xFilial() + '0013070')
+					cProd    := '0013070'
+					cForm    := ZZ1->ZZ1_FORM
+					cCrSMD   := ZZ1->ZZ1_CRSMD
+					cUnCont  := ZZ1->ZZ1_UNCONT
+				Else
+					Alert('TESTE')
+				EndIf
+
+			ElseIf(TRA->ZZM_TPATEN = '4' .OR. TRA->ZZM_TPATEN = '7' .OR. TRA->ZZM_TPATEN = '6')
+				If MsSeek(xFilial() + '0013069')
+					cProd    := '0013069'
+					cForm    := ZZ1->ZZ1_FORM
+					cCrSMD   := ZZ1->ZZ1_CRSMD
+					cUnCont  := ZZ1->ZZ1_UNCONT
+				Else
+					Alert('TESTE')
+				EndIf
+
+			ElseIf(TRA->ZZM_TPATEN = '5')
+				If MsSeek(xFilial() + '0013071')
+					cProd    := '0013071'
+					cForm    := ZZ1->ZZ1_FORM
+					cCrSMD   := ZZ1->ZZ1_CRSMD
+					cUnCont  := ZZ1->ZZ1_UNCONT
+				Else
+					Alert('TESTE')
+				EndIf
+
+			ElseIf(TRA->ZZM_TPATEN = '8')
+				cModal := 'ZZZZZZZZ'
+
+			ElseIf(TRA->ZZM_TPATEN = '9')
+				cModal := 'AAAAAAA'
+			EndIf
+		Else
+			cProd   := TRA->ZZF_PRDSMD
+			cForm   := TRA->ZZ1_FORM
+			cCrSMD  := TRA->ZZ1_CRSMD
+			cUnCont := TRA->ZZ1_UNCONT
+
+		EndIf	
+
+		//------------------------------|
+		//CLIENTELA                     |
+		//------------------------------|		
+		If (TRA->A1_XCNAEIN = 'S' .OR. TRA->A1_XCNAEIN = ' ')
+			cClient := "0000050"
+		ElseIf (TRA->A1_XCNAEIN = 'N')
+			cClient := "0000050"
+		EndIf	
+		
+		If(TRA->ZZM_TPATEN = 'I' .AND. TRA->ZZM_TIPO = 'D' )
+			cClient := "0000051"
+		EndIf
+		
+		//---------------------------------||
+		// NOME TRABALHADOR                ||
+		//---------------------------------||
+		If(!Empty(TRA->ZZ0_CPF))
+			_cQryTRB := " "
+			_cQryTRB += "SELECT ZZ2_DTNASC, ZZ2_NOME, ZZ2_RESP "
+			_cQryTRB += "FROM "      + RETSQLNAME("ZZ2") + " ZZ2 "
+			_cQryTRB += "WHERE ZZ2_CPF = '" + TRA->ZZ0_CPF + "' "
+
+			TCQUERY _cQryTRB NEW ALIAS "TRB"
+
+			DbSelectArea("TRB")
+
+			//----------------------------------------------------------------|
+			//Se não encotrar o trabalhador na Tabela ZZ2 (TRABALHADORES SMD),|
+			//busca nome e CPF, tabela ZZ0 (Trabalhadores SAS).               |
+			//----------------------------------------------------------------|					
+			If TRB->( Eof() )
+				cNomTrb := Alltrim(TRA->ZZ0_NOME)
+				cCPF := TRA->ZZ0_CPF
+			Else
+				cNomTrb := TRB->ZZ2_NOME
+				cCPF := TRA->ZZ0_CPF
+			EndIf
+		Else
+			//aadd(aLogCPF, {TRA->ZZM_TRABAL, TRA->ZZ0_NOME})
+			cCPF := '00000000000'
+			_cQryTRB := " "
+			_cQryTRB += "SELECT ZZ2_DTNASC, ZZ2_NOME, ZZ2_RESP "
+			_cQryTRB += "FROM "      + RETSQLNAME("ZZ2") + " ZZ2 "
+			_cQryTRB += "WHERE ZZ2_NOME LIKE '%" + TRA->ZZ0_NOME + "%' "
+			TCQUERY _cQryTRB NEW ALIAS "TRB"
+
+			DbSelectArea("TRB")
+
+			If TRB->( Eof() )
+				cNomTrb := Alltrim(TRA->ZZ0_NOME)
+				cCPF := '00000000000'
+				//cLogEnc += TRA->ZZ0_NOME + CRLF
+				//cLogEnc++
+
+			ElseIf ((!Empty(TRB->ZZ2_RESP)) .AND. (!Empty(TRB->ZZ2_DTNASC)))
+				cNomTrb  := TRB->ZZ2_NOME
+				cDtNasc  := DTOS(TRB->ZZ2_DTNASC)
+				cNomResp := TRB->ZZ2_RESP
+			Else
+				cNomTrb := Alltrim(TRA->ZZ0_NOME)
+				cCPF := '00000000000'
+				aadd(aLogInc, {TRB->ZZ2_NOME, DTOS(TRB->ZZ2_DTNASC),TRB->ZZ2_RESP })
+
+			EndIf
+		EndIf
+
+		DbCloseArea("TRB")
+
+
+		If (Empty(cDtNasc))
+			cDtNasc  := '00000000'
+		EndIf
+		If (Empty(cNomResp))
+			//cNomResp := Padr('0',60,'0')
+			cNomResp := " "
+		EndIf
+
+
+		//------------------------------|
+		//CLIENTELA                     |
+		//------------------------------|		
+		If (TRA->A1_XCNAEIN = 'S' .OR. TRA->A1_XCNAEIN = ' ')
+			cClient := "0000050"
+		ElseIf (TRA->A1_XCNAEIN = 'N')
+			cClient := "0000050"
+		EndIf	
+		
+		If(TRA->ZZM_TPATEN = 'I' .AND. TRA->ZZM_TIPO = 'D' )
+			cClient := "0000051"
+		EndIf
+		
+
+		//------------------------------|
+		//MODALIDADE                    |
+		//------------------------------|		
+		If(AllTrim(TRA->ZZF_PRDSMD) = '9999999')
+			DbSelectArea('ZZ1')
+			DbSetOrder(1)
+
+			If(TRA->ZZM_TPATEN = '1')
+				If MsSeek(xFilial() + '0013068')
+					cProd    := '0013068'
+					cForm    := ZZ1->ZZ1_FORM
+					cCrSMD   := ZZ1->ZZ1_CRSMD
+					cUnCont  := ZZ1->ZZ1_UNCONT
+				Else
+					Alert('TESTE')
+				EndIf
+
+			ElseIf(TRA->ZZM_TPATEN = '2')
+				If MsSeek(xFilial() + '0013072')
+					cProd    := '0013072'
+					cForm    := ZZ1->ZZ1_FORM
+					cCrSMD   := ZZ1->ZZ1_CRSMD
+					cUnCont  := ZZ1->ZZ1_UNCONT
+				Else
+					Alert('TESTE')
+				EndIf
+
+			ElseIf(TRA->ZZM_TPATEN = '3')
+				If MsSeek(xFilial() + '0013070')
+					cProd    := '0013070'
+					cForm    := ZZ1->ZZ1_FORM
+					cCrSMD   := ZZ1->ZZ1_CRSMD
+					cUnCont  := ZZ1->ZZ1_UNCONT
+				Else
+					Alert('TESTE')
+				EndIf
+
+			ElseIf(TRA->ZZM_TPATEN = '4' .OR. TRA->ZZM_TPATEN = '7' .OR. TRA->ZZM_TPATEN = '6')
+				If MsSeek(xFilial() + '0013069')
+					cProd    := '0013069'
+					cForm    := ZZ1->ZZ1_FORM
+					cCrSMD   := ZZ1->ZZ1_CRSMD
+					cUnCont  := ZZ1->ZZ1_UNCONT
+				Else
+					Alert('TESTE')
+				EndIf
+
+			ElseIf(TRA->ZZM_TPATEN = '5')
+				If MsSeek(xFilial() + '0013071')
+					cProd    := '0013071'
+					cForm    := ZZ1->ZZ1_FORM
+					cCrSMD   := ZZ1->ZZ1_CRSMD
+					cUnCont  := ZZ1->ZZ1_UNCONT
+				Else
+					Alert('TESTE')
+				EndIf
+
+			ElseIf(TRA->ZZM_TPATEN = '8')
+				cModal := 'ZZZZZZZZ'
+
+			ElseIf(TRA->ZZM_TPATEN = '9')
+				cModal := 'AAAAAAA'
+			EndIf
+		Else
+			cProd   := TRA->ZZF_PRDSMD
+			cForm   := TRA->ZZ1_FORM
+			cCrSMD  := TRA->ZZ1_CRSMD
+			cUnCont := TRA->ZZ1_UNCONT
+		EndIf				
+		cCnpj := TRA->ZZM_CNPJ
+
+
+		/*--------------------------------------------------------||
+		|=========================================================||				
+		|                         EXAMES                          ||
+		|=========================================================||
+		|---------------------------------------------------------|*/
+
+		//-----------------------------------------------------||
+		//Query para contar Exames por Empresa                 ||		
+		//-----------------------------------------------------||
+
+		If(AllTrim(TRA->ZZF_PRDSMD) <> '9999999')
+			/*If(cEmpAnt <> cCnpj .or. cProdAnt <> TRA->ZZF_PRDSMD)
+				//cQuantMod := TRA->ZZ4_MODSMD	
+				_cQuery1 := " "
+				_cQuery1 += "SELECT ZZM.ZZM_CNPJ, ZZF.ZZF_PRDSMD, ZZ1.ZZ1_FORM, ZZ1.ZZ1_CRSMD, ZZ1.ZZ1_UNCONT, COUNT(ZZM_TPATEN) QUANT  "
+				_cQuery1 += "FROM "      + RETSQLNAME("ZZM") + " ZZM "
+				_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZN") + " ZZN ON ZZN.ZZN_FILIAL = ZZM.ZZM_FILIAL AND ZZN.ZZN_ATEND = ZZM.ZZM_ATEND "
+				_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZF") + " ZZF ON ZZF_CODIGO = ZZN_PROCED "
+				_cQuery1 += "INNER JOIN "+ RETSQLNAME("SA1") + " SA1 ON SA1.A1_CGC = ZZM.ZZM_CNPJ "
+				_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZ1") + " ZZ1 ON ZZF_PRDSMD = ZZ1_COD "
+				_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZ0") + " ZZ0 ON ZZ0_CODIGO = ZZM_TRABAL "
+				_cQuery1 += "WHERE ZZM_FILIAL        = '"+xFilial("ZZM")+"' "
+				_cQuery1 += "      AND ZZM_DATA      >= '"+dDtIni+"' "
+				_cQuery1 += "      AND ZZM_DATA      <= '"+dDtFim+"' "
+				_cQuery1 += "      AND ZZM.ZZM_CNPJ   = '"+cCnpj+"' "
+				_cQuery1 += "      AND ZZF.ZZF_PRDSMD = '"+cProd+"' "
+				_cQuery1 += " 	   AND ZZM.D_E_L_E_T_ <> '*' 			"
+				_cQuery1 += "	   AND ZZN.D_E_L_E_T_ <> '*'          "
+				_cQuery1 += "	   AND ZZF.D_E_L_E_T_ <> '*' 			"
+				_cQuery1 += "      AND ZZ1.D_E_L_E_T_ <> '*'           "
+				_cQuery1 += "      AND SA1.D_E_L_E_T_ <> '*'          "
+				_cQuery1 += "      AND ZZ0.D_E_L_E_T_ <> '*'          "
+				_cQuery1 += "      AND ZZM.ZZM_TPATEN <> '9'          "
+				_cQuery1 += "GROUP BY ZZM.ZZM_CNPJ, ZZF.ZZF_PRDSMD, ZZ1.ZZ1_FORM, ZZ1.ZZ1_CRSMD, ZZ1.ZZ1_UNCONT "
+				_cQuery1 += "ORDER BY ZZM.ZZM_CNPJ, ZZF_PRDSMD "
+
+				TCQUERY _cQuery1 NEW ALIAS "TRQ"	
+
+				cEmpAnt  := TRA->ZZM_CNPJ
+				cProdAnt := TRA->ZZF_PRDSMD
+
+				DbSelectArea("TRQ")
+				cQuant := TRQ->QUANT
+
+				TRQ->(DBCLOSEAREA())
+
+			EndIf
+
+			//DbSelectArea("TRQ")
+			//cQuant := TRQ->QUANT */
+			
+			
+			  cSerie := TRA->ZZ1_SERIE
+			
+
+			aCampos :={}
+			Aadd(aCampos, {'ZZ8_FILIAL'  , xFilial()                                    } )
+			Aadd(aCampos, {'ZZ8_FILSMD'  , cFilSMD                                      } )
+			Aadd(aCampos, {'ZZ8_PROSMD'  , AllTrim(cProd)                               } )
+			Aadd(aCampos, {'ZZ8_FORM'    , cForm                                        } )
+			Aadd(aCampos, {'ZZ8_COMPET'  , cCompSMD                                     } )
+			Aadd(aCampos, {'ZZ8_CRESP'   , cCrSMD                                       } )
+			Aadd(aCampos, {'ZZ8_FINANC'  , cFinanc                                      } )
+			Aadd(aCampos, {'ZZ8_CLIENT'  , cClient                                      } )
+			Aadd(aCampos, {'ZZ8_PROJET'  , cProjet                                      } )
+			Aadd(aCampos, {'ZZ8_MODAL'   , cModal                                       } )
+			Aadd(aCampos, {'ZZ8_SERIE'   , cSerie                                       } )
+			Aadd(aCampos, {'ZZ8_CARGAH'  , cCargaH                                      } )
+			Aadd(aCampos, {'ZZ8_CNPJ'    , TRA->ZZM_CNPJ                                } )
+			
+			If(AllTrim(cProd) = '0014055')
+				Aadd(aCampos, {'ZZ8_UNTCON'  , "0000162"                                    } )
+			Else
+				Aadd(aCampos, {'ZZ8_UNTCON'  , "0000102"                                    } )
+			EndIf
+			Aadd(aCampos, {'ZZ8_MES'     , PadR(cLeg3,3)                                } )
+			Aadd(aCampos, {'ZZ8_ANO'     , cGet2                                        } )
+			//Aadd(aCampos, {'ZZ8_QUANT'   , cQuant                                       } )
+			Aadd(aCampos, {'ZZ8_QUANT'   ,  1                                           } )
+			Aadd(aCampos, {'ZZ8_CODPF'   , '000000000'                                  } )
+			Aadd(aCampos, {'ZZ8_CPF'     , PadR(cCPF,11)                                } )
+			Aadd(aCampos, {'ZZ8_NOME'    , cNomTrb                                      } )
+			If(!Empty(TRA->ZZ0_NOMMAE))
+				Aadd(aCampos, {'ZZ8_NOMRES'  , AllTrim(TRA->ZZ0_NOMMAE )                } )
+			else
+				Aadd(aCampos, {'ZZ8_NOMRES'  , STRZERO(0,60)                           } )
+			EndIf
+			
+			//Aadd(aCampos, {'ZZ8_UNCTCO'  , '0000159'                                    })
+			Aadd(aCampos, {'ZZ8_UNCTCO'  ,  cUnCont                                      })
+			Aadd(aCampos, {'ZZ8_DTNASC'  , STOD(TRA->ZZ0_DTNASC)                                      } )
+			//Aadd(aCampos, {'ZZ8_ID'      ,                                              } )
+			TRQ->(DBCLOSEAREA())
+
+			If !Import('ZZ8',aCampos)
+				lRet := .F.
+			EndIf
+
+		EndIf
+
+
+		/*--------------------------------------------------------||
+		|=========================================================||				
+		|                   CONSULTA OCUPACIONAL                  ||
+		|=========================================================||
+		|---------------------------------------------------------|*/		
+
+		If(AllTrim(TRA->ZZF_PRDSMD) = '9999999')
+			/*cQuantMod := TRA->ZZM_TPATEN
+			_cQuery1 := " "
+			_cQuery1 += "SELECT ZZM.ZZM_CNPJ, ZZF.ZZF_PRDSMD, ZZ1.ZZ1_FORM, ZZ1.ZZ1_CRSMD, ZZ1.ZZ1_UNCONT, ZZM.ZZM_TPATEN, COUNT(ZZM_TPATEN) QUANT "
+			_cQuery1 += "FROM "      + RETSQLNAME("ZZM") + " ZZM "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZN") + " ZZN ON ZZN.ZZN_FILIAL = ZZM.ZZM_FILIAL AND ZZN.ZZN_ATEND = ZZM.ZZM_ATEND "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZF") + " ZZF ON ZZF_CODIGO = ZZN_PROCED "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("SA1") + " SA1 ON SA1.A1_CGC = ZZM.ZZM_CNPJ "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZ1") + " ZZ1 ON ZZF_PRDSMD = ZZ1_COD "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZ4") + " ZZ4 ON ZZ4_CODIGO = ZZF_CLASSE "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZ0") + " ZZ0 ON ZZ0_CODIGO = ZZM_TRABAL "
+			_cQuery1 += "WHERE ZZM_FILIAL        = '"+xFilial("ZZM")+"' "
+			_cQuery1 += "      AND ZZM_DATA      >= '"+dDtIni+"' "
+			_cQuery1 += "      AND ZZM_DATA      <= '"+dDtFim+"' "
+			_cQuery1 += "      AND ZZM.ZZM_CNPJ   = '"+cCnpj+"' "
+			_cQuery1 += "      AND ZZF.ZZF_PRDSMD = '99999999' "
+			_cQuery1 += "      AND ZZM.ZZM_TPATEN = '"+cQuantMod+"' "
+			_cQuery1 += " 	   AND ZZM.D_E_L_E_T_ <> '*' 			"
+			_cQuery1 += "	   AND ZZN.D_E_L_E_T_ <> '*'          "
+			_cQuery1 += "	   AND ZZF.D_E_L_E_T_ <> '*' 			"
+			_cQuery1 += "      AND ZZ1.D_E_L_E_T_ <> '*'           "
+			_cQuery1 += "      AND SA1.D_E_L_E_T_ <> '*'          "
+			_cQuery1 += "      AND ZZ0.D_E_L_E_T_ <> '*'          "
+			_cQuery1 += "      AND ZZM.ZZM_TPATEN <> '9'          "
+			_cQuery1 += "      AND ZZ4.ZZ4_MODSMD <> ' '
+			_cQuery1 += "GROUP BY ZZM.ZZM_CNPJ, ZZF.ZZF_PRDSMD, ZZ1.ZZ1_FORM, ZZ1.ZZ1_CRSMD, ZZ1.ZZ1_UNCONT, ZZM_TPATEN "
+			_cQuery1 += "ORDER BY ZZM.ZZM_CNPJ, ZZF_PRDSMD,ZZM_TPATEN "
+
+			TCQUERY _cQuery1 NEW ALIAS "TRQ"	
+
+
+			DbSelectArea("TRQ")
+			cQuant := TRQ->QUANT */
+
+			aCampos :={}
+			Aadd(aCampos, {'ZZ8_FILIAL'  , xFilial()                                    } )
+			Aadd(aCampos, {'ZZ8_FILSMD'  , cFilSMD                                      } )
+			Aadd(aCampos, {'ZZ8_PROSMD'  , AllTrim(cProd)                               } )
+			Aadd(aCampos, {'ZZ8_FORM'    ,cForm                                         } )
+			Aadd(aCampos, {'ZZ8_COMPET'  , cCompSMD                                     } )
+			Aadd(aCampos, {'ZZ8_CRESP'   , cCrSMD                                       } )
+			Aadd(aCampos, {'ZZ8_FINANC'  , cFinanc                                      } )
+			Aadd(aCampos, {'ZZ8_CLIENT'  , cClient                                      } )
+			Aadd(aCampos, {'ZZ8_PROJET'  , cProjet                                      } )
+			Aadd(aCampos, {'ZZ8_MODAL'   , cModal                                       } )
+			Aadd(aCampos, {'ZZ8_SERIE'   , "0000000"                                    } )
+			Aadd(aCampos, {'ZZ8_CARGAH'  , cCargaH                                      } )
+			Aadd(aCampos, {'ZZ8_CNPJ'    , TRA->ZZM_CNPJ                                } )
+			Aadd(aCampos, {'ZZ8_UNTCON'  , '0000102'                                    } )
+			Aadd(aCampos, {'ZZ8_MES'     , PadR(cLeg3,3)                                } )
+			Aadd(aCampos, {'ZZ8_ANO'     , cGet2                                        } )
+			Aadd(aCampos, {'ZZ8_QUANT'   , 1                                            } )
+			Aadd(aCampos, {'ZZ8_CODPF'   , '000000000'                                  } )
+			Aadd(aCampos, {'ZZ8_CPF'     , PadR(cCPF,11)                                } )
+			Aadd(aCampos, {'ZZ8_NOME'    , cNomTrb                                      } )
+			If(!Empty(TRA->ZZ0_NOMMAE))
+				Aadd(aCampos, {'ZZ8_NOMRES'  , AllTrim(TRA->ZZ0_NOMMAE )                } )
+			else
+				Aadd(aCampos, {'ZZ8_NOMRES'  , STRZERO(0,60)                            } )
+			EndIf
+			//Aadd(aCampos, {'ZZ8_NOMRES'  , AllTrim(TRA->ZZ0_NOMMAE)                     } )
+			Aadd(aCampos, {'ZZ8_UNCTCO'  , '0000155'                                     })
+			Aadd(aCampos, {'ZZ8_DTNASC'  , STOD(TRA->ZZ0_DTNASC)                         } )
+			//Aadd(aCampos, {'ZZ8_ID'      ,                                              } )
+			//TRQ->(DBCLOSEAREA())
+
+			If !Import('ZZ8',aCampos)
+				lRet := .F.
+			EndIf
+
+
+
+			/*--------------------------------------------------------||
+			|=========================================================||				
+			|                   Enfermagem                            ||
+			|=========================================================||
+			|---------------------------------------------------------|*/	
+/*
+			_cQuery1 := " "
+			_cQuery1 += "SELECT ZZM.ZZM_CNPJ, ZZF.ZZF_PRDSMD, ZZ1.ZZ1_FORM, ZZ1.ZZ1_CRSMD, ZZ1.ZZ1_UNCONT, COUNT(ZZF_PRDSMD) QUANT "
+			_cQuery1 += "FROM "      + RETSQLNAME("ZZM") + " ZZM "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZN") + " ZZN ON ZZN.ZZN_FILIAL = ZZM.ZZM_FILIAL AND ZZN.ZZN_ATEND = ZZM.ZZM_ATEND "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZF") + " ZZF ON ZZF_CODIGO = ZZN_PROCED "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("SA1") + " SA1 ON SA1.A1_CGC = ZZM.ZZM_CNPJ "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZ1") + " ZZ1 ON ZZF_PRDSMD = ZZ1_COD "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZ4") + " ZZ4 ON ZZ4_CODIGO = ZZF_CLASSE "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZ0") + " ZZ0 ON ZZ0_CODIGO = ZZM_TRABAL "
+			_cQuery1 += "WHERE ZZM_FILIAL        = '"+xFilial("ZZM")+"' "
+			_cQuery1 += "      AND ZZM_DATA      >= '"+dDtIni+"' "
+			_cQuery1 += "      AND ZZM_DATA      <= '"+dDtFim+"' "
+			_cQuery1 += "      AND ZZM.ZZM_CNPJ   = '"+cCnpj+"' "
+			_cQuery1 += "      AND ZZF.ZZF_PRDSMD = '99999999' "
+			//_cQuery1 += "      AND ZZM.ZZM_TPATEN = '"+cQuantMod+"' "
+			_cQuery1 += " 	   AND ZZM.D_E_L_E_T_ <> '*' 			"
+			_cQuery1 += "	   AND ZZN.D_E_L_E_T_ <> '*'          "
+			_cQuery1 += "	   AND ZZF.D_E_L_E_T_ <> '*' 			"
+			_cQuery1 += "      AND ZZ1.D_E_L_E_T_ <> '*'           "
+			_cQuery1 += "      AND SA1.D_E_L_E_T_ <> '*'          "
+			_cQuery1 += "      AND ZZ0.D_E_L_E_T_ <> '*'          "
+			_cQuery1 += "      AND ZZM.ZZM_TPATEN <> '9'          "
+			_cQuery1 += "      AND ZZ4.ZZ4_MODSMD <> ' '
+			_cQuery1 += "GROUP BY ZZM.ZZM_CNPJ, ZZF.ZZF_PRDSMD, ZZ1.ZZ1_FORM, ZZ1.ZZ1_CRSMD, ZZ1.ZZ1_UNCONT "
+			_cQuery1 += "ORDER BY ZZM.ZZM_CNPJ, ZZF_PRDSMD "
+
+			TCQUERY _cQuery1 NEW ALIAS "TRQ"	
+
+
+			DbSelectArea("TRQ")
+			cQuant := TRQ->QUANT
+
+
+
+
+			cQuant := TRQ->QUANT * 5 */
+
+			aCampos :={}
+			Aadd(aCampos, {'ZZ8_FILIAL'  , xFilial()                                    } )
+			Aadd(aCampos, {'ZZ8_FILSMD'  , cFilSMD                                      } )
+			Aadd(aCampos, {'ZZ8_PROSMD'  ,"0000366"                                     } )
+			//Aadd(aCampos, {'ZZ8_PROSMD'  ,"0012075"                                     } )
+			Aadd(aCampos, {'ZZ8_FORM'    ,"0057098"                                     } )
+			Aadd(aCampos, {'ZZ8_COMPET'  , cCompSMD                                     } )
+			Aadd(aCampos, {'ZZ8_CRESP'   ,"304010109"                                   } )
+			Aadd(aCampos, {'ZZ8_FINANC'  , cFinanc                                      } )
+			Aadd(aCampos, {'ZZ8_CLIENT'  , cClient                                      } )
+			Aadd(aCampos, {'ZZ8_PROJET'  , cProjet                                      } )
+			Aadd(aCampos, {'ZZ8_MODAL'   , cModal                                       } )
+			Aadd(aCampos, {'ZZ8_SERIE'   , "0000000"                                    } )
+			Aadd(aCampos, {'ZZ8_CARGAH'  , cCargaH                                      } )
+			Aadd(aCampos, {'ZZ8_CNPJ'    , TRA->ZZM_CNPJ                                } )
+			Aadd(aCampos, {'ZZ8_UNTCON'  , "0000102"                                    } )
+			Aadd(aCampos, {'ZZ8_MES'     , PadR(cLeg3,3)                                } )
+			Aadd(aCampos, {'ZZ8_ANO'     , cGet2                                        } )
+			Aadd(aCampos, {'ZZ8_QUANT'   , 1                                            } )
+			Aadd(aCampos, {'ZZ8_CODPF'   , '000000000'                                  } )
+			Aadd(aCampos, {'ZZ8_CPF'     , PadR(cCPF,11)                                } )
+			Aadd(aCampos, {'ZZ8_NOME'    , cNomTrb                                      } )
+			If(!Empty(TRA->ZZ0_NOMMAE))
+				Aadd(aCampos, {'ZZ8_NOMRES'  , AllTrim(TRA->ZZ0_NOMMAE )                } )
+			else
+				Aadd(aCampos, {'ZZ8_NOMRES'  , STRZERO(0,60)                           } )
+			EndIf
+			Aadd(aCampos, {'ZZ8_UNCTCO'  , '0000157'                                      })
+			Aadd(aCampos, {'ZZ8_DTNASC'  , STOD(TRA->ZZ0_DTNASC)                         } )
+			//Aadd(aCampos, {'ZZ8_ID'      ,                                              } )
+			TRQ->(DBCLOSEAREA())
+
+			If !Import('ZZ8',aCampos)
+				lRet := .F.
+			EndIf
+
+			//TRQ->(DBCLOSEAREA())
+		EndIf
+
+		TRA->(DBSKIP())
+
+	EndDo
+	TRA->(DbCloseArea())
+
+	        /*--------------------------------------------------------||
+			|=========================================================||				
+			|                Contagem Empresa por Produto             ||
+			|=========================================================||
+			|---------------------------------------------------------|*/	
+	
+	_cQuery1 := " "
+	_cQuery1 := "SELECT ZZ8_FILIAL, ZZ8_FILSMD, ZZ8_PROSMD, ZZ8_FORM, ZZ8_COMPET, ZZ8_CRESP, ZZ8_FINANC,ZZ8_CLIENT,ZZ8_PROJET,ZZ8_MODAL, ZZ8_SERIE,ZZ8_CARGAH,ZZ8_CNPJ,ZZ8_UNCTCO,ZZ8_MES,ZZ8_ANO, Count(ZZ8_QUANT) QUANT "
+	_cQuery1 += "FROM "      + RETSQLNAME("ZZ8") + " ZZ8 "
+	_cQuery1 += "WHERE ZZ8.D_E_L_E_T_ <> '*' "
+	_cQuery1 += "AND ZZ8_MES  = '"+cLeg3+"' "
+	_cQuery1 += "AND ZZ8_ANO  = '"+cGet2+"' "
+	_cQuery1 += "AND ZZ8_FILIAL   = '"+xFilial("ZZ8")+"' "
+	_cQuery1 += "AND ZZ8_PROSMD <> '0014055' "
+	_cQuery1 += "GROUP BY ZZ8_FILIAL, ZZ8_FILSMD, ZZ8_CNPJ, ZZ8_PROSMD, ZZ8_FORM, ZZ8_COMPET, ZZ8_CRESP, ZZ8_FINANC,ZZ8_CLIENT,ZZ8_PROJET,ZZ8_MODAL, ZZ8_SERIE,ZZ8_CARGAH,ZZ8_UNCTCO,ZZ8_MES,ZZ8_ANO "
+	_cQuery1 += "ORDER BY ZZ8_CNPJ"
+	
+	TCQUERY _cQuery1 NEW ALIAS "TRB"
+
+	DbSelectArea("TRB")
+
+	While .Not. TRB->( EOF() )	
+	
+			If(Alltrim(ZZ8_PROSMD) <> '0000366')
+				cQuant := TRB->QUANT
+			Else
+				cQuant := TRB->QUANT * 5
+			EndIf
+	
+			aCampos :={}
+			Aadd(aCampos, {'ZZ8_FILIAL'  , xFilial()                                    } )
+			Aadd(aCampos, {'ZZ8_FILSMD'  , TRB->ZZ8_FILSMD                              } )
+			Aadd(aCampos, {'ZZ8_PROSMD'  , AllTrim(TRB->ZZ8_PROSMD)                     } )
+			Aadd(aCampos, {'ZZ8_FORM'    , TRB->ZZ8_FORM                                } )
+			Aadd(aCampos, {'ZZ8_COMPET'  , TRB->ZZ8_COMPET                              } )
+			Aadd(aCampos, {'ZZ8_CRESP'   , TRB->ZZ8_CRESP                              } )
+			Aadd(aCampos, {'ZZ8_FINANC'  , TRB->ZZ8_FINANC                              } )
+			Aadd(aCampos, {'ZZ8_CLIENT'  , TRB->ZZ8_CLIENT                              } )
+			Aadd(aCampos, {'ZZ8_PROJET'  , TRB->ZZ8_PROJET                              } )
+			Aadd(aCampos, {'ZZ8_MODAL'   , TRB->ZZ8_MODAL                               } )
+			Aadd(aCampos, {'ZZ8_SERIE'   , TRB->ZZ8_SERIE                               } )
+			Aadd(aCampos, {'ZZ8_CARGAH'  , TRB->ZZ8_CARGAH                              } )
+			Aadd(aCampos, {'ZZ8_CNPJ'    , TRB->ZZ8_CNPJ                                } )
+			Aadd(aCampos, {'ZZ8_UNTCON'  , TRB->ZZ8_UNCTCO                              } )
+			Aadd(aCampos, {'ZZ8_MES'     , TRB->ZZ8_MES                                 } )
+			Aadd(aCampos, {'ZZ8_ANO'     , TRB->ZZ8_ANO                                 } )
+			Aadd(aCampos, {'ZZ8_QUANT'   , cQuant                                       } )
+			Aadd(aCampos, {'ZZ8_CODPF'   , '000000000'                                  } )
+			Aadd(aCampos, {'ZZ8_CPF'     , STRZERO(0,11)                                } )
+			Aadd(aCampos, {'ZZ8_NOME'    , STRZERO(0,60)                                } )
+			Aadd(aCampos, {'ZZ8_NOMRES'  , STRZERO(0,60)                                } )
+			
+			//Aadd(aCampos, {'ZZ8_DTNASC'  , cDtNasc                                      } )
+			//Aadd(aCampos, {'ZZ8_ID'      ,                                              } )
+			
+			If !Import('ZZ8',aCampos)
+				lRet := .F.
+			EndIf 
+			
+			TRB->(DBSKIP())
+	EndDo
+	
+	TRB->(DBCLOSEAREA())
+	
+	GeraSMD()
+
+Return
+
+
+
+Static Function Import(cAlias,aCampos)
+
+	//Local oModel, oAux, oStruct
+	//Local aAux  := {}
+	Local nI    := 0
+	Local nPos  := 0
+	Local lRet  := .T.
+	//Local aAux  := {}
+	Local cPath := "C:\Import\"
+
+
+	If nExec = 0
+		nExec++
+		dbSelectArea(cAlias)
+		dbSetOrder(1)
+
+		//Aqui ocorre o instanciamento do Modelo de dados (Model)
+		//que é a rotina de manutenção do cadastro do PCMSO.
+		oModel := FWLoadModel('SS3315S')
+
+		//Temos que definir qual a operação que sera executada: 3 - Inclusão / 4 - Alteração / 5 - Exclusao
+		//oModel:SetOperation(3)
+
+		//Antes de Atribuirmos os Valores dos Campos temos que Ativar o Modelo
+		//:Activate()
+
+		//Instanciamos apenas referentes aos Dados
+		oAux :=oModel:GetModel(cAlias + 'MASTER')
+
+		//Obtemos a estrutura de dados
+		oStruct := oAux:GetStruct()
+		aAux    := oStruct:GetFields()
+	EndIf
+	//Temos que definir qual a operação que sera executada: 3 - Inclusão / 4 - Alteração / 5 - Exclusao
+	oModel:SetOperation(3)
+
+	//Antes de Atribuirmos os Valores dos Campos temos que Ativar o Modelo
+	oModel:Activate()
+
+	For nI := 1 To Len(aCampos)
+		//Verificar se os campos passados existem na estrutura do Modelo
+		//If (nPos := aScan(aAux,{|x| AllTrim(x[3] ) == Alltrim(aCampos[nI][1])})) > 0
+		If ( nPos := aScan(aAux,{|x| AllTrim( x[3] )== AllTrim(aCampos[nI][1]) } ) ) > 0
+
+			// É feita a atribuição do dado ao campo do Model
+			If !(lAux := oModel:SetValue(cAlias + 'MASTER', aCampos[nI][1], aCampos[nI][2]))
+				//Caso a atribuição não possa ser feita, por algum motivo (Validação, por exemplo)
+				//O método SetValue retorna .F.
+				lRet := .F.
+				Exit
+			EndIf
+		EndIf
+	Next nI
+
+	If lRet
+		//Faz-se a validação dos dados, note que diferentemente das tradicionais "rotinas automaticas"
+		//Nesse momento os dados não são gravados, são somento validados.
+		If (lRet := oModel:VldData())
+			//Se os dados foram validados faz-se a gravação efetiva dos dados (commit)
+			oModel:CommitData()
+		EndIf
+	EndIf
+
+	If !lRet
+
+		//Se os dados não foram validados obtemos a descrição do erro para gerar LOG ou mensagem de aviso
+		aErro := oModel:GetErrorMessage()
+		//A estrutura do vetor com o erro é:
+		// [1] Identificador (ID) do formulario de origem
+		// [2] Identificador (ID) do campo de origem
+		// [3] Identificador (ID) do formulario de erro
+		// [4] Identificador (ID) do campo de erro
+		// [5] Identificador (ID) do erro
+		// [6] Mensagem do erro
+		// [7] Mensagem da solução
+		// [8] Valor Atribuido
+		// [9] Valor Anterior
+
+		AutoGrLog("Id do Formulário de Origem:" + ' [' + AllToChar( aErro[1] ) + ']')
+		AutoGrLog("Id do Campo de Origem:     " + ' [' + AllToChar( aErro[2] ) + ']')
+		AutoGrLog("Id do Formulário de Erro:  " + ' [' + AllToChar( aErro[3] ) + ']')
+		AutoGrLog("Id do Campo de Erro:       " + ' [' + AllToChar( aErro[4] ) + ']')
+		AutoGrLog("Id do Erro:                " + ' [' + AllToChar( aErro[5] ) + ']')
+		AutoGrLog("Mensagem do Erro:          " + ' [' + AllToChar( aErro[6] ) + ']')
+		AutoGrLog("Mensagem da Solução:       " + ' [' + AllToChar( aErro[7] ) + ']')
+		AutoGrLog("Valor Atribuido:           " + ' [' + AllToChar( aErro[8] ) + ']')
+		AutoGrLog("Valor Anterior:            " + ' [' + AllToChar( aErro[9] ) + ']')
+
+		MostraErro(cPath)
+	EndIf
+
+	//Desativamos o Model
+	oModel:DeActivate()
+
+Return lRet		
+
+Static Function GeraSmd()
+	Local cTexto   := " "
+	Local nArquivo	
+	Local _cQryTRB := " "
+	Local nRegTot  := 0
+	Local cTexto1  := " "
+	Local cTexto2  := " "
+	Local cTexto3  := " "
+	Local cTexto4  := " "
+
+
+	_cQryTRB := "SELECT * "
+	_cQryTRB += "FROM "      + RETSQLNAME("ZZ8") + " ZZ8 "
+	_cQryTRB += "WHERE ZZ8.D_E_L_E_T_ <> '*' "
+	_cQryTRB += "AND ZZ8_MES  = '"+cLeg3+"' "
+	_cQryTRB += "AND ZZ8_ANO  = '"+cGet2+"' "
+	_cQryTRB += "AND ZZ8_FILIAL   = '"+xFilial("ZZ8")+"' "
+
+
+	TCQUERY _cQryTRB NEW ALIAS "TRB"
+
+	DbSelectArea("TRB")
+
+	While .Not. TRB->( EOF() )	
+	
+		nRegTot++
+
+		cTexto += TRB->ZZ8_FILSMD                                     //Filial                Posição 001 / 007
+		cTexto += STRZERO(VAl(TRB->ZZ8_PROSMD),7)                     //Produto               Posição 008 / 014
+		cTexto += STRZERO(VAL(TRB->ZZ8_FORM),7)                       //Formulario            Posição 015 / 021
+		cTexto += STRZERO(VAL(TRB->ZZ8_COMPET),7)                     //Competencia           Posição 022 / 028
+		cTexto += STRZERO(VAL(TRB->ZZ8_CRESP),9)                     //Centro Resp.          Posição 029 / 037
+		cTexto += STRZERO(VAL(TRB->ZZ8_FINANC),7)                    //Financiamento         Posição 038 / 044
+		cTexto += STRZERO(VAL(TRB->ZZ8_CLIENT),7)                    //Clientela             Posição 045 / 051
+		cTexto += STRZERO(VAL(TRB->ZZ8_PROJET),7)                    //Projeto               Posição 052 / 058
+		cTexto += STRZERO(VAL(TRB->ZZ8_MODAL),7)                     //Modalidade            Posição 059 / 065
+		cTexto += TRB->ZZ8_SERIE                                     //Serie                 Posição 066 / 072
+		cTexto += TRB->ZZ8_CARGAH                                    //Carga Horaria         Posição 073 / 079
+		cTexto += TRB->ZZ8_CNPJ                                     //CNPJ                  Posição 080 / 093
+		cTexto += STRZERO(VAL(TRB->ZZ8_UNTCON),7)                   //Unidade de Controle   Posição 094 / 100 Alterar o nome para Unidade de Controle
+		cTexto += PadR(cLeg3,3)                                      //Mes Produção          Posição 101 / 103
+		cTexto += STRZERO(TRB->ZZ8_QUANT,7)	                         //Quantidade            Posição 104 / 110
+		cTexto += TRB->ZZ8_CODPF                                     //Codigo Pessoa Fisica  Posição 111 / 119 
+		cTexto += PadR(TRB->ZZ8_CPF,11)                              // CPF do Trabalhador   Posição 120 / 130
+		cTexto += PadL(Substr(Alltrim(TRB->ZZ8_NOME),1,60),60,'0')   // Nome do Trabalhador  Posição 131 / 190
+		cTexto += PadL(Substr(AllTrim(TRB->ZZ8_DTNASC),7,2),2,'0')	 //Data de Nascimento    Posiçao 251 / 258
+		cTexto += PadL(Substr(AllTrim(TRB->ZZ8_DTNASC),5,6),2,'0')	 //Data de Nascimento    Posiçao 251 / 258
+		cTexto += PadL(Substr(AllTrim(TRB->ZZ8_DTNASC),1,4),4,'0')	 //Data de Nascimento    Posiçao 251 / 258
+		cTexto += PadL(Substr(AllTrim(TRB->ZZ8_NOMRES),1,60),60,'0') // Nome do Responsavel  Posição 191 / 250
+		
+		cTexto += CRLF
+
+		If (nRegTot = 2000) 
+			cTexto1 := cTexto
+			cTexto := " "
+			//MsgAlert("2000")
+		EndIf
+
+		If (nRegTot = 4000)
+			cTexto2 := cTexto
+			cTexto := " "
+			//MsgAlert("4000")
+		EndIf
+
+		If (nRegTot = 6000)
+			cTexto3 := cTexto
+			cTexto := " "
+			//MsgAlert("6000")
+		EndIf
+
+		If (nRegTot = 8000)
+			cTexto4 := cTexto
+			cTexto := " "
+			//MsgAlert("8000")
+		EndIf
+
+		TRB->(DBSKIP())				
+	EndDo
+	TRB->(DBCLOSEAREA())
+
+	cPlaNew := Upper(cGetFile('Arquivos XLS (*.xls) |*.xls|', 'Salvar Planilha Como',,'C:\UTIL\',.T.,nOR( GETF_LOCALHARD, GETF_LOCALFLOPPY, GETF_RETDIRECTORY ),.F.))
+
+	nArquivo := FCREATE (cPlaNew+"SMD.TXT",FC_NORMAL)
+
+	If nArquivo == -1
+		MsgStop('Erro ao criar o Arquivo.')
+	else
+		FSeek (nArquivo, 0, FS_SET) // Posiciona no inicio do arquivo
+		FWrite(nArquivo, AllTrim(cTexto)) // Insere texto no arquivo
+		FSeek (nArquivo, 0, FS_END)
+		FWrite(nArquivo, cTexto1) 
+		FSeek (nArquivo, 0, FS_END)
+		FWrite(nArquivo, cTexto2)
+		FSeek (nArquivo, 0, FS_END)
+		FWrite(nArquivo, cTexto3) 
+		FSeek (nArquivo, 0, FS_END)
+		FWrite(nArquivo, cTexto4)  
+
+		fclose(nArquivo) // Fecha arquivo
+		MsgAlert('Arquivo SMD Criado')
+	Endif
+
+Return				
+				
+				

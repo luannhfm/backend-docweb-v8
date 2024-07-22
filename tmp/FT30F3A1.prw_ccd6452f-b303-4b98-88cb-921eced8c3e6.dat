@@ -1,0 +1,127 @@
+#Include 'Protheus.ch'
+#Include 'FwMVCDef.ch'
+
+/*/{Protheus.doc} FT30F3A1
+@description Consulta padrão dos contatos da proposta comercial.
+@type User Function
+@author Alan Teles de Oliveria
+@since 01/02/2019
+@version 12.1.17
+@return lRet, logical, negativo quando precionar o botão cancelar.
+/*/
+User Function FT30F3A1()
+
+    Local aArea		:= GetArea()
+    Local aAreaAC8	:= AC8->(GetArea())
+    Local oModel	:= FwModelActive()
+    Local oMdlAD1	:= oModel:GetModel("AD1MASTER")
+    Local cQuery	:= ""
+    Local cEntidade := ""
+    Local cCodEnt	:= ""
+    Local lRet	    := .T.
+    Local cAliTmp	:= "SU5TMP"
+    Local cPesq	 	:= Space(50)
+    Local nRecno	:= 0
+    Local oDlg		:= Nil
+    Local oLstBx	:= Nil
+    Local aContato	:= {}
+    Local bRet		:= {|| If(!Empty(aTail(oLstBx:aArray[oLstBx:nAt])),(lRet := .T., Var_IXB := IIf(Len(oLstBx:aArray)>=oLstBx:nAt,oLstBx:aArray[oLstBx:nAt][1],0), nRecno := IIf(Len(oLstBx:aArray)>=oLstBx:nAt,aTail(oLstBx:aArray[oLstBx:nAt]),0),oDlg:DeActivate()),(lRet := .F.,MsgInfo('Incluir pelo menos um contrato responsável pela assinatura da proposta!')))}
+    Local bVisual	:= {|| SaveInter(),If(!Empty(aTail(oLstBx:aArray[oLstBx:nAt])),(nRecno := IIf(Len(oLstBx:aArray)>=oLstBx:nAt,aTail(oLstBx:aArray[oLstBx:nAt]),0),ALTERA := .F.,SU5->(DbGoTo(nRecno),A70Visual("SU5",nRecno,2))),Nil),RestInter()}
+    Local oPesq		:= Nil
+
+    If !Empty(oMdlAD1:GetValue("AD1_CODCLI"))
+
+        cEntidade   := "SA1"
+        cCodEnt	    := oMdlAD1:GetValue("AD1_CODCLI") + oMdlAD1:GetValue("AD1_LOJCLI")
+
+    ElseIf !Empty(oMdlAD1:GetValue("AD1_PROSPE"))
+
+        cEntidade   := "SUS"
+        cCodEnt	    := oMdlAD1:GetValue("AD1_PROSPE") + oMdlAD1:GetValue("AD1_LOJPRO")
+        
+    EndIf
+
+    If Empty(cEntidade)
+
+        MsgInfo("Nenhuma entidade (Código do Cliente/Código do Prospect) foi selecionada") 
+        lRet := .F.
+
+    EndIf
+
+    If lRet
+
+        cQuery := "SELECT U5_CODCONT,U5_CONTAT,SU5.R_E_C_N_O_ AS RECN FROM " + RetSqlName("SU5") + " SU5 "
+        cQuery += "INNER JOIN " + RetSqlName("AC8") + " AC8 ON AC8_FILIAL = '" + xFilial("AC8") + "' AND AC8_FILENT = '" + xFilial(cEntidade) + "' "
+        cQuery += "AND AC8_ENTIDA = '" + cEntidade + "' AND AC8_CODENT = '" + cCodEnt + "' AND AC8_CODCON = U5_CODCONT "
+        cQuery += "AND AC8.D_E_L_E_T_ = '' "
+        cQuery += "WHERE SU5.D_E_L_E_T_ = ''"
+
+        cQuery	:= ChangeQuery(cQuery)
+
+        If Select(cAliTmp) > 0
+            (cAliTmp)->(DbCloseArea())
+        EndIf
+
+        DbUseArea(.T., "TOPCONN", TcGenQry(,, cQuery), cAliTmp, .T., .T.)
+        DbGoTop()
+
+        While !(cAliTmp)->(Eof())
+
+            AAdd(aContato, {(cAliTmp)->U5_CODCONT, (cAliTmp)->U5_CONTAT, (cAliTmp)->RECN})
+            (cAliTmp)->(DbSkip())
+
+        EndDo
+
+        (cAliTmp)->(DbCloseArea())
+
+        If Len(aContato) == 0
+
+            aAdd(aContato, {Nil, Nil, Nil})
+
+        EndIf
+
+        oDlg := FWDialogModal():New()
+
+        oDlg:SetBackground(.F.)
+        oDlg:SetTitle('Consulta')
+        oDlg:SetEscClose(.T.)
+        oDlg:SetSize(210, 270)
+        oDlg:EnableFormBar(.T.)
+
+        oDlg:CreateDialog() 
+
+        oPanel := oDlg:getPanelMain()
+
+        oDlg:createFormBar()
+        oDlg:AddButton('Cancelar', {|| Var_IXB := ' ', oDlg:Deactivate()}, 'Cancelar', , .T., .F., .T., )
+        oDlg:AddButton('OK', {|| Eval(bRet)}, 'OK', , .T., .F., .T., )
+        oDlg:AddButton('Visualizar', {|| Eval(bVisual)}, 'Visualizar', , .T., .F., .T., )
+
+        @ 003, 002 MsGet oPesq Var cPesq Size 219, 009 COLOR CLR_BLACK PIXEL OF oPanel
+        @ 003, 228 Button 'Pesquisar' Size 037, 012 PIXEL OF oPanel ACTION IF(!Empty(aTail(oLstBx:aArray[oLstBx:nAt])), Ft300LbxSCon(oLstBx, cPesq), Nil)
+        @ 020, 003 LISTBOX oLstBx FIELDS HEADER 'Código','Nome' SIZE 264, 139 OF oPanel PIXEL
+
+        oLstBx:bLDblClick := bRet
+        oLstBx:SetArray(aContato)
+        oLstBx:bLine := {|| {aContato[oLstBx:nAt,1], aContato[oLstBx:nAt,2], aContato[oLstBx:nAt,3]}}
+
+        oDlg:Activate()
+
+    EndIf
+
+    If lRet
+
+        DbSelectArea("SU5")
+        DbGoTo(nRecno)
+
+    EndIf
+
+    If aArea[1] <> "SU5"
+
+        RestArea(aArea)
+
+    EndIf
+
+    RestArea(aAreaAC8)
+
+Return lRet

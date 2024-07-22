@@ -1,0 +1,155 @@
+#INCLUDE "PROTHEUS.CH"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIESBA33   ºAutor  ³Microsiga          º Data ³  23/05/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Receptor de EAI - Edital                                   º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ MP 11.5 - Sistema Industria                                º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/                                                                           
+
+User Function SIESBA33(_cOper)  
+If !Empty(CO1->CO1_DTPUBL)  
+	SZZ->(dbSetOrder(1))
+	IF SZZ->(dbSeek(XFilial("SZZ")+"GCPA002"))
+		MsgRun('Enviando pacote para ESB. Aguarde...',, {|| U_ASIESB33(,_cOper) } )
+	Else
+		Aviso("Atenção","Esta integração não está disponível. Por favor, verifique o cadastro de integrações.",{"OK"})   				
+	ENDIF
+Else 
+		Aviso("Atenção","Somente Editais com data de publicação podem ser enviados para a integração.",{"OK"})   		
+Endif		
+Return
+
+
+User Function ASIESB33(_cOper)
+Local _cOper     := "4"
+Local _cError    := ""
+Local _cWarning  := ""
+Local _cDelimit  := "_"
+Local aStru      := {}
+Local _cXML      := ""
+Local _cData     := Dtos(Date())
+Local _cTime     := Time()
+Local _cDateTime := Transform(_cData,"@R 9999-99-99")+"T"+_cTime+"Z"
+Local _cFile     := "GCPA002"+_cOper+_cData+StrTran(_cTime,":","")+".XML"
+
+// Montagem das tags do XML
+_cXML += '<TOTVSIntegrator>'
+_cXML += '<GlobalProduct>TOTVS|ESB</GlobalProduct>'
+_cXML += '<GlobalFunctionCode>EAI</GlobalFunctionCode>'
+_cXML += '<GlobalDocumentFunctionCode>GCPA002</GlobalDocumentFunctionCode>'
+_cXML += '<GlobalDocumentFunctionDescription>Editais</GlobalDocumentFunctionDescription>'
+_cXML += '<DocVersion>1.0</DocVersion>'
+_cXML += '<DocDateTime>'+_cDateTime+'</DocDateTime>'
+_cXML += '<DocIdentifier></DocIdentifier>'
+_cXML += '<DocCompany>'+cEmpAnt+'</DocCompany>'
+_cXML += '<DocBranch>'+cFilAnt+'</DocBranch>'
+_cXML += '<DocName></DocName>'
+_cXML += '<DocFederalID></DocFederalID>'
+_cXML += '<DocType>2</DocType>'
+_cXML += '<Message>'
+_cXML += '<Layouts>'
+_cXML += '<Identifier>GCPA002</Identifier>'
+_cXML += '<Version>1.0</Version>'
+_cXML += '<FunctionCode></FunctionCode>'
+_cXML += '<Content>'
+_cXML += '<GCPA002 Operation="'+_cOper+'" version="1.01">'
+_cXML += '<CO1MASTER modeltype="FIELDS">'
+
+dbSelectArea("CO1")
+// Montagem das TAGs do cabeçalho
+IF _cOper == "5" // exclusão
+	_cXML += '<CO1_CODEDT order="1">'
+	_cXML += '<value>'+CO1->CO1_CODEDT+'</value>'
+	_cXML += '</CO1_CODEDT>'
+	_cXML += '<CO1_NUMPRO order="2">'
+	_cXML += '<value>'+CO1->CO1_NUMPRO+'</value>'
+	_cXML += '</CO1_NUMPRO>'
+ELSE
+	// Montagem das TAGs do cabeçalho
+	For i := 1 To FCount()
+		_cXML += '<'+FieldName(i)+' order="'+Alltrim(Str(i))+'">'
+			If Type(FieldName(i)) = "D" 
+			_cXML += '<value>'+DTOS((&("CO1->"+FieldName(i))))+'</value>' 
+		Else
+			_cXML += '<value>'+Alltrim(CValtoChar(&("CO1->"+FieldName(i))))+'</value>'
+		Endif
+		_cXML += '</'+FieldName(i)+'>'
+	Next
+	
+	_cXML += '<CO2DETAIL modeltype="GRID">'
+	_cXML += '<items>'
+	
+	dbSelectArea("CO2")
+	CO2->(dbsetOrder(1))
+	CO2->(dbseek(xFilial("CO2")+CO1->(CO1_CODEDT+CO1_NUMPRO)))
+	
+	_nItemCO2 := 1
+	While CO2->(!Eof()) .and. CO2->CO2_FILIAL == XFilial("CO2") .and. CO2->(CO2_CODEDT+CO2_NUMPRO) == CO1->(CO1_CODEDT+CO1_NUMPRO)
+		
+		_cXML += '<item id="'+Alltrim(Str(_nItemCO2))+'" deleted="0">'
+		// Campos do CO2
+		dbSelectArea("CO2")
+		For i := 1 To FCount()
+			_cXML += '<'+FieldName(i)+'>'+Alltrim(CValtoChar(&("CO2->"+FieldName(i))))+'</'+FieldName(i)+'>'
+		Next
+		
+		CO3->(dbsetOrder(1))
+		IF CO3->(dbseek(xFilial("CO3")+CO2->(CO2_CODEDT+CO2_NUMPRO+CO2_CODPRO)))
+			_cXML += '<CO3DETAIL modeltype="GRID">'
+			_cXML += '<items>'
+			_nItemCO3 := 1
+			While CO3->(!Eof()) .and. CO3->CO3_FILIAL == XFilial("CO3") .and. CO3->(CO3_CODEDT+CO3_NUMPRO+CO3_CODPRO) == CO2->(CO2_CODEDT+CO2_NUMPRO+CO2_CODPRO)
+				
+				_cXML += '<item id="'+Alltrim(Str(_nItemCO3))+'" deleted="0">'
+				
+				dbSelectArea("CO3")
+				For i := 1 To FCount()
+					_cXML += '<'+FieldName(i)+'>'+Alltrim(CValtoChar(&("CO3->"+FieldName(i))))+'</'+FieldName(i)+'>'
+				Next
+				_cXML += '</item>'
+				
+				_nItemCO3++
+				CO3->(dbSkip())
+			Enddo
+			_cXML += '</items>'
+			_cXML += '</CO3DETAIL>'
+		ENDIF
+		
+		_cXML += '</item>'
+		
+		_nItemCO2++
+		CO2->(dbSkip())
+	Enddo
+	
+	_cXML += '</items>'
+	_cXML += '</CO2DETAIL>'
+ENDIF
+
+_cXML += '</CO1MASTER>'
+_cXML += '</GCPA002>'
+_cXML += '</Content>'
+_cXML += '</Layouts>'
+_cXML += '</Message>'
+_cXML += '</TOTVSIntegrator>'
+
+// Transforma a string XML em Objeto
+//oXML := XMLParser( _cXML, _cDelimit, @_cError, @_cWarning )
+
+//Verifica se a estrutura foi criada
+//IF !(Empty(_cError) .and. Empty(_cWarning))
+//	Return()
+//ENDIF
+
+// Geração do arquivo
+U_SIXMLDATA(_cXML,_cFile,"GCPA002","Edital - Pregão Eletronico")	
+
+Return()

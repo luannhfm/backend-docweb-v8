@@ -1,0 +1,93 @@
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "TOPCONN.CH"
+
+/*/{Protheus.doc} F50TFINS
+Ponto de entrada, retorna um array com a lista de filiais, as quais o sistema deve considerar no cálculo de acúmulo de INSS. 
+
+Exemplo: O cadastro de fornecedores tem o seguinte código: FORNECEDOR 000001 LOJA 01 Esse fornecedor tem títulos 
+em mais de uma filial, de forma que considerando/somando os títulos de todas as filiais para o mesmo fornecedor, 
+o valor do INSS é superior ao valor mínimo (MV_MININSS). 
+Caso a operação exija que o sistema retenha impostos, considerando todas as filiais, é necessário implementar 
+o RDMake e retornar a lista de filiais que devem ser consideradas na retenção de INSS.
+
+@author 	Jose Leite de Barros Neto
+@since 		01/07/2014
+@version 	1.0
+@return 	_aFilial, Array
+
+@see 
+http://tdn.totvs.com/pages/releaseview.action?pageId=6071446
+/*/
+User Function F50TFINS()
+	
+	Local _aArea 	:= GetArea()
+	Local _aFilial	:= {}
+	Local _aFilTit	:= {}
+	Local _cQuery 	:= ""
+	
+	/*
+	*****************************************************************************
+	*	@Data				13/08/2014
+	*	@Desenvolvedor 	Jose Leite de Barros Neto
+	*
+	*	Solicitado por Mayara Mariano - UNETEC
+	*
+	*	Somente chamar o P.E na rotina de Documento de Entrada - MATA103
+	*****************************************************************************
+	*/
+	//Inicio
+	If FunName() <> "MATA103"
+		_aFilial := { xFilial("SE2") }
+		RestArea(_aArea)
+		Return( _aFilial )
+	EndIf
+	//Fim
+	
+	If Select("TRA") > 0
+		DbSelectarea("TRA")
+		DbCloseArea()
+	Endif
+		
+	_cQuery := ""
+	_cQuery += " SELECT * " 
+	_cQuery += " FROM "+ RETSQLNAME("SE2")
+	_cQuery += " WHERE E2_FILIAL 		LIKE '"+substr(cFilAnt,1,4)+"%'	
+	_cQuery += "			AND E2_FORNECE 	= '"+cA100For+"' 	" 
+	_cQuery += " 		AND E2_LOJA 		= '"+cLoja+"'		"
+	_cQuery += "			AND E2_BAIXA 	= ' '					"
+	_cQuery += "			AND E2_INSS 		> 0 					"
+	_cQuery += " 		AND D_E_L_E_T_ <> '*'					"
+	
+	TCQUERY _cQuery NEW ALIAS "TRA"	
+	
+	/*
+	*****************************************************************************
+	*	@Data				13/08/2014
+	*	@Desenvolvedor 	Jose Leite de Barros Neto
+	*
+	*	Solicitado por Jorge Fernandez - UNETEC
+	*
+	*	Se nao existir titulos em outras filiais retorna a filial logada 
+	*****************************************************************************
+	*/
+	//Inicio
+	If TRA->( Eof() )
+		_aFilial := { xFilial("SE2") }
+		TRA->(DbCloseArea())
+		RestArea(_aArea)
+		Return( _aFilial )
+	EndIf
+	//Fim
+	
+	While .Not. TRA->( EOF() )
+		
+		AADD(_aFilTit,TRA->E2_FILIAL)
+		
+		TRA->( DbSkip() )
+	EndDo
+	
+	_aFilial := _aFilTit
+	
+	RestArea(_aArea)
+	
+Return( _aFilial )

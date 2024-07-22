@@ -1,0 +1,812 @@
+#Include 'Protheus.ch'
+#Include 'XMLXFUN.ch'
+#Include 'Fileio.ch'
+
+#define F_BLOCK 512
+
+/*/{Protheus.doc} SNWSSGT
+Classe responsavel por fazer a comunicacao, autenticacao e 
+retorno dos metodos do WebService Rest SGT - FIESC
+
+@type 		class
+@author 	Jose Leite de Barros Neto
+@since 		20/10/2016
+@version 	1.0
+@history 15/03/2021, Franklin de Brito de Oliveira, Criado o parâmetro MV_XSGTBEA para registro do token via parâmetro.
+/*/
+Class SNWSSGT
+	
+	Data cBearer
+	Data cCertificate
+	Data cPrivKey
+	Data cPassword
+	Data cDirWrk
+	Data aProdutosR
+	Data aClientes
+	
+	/*Construtor*/
+	Method New() Constructor
+	
+	/*Autenticacao*/
+	Method Auth()
+	
+	/*Gets*/
+	Method GetProdReg()
+	Method GetCliente()
+	
+	/*Post*/
+	Method PostClient()
+	
+	/*Relatorios*/
+	Method RlAtend()
+	Method RlCliAtend()
+	Method RlProdHH()
+	Method RlProdMetr()
+	Method RlReceitaC()
+	
+
+EndClass
+
+
+/*/{Protheus.doc} SNWSSGT - New()
+Metodo New - Construtor
+
+@type 		method
+@author 	Jose Leite de Barros Neto
+@since 		20/10/2016
+@version 	1.0
+/*/
+Method New() Class SNWSSGT
+	Self:cBearer		:= AllTrim( SuperGetMv( "MV_XSGTBEA", .T., "",  ) )	//Bearer ou Token de autorização
+	Self:cCertificate	:= GetNewPar("MV_XSGTCDI","\certs\pub.pem") 	//Caminho do certificado digital
+	Self:cPrivKey 		:= GetNewPar("MV_XSGTCPK","\certs\priv.pem") 	//Caminho da chave privada
+	Self:cPassword 		:= GetNewPar("MV_XSGTCPW","fiemt")				//Password para abrir a chave privada
+	Self:cDirWrk		:= GetNewPar("MV_XSGTDIR","K:\UTIL\")			//Diretorio aonde vai ser gravado o XML dos relatorios
+	Self:aProdutosR		:= {}
+	Self:aClientes		:= {}
+Return(Self)
+
+
+/*/{Protheus.doc} SNWSSGT - Auth()
+Metodo Auth - Responsavel por conectar e autenticar no WS Rest do SGT - FIESC
+
+@type 		method
+@author 	Jose Leite de Barros Neto
+@since 		20/10/2016
+@version 	1.0
+/*/
+Method Auth() Class SNWSSGT
+	
+	Local cURLToken		:= GetNewPar("MV_XSGTURT","https://apimd.exablack.com:8243/token")	//Endereco do Token
+	Local cCustKey		:= GetNewPar("MV_XSGTCK","HPqsUS0FKUgC2RkWfpNFwTwrLx4a")			//Consumer Key
+	Local cCustSec		:= GetNewPar("MV_XSGTCS","ERLMh1OEk1i2WxtPsrFkSSA4jdoa")			//Consumer Secret
+	Local cBasicAuth	:= Encode64(cCustKey + ":" + cCustSec)
+	Local cGetParms		:= "grant_type=client_credentials"
+	Local cPostParms	:= ""
+	Local nTimeOut		:= 120
+	Local aHeadOut		:= {}
+	Local cHeadRet		:= ""
+	Local cPostRet		:= ""
+	Local lRet			:= .T.
+	Local oObj			:= Nil
+	
+	If Empty(Self:cBearer)
+		If Empty(cURLToken)
+			ConOut("SNWSSGT():Auth -> URL nao preenchida, favor verificar o parametro: MV_XSGTURT")
+			lRet := .F.
+			Return(lRet)
+		EndIf
+		
+		If Empty(cCustKey)
+			ConOut("SNWSSGT():Auth -> Consumer Key nao preenchida, favor verificar o parametro: MV_XSGTCK")
+			lRet := .F.
+			Return(lRet)
+		EndIf
+		
+		If Empty(cCustSec)
+			ConOut("SNWSSGT():Auth -> Consumer Secret nao preenchida, favor verificar o parametro: MV_XSGTCS")
+			lRet := .F.
+			Return(lRet)
+		EndIf
+		
+		aAdd(aHeadOut,"content-type: application/x-www-form-urlencoded")
+		aAdd(aHeadOut,"Authorization: Basic " + cBasicAuth)	
+		
+		cPostRet := HTTPSPost(cURLToken, Self:cCertificate, Self:cPrivKey, Self:cPassword, cGetParms, cPostParms, nTimeOut, aHeadOut, @cHeadRet )
+		
+		If Empty(cPostRet)
+			ConOut("SNWSSGT():Auth -> HttpPost Failed.")
+			varinfo("Header", cHeadRet)
+			lRet := .F.
+			Return(lRet)
+		Else
+			ConOut("SNWSSGT():Auth -> HttpPost OK.")
+		EndIf
+		
+		If FWJsonDeserialize(cPostRet,@oObj)
+			Self:cBearer := oObj:access_token
+		Else
+			ConOut("SNWSSGT():Auth -> FWJsonDeserialize Failed.")
+			lRet := .F.
+			Return(lRet)
+		EndIf
+	EndIf
+	oObj := Nil
+	
+Return( lRet )
+
+
+/*/{Protheus.doc} SNWSSGT - GetProdReg()
+Metodo GetProdReg - Responsavel por buscar os Produtos Regionais do SGT
+
+@type 		method
+@author 	Jose Leite de Barros Neto
+@since 		20/10/2016
+@version 	1.0
+/*/
+Method GetProdReg() Class SNWSSGT
+	
+	Local cUrl 		:= GetNewPar("MV_XSGTUPR","https://apimd.exablack.com:8243/sgt/integracoes/v1.0.0/produtosRegionais") //URL - GetProdReg
+	Local cGetParms	:= ""
+	Local cHeadRet 	:= ""
+	Local nTimeOut	:= 120
+	Local aHeadGet 	:= {}
+	Local oXml		:= Nil
+	Local cSepara	:= "_"
+	Local cError 	:= ""
+	Local cWarning	:= ""
+	Local lRet		:= .T.
+	Local i			:= 0
+	
+	If Empty(cUrl)
+		ConOut("SNWSSGT():GetProdReg -> URL nao preenchida, favor verificar o parametro: MV_XSGTURP")
+		lRet := .F.
+		Return(lRet)
+	EndIf
+	
+	aAdd(aHeadGet, "Authorization: Bearer "+ Self:cBearer  )
+	aAdd(aHeadGet, "Accept: application/xml")
+	
+	oXml := XmlParser(HTTPSGet(cUrl, Self:cCertificate, Self:cPrivKey, Self:cPassword, cGetParms, nTimeOut, aHeadGet, @cHeadRet, .F. ), cSepara, @cError, @cWarning)
+	
+	If ValType(oXml) == "O"
+		For i := 1 to Len(oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL)
+			aAdd(Self:aProdutosR,{ oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL[i]:_idProdutoRegional:TEXT,;
+										 oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL[i]:_codigoIntegracaoProdutoRegional:TEXT,;
+										 oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL[i]:_CRProdutoRegional:TEXT,;
+										 oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL[i]:_isAtivo:TEXT,;
+										 FwNoAccent(oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL[i]:_nome:TEXT),;
+										 oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL[i]:_idProdutoNacional:TEXT,;
+										 oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL[i]:_CRProdutoNacional:TEXT,;
+										 oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL[i]:_codigoDNProdutoNacional:TEXT,;
+										 oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL[i]:_descricaoProdutoNacional:TEXT,;
+										 oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL[i]:_idProdutoCategoria:TEXT,;
+										 oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL[i]:_CRProdutoCategoria:TEXT,;
+										 oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL[i]:_codigoDNProdutoCategoria:TEXT,;
+										 oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL[i]:_descricaoProdutoCategoria:TEXT,;
+										 oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL[i]:_idProdutoLinha:TEXT,;
+										 oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL[i]:_CRProdutoLinha:TEXT,;
+										 oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL[i]:_codigoDNProdutoLinha:TEXT,;
+										 oXml:_PRODUTOSREGIONAIS:_PRODUTOREGIONAL[i]:_descricaoProdutoLinha:TEXT})
+		Next
+	Else
+		lRet := .F.
+		ConOut("SNWSSGT():GetProdReg -> oXml Failed.")
+	EndIf
+	
+	oXml := Nil
+	
+Return( lRet )
+
+
+/*/{Protheus.doc} SNWSSGT - GetCliente()
+Metodo GetCliente - Responsavel por buscar o cliente no SGT
+
+@type 		method
+@author 	Jose Leite de Barros Neto
+@since 		20/10/2016
+@version 	1.0
+/*/
+Method GetCliente( pCGC ) Class SNWSSGT
+	
+	Local lRet 		:= .T.
+	Local cUrl 		:= GetNewPar("MV_XSGTUCL","https://apimd.exablack.com:8243/sgt/integracoes/v1.0.0/clientes") //URL - GetCliente
+	Local cGetParms	:= "cpfcnpj=" + pCGC //+ "&enderecoDN=false"
+	Local cHeadRet 	:= ""
+	Local nTimeOut	:= 120
+	Local aHeadGet 	:= {}
+	Local oXml		:= Nil
+	Local cSepara	:= "_"
+	Local cError 	:= ""
+	Local cWarning	:= ""
+	
+	If Empty(cUrl)
+		ConOut("SNWSSGT():GetCliente -> URL nao preenchida, favor verificar o parametro: MV_XSGTURP")
+		lRet := .F.
+		Return(lRet)
+	EndIf
+	
+	aAdd(aHeadGet, "Authorization: Bearer "+ Self:cBearer  )
+	aAdd(aHeadGet, "Accept: application/xml")
+	
+	oXml := XmlParser(HTTPSGet(cUrl, Self:cCertificate, Self:cPrivKey, Self:cPassword, cGetParms, nTimeOut, aHeadGet, @cHeadRet, .F. ), cSepara, @cError, @cWarning) 	
+	
+	If ValType(oXml) == "O"
+		aAdd(Self:aClientes,{	oXml:_CLIENTES:_CLIENTE:_ID:TEXT,;
+								oXml:_CLIENTES:_CLIENTE:_CPFCNPJ:TEXT,;
+								oXml:_CLIENTES:_CLIENTE:_CNAE:TEXT,;
+								oXml:_CLIENTES:_CLIENTE:_INSCRICAOESTADUAL:TEXT,;
+								oXml:_CLIENTES:_CLIENTE:_ISATIVO:TEXT,;
+								oXml:_CLIENTES:_CLIENTE:_ISFONTEFOMENTO:TEXT,;
+								oXml:_CLIENTES:_CLIENTE:_ISUNIDADESENAI:TEXT,;
+								oXml:_CLIENTES:_CLIENTE:_NOMEFANTASIA:TEXT,;
+								oXml:_CLIENTES:_CLIENTE:_RAZAOSOCIAL:TEXT,;
+								oXml:_CLIENTES:_CLIENTE:_NUMEROFUNCIONARIOS:TEXT,;
+								oXml:_CLIENTES:_CLIENTE:_TIPOPESSOA:TEXT,;
+								oXml:_CLIENTES:_CLIENTE:_ENDERECOS:TEXT})
+	Else
+		lRet := .F.
+		ConOut("SNWSSGT():GetCliente -> oXml Failed.")
+	EndIf
+	
+	oXml := Nil
+	
+Return( lRet )
+
+/*/{Protheus.doc} SNWSSGT - PostClient()
+Responsavel por inserir o cliente no SGT
+
+@type 		method
+@author 	Jose Leite de Barros Neto
+@since 		26/06/2017
+@version 	1.0
+/*/
+Method PostClient( p_cCliente ) Class SNWSSGT
+	
+	Local lRet 		:= .T.
+	Local cUrl 		:= GetNewPar("MV_XSGTUCL","https://apimd.exablack.com:8243/sgt/integracoes/v1.0.0/clientes") //URL - PostClient
+	Local nTimeOut 	:= 120
+	Local aHeadOut 	:= {}
+	Local cGetParms	:= ""
+	Local cPstParms	:= "" 
+	Local cSepara	:= "_"
+	Local cError 	:= ""
+	Local cWarning	:= ""
+	Local cHeadRet 	:= ""
+	
+	Default p_cCliente := ""
+	
+	If Empty(cUrl)
+		ConOut("SNWSSGT():PostClient -> URL nao preenchida, favor verificar o parametro: MV_XSGTURP")
+		lRet := .F.
+		Return(lRet)
+	EndIf
+	
+	If Empty(p_cCliente)
+		ConOut("SNWSSGT():PostClient -> Parametro p_cCliente vazio, favor verificar.")
+		lRet := .F.
+		Return(lRet)
+	Else
+		cPstParms := p_cCliente
+	EndIf
+	
+	aAdd(aHeadOut, "Authorization: Bearer "+ Self:cBearer  )
+	aAdd(aHeadOut, "Content-Type: application/json" )
+	
+	//aAdd(aHeadOut, "Accept: application/xml")
+	//aAdd(aHeadOut, p_cCliente)
+	
+	oXml := XmlParser(HTTPSPost(cUrl, Self:cCertificate, Self:cPrivKey, Self:cPassword, cGetParms, cPstParms, nTimeOut, aHeadOut, @cHeadRet, .F. ) , cSepara, @cError, @cWarning)
+	
+	varinfo("Header", cHeadRet)
+	
+	If ValType(oXml) == "O"
+		Alert("oXml -> Ok")
+	EndIf
+	
+Return( lRet )
+
+
+/*/{Protheus.doc} RlAtend
+Metodo RlAtend - Responsavel por gerar o relatorio de atendimentos
+
+@author 	Jose Leite de Barros Neto
+@since 		26/06/2017
+@version 	1.0
+
+@type function
+/*/
+Method RlAtend(p_dInicio, p_dFim) Class SNWSSGT
+	
+	Local lRet 		:= .T.
+	Local cUrl 		:= GetNewPar("MV_XSGTURA","https://apimd.exablack.com:8243/sgt/reports/v1.0.0/atendimentos") //URL - Relatorio de Atendimentos
+	Local cGetParms	:= "dataInicio=" + p_dInicio + "&dataFim="+ p_dFim
+	Local cHeadRet 	:= ""
+	Local nTimeOut	:= 120
+	Local aHeadGet 	:= {}
+	Local oXml		:= Nil
+	Local cSepara	:= "_"
+	Local cError 	:= ""
+	Local cWarning	:= ""
+	Local cArqvXml	:= "\xml\RlAtend.xml"
+	Local cArqvWrk	:= "\xml\" + DtoS(dDataBase) + "_SGT_Relatorio_Atendimentos.xml"
+	Local cEncode	:= '<?xml version="1.0" encoding="ISO-8859-1"?>'
+	Local cBuffer 	:= ""
+	Local lDone   	:= .F.
+	Local nBytesR 	:= 0
+	
+	Default p_dInicio 	:= ""
+	Default p_dFim 		:= ""
+	
+	If Empty(cUrl)
+		MsgInfo("SNWSSGT():RlAtend -> URL nao preenchida, favor verificar o parametro: MV_XSGTURA","INFO")
+		lRet := .F.
+		Return(lRet)
+	EndIf
+	
+	If Empty(p_dInicio) .Or. Empty(p_dFim)
+		MsgInfo("SNWSSGT():RlAtend -> Data inicio ou data final não preenchida, favor verificar os parametros do relatório","INFO")
+		lRet := .F.
+		Return(lRet)
+	EndIf
+	
+	aAdd(aHeadGet, "Authorization: Bearer "+ Self:cBearer  )
+	aAdd(aHeadGet, "Accept: application/xml")
+	
+	oXml := XmlParser(HTTPSGet(cUrl, Self:cCertificate, Self:cPrivKey, Self:cPassword, cGetParms, nTimeOut, aHeadGet, @cHeadRet, .F. ), cSepara, @cError, @cWarning)
+	
+	If ValType(oXml) == "O"
+		
+		If File(cArqvXml,0)
+			FERASE(cArqvXml)
+		EndIf
+		
+		If File(cArqvWrk,0)
+			FERASE(cArqvWrk)
+		EndIf
+		
+		SAVE oXml XMLFILE cArqvXml
+		
+		nInfile  := FOPEN(cArqvXml, FO_READ)
+		nOutfile := FCREATE(cArqvWrk, FC_NORMAL)
+		fWrite(nOutfile, cEncode)
+		FSeek(nOutfile, 0, FS_END)
+		
+		While .Not. lDone
+			nBytesR := FREAD(nInfile, @cBuffer, F_BLOCK)
+			If fWrite(nOutfile, cBuffer, nBytesR) < nBytesR
+				MsgAlert("SNWSSGT():RlAtend -> Erro de gravação: " + STR(FERROR()))
+				lDone := .T.
+			Else
+				lDone := (nBytesR == 0)
+            EndIf
+		End	
+		
+		FCLOSE(nInfile)
+		FCLOSE(nOutfile)
+		
+		If File(Self:cDirWrk + "\" + SubStr(cArqvWrk,6,Len(cArqvWrk)),0)
+			FERASE(Self:cDirWrk + "\" + SubStr(cArqvWrk,6,Len(cArqvWrk)))
+		EndIf
+		
+		If CpyS2T(cArqvWrk, Self:cDirWrk, .F. )
+			MsgInfo("O Arquivo: "+ SubStr(cArqvWrk,6,Len(cArqvWrk)) +", foi gerado com sucesso. Favor verificar o diretório: "+ Self:cDirWrk,"Sucesso")
+		Else
+			MsgAlert("Não foi possivel salvar o arquivo: "+ SubStr(cArqvWrk,6,Len(cArqvWrk))  + " no diretório: "+ Self:cDirWrk + ". Favor verificar as permissões para o diretório.")
+		EndIf
+
+		FERASE(cArqvXml)
+		FERASE(cArqvWrk)
+		
+	Else
+		lRet := .F.
+		MsgAlert("SNWSSGT():RlAtend -> oXml Failed.")
+	EndIf
+	
+	oXml := Nil
+
+Return( lRet )
+
+
+/*/{Protheus.doc} RlCliAtend
+Metodo RlCliAtend - Responsavel por gerar o relatorio de clientes atendidos
+
+@author 	Jose Leite de Barros Neto
+@since 		28/06/2017
+@version 	1.0
+
+@type function
+/*/
+Method RlCliAtend(p_dInicio, p_dFim) Class SNWSSGT
+	
+	Local lRet 		:= .T.
+	Local cUrl 		:= GetNewPar("MV_XSGTURC","https://apimd.exablack.com:8243/sgt/reports/v1.0.0/clientes/atendidos") //URL - Relatorio de clientes atendidos
+	Local cGetParms	:= "dataInicio=" + p_dInicio + "&dataFim="+ p_dFim
+	Local cHeadRet 	:= ""
+	Local nTimeOut	:= 120
+	Local aHeadGet 	:= {}
+	Local oXml		:= Nil
+	Local cSepara	:= "_"
+	Local cError 	:= ""
+	Local cWarning	:= ""
+	Local cArqvXml	:= "\xml\RlCliAtend.xml"
+	Local cArqvWrk	:= "\xml\" + DtoS(dDataBase) + "_SGT_Relatorio_Clientes_Atendidos.xml"
+	Local cEncode	:= '<?xml version="1.0" encoding="ISO-8859-1"?>'
+	Local cBuffer 	:= ""
+	Local lDone   	:= .F.
+	Local nBytesR 	:= 0
+	
+	Default p_dInicio 	:= ""
+	Default p_dFim 		:= ""
+	
+	If Empty(cUrl)
+		MsgInfo("SNWSSGT():RlCliAtend -> URL nao preenchida, favor verificar o parametro: MV_XSGTURC","INFO")
+		lRet := .F.
+		Return(lRet)
+	EndIf
+	
+	If Empty(p_dInicio) .Or. Empty(p_dFim)
+		MsgInfo("SNWSSGT():RlCliAtend -> Data inicio ou data final não preenchida, favor verificar os parametros do relatório","INFO")
+		lRet := .F.
+		Return(lRet)
+	EndIf
+	
+	aAdd(aHeadGet, "Authorization: Bearer "+ Self:cBearer  )
+	aAdd(aHeadGet, "Accept: application/xml")
+	
+	oXml := XmlParser(HTTPSGet(cUrl, Self:cCertificate, Self:cPrivKey, Self:cPassword, cGetParms, nTimeOut, aHeadGet, @cHeadRet, .F. ), cSepara, @cError, @cWarning)
+	
+	If ValType(oXml) == "O"
+		
+		If File(cArqvXml,0)
+			FERASE(cArqvXml)
+		EndIf
+		
+		If File(cArqvWrk,0)
+			FERASE(cArqvWrk)
+		EndIf
+		
+		SAVE oXml XMLFILE cArqvXml
+		
+		nInfile  := FOPEN(cArqvXml, FO_READ)
+		nOutfile := FCREATE(cArqvWrk, FC_NORMAL)
+		fWrite(nOutfile, cEncode)
+		FSeek(nOutfile, 0, FS_END)
+		
+		While .Not. lDone
+			nBytesR := FREAD(nInfile, @cBuffer, F_BLOCK)
+			If fWrite(nOutfile, cBuffer, nBytesR) < nBytesR
+				MsgAlert("SNWSSGT():RlCliAtend -> Erro de gravação: " + STR(FERROR()))
+				lDone := .T.
+			Else
+				lDone := (nBytesR == 0)
+            EndIf
+		End	
+		
+		FCLOSE(nInfile)
+		FCLOSE(nOutfile)
+		
+		If File(Self:cDirWrk + "\" + SubStr(cArqvWrk,6,Len(cArqvWrk)),0)
+			FERASE(Self:cDirWrk + "\" + SubStr(cArqvWrk,6,Len(cArqvWrk)))
+		EndIf
+		
+		If CpyS2T(cArqvWrk, Self:cDirWrk, .F. )
+			MsgInfo("O Arquivo: "+ SubStr(cArqvWrk,6,Len(cArqvWrk)) +", foi gerado com sucesso. Favor verificar o diretório: "+ Self:cDirWrk,"Sucesso")
+		Else
+			MsgAlert("Não foi possivel salvar o arquivo: "+ SubStr(cArqvWrk,6,Len(cArqvWrk))  + " no diretório: "+ Self:cDirWrk + ". Favor verificar as permissões para o diretório.")
+		EndIf
+
+		FERASE(cArqvXml)
+		FERASE(cArqvWrk)
+		
+	Else
+		lRet := .F.
+		MsgAlert("SNWSSGT():RlCliAtend -> oXml Failed.")
+	EndIf
+	
+	oXml := Nil
+
+Return( lRet )
+
+
+/*/{Protheus.doc} RlProdHH
+Metodo RlProdHH - Responsavel por gerar o relatorio de Producao HH
+
+@author 	Jose Leite de Barros Neto
+@since 		28/06/2017
+@version 	1.0
+
+@type function
+/*/
+Method RlProdHH(p_dInicio, p_dFim) Class SNWSSGT
+	
+	Local lRet 		:= .T.
+	Local cUrl 		:= GetNewPar("MV_XSGTURH","https://apimd.exablack.com:8243/sgt/reports/v1.0.0/producoesHH") //URL - Relatorio de Producao HH
+	Local cGetParms	:= "dataInicio=" + p_dInicio + "&dataFim="+ p_dFim
+	Local cHeadRet 	:= ""
+	Local nTimeOut	:= 120
+	Local aHeadGet 	:= {}
+	Local oXml		:= Nil
+	Local cSepara	:= "_"
+	Local cError 	:= ""
+	Local cWarning	:= ""
+	Local cArqvXml	:= "\xml\RlProdHH.xml"
+	Local cArqvWrk	:= "\xml\" + DtoS(dDataBase) + "_SGT_Relatorio_Producao_HH.xml"
+	Local cEncode	:= '<?xml version="1.0" encoding="ISO-8859-1"?>'
+	Local cBuffer 	:= ""
+	Local lDone   	:= .F.
+	Local nBytesR 	:= 0
+	
+	Default p_dInicio 	:= ""
+	Default p_dFim 		:= ""
+	
+	If Empty(cUrl)
+		MsgInfo("SNWSSGT():RlProdHH -> URL nao preenchida, favor verificar o parametro: MV_XSGTURH","INFO")
+		lRet := .F.
+		Return(lRet)
+	EndIf
+	
+	If Empty(p_dInicio) .Or. Empty(p_dFim)
+		MsgInfo("SNWSSGT():RlProdHH -> Data inicio ou data final não preenchida, favor verificar os parametros do relatório","INFO")
+		lRet := .F.
+		Return(lRet)
+	EndIf
+	
+	aAdd(aHeadGet, "Authorization: Bearer "+ Self:cBearer  )
+	aAdd(aHeadGet, "Accept: application/xml")
+	
+	oXml := XmlParser(HTTPSGet(cUrl, Self:cCertificate, Self:cPrivKey, Self:cPassword, cGetParms, nTimeOut, aHeadGet, @cHeadRet, .F. ), cSepara, @cError, @cWarning)
+	
+	If ValType(oXml) == "O"
+		
+		If File(cArqvXml,0)
+			FERASE(cArqvXml)
+		EndIf
+		
+		If File(cArqvWrk,0)
+			FERASE(cArqvWrk)
+		EndIf
+		
+		SAVE oXml XMLFILE cArqvXml
+		
+		nInfile  := FOPEN(cArqvXml, FO_READ)
+		nOutfile := FCREATE(cArqvWrk, FC_NORMAL)
+		fWrite(nOutfile, cEncode)
+		FSeek(nOutfile, 0, FS_END)
+		
+		While .Not. lDone
+			nBytesR := FREAD(nInfile, @cBuffer, F_BLOCK)
+			If fWrite(nOutfile, cBuffer, nBytesR) < nBytesR
+				MsgAlert("SNWSSGT():RlProdHH -> Erro de gravação: " + STR(FERROR()))
+				lDone := .T.
+			Else
+				lDone := (nBytesR == 0)
+            EndIf
+		End	
+		
+		FCLOSE(nInfile)
+		FCLOSE(nOutfile)
+		
+		If File(Self:cDirWrk + "\" + SubStr(cArqvWrk,6,Len(cArqvWrk)),0)
+			FERASE(Self:cDirWrk + "\" + SubStr(cArqvWrk,6,Len(cArqvWrk)))
+		EndIf
+		
+		If CpyS2T(cArqvWrk, Self:cDirWrk, .F. )
+			MsgInfo("O Arquivo: "+ SubStr(cArqvWrk,6,Len(cArqvWrk)) +", foi gerado com sucesso. Favor verificar o diretório: "+ Self:cDirWrk,"Sucesso")
+		Else
+			MsgAlert("Não foi possivel salvar o arquivo: "+ SubStr(cArqvWrk,6,Len(cArqvWrk))  + " no diretório: "+ Self:cDirWrk + ". Favor verificar as permissões para o diretório.")
+		EndIf
+
+		FERASE(cArqvXml)
+		FERASE(cArqvWrk)
+		
+	Else
+		lRet := .F.
+		MsgAlert("SNWSSGT():RlProdHH -> oXml Failed.")
+	EndIf
+	
+	oXml := Nil
+
+Return( lRet )
+
+
+/*/{Protheus.doc} RlProdMetr
+Metodo RlProdMetr - Responsavel por gerar o relatorio de Producao Metrologia
+
+@author 	Jose Leite de Barros Neto
+@since 		28/06/2017
+@version 	1.0
+
+@type function
+/*/
+Method RlProdMetr(p_dInicio, p_dFim) Class SNWSSGT
+	
+	Local lRet 		:= .T.
+	Local cUrl 		:= GetNewPar("MV_XSGTURM","https://apimd.exablack.com:8243/sgt/reports/v1.0.0/producoesMetrologia") //URL - Relatorio de Producao Metrologia
+	Local cGetParms	:= "dataInicio=" + p_dInicio + "&dataFim="+ p_dFim
+	Local cHeadRet 	:= ""
+	Local nTimeOut	:= 120
+	Local aHeadGet 	:= {}
+	Local oXml		:= Nil
+	Local cSepara	:= "_"
+	Local cError 	:= ""
+	Local cWarning	:= ""
+	Local cArqvXml	:= "\xml\RlProdMetr.xml"
+	Local cArqvWrk	:= "\xml\" + DtoS(dDataBase) + "_SGT_Relatorio_Producao_Metrologia.xml"
+	Local cEncode	:= '<?xml version="1.0" encoding="ISO-8859-1"?>'
+	Local cBuffer 	:= ""
+	Local lDone   	:= .F.
+	Local nBytesR 	:= 0
+	
+	Default p_dInicio 	:= ""
+	Default p_dFim 		:= ""
+	
+	If Empty(cUrl)
+		MsgInfo("SNWSSGT():RlProdMetr -> URL nao preenchida, favor verificar o parametro: MV_XSGTURM","INFO")
+		lRet := .F.
+		Return(lRet)
+	EndIf
+	
+	If Empty(p_dInicio) .Or. Empty(p_dFim)
+		MsgInfo("SNWSSGT():RlProdMetr -> Data inicio ou data final não preenchida, favor verificar os parametros do relatório","INFO")
+		lRet := .F.
+		Return(lRet)
+	EndIf
+	
+	aAdd(aHeadGet, "Authorization: Bearer "+ Self:cBearer  )
+	aAdd(aHeadGet, "Accept: application/xml")
+	
+	oXml := XmlParser(HTTPSGet(cUrl, Self:cCertificate, Self:cPrivKey, Self:cPassword, cGetParms, nTimeOut, aHeadGet, @cHeadRet, .F. ), cSepara, @cError, @cWarning)
+	
+	If ValType(oXml) == "O"
+		
+		If File(cArqvXml,0)
+			FERASE(cArqvXml)
+		EndIf
+		
+		If File(cArqvWrk,0)
+			FERASE(cArqvWrk)
+		EndIf
+		
+		SAVE oXml XMLFILE cArqvXml
+		
+		nInfile  := FOPEN(cArqvXml, FO_READ)
+		nOutfile := FCREATE(cArqvWrk, FC_NORMAL)
+		fWrite(nOutfile, cEncode)
+		FSeek(nOutfile, 0, FS_END)
+		
+		While .Not. lDone
+			nBytesR := FREAD(nInfile, @cBuffer, F_BLOCK)
+			If fWrite(nOutfile, cBuffer, nBytesR) < nBytesR
+				MsgAlert("SNWSSGT():RlProdMetr -> Erro de gravação: " + STR(FERROR()))
+				lDone := .T.
+			Else
+				lDone := (nBytesR == 0)
+            EndIf
+		End	
+		
+		FCLOSE(nInfile)
+		FCLOSE(nOutfile)
+		
+		If File(Self:cDirWrk + "\" + SubStr(cArqvWrk,6,Len(cArqvWrk)),0)
+			FERASE(Self:cDirWrk + "\" + SubStr(cArqvWrk,6,Len(cArqvWrk)))
+		EndIf
+		
+		If CpyS2T(cArqvWrk, Self:cDirWrk, .F. )
+			MsgInfo("O Arquivo: "+ SubStr(cArqvWrk,6,Len(cArqvWrk)) +", foi gerado com sucesso. Favor verificar o diretório: "+ Self:cDirWrk,"Sucesso")
+		Else
+			MsgAlert("Não foi possivel salvar o arquivo: "+ SubStr(cArqvWrk,6,Len(cArqvWrk))  + " no diretório: "+ Self:cDirWrk + ". Favor verificar as permissões para o diretório.")
+		EndIf
+
+		FERASE(cArqvXml)
+		FERASE(cArqvWrk)
+		
+	Else
+		lRet := .F.
+		MsgAlert("SNWSSGT():RlProdMetr -> oXml Failed.")
+	EndIf
+	
+	oXml := Nil
+
+Return( lRet )
+
+
+/*/{Protheus.doc} RlReceitaC
+Metodo RlReceitaC - Responsavel por gerar o relatorio de Receitas Competencia
+
+@author 	Jose Leite de Barros Neto
+@since 		28/06/2017
+@version 	1.0
+
+@type function
+/*/
+Method RlReceitaC(p_dInicio, p_dFim) Class SNWSSGT
+	
+	Local lRet 		:= .T.
+	Local cUrl 		:= GetNewPar("MV_XSGTURR","https://apimd.exablack.com:8243/sgt/reports/v1.0.0/producoesMetrologia") //URL - Relatorio de Receitas Competencia
+	Local cGetParms	:= "dataInicio=" + p_dInicio + "&dataFim="+ p_dFim
+	Local cHeadRet 	:= ""
+	Local nTimeOut	:= 120
+	Local aHeadGet 	:= {}
+	Local oXml		:= Nil
+	Local cSepara	:= "_"
+	Local cError 	:= ""
+	Local cWarning	:= ""
+	Local cArqvXml	:= "\xml\RlReceitaC.xml"
+	Local cArqvWrk	:= "\xml\" + DtoS(dDataBase) + "_SGT_Relatorio_Receitas_Competencia.xml"
+	Local cEncode	:= '<?xml version="1.0" encoding="ISO-8859-1"?>'
+	Local cBuffer 	:= ""
+	Local lDone   	:= .F.
+	Local nBytesR 	:= 0
+	
+	Default p_dInicio 	:= ""
+	Default p_dFim 		:= ""
+	
+	If Empty(cUrl)
+		MsgInfo("SNWSSGT():RlReceitaC -> URL nao preenchida, favor verificar o parametro: MV_XSGTURR","INFO")
+		lRet := .F.
+		Return(lRet)
+	EndIf
+	
+	If Empty(p_dInicio) .Or. Empty(p_dFim)
+		MsgInfo("SNWSSGT():RlReceitaC -> Data inicio ou data final não preenchida, favor verificar os parametros do relatório","INFO")
+		lRet := .F.
+		Return(lRet)
+	EndIf
+	
+	aAdd(aHeadGet, "Authorization: Bearer "+ Self:cBearer  )
+	aAdd(aHeadGet, "Accept: application/xml")
+	
+	oXml := XmlParser(HTTPSGet(cUrl, Self:cCertificate, Self:cPrivKey, Self:cPassword, cGetParms, nTimeOut, aHeadGet, @cHeadRet, .F. ), cSepara, @cError, @cWarning)
+	
+	If ValType(oXml) == "O"
+		
+		If File(cArqvXml,0)
+			FERASE(cArqvXml)
+		EndIf
+		
+		If File(cArqvWrk,0)
+			FERASE(cArqvWrk)
+		EndIf
+		
+		SAVE oXml XMLFILE cArqvXml
+		
+		nInfile  := FOPEN(cArqvXml, FO_READ)
+		nOutfile := FCREATE(cArqvWrk, FC_NORMAL)
+		fWrite(nOutfile, cEncode)
+		FSeek(nOutfile, 0, FS_END)
+		
+		While .Not. lDone
+			nBytesR := FREAD(nInfile, @cBuffer, F_BLOCK)
+			If fWrite(nOutfile, cBuffer, nBytesR) < nBytesR
+				MsgAlert("SNWSSGT():RlReceitaC -> Erro de gravação: " + STR(FERROR()))
+				lDone := .T.
+			Else
+				lDone := (nBytesR == 0)
+            EndIf
+		End	
+		
+		FCLOSE(nInfile)
+		FCLOSE(nOutfile)
+		
+		If File(Self:cDirWrk + "\" + SubStr(cArqvWrk,6,Len(cArqvWrk)),0)
+			FERASE(Self:cDirWrk + "\" + SubStr(cArqvWrk,6,Len(cArqvWrk)))
+		EndIf
+		
+		If CpyS2T(cArqvWrk, Self:cDirWrk, .F. )
+			MsgInfo("O Arquivo: "+ SubStr(cArqvWrk,6,Len(cArqvWrk)) +", foi gerado com sucesso. Favor verificar o diretório: "+ Self:cDirWrk,"Sucesso")
+		Else
+			MsgAlert("Não foi possivel salvar o arquivo: "+ SubStr(cArqvWrk,6,Len(cArqvWrk))  + " no diretório: "+ Self:cDirWrk + ". Favor verificar as permissões para o diretório.")
+		EndIf
+
+		FERASE(cArqvXml)
+		FERASE(cArqvWrk)
+		
+	Else
+		lRet := .F.
+		MsgAlert("SNWSSGT():RlReceitaC -> oXml Failed.")
+	EndIf
+	
+	oXml := Nil
+
+Return( lRet )

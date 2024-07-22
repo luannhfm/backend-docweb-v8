@@ -9,8 +9,10 @@ export class UserRepository {
     this.repository = appDataSource.getRepository(User);
   }
 
-  async findByLogin(login: string): Promise<User | null> {
-    return this.repository.findOne({ where: { id: login } });
+
+  async findByLogin(login: string): Promise<User | undefined> {
+    const user = await this.repository.findOne({ where: { id: login } });
+    return user || undefined; // Retorna undefined em vez de null
   }
 
   async createUser(user: Partial<User>): Promise<User> {

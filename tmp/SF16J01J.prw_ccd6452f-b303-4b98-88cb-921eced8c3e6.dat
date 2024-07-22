@@ -1,0 +1,219 @@
+#Include 'Protheus.ch'
+#Include 'Topconn.ch'
+#Include 'Tbiconn.ch'
+
+/*/{Protheus.doc} SF16J01J
+Job executado para realizar atualizacao da tabela RH3
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	15/09/2015
+@version 	1.0
+@return 	Nil, Nulo
+@history 22/07/2020, Franklin de Brito de Oliveira, removido a validação de execução do Job na tabela ZZA.
+/*/
+User Function SF16J01J()	
+Local aArea := GetArea()
+
+	Conout(Replicate("-", 80))
+	Conout("SF16J01J: Executando Schedule.")
+
+	//Atualiza RH3
+	Job1601J()
+	
+	Conout("SF16J01J: Finalizou Schedule.")
+	Conout('')
+	Conout(Replicate("-", 80))
+		  	  	
+  	RestArea(aArea)
+
+Return( Nil )
+
+/*/{Protheus.doc} JobAtivo
+Função que verifica se o job está ativo.
+
+@author 	Jose Leite de Barros Neto
+@since 	15/09/2015
+@version 	1.0
+
+@return lRet, Logico
+
+/*/
+Static function JobAtivo()
+  
+	Local cQuery := ''
+	Local lRet := .F.
+  
+	If Select('TMP') > 0
+		TMP->(DbCloseArea())
+	EndIf
+ 
+	cQuery := " SELECT ZZA_STATUS "
+	cQuery += " FROM "+RetSqlName("ZZA")
+	cQuery += " WHERE D_E_L_E_T_ != '*' "
+	cQuery += " AND   ZZA_TIPO    = '5' "
+ 
+	TcQuery cQuery New Alias 'TMP'
+ 
+	If TMP->ZZA_STATUS == 'S'
+		lRet := .T. 
+	EndIf
+	
+	TMP->(DbCloseArea())
+
+Return( lRet )
+
+/*/{Protheus.doc} AtuaZZA
+Função responsável por bloquear/desbloquear a tabela de importacao
+
+@author 	Jose Leite de Barros Neto
+@since 	19/08/2015
+@version 	1.0
+
+@return Nil
+/*/
+Static Function AtuaZZA(p_cBloq)
+	
+	Local cMsg := If(p_cBloq == 'N','SF16J01J: Bloqueando ZZA.','SF16J01J: Liberando ZZA.')
+	
+	Begin Transaction
+		
+		DbSelectArea("ZZA")
+		ZZA->( DbSetOrder(1) )
+		If ZZA->( DbSeek(xFilial("ZZA") + p_cBloq + "5") )
+	   		If RecLock("ZZA",.F.)
+				ZZA->ZZA_STATUS := IIF( p_cBloq == 'N','S','N')
+				ZZA->ZZA_DATA   := dDataBase
+				ZZA->ZZA_HORA   := Time()
+				ZZA->( MsUnlock() )
+		   EndIf
+		EndIf
+		
+		ZZA->( DbCloseArea() )
+		
+	End Transaction
+	
+	ConOut(cMsg)
+	
+Return( Nil )
+
+/*/{Protheus.doc} Job1601J
+Função responsável por atualizar os dados da RH3
+
+@author 	Jose Leite de Barros Neto
+@since 	19/08/2015
+@version 	1.0
+
+@return Nil
+/*/
+Static Function Job1601J()
+	
+	Local cQuery := ''
+	Local nCont  := 0
+	
+	Begin Transaction		
+		
+		Conout("SF16J01J: Iniciando a Atualizacao - "+ DtoC(dDataBase) + ' - '+ Time())
+		
+		If Select("TMP") > 0
+			dbSelectArea("TMP")
+			dbCloseArea()
+		EndIf
+		
+		cQuery := " SELECT * FROM "+RetSqlName("RH3")
+		cQuery += " WHERE RH3_STATUS = '1'  AND (RH3_NVLINI = '1' OR RH3_NVLINI = '2')"
+		
+		TcQuery cQuery New Alias 'TMP'
+		
+		DbSelectArea('TMP')
+		TMP->(DbGoTop())
+		While .Not. TMP->(EOF())
+			
+			DbSelectArea('RH3')
+			RH3->( DbSetOrder(1) )
+			RH3->( DbGoTop() )
+			If RH3->( DbSeek(TMP->RH3_FILIAL+TMP->RH3_CODIGO) )
+				
+				If RecLock("RH3",.F.)
+					RH3->RH3_STATUS := '4'
+					RH3->( MsUnlock() )
+				EndIf
+				
+				nCont++
+			EndIf
+			
+			RH3->( DbCloseArea() )
+			TMP->( DbSkip() )
+		End
+		
+		If nCont > 0
+			ConOut('RH3_STATUS = 4: Atualizou '+ cValToChar(nCont) + ' registros.')
+		Else
+			ConOut('Nenhum registro foi atualizado.')
+		EndIf
+		
+		nCont := 0
+			
+		If Select("TMP") > 0
+			DbSelectArea("TMP")
+			DbCloseArea()
+		EndIf
+			
+		cQuery := " SELECT * FROM "+RetSqlName("RH3") 
+		cQuery += " WHERE RH3_STATUS = '4'  AND (RH3_NVLINI = '1' OR RH3_NVLINI = '2') "
+			
+		TcQuery cQuery New Alias 'TMP'
+		
+		DbSelectArea('TMP')
+		TMP->( DbGoTop() )
+		While .Not. TMP->( EOF() )
+				
+			DbSelectArea('RH3')
+			RH3->( DbSetOrder(1) )
+			RH3->( DbGoTop() )
+			If RH3->( DbSeek(TMP->RH3_FILIAL+TMP->RH3_CODIGO) )
+					
+				If RecLock("RH3",.F.)
+					RH3->RH3_NVLINI := 0
+					RH3->( MsUnlock() )
+				EndIf
+				
+				nCont++
+			EndIf
+				
+			RH3->( DbCloseArea() )
+			TMP->( DbSkip() )
+		End
+			
+		If nCont > 0
+			ConOut('RH3_NVLINI = 0: Atualizou '+ cValToChar(nCont) + ' registros.')
+		EndIf
+		AtuaZZA("S")
+		Conout("SF16J01J: Finalizando a Atualizacao - "+ DtoC(dDataBase) + ' - '+ Time())
+		
+	End Transaction
+   
+Return( Nil )
+
+/*/{Protheus.doc} SchedDef
+Static function para o novo Schedule 
+@author Franklin de Brito de Oliveira
+@since 22/07/2020
+@return aParam[1],	 - Tipo: "P" - para Processo, "R" - para Relatórios 
+@return aParam[2] - Nome do Pergunte 
+@return aParam[3] - Alias (para Relatório) 
+@return aParam[4] - Array de ordem (para Relatório) 
+@return aParam[5] - Título (para Relatório)
+@type static function
+/*/
+Static Function SchedDef()
+Local aParam	:= {}
+Local aOrd		:= {}
+
+    aParam := {"P", ;
+        "ParamDef", ;
+        ""        , ;
+        aOrd      , ;
+    }
+
+Return aParam

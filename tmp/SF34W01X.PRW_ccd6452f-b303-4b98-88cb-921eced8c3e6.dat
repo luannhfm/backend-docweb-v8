@@ -1,0 +1,244 @@
+#INCLUDE 'TOTVS.CH'
+#INCLUDE 'RestFul.ch'
+
+/*/{Protheus.doc} SF34W01X
+    @description
+    @type User Function
+    @author Rafael Karczevski
+    @since 22/08/2019
+    @version 1.0
+    /*/
+User Function SF34W01X()	
+Return
+
+/*/{Protheus.doc} LANCONTA
+    @description WebService Rest para realizar inclusão de titulos a receber
+    @type WebService Method
+    @author Rafael Karczevski
+    @since 22/08/2019
+    @version 1.0
+/*/
+WSRESTFUL LANCONTA DESCRIPTION "Serviço REST Rotina automática Inclusão Lançamentos Contábeis"
+
+    WSDATA RECEIVE As String //Json Recebido no corpo da requição
+    WSDATA PREFIXO As String
+    WSDATA NUM     As String
+    WSDATA TIPO    As String
+    
+    WSMETHOD POST 	DESCRIPTION "Inclui novo lançamento contabel" 		WSSYNTAX ""
+
+END WSRESTFUL
+
+/*/{Protheus.doc} POST
+    @description Efetua a inclusão de um novo titulo a receber.
+    @type WebService Method
+    @author Rafael Karczevski
+    @since 22/08/2019
+    @version 1.0
+/*/
+WSMETHOD POST WSRECEIVE RECEIVE WSSERVICE LANCONTA
+
+    Local cJSON 	 := ::GetContent() // Pega a string do JSON 
+    Local aDadosTit	 := {} //--> Array para ExecAuto do MATA030
+    Local cJsonRet   := ""
+    Local cArqLog	 := ""
+    Local cErro		 := ""
+    Local nCount     := 0
+    Local nAux       := {}
+    Local lRet		 := .T.
+    Local aArea		 := GetArea()
+    Local _lOk       := .T.
+    Local aListCont  := {}
+    Local aSE2Stru   := {}
+    Local aCab       := {}
+    Local _aCCIC     := {{"CT2_DEBITO","CT2_CCD","CT2_ITEMD"},{"CT2_CREDIT","CT2_CCC","CT2_ITEMC"}}
+    Local _cValue    := ""
+    Local _nOpc      := 3
+    Local _nLinha    := 1
+    Local _cConta    := ""
+    
+    Private lMsErroAuto := .F. 
+    Private oParseJSON  := Nil 
+
+    PRIVATE lMsErroAuto
+
+    ::SetContentType("application/json; charset=iso-8859-1")
+    // --> Deserializa a string JSON
+    If FWJsonDeserialize(cJson, @oParseJSON)
+
+        CT2->( DbSetOrder(1) )
+        aCT2Stru := CT2->(DBStruct())
+
+        Set Century On
+        Do Case
+            Case !(AttIsMemberOf(oParseJSON, "DDATALANC"   ))
+                lCont := .F.
+            Case !(AttIsMemberOf(oParseJSON, "CLOTE"   ))
+                lCont := .F.
+            Case !(AttIsMemberOf(oParseJSON, "CSUBLOTE" ))
+                lCont := .F.
+            Case !(AttIsMemberOf(oParseJSON, "CDOC"    ))
+                lCont := .F.
+            Case !(AttIsMemberOf(oParseJSON:LancaCont[1], "CT2_LINHA"  ))
+                lCont := .F.
+            OtherWise
+                lCont := .T.
+        EndCase
+        If lCont
+        	If CT2->( DbSeek( xFilial("CT2") + oParseJSON:DDATALANC + PadR(oParseJSON:CLOTE, TamSX3('CT2_LOTE')[1]) + PadR(oParseJSON:CSUBLOTE, TamSX3('CT2_SBLOTE')[1]) + PadR(oParseJSON:CDOC, TamSX3('CT2_DOC')[1])))
+        		_nOpc := 4
+        	EndIf
+            // CT2_FILIAL+DTOS(CT2_DATA)+CT2_LOTE+CT2_SBLOTE+CT2_DOC+CT2_LINHA+CT2_TPSALD+CT2_EMPORI+CT2_FILORI+CT2_MOEDLC
+            If !(CT2->( DbSeek( xFilial("CT2") + oParseJSON:DDATALANC + PadR(oParseJSON:CLOTE, TamSX3('CT2_LOTE')[1]) + PadR(oParseJSON:CSUBLOTE, TamSX3('CT2_SBLOTE')[1]) + PadR(oParseJSON:CDOC, TamSX3('CT2_DOC')[1]) + StrZero(Val(oParseJSON:LancaCont[1]:CT2_LINHA),3))))
+
+                If ValType(oParseJSON:CDOC) == 'U'
+                    _cPadrao := "   "
+                Else
+                    _cPadrao := oParseJSON:CPADRAO
+                EndIf
+
+                aAdd(aCab,      {"DDATALANC"   , STOD(oParseJSON:DDATALANC)    , Nil})
+                aAdd(aCab,      {"CLOTE"       , oParseJSON:CLOTE              , Nil})
+                aAdd(aCab,      {"CSUBLOTE"    , oParseJSON:CSUBLOTE           , Nil})
+                aAdd(aCab,      {"CDOC"        , oParseJSON:CDOC               , Nil})
+                aAdd(aCab,      {"CPADRAO"     , _cPadrao                      , Nil})
+                aAdd(aCab,      {"NTOTINF"     , Val(oParseJSON:NTOTINF)       , Nil})
+                aAdd(aCab,      {"NTOTINFLOT"  , Val(oParseJSON:NTOTINFLOT )   , Nil})
+
+              /*For nY := 1 to Len(aCT2Stru)
+                    If AttIsMemberOf(oParseJSON, aCT2Stru[nY][1] ) .and. aCT2Stru[nY][1] <> "CT2_FILIAL"
+                        _cValue := &("oParseJSON:LancaCont:" + aCT2Stru[nY][1])
+                        aAdd( nAux , { aListCont[nAux][aCT2Stru[nY][1]] , _cValue } )
+                    EndIf
+                Next*/
+                
+                For _nLinha := 1 To Len(_aCCIC)
+                	_cConta := &('oParseJSON:LancaCont[1]:' + _aCCIC[_nLinha][1])
+                	
+                	If !Empty(_cConta)
+	                	_cAceitaItem := Posicione('CT1',1,xFilial('CT1') + PadR(_cConta,TamSX3('CT1_CONTA')[1]),'CT1_ACITEM')
+	                	_cAceitaCC   := Posicione('CT1',1,xFilial('CT1') + PadR(_cConta,TamSX3('CT1_CONTA')[1]),'CT1_ACCUST')
+	                	
+	                	If _cAceitaItem != '1'
+	                		&('oParseJSON:LancaCont[1]:' + _aCCIC[_nLinha][3] + " := ''")
+	                	EndIf
+	                	
+	                	If _cAceitaCC != '1'
+	                		&('oParseJSON:LancaCont[1]:' + _aCCIC[_nLinha][2] + " := ''")
+	                	EndIf
+	                	
+                	EndIf
+                	
+                Next _nLinha
+                
+                For nX := 1 to Len(oParseJSON:LancaCont)
+
+                    nAux := {}
+
+                  //aAdd( nAux, { "CT2_FILIAL", xFilial("CT2"), Nil} )
+                    For nY := 1 to Len(aCT2Stru)
+                        If AttIsMemberOf(oParseJSON:LancaCont[nX], aCT2Stru[nY][1] ) .and. aCT2Stru[nY][1] <> "CT2_FILIAL"  .and. aCT2Stru[nY][1] <> "CT2_DATA" .and. aCT2Stru[nY][1] <> "CT2_HP"
+                            If ValType( "oParseJSON:LancaCont[" + cValToChar(nX) + "]:" + aCT2Stru[nY][1]) <> "U"
+                            	If aCT2Stru[nY][2] == 'D'
+                            		_cValue := &("oParseJSON:LancaCont[" + cValToChar(nX) + "]:" + aCT2Stru[nY][1])
+                            		_cValue := STOD(_cValue)
+                            	ElseIf aCT2Stru[nY][2] == 'N'
+                            		_cValue := &("oParseJSON:LancaCont[" + cValToChar(nX) + "]:" + aCT2Stru[nY][1])
+                            		_cValue := Val(StrTran(_cValue, ',', '.'))
+                            	Else
+                            		If aCT2Stru[nY][1] == 'CT2_LINHA'
+                            			_cValue := &("oParseJSON:LancaCont[" + cValToChar(nX) + "]:" + aCT2Stru[nY][1])
+                            			_cValue := StrZero(Val(_cValue),3)
+                            		Else
+	                            		_cValue := &("oParseJSON:LancaCont[" + cValToChar(nX) + "]:" + aCT2Stru[nY][1])
+	                            		_cValue := AllTrim(_cValue)
+	                            	EndIf
+                            	EndIf
+                            	If ValType(_cValue) == 'C'
+                            		If !Empty(_cValue)
+                            			aAdd( nAux , { aCT2Stru[nY][1] , _cValue, Nil } )
+                            		EndIf
+                            	Else
+                            		aAdd( nAux , { aCT2Stru[nY][1] , _cValue, Nil } )
+                            	EndIf
+                            EndIf
+                        EndIf
+                    Next
+                    
+                    aAdd( aListCont , nAux )
+                    
+                    aCT2Stru := {}
+                    FreeObj(oParseJSON)
+
+                Next
+
+                MSExecAuto( {|X,Y,Z| CTBA102(X,Y,Z)} ,aCab ,aListCont, _nOpc)
+            
+                If lMsErroAuto
+                    cErro := MostraErro("z","z") // --> Trata o erro para devolver para o client.
+                    SetRestFault(400, cErro)
+                    lRet := .F. 				
+                Else
+                    ConfirmSX8()
+                    cJSONRet := '{' + CRLF + '    "errorCode": 204,' + CRLF;
+                              + '    "errorMessage": "' + "Lancamento incluido com sucesso" + '"' + CRLF;
+                              +'}'
+                                
+                    ::SetResponse( cJSONRet )				
+                EndIf		 
+            Else
+                SetRestFault(302, "Lancamento ja existente.")
+                lRet := .F. 
+            
+            EndIf
+        Else         
+            SetRestFault(400, "Informe a Chave primaria no conteudo da requisicao: CT2_FILIAL + DTOS(CT2_DATA) + CT2_LOTE + CT2_SBLOTE + CT2_DOC + CT2_LINHA")
+            lRet := .F. 
+        EndIf
+    EndIf
+
+    RestArea(aArea)
+
+Return(lRet)
+
+/*/{Protheus.doc} LANCONTA
+    @description Objeto de cliente para utilização em web service rest
+    @type Class
+    @author Rafael Karczevski
+    @since 22/08/2019
+    @version 1.0
+    /*/
+Class LANCONTA
+	
+	Data CT2_LINHA		As String
+    Data CT2_MOEDLC		As String
+    Data CT2_DC			As String
+    Data CT2_DEBITO		As String
+    Data CT2_CREDIT		As String
+    Data CT2_VALOR		As String
+    Data CT2_ORIGEM		As String
+    Data CT2_HP	    	As String
+    Data CT2_HIST 	    As String
+    Data Message	    As String
+	
+	Method New() Constructor
+	
+EndClass
+
+/*/{Protheus.doc} New
+Método Construtor
+/*/
+Method New() Class LANCONTA
+    
+    ::CT2_LINHA	    := Nil
+    ::CT2_MOEDLC	:= Nil
+    ::CT2_DC	    := Nil
+    ::CT2_DEBITO	:= Nil
+    ::CT2_CREDIT	:= Nil
+    ::CT2_VALOR		:= Nil
+    ::CT2_ORIGEM	:= Nil
+    ::CT2_HP	    := "   "
+    ::CT2_HIST 	    := Nil
+    ::Message	    := Nil
+
+Return(Self)

@@ -1,0 +1,930 @@
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "PROTHEUS.CH"
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<SN0698X>                                                   |
+| Rotina Responsavel Gerar informacoes no finaneiro Relativo ao Pagamento  |
+| PRONATEC.  Funcao que cria os titulos a pagar referente, considera-se de |
+| dois tipo:                                                               |
+|    _cOper = "Retorno_da_Remessa" - Ocorre na Leitura do Arquivo de       |
+|                                    Retorno da Remessa para Pagamento     |
+|                                    e considera as Matriculas com ORDEM   |
+|                                    DE PAGAMENTO AGENDADA, "aceitas pelo  |
+|                                    convenio PAGADOR para Gerar o titulo  |
+|                                    A PAGAR.                              |
+|    _cOper = "Retorno_Diario" - Ocorre na Leitura dos Arquivo diarios     |
+|                                com retorno dos PAGAMENTOS e dos valores  |
+|                                DEVOLVIDOS, considera o para geracao do   |
+|                                TITULO A RECEBER o montante dos           |
+|                                Devolvidos.                               |
+|			                                                               |
+| Considera os campos para o TITULO A PAGAR:                               |
+| ------------------------------------------------                         |
+|  ZP7_XTITPG - Tit PG Princ                                               |
+|  ZP7_XCHTPG - Chave do Titulo Principal                                  |
+|                          TITULO A RECEBER:                               |
+|  ZP7_XTITRC - Tit Receber                                                |
+|  ZP7_XCHTRC - Chave do Titulo a Receber                                  |
+|			                                                               |
+| CAMPO E TABELAS ENVOLVIDAS E DEMAIS OBSERVACOES:                         |
+| ------------------------------------------------                         |
+| E2_XBANCO    |                                                           |
+| E2_XAGENC    |  Grupo de campos que estao sendo utilizados na inclusao   |
+| E2_XDVAGE    |  de titulo de acordo com a conta aqui informada que a     |
+| E2_XNUMCON   |  baixa sera feita.                                        |
+| E2_XDVCTA    |                                                           |
+|  														                   |
+| campo que deve ser criados no financeiro                                 |
+| E2_XPRCONV, 05, CARACTER, Cod Convenio                                   |
+| E2_XPRNREM, 08, CARACTER, Cod Remessa                                    |
+| E2_XPRPERI, 08, CARACTER, Cod Periodo                                    |
+| E2_XPRCALE, 03, CARACTER, Cod Calendario                                 |
+| E2_XPRSESS, 10, CARACTER, Cod Sessao                                     |
+|  														                   |
+| Campos criado ZP7									                       |
+| ZP7_XTITPG, 01, CARACTER, Gerou titulo a pagar principal S=Sim ou N=Nao  |
+| ZP7_XTITRJ, 01, CARACTER, Gerou titulo a pagar rejeitado S=Sim ou N=Nao  |
+| ZP7_XTITRC, 01, CARACTER, Gerou titulo a receber referente               |
+|                 a devolucao S=Sim ou N=Nao                               |
+| ZP7_XCHTPG, 50, CARACTER, Chave do titulo principal a pagar gerado       |
+| ZP7_XCHTRC, 50, CARACTER, Chave do titulo a receber referente a valores  |
+|                 devolvidos                                               |
+| ZP7_XCHTRJ, 50, CARACTER, Chave do titulo a pagar referente a valores    |
+|                 rejeitados                                               |
+| Campos criados ZP1									                   |
+| ZP1_XTIPO, 03, CARACTER, Tipo do titulo a pagar principal				   |   
+|  														                   |
+| CRIAR O PARAMETRO: [MV_XPREPRN - "Prefixo" dos Titulos PRONATEC] 	       |
+| --------------------------------------------------------------------     |
+|@Author<Caio Lima>                                                        |
+|@since<20/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@Receive                                                                  |
+|<   _cOper (c) - Operacao que esta sendo realizada:                       |
+|                "Retorno_da_Remessa"                                      |
+|                "Retorno_Diario"                                          |
+|  _cCodConv (c) - Codigo do Convenio                                      |
+| _cCodRemes (C) - Codigo da Remessa                                       |
+|  _cPeriodo (c) - Codigo do Periodo                                       |  
+|      _cSeg (c) - Codigo do Calendario                                    |
+|   _cSessao (c) - Codigo da Sessao                                        |
+|    _cRetPg (c) - Chave de Localizacao quando e Retorno Diario            |
+|   _cSTATUS (c) - Qual ZP7_XSTATU sera considerado                        |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _lTudoOK (l) - (.t.) A gerou titulo no financeiro OK                  |
+|                   (.f.) Nao consegui Gerar o titulo no financeiro        |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+
+*/                        
+User Function SN0698X(_cOper,_cCodConv,_cCodRemes,_cPeriodo,_cSeg,_cSessao,_cRetPg,_cSTATUS)
+Local _lRet 	:= .T.
+Local _aArea 	:= GetArea()
+Local _aAreaZP1 := ZP1->(GetArea())
+Local _aAreaSE2 := SE2->(GetArea())
+Local _aAreaSE1 := SE1->(GetArea())
+Local _aAreaZP7 := ZP7->(GetArea())
+do Case 
+	Case _cOper == "Retorno_da_Remessa" 			//-- Leitura do Retorno da Remessa
+		_lRet := fGeraFin(_cOper,_cCodConv,_cCodRemes,_cPeriodo,_cSeg,_cSessao,"",_cSTATUS)      
+	Case _cOper == "Retorno_Diario" 	  			//-- Leitura dos Arquivos de Retorno dos Pagamentos 
+		_lRet := fGeraFin(_cOper,_cCodConv,,_cPeriodo,_cSeg,_cSessao,_cRetPg,_cSTATUS)
+Endcase
+RestArea(_aAreaZP1)
+RestArea(_aAreaSE2)
+RestArea(_aAreaSE1)
+RestArea(_aAreaZP7)
+RestArea(_aArea)
+Return(_lRet)
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGeraFin>                                                  |
+| Rotina de Pre Tratamento para Geracao de Titulo no financeiro relativos  |
+| as Transacoes do PRONATEC. Gera o titulo utilizando rotina automatica.   |
+|																		   |
+|@Author<Caio Lima>                                                        |
+|@since<18/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<     _cOper (c) - Defini o tipo de Operacao, sendo:                      |
+|                     "Retorno_da_Remessa" - Leitura do Retorno da Remessa |
+|                     "Retorno_Diario"     - Leitura dos Arquivos de       |
+|                                            Retorno dos Pagamentos        |
+|   _cCodConv (c) - Codigo do Covenio                                      |
+|  _cCodRemes (C) - Codigo da Remessa                                      |
+|   _cPeriodo (c) - Codigo do Periodo                                      |
+|       _cSeg (c) - Codigo do Calendario "Sequencia"                       |
+|    _cSessao (c) - Codigo da Sessao de Pagamento                          |
+|     _cRetPg (c) - Chave do Registro de Remessa/Retorno                   |
+|    _cSTATUS (c) - Qual ZP7_XSTATU sera considerado                       |
+|>                                                                         |
+|@return                                                                   |
+|<   _lTudoOK (L) - [.t.] - O Titulo foi Gerado com sucesso                |
+|                   [.f.] - Nao foi possivel Gerar o titulo                |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGeraFin(_cOper,_cCodConv,_cCodRemes,_cPeriodo,_cSeg,_cSessao,_cRetPg,_cSTATUS)
+Local _lTudoOK		:= .T.
+Local _nValTit 		:= 0
+Local _cSql 		:= ""
+Local _cALias 		:= GetNextAlias()   
+
+DEFAULT _cSTATUS	:= "O"
+
+_cSql := ""
+_cSql += " SELECT SUM(ZP7_XVALOR) AS VALOR "+CRLF
+_cSql += " FROM "+RetSQLName("ZP7")+" "+CRLF
+_cSql += " WHERE D_E_L_E_T_<>'*' AND ZP7_FILIAL = '"+FwxFilial("ZP7")+"' "+CRLF
+do Case 
+	Case _cOper == "Retorno_da_Remessa" 			//-- Leitura do Retorno da Remessa
+		_cSql += " AND ZP7_XPERIO='"+_cPeriodo+"' AND ZP7_XSEG='"+_cSeg+"' AND ZP7_XSESSA='"+_cSessao+"' "+CRLF
+		_cSql += " AND ZP7_XCONVE='"+_cCodConv+"' "+CRLF
+		_cSql += " AND ZP7_XSTATU = '"+_cSTATUS+"' "+CRLF
+		_cSql += " AND (ZP7_XTITPG = ' ' OR ZP7_XTITPG='N') "+CRLF
+	Case _cOper == "Retorno_Diario" 	  			//-- Leitura dos Arquivos de Retorno dos Pagamentos 
+		_cSql += " AND ZP7_XCHTRC = '"+PadR(Alltrim(_cRetPg),TamSX3("ZP7_XCHTRC")[1])+"' "+CRLF
+		_cSql += " AND ZP7_XCONVE = '"+_cCodConv+"' "+CRLF
+		_cSql += " AND ZP7_XSTATU = 'D' "+CRLF
+		_cSql += " AND (ZP7_XTITRC = ' ' OR ZP7_XTITRC='N') "+CRLF
+Endcase
+If Select(_cALias) > 0
+	(_cALias)->(dbClosearea())
+Endif
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cSql)
+DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSql)), _cALias, .F., .F.)
+If (_cAlias)->(!Eof())
+	_nValTit := (_cAlias)->VALOR
+EndIf
+(_cAlias)->( dbCloseArea() )
+If _nValTit > 0
+	_lTudoOK := fGeraTit(_nValTit,_cOper,_cCodConv,_cCodRemes,_cPeriodo,_cSeg,_cSessao,_cRetPg,_cSTATUS)
+EndIf
+Return _lTudoOK
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGeraTit>                                                  |
+| Rotina de para Geracao de Titulo no financeiro relativos as Transacoes   |
+| do PRONATEC. Gera o titulo utilizando rotina automatica.                 |
+|																		   |
+|@Author<Caio Lima>                                                        |
+|@since<18/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<   _nValTit (n) - Valor do Titulo que sera Gerado                        |
+|      _cOper (c) - Defini o tipo de Operacao, sendo:                      |
+|                     "Retorno_da_Remessa" - Leitura do Retorno da Remessa |
+|                     "Retorno_Diario"     - Leitura dos Arquivos de       |
+|                                            Retorno dos Pagamentos        |
+|   _cCodConv (c) - Codigo do Covenio                                      |
+|  _cCodRemes (C) - Codigo da Remessa                                      |
+|   _cPeriodo (c) - Codigo do Periodo                                      |
+|       _cSeg (c) - Codigo do Calendario "Sequencia"                       |
+|    _cSessao (c) - Codigo da Sessao de Pagamento                          |
+|     _cRetPg (c) - Chave do Registro de Remessa/Retorno                   |   
+|    _cSTATUS (c) - Qual ZP7_XSTATU sera considerado                       |
+|>                                                                         |
+|@return                                                                   |
+|<      _lRet (L) - [.t.] - O Titulo foi Gerado com sucesso                |
+|                   [.f.] - Nao foi possivel Gerar o titulo                |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGeraTit(_nValTit,_cOper,_cConvenio,_cCodRemes,_cPeriodo,_cSeg,_cSessao,_cRetPg,_cSTATUS)
+Local _lRet			:= .F.
+// Variaveis privates para serem utilizadas dentro das funcoes fGeraSE1 e fGeraSE2
+Private _cPrefixo	:= SuperGetMv("MV_XPREPRN",,"PRT")
+Private _cTipoTIT	:= SuperGetMv("MV_XPRTIPO",,"PRT")
+Private _cNum		:= fGetNexNum(_cPrefixo)
+Private _cCliFor	:= "" // Posicione("ZP1",1,FwxFilial("ZP1")+_cConvenio, "ZP1_XFORNC" )
+Private _cLoja		:= "" // Posicione("ZP1",1,FwxFilial("ZP1")+_cConvenio, "ZP1_XFORLJ" )
+Private _cNaturez	:= "" // Posicione("ZP1",1,FwxFilial("ZP1")+_cConvenio, "ZP1_XNATDB" )
+Private _cBanco		:= "" // Posicione("ZP1",1,FwxFilial("ZP1")+_cConvenio, "ZP1_XBCO"   )
+Private _cAgenc		:= "" // Posicione("ZP1",1,FwxFilial("ZP1")+_cConvenio, "ZP1_XAGEN"  )
+Private _cDvAge		:= ""
+Private _cConta		:= "" // Posicione("ZP1",1,FwxFilial("ZP1")+_cConvenio, "ZP1_XCONTA" )
+Private _cDvCC		:= ""
+//-- 
+dbSelectArea("ZP1")
+ZP1->(dbSetOrder(1))
+//-- 
+If !ZP1->( dbSeek( FwxFilial("ZP1")+_cConvenio ) )
+	Alert("Erro ao tentar localizar o Convenio, titulo não será gerado.")
+	Return(_lRet)
+EndIf
+//-- 
+_cBanco   := ZP1->ZP1_XBCO
+_cAgenc   := ZP1->ZP1_XAGEN
+_cConta   := ZP1->ZP1_XCONTA
+// Agencia e conta no cadastro de convenio esta com o digito verificador 
+If At("-",_cAgenc) > 0
+	_cAgenc := SubStr(_cAgenc,1,At("-",_cAgenc)-1)
+	_cDvAge := SubStr(_cAgenc,At("-",_cAgenc)+1,1)
+EndIf
+If At("-",_cConta) > 0
+	_cConta := SubStr(_cConta,1,At("-",_cConta)-1)
+	_cDvCC  := SubStr(_cConta,At("-",_cConta)+1,1) 
+EndIf
+Do Case
+	Case _cOper == "Retorno_da_Remessa" 			//-- Leitura do Retorno da Remessa
+		_cCliFor	:= ZP1->ZP1_XFORNC
+		_cLoja		:= ZP1->ZP1_XFORLJ
+		_cNaturez	:= ZP1->ZP1_XNATDB
+		_lRet		:= fGeraSE2(_nValTit,_cOper,_cConvenio,_cCodRemes,_cPeriodo,_cSeg,_cSessao,_cRetPg,_cSTATUS)
+	Case _cOper == "Retorno_Diario" 	   			//-- Leitura dos Arquivos de Retorno dos Pagamentos 
+		_cCliFor	:= ZP1->ZP1_XCLIEN
+		_cLoja		:= ZP1->ZP1_XCLILJ
+		_cNaturez	:= ZP1->ZP1_XNATCR
+		_lRet		:= fGeraSE1(_nValTit,_cOper,_cConvenio,_cPeriodo,_cSeg,_cSessao,_cRetPg)
+EndCase
+Return _lRet
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGeraSE2>                                                  |
+| Funcao para inclusao de TITULO A PAGAR                                   |
+|																		   |
+|@Author<Caio Lima>                                                        |
+|@since<27/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<   _nValTit (n) - Valor do Titulo que sera Gerado                        |
+|      _cOper (c) - Defini o tipo de Operacao, sendo:                      |
+|                     "Retorno_da_Remessa" - Leitura do Retorno da Remessa |
+|                     "Retorno_Diario"     - Leitura dos Arquivos de       |
+|                                            Retorno dos Pagamentos        |
+|   _cCodConv (c) - Codigo do Covenio                                      |
+|  _cCodRemes (C) - Codigo da Remessa                                      |
+|   _cPeriodo (c) - Codigo do Periodo                                      |
+|       _cSeg (c) - Codigo do Calendario "Sequencia"                       |
+|    _cSessao (c) - Codigo da Sessao de Pagamento                          |
+|     _cRetPg (c) - Chave do Registro de Remessa/Retorno                   |  
+|    _cSTATUS (c) - Qual ZP7_XSTATU sera considerado                       |
+|>                                                                         |
+|@return                                                                   |
+|<      _lRet (L) - [.t.] - O Titulo foi Gerado com sucesso                |
+|                   [.f.] - Nao foi possivel Gerar o titulo                |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGeraSE2(_nValTit,_cOper,_cConvenio,_cCodRemes,_cPeriodo,_cSeg,_cSessao,_cRetPg,_cSTATUS)
+Local _aTitSE2 	:=	{ 	{"E2_FILIAL"	, FwxFilial("SE2")		,Nil},;
+						{"E2_PREFIXO"	, _cPrefixo				,Nil},;
+						{"E2_NUM"		, _cNum  				,Nil},;
+						{"E2_PARCELA"	, ""					,Nil},;
+						{"E2_TIPO"		, _cTipoTIT	  	 		,Nil},;                 
+						{"E2_FORNECE"	, PadR(Alltrim(_cCliFor),TamSX3("E2_FORNECE")[1]) 	,Nil},;
+						{"E2_LOJA"		, _cLoja 	  			,Nil},;
+						{"E2_NATUREZ"	, _cNaturez 			,Nil},;
+						{"E2_EMISSAO"	, dDataBase		 		,NIL},;
+						{"E2_VENCTO"	, dDataBase+3	   		,NIL},;  
+						{"E2_MULTNAT"  	, "1"   				,Nil},;
+						{"E2_VALOR"		, _nValTit 				,Nil},;
+						{"E2_MOEDA"		, 1						,Nil},;
+						{"E2_HIST"		, "Tit PRONATEC"		,Nil},;
+						{"E2_XBANCO"	, _cBanco 	   			,Nil},;
+						{"E2_XAGENC"	, _cAgenc 	   			,Nil},;
+						{"E2_XDVAGE"	, _cDvAge 	  			,Nil},;
+						{"E2_XNUMCON"	, _cConta 	  			,Nil},;
+						{"E2_XDVCTA"	, _cDvCC	  			,Nil},;
+						{"E2_XPRCONV"	, _cConvenio 			,Nil},;
+						{"E2_XPRNREM"	, _cCodRemes	  		,Nil},;
+						{"E2_XPRPERI"	, _cPeriodo	  			,Nil},;
+						{"E2_XPRCALE"	, _cSeg  	  			,Nil},;
+						{"E2_XPRSESS"	, _cSessao	   			,Nil} }
+// as variaveis de definicoes do titulo sao as privates da funcao anterior
+_lRet := .t.
+If !fDelTit(_cConvenio,_cOper,_cPeriodo,_cSeg,_cSessao,_cRetPg)
+	// Algum ao tentar deletar o titulo, possivelmente o titulo ja esta baixado
+	Return .f.
+EndIf
+lMsErroAuto := .F.
+MSExecAuto({|x,y,z| Fina050(x,y,z)},_aTitSE2,,3)
+If lMsErroAuto
+	MostraErro()
+	DisarmTransaction()
+	_lRet := .F.
+Else
+	//E2_FILIAL+E2_PREFIXO+E2_NUM+E2_PARCELA+E2_TIPO+E2_FORNECE+E2_LOJA
+	_cChave := FwxFilial("SE2")+_cPrefixo+_cNum+Space(Tamsx3("E2_PARCELA")[1])+_cTipoTIT+_cCliFor+_cLoja
+	// se funcionou gera rateio
+	fGrRatei(_cConvenio,_cOper,_cPeriodo,_cSeg,_cSessao,_cRetPg,_cSTATUS)
+	// Grava a chave do titulo na ZP7
+	fGravZP7(_cChave,_cConvenio,_cOper,_cPeriodo,_cSeg,_cSessao,_cRetPg,_cSTATUS)    
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Antonio Dantas                                    03/07/2014  ³
+	//³                                                               ³
+	//³ Inicializa array [_aInfTit] com informacoes do Titulo Gerado  ³
+	//³ pela Rotina de Integracao para ser utilizado na mensagem ao   ³
+	//³ usuario.                                                      ³
+	//³                                                               ³
+	//³ ATENCAO: O Array [_aInfTit] deve ser declarado PRIVATE pela   ³
+	//³           rotina que chamou	                                  ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_aInfTit := {_cPrefixo,_cNum,_cTipoTIT,_cCliFor,_cLoja,dDataBase+3,_cPeriodo,_cSeg,_cSessao,_nValTit}	
+	_lRet := .T.
+Endif
+Return(_lRet)
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGeraSE1>                                                  |
+| Funcao para inclusao de TITULO A RECEBER                                 |
+|																		   |
+|@Author<Caio Lima>                                                        |
+|@since<27/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<   _nValTit (n) - Valor do Titulo que sera Gerado                        |
+|      _cOper (c) - Defini o tipo de Operacao, sendo:                      |
+|                     "Retorno_da_Remessa" - Leitura do Retorno da Remessa |
+|                     "Retorno_Diario"     - Leitura dos Arquivos de       |
+|                                            Retorno dos Pagamentos        |
+|   _cCodConv (c) - Codigo do Covenio                                      |
+|   _cPeriodo (c) - Codigo do Periodo                                      |
+|       _cSeg (c) - Codigo do Calendario "Sequencia"                       |
+|    _cSessao (c) - Codigo da Sessao de Pagamento                          |
+|     _cRetPg (c) - Chave do Registro de Remessa/Retorno                   |
+|>                                                                         |
+|@return                                                                   |
+|<      _lRet (L) - [.t.] - O Titulo foi Gerado com sucesso                |
+|                   [.f.] - Nao foi possivel Gerar o titulo                |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGeraSE1(_nValTit,_cOper,_cConvenio,_cPeriodo,_cSeg,_cSessao,_cRetPg)   
+Local _aTitSE1 		:= {}
+Default _cPeriodo	:= ""
+Default _cSeg		:= ""
+Default _cSessao	:= ""  
+Default _cRetPg		:= ""    
+//-- Monta o arrey para gravar o titulo A RECEBER
+_aTitSE1 	:={	{"E1_PREFIXO"       , _cPrefixo      , Nil},;
+				{"E1_NUM"           , _cNum          , Nil},;
+				{"E1_PARCELA"       , ""             , Nil},;
+				{"E1_TIPO"          , "BOL" /*_cTipoTIT*/    , Nil},;
+				{"E1_CLIENTE"	, PadR(Alltrim(_cCliFor),TamSX3("E1_CLIENTE")[1]) 	,Nil},;
+				{"E1_LOJA"          , _cLoja         , Nil},;
+				{"E1_NATUREZ"       , _cNaturez      , Nil},;
+				{"E1_EMISSAO"       , dDataBase      , Nil},;
+				{"E1_VENCTO"        , dDataBase+3  	 , Nil},;
+				{"E1_MULTNAT"       , "1"            , Nil},;
+				{"E1_XBANCO"        , _cBanco        , Nil},;
+				{"E1_XAGENC"        , _cAgenc        , Nil},;
+				{"E1_XDVAGE"        , _cDvAge        , Nil},;
+				{"E1_XNUMCON"       , _cConta        , Nil},;
+				{"E1_XDVCTA"        , _cDvCC         , Nil},;
+				{"E1_XPRCONV"       , _cConvenio     , Nil},;
+				{"E1_XPRRETP"       , _cRetPg		 , Nil},;
+				{"E1_XPRPERI"       , _cPeriodo      , Nil},;
+				{"E1_XPRCALE"       , _cSeg          , Nil},;
+				{"E1_XPRSESS"       , _cSessao       , Nil},;
+				{"E1_VALOR"         , _nValTit       , Nil} }             
+// as variaveis de definicoes do titulo sao as privates da funcao anterior
+If !fDelTit(_cConvenio,_cOper,_cPeriodo,_cSeg,_cSessao,_cRetPg)
+	// Algum ao tentar deletar o titulo, possivelmente o titulo ja esta baixado
+	Return(_lRet)
+EndIf   
+lMsErroAuto := .F.
+MSExecAuto({|x,y,z| Fina040(x,y,z)},_aTitSE1,,3)
+If lMsErroAuto
+	MostraErro()
+	DisarmTransaction()
+	_lRet := .F.
+Else
+	//E2_FILIAL+E2_PREFIXO+E2_NUM+E2_PARCELA+E2_TIPO+E2_FORNECE+E2_LOJA
+	_cChave := FwxFilial("SE2")+_cPrefixo+_cNum+Space(Tamsx3("E2_PARCELA")[1])+_cTipoTIT+_cCliFor+_cLoja
+	// se funcionou gera rateio
+	fGrRatei(_cConvenio,_cOper,_cPeriodo,_cSeg,_cSessao,_cRetPg)
+	// Grava a chave do titulo na ZP7
+	fGravZP7(_cChave,_cConvenio,_cOper,_cPeriodo,_cSeg,_cSessao,_cRetPg)
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Antonio Dantas                                    03/07/2014  ³
+	//³                                                               ³
+	//³ Inicializa array [_aInfTit] com informacoes do Titulo Gerado  ³
+	//³ pela Rotina de Integracao para ser utilizado na mensagem ao   ³
+	//³ usuario.                                                      ³
+	//³                                                               ³
+	//³ ATENCAO: O Array [_aInfTit] deve ser declarado PRIVATE pela   ³
+	//³           rotina que chamou	                                  ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_aInfTit := {_cPrefixo,_cNum,_cTipoTIT,_cCliFor,_cLoja,dDataBase+3,_cPeriodo,_cSeg,_cSessao,_nValTit}
+	_lRet := .T.
+Endif
+Return(_lRet)
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fDelTit>                                                   |
+| Rotina para verificar se ja existe titulo emitido para Matriculas de     |
+| referencia: Caso ja exista titulos tenta deletar para continuar a        |
+| geracao                                                                  |
+|																		   |
+|@Author<Caio Lima>                                                        |
+|@since<27/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|< _cConvenio (c) - Codigo do Covenio                                      |
+|      _cOper (c) - Defini o tipo de Operacao, sendo:                      |
+|                     "Retorno_da_Remessa" - Leitura do Retorno da Remessa |
+|                     "Retorno_Diario"     - Leitura dos Arquivos de       |
+|                                            Retorno dos Pagamentos        |
+|   _cPeriodo (c) - Codigo do Periodo                                      |
+|       _cSeg (c) - Codigo do Calendario "Sequencia"                       |
+|    _cSessao (c) - Codigo da Sessao de Pagamento                          |
+|     _cRetPg (c) - Chave do Registro de Remessa/Retorno                   |
+|    _cSTATUS (c) - Qual ZP7_XSTATU sera considerado                       |
+|>                                                                         |
+|@return                                                                   |
+|<_lRet = .T.>                                                             |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fDelTit(_cConvenio,_cOper,_cPeriodo,_cSeg,_cSessao,_cRetPg,_cSTATUS)
+Local _cALias 		:= GetNextAlias()
+Local _cSql 		:= ""
+Local _lRet 		:= .T.
+Local _cCampo		:= ""  
+
+DEFAULT _cSTATUS	:= "0"
+ 
+Do Case
+	Case _cOper == "Retorno_da_Remessa" 			//-- Leitura do Retorno da Remessa
+		_cCampo := "ZP7_XCHTPG"
+	Case _cOper == "Retorno_Diario" 	  			//-- Leitura dos Arquivos de Retorno dos Pagamentos 
+		_cCampo := "ZP7_XCHTRC"
+EndCase
+_cSql := ""
+_cSql += " SELECT "+_cCampo+" "+CRLF
+_cSql += " FROM "+RetSQLName("ZP7")+" "+CRLF
+_cSql += " WHERE D_E_L_E_T_<>'*' AND ZP7_FILIAL = '"+FwxFilial("ZP7")+"' "+CRLF
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Antonio Dantas                            	   06/07/2014 ³
+//³ Para Gerar consulta das Matriculas no RETORNO DE PAGAMENTO³
+//³ como pode ser de qualquer PERIODO + CALENDARIO + SESSAO   ³
+//³ Localiza pela CHAVE do Retorno [AAAAAAAArAAAAMMAAHHMMSS]  ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+Do Case
+	Case _cOper == "Retorno_da_Remessa" 			//-- Leitura do Retorno da Remessa
+		_cSql += " AND ZP7_XPERIO='"+_cPeriodo+"' AND ZP7_XSEG='"+_cSeg+"' AND ZP7_XSESSA='"+_cSessao+"' "+CRLF
+		_cSql += " AND ZP7_XCONVE='"+_cConvenio+"' "+CRLF
+		_cSql += " AND ZP7_XSTATU = '"+_cSTATUS+"' "+CRLF
+		_cSql += " AND ZP7_XTITPG = 'S' "+CRLF
+	Case _cOper == "Retorno_Diario" 	   			//-- Leitura dos Arquivos de Retorno dos Pagamentos 
+		_cSql += " AND ZP7_XCHTRC = '"+PadR(Alltrim(_cRetPg),TamSX3("ZP7_XCHTRC")[1])+"' "+CRLF
+		_cSql += " AND ZP7_XCONVE = '"+_cConvenio+"' "+CRLF
+		_cSql += " AND ZP7_XSTATU = 'D' "+CRLF
+		_cSql += " AND ZP7_XTITRC = 'S' "+CRLF
+EndCase
+If Select(_cALias) > 0
+	(_cALias)->(dbClosearea())
+Endif
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cSql)
+DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSql)), _cALias, .F., .F.)
+If !(_cAlias)->(Eof())
+	If !Empty((_cAlias)->&(_cCampo))
+		If _cOper == "Retorno_da_Remessa" 			//-- Leitura do Retorno da Remessa
+			fDelSE2((_cAlias)->&(_cCampo))
+		ElseIf	_cOper == "Retorno_Diario" 	   		//-- Leitura dos Arquivos de Retorno dos Pagamentos 
+			fDelSE1((_cAlias)->&(_cCampo))
+		Endif 
+	Endif
+EndIf
+Return(_lRet)
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fDelSE2>                                                   |
+| Exclui titulos na SE2 - Titulos A PAGAR                                  |
+|																		   |
+|@Author<Caio Lima>                                                        |
+|@since<27/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<    _cChave (c) - Chave para Localizacao do titulo pelo Indice 1         |
+|>                                                                         |
+|@return                                                                   |
+|<      _lRet (l) - [.t.]-Exclussao concluida; [.f.]-Excl nao concluida    |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fDelSE2(_cChave)
+Local _lRet 	:= .T.
+Local _aSE2		:= {}
+dbSelectArea("SE2")
+SE2->(dbSetOrder(1))
+If SE2->(dbSeek(_cChave))
+	_aSE2 := {	{"E2_FILIAL"        , SE2->E2_FILIAL   , Nil},;
+				{"E2_PREFIXO"       , SE2->E2_PREFIXO  , Nil},;
+				{"E2_NUM"           , SE2->E2_NUM      , Nil},;
+				{"E2_PARCELA"       , SE2->E2_PARCELA  , Nil},;
+				{"E2_TIPO"          , SE2->E2_TIPO     , Nil},;
+				{"E2_FORNECE"       , SE2->E2_FORNECE  , Nil},;
+				{"E2_LOJA"          , SE2->E2_LOJA     , Nil}}
+	MSExecAuto({|x,y,z| Fina050(x,y,z)},aSE2,,5)
+	If lMsErroAuto
+		MostraErro()
+		DisarmTransaction()
+		_lRet := .F.
+	Endif
+EndIf
+Return _lRet
+            
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fDelSE1>                                                   |
+| Exclui titulos na SE1 - Titulos A RECEBER                                |
+|																		   |
+|@Author<Caio Lima>                                                        |
+|@since<27/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<    _cChave (c) - Chave para Localizacao do titulo pelo Indice 1         |
+|>                                                                         |
+|@return                                                                   |
+|<      _lRet (l) - [.t.]-Exclussao concluida; [.f.]-Excl nao concluida    |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fDelSE1()
+Local	_lRet 	:= .F.
+Local	_aSE1 	:= {}
+dbSelectArea("SE1")
+SE1->(dbSetOrder(1))
+If SE1->(dbSeek(_cChave))
+	_aSE1	:={	{"E1_FILIAL"        , SE1->E1_FILIAL   , Nil},;
+				{"E1_PREFIXO"       , SE1->E1_PREFIXO  , Nil},;
+				{"E1_NUM"           , SE1->E1_NUM      , Nil},;
+				{"E1_PARCELA"       , SE1->E1_PARCELA  , Nil},;
+				{"E1_TIPO"          , SE1->E1_TIPO     , Nil},;
+				{"E1_CLIENTE"       , SE1->E1_CLIENTE  , Nil},;
+				{"E1_LOJA"          , SE1->E1_LOJA     , Nil}}
+	MSExecAuto({|x,y,z| Fina040(x,y,z)},aSE1,,5)
+	If lMsErroAuto
+		MostraErro()
+		DisarmTransaction()
+		_lRet := .F.
+	Endif
+EndIf
+Return _lRet
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGravZP7>                                                  |
+| Grava chave do titulo na tabela ZP7                                      |
+|																		   |
+|@Author<Caio Lima>                                                        |
+|@since<27/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<    _cChave (c) - Chave do Titulo Gerado                                 |
+|  _cConvenio (c) - Codigo do Covenio                                      |
+|      _cOper (c) - Defini o tipo de Operacao, sendo:                      |
+|                     "Retorno_da_Remessa" - Leitura do Retorno da Remessa |
+|                     "Retorno_Diario"     - Leitura dos Arquivos de       |
+|                                            Retorno dos Pagamentos        |
+|   _cPeriodo (c) - Codigo do Periodo                                      |
+|       _cSeg (c) - Codigo do Calendario "Sequencia"                       |
+|    _cSessao (c) - Codigo da Sessao de Pagamento                          |
+|     _cRetPg (c) - Chave do Registro de Remessa/Retorno                   |
+|    _cSTATUS (c) - Qual ZP7_XSTATU sera considerado                       |
+|>                                                                         |
+|@return                                                                   |
+|<   _lReturn (c) - [.t.]-Chave Gravada c/Sucesso, [.f.]Chave nao Gravada  |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGravZP7(_cChave,_cConvenio,_cOper,_cPeriodo,_cSeg,_cSessao,_cRetPg,_cSTATUS)    
+Local _lReturn 		:= .f.
+Local _cSql 		:= ""
+Local _cALias 		:= GetNextAlias()   
+
+DEFAULT _cSTATUS	:= "O"
+//--
+_cSql := ""
+_cSql += " SELECT R_E_C_N_O_ AS REC "+CRLF
+_cSql += " FROM "+RetSQLName("ZP7")+" "+CRLF
+_cSql += " WHERE D_E_L_E_T_<>'*' AND ZP7_FILIAL = '"+FwxFilial("ZP7")+"'  "+CRLF
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Antonio Dantas                            	   06/07/2014 ³
+//³ Para Gerar consulta das Matriculas no RETORNO DE PAGAMENTO³
+//³ como pode ser de qualquer PERIODO + CALENDARIO + SESSAO   ³
+//³ Localiza pela CHAVE do Retorno [AAAAAAAArAAAAMMAAHHMMSS]  ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+Do Case
+	Case _cOper == "Retorno_da_Remessa" 			//-- Leitura do Retorno da Remessa
+		_cSql += " AND ZP7_XPERIO='"+_cPeriodo+"' AND ZP7_XSEG='"+_cSeg+"' AND ZP7_XSESSA='"+_cSessao+"' "+CRLF
+		_cSql += " AND ZP7_XCONVE='"+_cConvenio+"' "+CRLF
+		_cSql += " AND ZP7_XSTATU = '"+_cSTATUS+"' "+CRLF
+		_cSql += " AND (ZP7_XTITPG = ' ' OR ZP7_XTITPG='N') "+CRLF
+	Case _cOper == "Retorno_Diario" 	   			//-- Leitura dos Arquivos de Retorno dos Pagamentos 
+		_cSql += " AND ZP7_XCHTRC = '"+PadR(Alltrim(_cRetPg),TamSX3("ZP7_XCHTRC")[1])+"' "+CRLF
+		_cSql += " AND ZP7_XCONVE = '"+_cConvenio+"' "+CRLF
+		_cSql += " AND ZP7_XSTATU = 'D' "+CRLF
+		_cSql += " AND (ZP7_XTITRC = ' ' OR ZP7_XTITRC='N') "+CRLF
+EndCase
+If Select(_cALias) > 0
+	(_cALias)->(dbClosearea())
+Endif
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cSql)
+DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSql)), _cALias, .F., .F.)
+dbSelectarea("ZP7")
+Do While (_cAlias)->(!Eof())
+	ZP7->(dbGoTo((_cAlias)->REC))
+	Reclock("ZP7",.F.)
+	Do Case
+		Case _cOper == "Retorno_da_Remessa" 		//-- Leitura do Retorno da Remessa
+			Replace ZP7->ZP7_XTITPG With "S"			//-- Tit PG Princ
+			Replace ZP7->ZP7_XCHTPG With _cChave		//-- Chave do Titulo Principal
+		Case _cOper == "Retorno_Diario" 	   		//-- Leitura dos Arquivos de Retorno dos Pagamentos 
+			Replace ZP7->ZP7_XTITRC With "S"			//-- Tit Receber
+			Replace ZP7->ZP7_XCHTRC With _cChave		//-- Chave do Titulo a Receber
+	EndCase
+	ZP7->(MsUnLock())
+	(_cAlias)->(dbSkip())
+	_lReturn := .t.
+Enddo
+(_cALias)->(dbClosearea())
+Return _lReturn
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGrRatei>                                                  |
+| Funcao de preparação para gera os rateios de centro de custo na tabela   |
+| SEV e SEZ                                                                |
+|																		   |
+|@Author<Caio Lima>                                                        |
+|@since<27/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|< _cConvenio (c) - Codigo do Covenio                                      |
+|      _cOper (c) - Defini o tipo de Operacao, sendo:                      |
+|                     "Retorno_da_Remessa" - Leitura do Retorno da Remessa |
+|                     "Retorno_Diario"     - Leitura dos Arquivos de       |
+|                                            Retorno dos Pagamentos        |
+|   _cPeriodo (c) - Codigo do Periodo                                      |
+|       _cSeg (c) - Codigo do Calendario "Sequencia"                       |
+|    _cSessao (c) - Codigo da Sessao de Pagamento                          |
+|     _cRetPg (c) - Chave do Registro de Remessa/Retorno                   |
+|    _cSTATUS (c) - Qual ZP7_XSTATU sera considerado                       |
+|>                                                                         |
+|@return                                                                   |
+|<Nil>                                                                     |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGrRatei(_cConvenio,_cOper,_cPeriodo,_cSeg,_cSessao,_cRetPg,_cSTATUS)
+Local _cSql 		:= ""
+Local _cALias 		:= GetNextAlias()
+Local _aRateio 		:= {}
+Local _cCCusto 		:= ""   
+
+DEFAULT _cSTATUS	:= "O"
+
+//-- 
+_cSql := "" 
+_cSql += " SELECT SUM(ZP7_XVALOR) AS VALOR_TOTAL, ZP7_XCCUST, ZP7_XITCTA "+CRLF
+_cSql += " FROM "+RetSQLName("ZP7")+" "+CRLF
+_cSql += " WHERE D_E_L_E_T_<>'*' AND ZP7_FILIAL = '"+FwxFilial("ZP7")+"' "+CRLF
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Antonio Dantas                            	   06/07/2014 ³
+//³ Para Gerar consulta das Matriculas no RETORNO DE PAGAMENTO³
+//³ como pode ser de qualquer PERIODO + CALENDARIO + SESSAO   ³
+//³ Localiza pela CHAVE do Retorno [AAAAAAAArAAAAMMAAHHMMSS]  ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+Do Case
+	Case _cOper == "Retorno_da_Remessa" 			//-- Leitura do Retorno da Remessa
+		_cSql += " AND ZP7_XPERIO='"+_cPeriodo+"' AND ZP7_XSEG='"+_cSeg+"' AND ZP7_XSESSA='"+_cSessao+"' "+CRLF
+		_cSql += " AND ZP7_XCONVE='"+_cConvenio+"' "+CRLF
+		_cSql += " AND ZP7_XSTATU = '"+_cSTATUS+"' "+CRLF
+		_cSql += " AND (ZP7_XTITPG = ' ' OR ZP7_XTITPG='N') "+CRLF
+	Case _cOper == "Retorno_Diario" 	   			//-- Leitura dos Arquivos de Retorno dos Pagamentos 
+		_cSql += " AND ZP7_XCHTRC = '"+PadR(Alltrim(_cRetPg),TamSX3("ZP7_XCHTRC")[1])+"' "+CRLF
+		_cSql += " AND ZP7_XCONVE = '"+_cConvenio+"' "+CRLF
+		_cSql += " AND ZP7_XSTATU = 'D' "+CRLF
+		_cSql += " AND (ZP7_XTITRC = ' ' OR ZP7_XTITRC='N') "+CRLF
+EndCase
+_cSql += " GROUP BY ZP7_XCCUST, ZP7_XITCTA "+CRLF
+If Select(_cALias) > 0
+	(_cALias)->(dbClosearea())
+Endif
+DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSql)), _cALias, .F., .F.)
+//-- Defini o Codigo do Centro de Custo 
+_cCCusto := (_cAlias)->ZP7_XCCUST
+// segundo: coloco todas as informacoes dentro de um array
+Do While (_cAlias)->(!Eof())
+	//-- Posicoes do rateio { VALOR TOTAL 		|| item_contabil }
+	Aadd(_aRateio,{(_cAlias)->VALOR_TOTAL,(_cAlias)->ZP7_XITCTA })
+	(_cAlias)->(dbSkip())
+Enddo
+(_cAlias)->(dbCloseArea())
+// Grava o rateio nas tabelas SEV e SEZ
+fGravRatei(_aRateio,_cCCusto,_cOper)
+Return Nil 
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGravRatei>                                                |
+| Efetivamente Grava os rateios de centro de custo na tabela  SEV e SEZ    |
+|																		   |
+|@Author<Caio Lima>                                                        |
+|@since<27/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<   _aRateio (a) - Itens Contabeis e valores para rateios                 |
+|     _aRateio[N,1] (n) - Valor a Ser Rateado                              |
+|     _aRateio[N,2] (c) - Codigo do Item Contabil                          |
+|    _cCCusto (c) - Codigo do Centro de Custo                              |
+|      _cOper (c) - Defini o tipo de Operacao, sendo:                      |
+|                     "Retorno_da_Remessa" - Leitura do Retorno da Remessa |
+|                     "Retorno_Diario"     - Leitura dos Arquivos de       |
+|                                            Retorno dos Pagamentos        |
+|>                                                                         |
+|@return                                                                   |
+|< Nil >                                                                   |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGravRatei(_aRateio,_cCCusto,_cOper)
+Local _nx 	:= 0
+// gera as tabelas SEV e SEZ
+dbSelectArea("SEV")
+dbSelectArea("SEZ")
+If _cOper == "Retorno_da_Remessa" 			//-- Leitura do Retorno da Remessa
+	RecLock("SEV",.T.)
+	Replace SEV->EV_FILIAL    With SE2->E2_FILIAL
+	Replace SEV->EV_PREFIXO   With SE2->E2_PREFIXO
+	Replace SEV->EV_NUM       With SE2->E2_NUM
+	Replace SEV->EV_PARCELA   With SE2->E2_PARCELA
+	Replace SEV->EV_CLIFOR    With SE2->E2_FORNECE
+	Replace SEV->EV_LOJA      With SE2->E2_LOJA
+	Replace SEV->EV_TIPO      With SE2->E2_TIPO
+	Replace SEV->EV_VALOR     With SE2->E2_VALOR
+	Replace SEV->EV_NATUREZ   With SE2->E2_NATUREZ
+	Replace SEV->EV_RECPAG    With "P"
+	Replace SEV->EV_PERC      With 1
+	Replace SEV->EV_LA        With ""
+	Replace SEV->EV_RATEICC   With "1"
+	Replace SEV->EV_IDENT     With "1"
+	Replace SEV->EV_SEQ       With ""
+	Replace SEV->EV_SITUACA   With ""
+	SEV->(Msunlock())
+	_nx := 0
+	For _nx := 1 To Len(_aRateio)
+		RecLock("SEZ",.T.)
+		Replace SEZ->EZ_FILIAL   With SE2->E2_FILIAL
+		Replace SEZ->EZ_PREFIXO  With SE2->E2_PREFIXO
+		Replace SEZ->EZ_NUM      With SE2->E2_NUM
+		Replace SEZ->EZ_PARCELA  With SE2->E2_PARCELA
+		Replace SEZ->EZ_CLIFOR   With SE2->E2_FORNECE
+		Replace SEZ->EZ_LOJA     With SE2->E2_LOJA
+		Replace SEZ->EZ_TIPO     With SE2->E2_TIPO
+		Replace SEZ->EZ_VALOR    With _aRateio[_nx,1]
+		Replace SEZ->EZ_NATUREZ  With SE2->E2_NATUREZ
+		Replace SEZ->EZ_CCUSTO   With _cCCusto
+		Replace SEZ->EZ_RECPAG   With "P"
+		Replace SEZ->EZ_PERC     With (_aRateio[_nx,01]/SE2->E2_VALOR)*100  // SE2->E2_VALOR
+		Replace SEZ->EZ_LA       With ""
+		Replace SEZ->EZ_ITEMCTA  With _aRateio[_nx,02] // IItem Contabil = CENTRO RESPONSABILIDADE
+		Replace SEZ->EZ_CLVL     With ""
+		Replace SEZ->EZ_IDENT    With "1"
+		Replace SEZ->EZ_SEQ      With ""
+		Replace SEZ->EZ_SITUACA  With ""
+		SEZ->(Msunlock())
+	Next _nx  
+ElseIf _cOper == "Retorno_Diario" 	   			//-- Leitura dos Arquivos de Retorno dos Pagamentos 
+	RecLock("SEV",.T.)
+	Replace SEV->EV_FILIAL    With SE1->E1_FILIAL
+	Replace SEV->EV_PREFIXO   With SE1->E1_PREFIXO
+	Replace SEV->EV_NUM       With SE1->E1_NUM
+	Replace SEV->EV_PARCELA   With SE1->E1_PARCELA
+	Replace SEV->EV_CLIFOR    With SE1->E1_CLIENTE
+	Replace SEV->EV_LOJA      With SE1->E1_LOJA
+	Replace SEV->EV_TIPO      With SE1->E1_TIPO
+	Replace SEV->EV_VALOR     With SE1->E1_VALOR
+	Replace SEV->EV_NATUREZ   With SE1->E1_NATUREZ
+	Replace SEV->EV_RECPAG    With "R"
+	Replace SEV->EV_PERC      With 1
+	Replace SEV->EV_LA        With ""
+	Replace SEV->EV_RATEICC   With "1"
+	Replace SEV->EV_IDENT     With "1"
+	Replace SEV->EV_SEQ       With ""
+	Replace SEV->EV_SITUACA   With ""
+	SEV->(Msunlock())
+	_nx := 0
+	For _nx := 1 To Len(_aRateio)
+		RecLock("SEZ" , .T.)
+		Replace SEZ->EZ_FILIAL   With SE1->E1_FILIAL
+		Replace SEZ->EZ_PREFIXO  With SE1->E1_PREFIXO
+		Replace SEZ->EZ_NUM      With SE1->E1_NUM
+		Replace SEZ->EZ_PARCELA  With SE1->E1_PARCELA
+		Replace SEZ->EZ_CLIFOR   With SE1->E1_CLIENTE
+		Replace SEZ->EZ_LOJA     With SE1->E1_LOJA
+		Replace SEZ->EZ_TIPO     With SE1->E1_TIPO
+		Replace SEZ->EZ_VALOR    With _aRateio[_nx,1]
+		Replace SEZ->EZ_NATUREZ  With SE1->E1_NATUREZ
+		Replace SEZ->EZ_CCUSTO   With _cCCusto
+		Replace SEZ->EZ_RECPAG   With "P"
+		Replace SEZ->EZ_PERC     With (_aRateio[_nx,01]/SE1->E1_VALOR)*100  // SE2->E2_VALOR
+		Replace SEZ->EZ_LA       With ""
+		Replace SEZ->EZ_ITEMCTA  With _aRateio[_nx,02] // IItem Contabil = CENTRORESPONSABILIDADE
+		Replace SEZ->EZ_CLVL     With ""
+		Replace SEZ->EZ_IDENT    With "1"
+		Replace SEZ->EZ_SEQ      With ""
+		Replace SEZ->EZ_SITUACA  With ""
+		SEZ->(Msunlock())
+	Next _nx
+Endif 
+Return Nil 
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGetNexNum>                                                |
+| Pega o proximo numero do titulo, considerando o titulo gerado na SE2     |
+|																		   |
+|@Author<Caio Lima>                                                        |
+|@since<18/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<   _cPrefixo (c) - Codigo do Prefixo que sera considerado                |
+|>                                                                         |
+|@return                                                                   |
+|<       _cRet (c) - Numero do Titulo que sera Gerado                      |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGetNexNum(_cPrefixo)
+Local _cSql := ""
+Local _cRet := "1"
+Local _cALias := GetNextAlias()
+_cSql := "" 
+_cSql += " SELECT MAX(E2_NUM) NUMMAX "+CRLF
+_cSql += " FROM "+RetSQLName("SE2")+" "+CRLF
+_cSql += " WHERE D_E_L_E_T_<>'*' AND E2_PREFIXO='"+_cPrefixo+"' "+CRLF
+_cSql += " AND E2_FILIAL='"+FwxFilial("SE2")+"' "+CRLF
+If Select(_cALias) > 0
+	(_cALias)->(dbClosearea())
+Endif
+DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSql)), _cALias, .F., .F.)
+If !(_cAlias)->(Eof())
+	_cRet := (_cAlias)->NUMMAX
+EndIf
+(_cAlias)->( dbCloseArea() )
+_cRet := Iif(_cRet=="1",PadL(_cRet,09,"0"),Soma1(_cRet))
+Return _cRet

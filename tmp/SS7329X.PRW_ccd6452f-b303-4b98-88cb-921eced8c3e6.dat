@@ -1,0 +1,673 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "PARMTYPE.CH"
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"
+#INCLUDE "FWPRINTSETUP.CH"
+#INCLUDE 'MSOLE.CH'
+
+#DEFINE oleWdFormatPDF "17"
+#Define ADY_ENTIDADE_CLIENTE "1"
+#Define ADY_ENTIDADE_PROSPECT "2"
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <SS7329X>
+	Imprime a Proposta Comercial (SESI) no modo grafico utilizando a 
+	ferramenta [FWMsPrinter()]. 
+    Executa um Pre-View da proposta antes de envia-la por e-mail ao cliente.
+ 
+@type function
+@author Antonio Dantas
+@since<08/06/2015>
+@history 19/11/2015, Antonio Dantas, Modificado a seguencia e tamanho dos BOX, implementado a BOX na 3(Terceira) linha de Detalhes para Impressao do codigo do [AD1->AD1_XCEI - Cad Especial INSS].
+@history 29/01/2018, Franklin de Brito de Oliveira, Criado o parâmetro MV_XENREPC para indicar se a pergunta de remessa de proposta comercial será feita.
+@history 04/04/2019, Caio Lima, Incluida a coluna valor desconto, diminuição do tamanho da coluna descrição do produto alteração da coluna vlr unitario para pegar o preço tabela sempre
+@history 30/09/2020, Franklin de Brito de Oliveira, Permitir impressão da proposta quando o Status for A=Proposta em Aberto;B=Proposta fechada;E=Proposta aprovada.
+*/
+User Function SS7329X()
+Local _cMailUser		:= SuperGetMv("MV_XCRMUSE", , "") 		//-- Usuarios p/copia das Propostas Comerc. (CRM)
+Local lEnvRemP			:= SuperGetMv("MV_XENREPC", , .T.) 		//-- indica se a pergunta de remessa de proposta comercial sera feita.
+Local _aMailUSER		:= Iif(!Empty(_cMailUser), StrTokArr(_cMailUser, "#"), {})
+Local _cNomeTo			:= ""
+Local _cMailTo 			:= ""
+Local _lSendOk			:= .f.
+Local _lReenvio 		:= .f.
+Local _cSendMail 		:= ""
+Local _nCtaA := 0
+//-- Declara Private a Variavel que identifica o cliente para Utilizado no Corpo do e-mail que sera enviado 
+Private _cNome 		:= ""
+//-- 
+Private _cProposta 	:= ""
+Private _lExistPro		:= .f.
+	//+---------------------------------------------------------------------+
+	//| Não permite gerar remessa de proposta já movimentada                | 
+	//+---------------------------------------------------------------------+
+	If !(ADY->ADY_STATUS $ "A/B/E") 
+		Aviso(FunName()+"/"+ProcName(), "Proposta não encontra-se mais em Aberto, Fechada ou Aprovada, não pode ser gerada!", {"OK"})
+		Return .t.
+	Endif 
+	_cSendMail := ADY->ADY_XSENDM
+	If !Empty(_cSendMail) 
+		Aviso(FunName()+"/"+ProcName(), "Proposta já Enviada anteriormente: "+CRLF+_cSendMail , {"OK"}, 3)
+		_lReenvio := .t.
+	Endif
+	
+	//MsgRun("Gerando Relatorio, Aguarde.","",{|| CursorWait(), u_fBody329() ,CursorArrow()})
+	Processa({|| u_fBody329()}, "Gerando Relatorio, Aguarde...")
+	
+	If _lExistPro
+		//+---------------------------------------------------------------------+
+		//| Envia remessa de proposta por e-mail                                |
+		//|	O parâmetro MV_XENREPC indica se a pergunta de remessa de proposta	|
+		//| será feita.															|
+		//+---------------------------------------------------------------------+
+		If lEnvRemP
+			If Aviso(FunName()+"/"+ProcName(),"Confirma remessa por e-mail da Proposta ["+_cProposta+"] ?",{"Sim","Não"}) == 1 
+				//+---------------------------------------------------------------------+
+				//| Permite ao operador selecionar os destinatarios do E-mail.          | 
+				//+---------------------------------------------------------------------+
+				For _nCtaA := 1 to Len(_aMailUSER)
+					_cNomeTo := UsrRetName(_aMailUSER[1])
+					_cMailTo := Alltrim(UsrRetMail(_aMailUSER[1]))
+					//-- {"Nome do Destinarario","emailDedtino@provedor.com.br"}
+					aAdd(_aCopyMail, {_cNomeTo,_cMailTo}  ) 
+				Next _nCtaA 
+				//+---------------------------------------------------------------------+
+				//| Defini o e-mail do responsavel pelo CRM que recebera a copia.       | 
+				//+---------------------------------------------------------------------+
+				//-- {"Nome do Destinarario","emailDedtino@provedor.com.br"}
+				_aEMails	:= fGetCont()
+				If Len(_aEMails) > 0
+					//+---------------------------------------------------------------------+
+					//| Chama rotina para envio do e-mail.                                  | 
+					//+---------------------------------------------------------------------+
+					Processa({|| _lSendOk := u_fMail329(_aEMails,_aCopyMail,_cAttach) }, "Processando...","Remessa de e-mail's...")
+				Else 
+					Aviso(FunName()+"/"+ProcName(),"Não foi selecionado nenhum contato valido para remessa do e-mail com a proposta comercial!",{"OK"})
+				Endif 
+			Endif
+		EndIf
+		*/
+	Else
+		Aviso(FunName()+"/"+ProcName(), "Nenhuma Proposta a ser impressa nos parametros utilizados!", {"OK"}, 3)
+	Endif
+	
+	If _lSendOk
+		If 	_lReenvio
+			_cSendMail	 += CRLF+"Proposta Re-enviada em "+dtoc(dDataBase)+" as "+Time()+"    para:"+CRLF
+			_cSendMail	 += "O documento ["+Alltrim(_cTitArq+".pdf")+"] esta disponivel em ["+Alltrim(cPathDes)+"] para visualização. "+CRLF
+		Else
+			_cSendMail	 := "Proposta enviada em "+dtoc(dDataBase)+" as "+Time()+"    para:"+CRLF
+			_cSendMail	 += "O documento ["+Alltrim(_cTitArq+".pdf")+"] esta disponivel em ["+Alltrim(cPathDes)+"] para visualização. "+CRLF
+		Endif 	
+		_nCtaA := 0
+		For _nCtaA := 1 to Len(_aEMails) 	
+			_cSendMail		+= "[ Contato: "+Alltrim(_aEMails[_nCtaA,1])+"] ==> [E-mail:"+Alltrim(_aEMails[_nCtaA,2])+"] "+CRLF
+		Next _nCtaA
+		Aviso(FunName()+"/"+ProcName(), _cSendMail, {"OK"}, 3)
+		//Incluindo o Registro de Empenho na Tabela.
+		If RecLock("ADY",.f.)
+			Replace ADY->ADY_XSENDM	With _cSendMail
+			ADY->(MsUnLock())
+			ADY->(dbCommit()) 
+		EndIF
+	Endif
+Return Nil
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fBody329>
+Imprime a Proposta Comercial no modo grafico utilizando integração com Word
+@type function
+@author Antonio Dantas
+@since 08/06/2015
+@see https://tdn.totvs.com/display/public/PROT/FWSM0Util
+--------------------------------------------------------------------------------
+*/
+User Function fBody329()
+local aFilAtu := FWSM0Util():GetSM0Data()
+Local aDescri := {}
+Local cPathDes := SuperGetMv("MV_XCRMREP",,"")	//Repositorio LOCAL p/emissao dos documentos (CRM) 
+local cPathDot := AllTrim(SuperGetMV("MV_XCRMDOT", , ""))	//Repositorio DOT docs de Integracao WORD (CRM)
+local cArqDot := AllTrim(SuperGetMV("MV_XCRMPRO", , ""))	//Nome do Arq. DOT da Proposta Comercial (CRM) SESI
+Local cDescExt := ""
+Local cDesPro := ""
+local nLinha := 0
+local nVlrTotal := 0
+local nPosM0NomeCom := AScan(aFilAtu, {|x| AllTrim(x[1]) == "M0_NOMECOM"})
+local nPosM0Filial := AScan(aFilAtu, {|x| AllTrim(x[1]) == "M0_FILIAL"})
+local nPosM0CGC := AScan(aFilAtu, {|x| AllTrim(x[1]) == "M0_CGC"})
+local nPosM0EndCob := AScan(aFilAtu, {|x| AllTrim(x[1]) == "M0_ENDCOB"})
+local nPosM0CidCob := AScan(aFilAtu, {|x| AllTrim(x[1]) == "M0_CIDCOB"})
+local nPosM0EstCob := AScan(aFilAtu, {|x| AllTrim(x[1]) == "M0_ESTCOB"})
+
+Private hOleLink := ""
+
+ProcRegua(0)
+
+cFileName := "PROPSESI"+Alltrim(ADY->ADY_PROPOS)+Alltrim(ADY->ADY_PREVIS)+Dtos(dDataBase)+StrTran(Time(),":","")
+
+//Verifico se o arquivo de modelo existe
+If !File(cPathDot+cArqDot)
+	MsgAlert("Modelo do WORD :"+cArqDot+" usado na integração não encontrado no servidor. Impressão cancelada !", "Atenção")
+	Return NIL
+Endif
+//Copia o arquivo de modelo para a estação
+CpyS2T(cPathDot+cArqDot, cPathDes)
+//Conecta ao word
+hOleLink := OLE_CreateLink()
+//Altera propriedade para não exibir a janela do word
+OLE_SetProperty(hOleLink, oleWdVisible, .F. )
+//Inicia uma nova instância de trabalho entre o Protheus SmartClient e o arquivo modelo
+OLE_NewFile(hOleLink, cPathDes+cArqDot)
+
+//Dados da Proposta
+OLE_SetDocumentVar(hOleLink, 'ADY_PROPOS', ADY->ADY_PROPOS)
+OLE_SetDocumentVar(hOleLink, 'AD1_NROPOR', AD1->AD1_NROPOR)
+OLE_SetDocumentVar(hOleLink, 'ADY_DATA', ADY->ADY_DATA)
+
+//DADOS SESI
+OLE_SetDocumentVar(hOleLink, 'M0_NOMECOM', AllTrim(aFilAtu[nPosM0NomeCom][2]))
+OLE_SetDocumentVar(hOleLink, 'M0_FILIAL', AllTrim(aFilAtu[nPosM0Filial][2]))
+OLE_SetDocumentVar(hOleLink, 'M0_CGC', AllTrim(Transform(aFilAtu[nPosM0CGC][2], "@R 99.999.999/9999-99")))
+OLE_SetDocumentVar(hOleLink, 'M0_ENDCOB', AllTrim(aFilAtu[nPosM0EndCob][2]))
+OLE_SetDocumentVar(hOleLink, 'M0_CIDCOB', AllTrim(aFilAtu[nPosM0CidCob][2]))
+OLE_SetDocumentVar(hOleLink, 'M0_ESTCOB', AllTrim(aFilAtu[nPosM0EstCob][2]))
+dbSelectArea("SA3")
+SA3->(dbSetOrder(1))	////A3_FILIAL+A3_COD
+if SA3->(dbSeek(xFilial("SA3")+ADY->ADY_VEND))
+	OLE_SetDocumentVar(hOleLink, 'A3_NOME', AllTrim(SA3->A3_NOME))
+	OLE_SetDocumentVar(hOleLink, 'A3_CARGO', AllTrim(Posicione("SUM", 1, xFilial("SUM")+SA3->A3_CARGO, "UM_DESC")))
+	OLE_SetDocumentVar(hOleLink, 'A3_TEL', AllTrim(TRANSFORM( SA3->A3_TEL, "@R 9999-9999")))
+	OLE_SetDocumentVar(hOleLink, 'A3_EMAIL', AllTrim(SA3->A3_EMAIL))
+endif
+
+// DADOS DO CLIENTE
+If ADY->ADY_ENTIDA == "1"
+	DbSelectArea("SA1")
+	SA1->(DbSetOrder(1))
+	If	(DbSeek(FwxFilial("SA1")+ADY->ADY_CODIGO+ADY->ADY_LOJA))
+		OLE_SetDocumentVar(hOleLink, 'A1_NOME', AllTrim(SA1->A1_NOME))
+		OLE_SetDocumentVar(hOleLink, 'A1_NREDUZ', AllTrim(SA1->A1_NREDUZ))
+		OLE_SetDocumentVar(hOleLink, 'A1_XQTEMP', AllTrim(fFormNroFun(ADY_ENTIDADE_CLIENTE, SA1->A1_XQTDESI)))
+		OLE_SetDocumentVar(hOleLink, 'A1_CGC', Transform(SA1->A1_CGC, Iif(Len(AllTrim(SA1->A1_CGC))==11, "@R 999.999.999-99", "@R 99.999.999/9999-99")))
+		OLE_SetDocumentVar(hOleLink, 'A1_INSCR', AllTrim(SA1->A1_INSCR))
+		OLE_SetDocumentVar(hOleLink, 'A1_END', AllTrim(SA1->A1_END))
+		OLE_SetDocumentVar(hOleLink, 'A1_MUN', AllTrim(SA1->A1_MUN))
+		OLE_SetDocumentVar(hOleLink, 'A1_EST', AllTrim(SA1->A1_EST))
+		OLE_SetDocumentVar(hOleLink, 'A1_CEP', AllTrim(Transform(SA1->A1_CEP, "@R 99999-999")))
+		OLE_SetDocumentVar(hOleLink, 'A1_EMAIL', AllTrim(SA1->A1_XEMLCOB))
+		If SA1->A1_END == SA1->A1_ENDCOB .and. SA1->A1_CEP == SA1->A1_CEPC
+			OLE_SetDocumentVar(hOleLink, 'A1_ENDCOB', AllTrim(SA1->A1_END))
+			OLE_SetDocumentVar(hOleLink, 'endereçoCobrançaIgual', 'True')
+			OLE_ExecuteMacro(hOleLink, 'selecionaBoxEndereçoCobrança')
+		Else
+			OLE_SetDocumentVar(hOleLink, 'A1_ENDCOB', AllTrim(SA1->A1_ENDCOB))
+			OLE_SetDocumentVar(hOleLink, 'endereçoCobrançaIgual', 'False')
+			OLE_ExecuteMacro(hOleLink, 'selecionaBoxEndereçoCobrança')		
+		Endif 
+	Endif     
+Else
+	DbSelectArea("SUS")
+	SUS->(DbSetOrder(1))
+	If	(SUS->(DbSeek(FwxFilial("SUS")+ADY->ADY_CODIGO+ADY->ADY_LOJA)))
+		OLE_SetDocumentVar(hOleLink, 'A1_NOME', AllTrim(SUS->US_NOME))
+		OLE_SetDocumentVar(hOleLink, 'A1_NREDUZ', AllTrim(SUS->US_NREDUZ))
+		OLE_SetDocumentVar(hOleLink, 'A1_XQTEMP', AllTrim(fFormNroFun(ADY_ENTIDADE_PROSPECT, SUS->US_QTFUNC)))
+		OLE_SetDocumentVar(hOleLink, 'A1_CGC', Transform(SUS->US_CGC, Iif(Len(AllTrim(SUS->US_CGC))==11, "@R 999.999.999-99", "@R 99.999.999/9999-99")))
+		OLE_SetDocumentVar(hOleLink, 'A1_INSCR', AllTrim(SUS->US_INSCR))
+		OLE_SetDocumentVar(hOleLink, 'A1_END', AllTrim(SUS->US_END))
+		OLE_SetDocumentVar(hOleLink, 'A1_MUN', AllTrim(SUS->US_MUN))
+		OLE_SetDocumentVar(hOleLink, 'A1_EST', AllTrim(SUS->US_EST))
+		OLE_SetDocumentVar(hOleLink, 'A1_CEP', AllTrim(Transform(SUS->US_CEP, "@R 99999-999")))
+		OLE_SetDocumentVar(hOleLink, 'A1_EMAIL', AllTrim(SUS->US_EMAIL))
+		If AllTrim(SUS->US_END) == AllTrim(SUS->US_XENDCOB) .and. AllTrim(SUS->US_CEP) == AllTrim(SUS->US_XCEPC)
+			OLE_SetDocumentVar(hOleLink, 'A1_ENDCOB', AllTrim(SUS->US_END))
+			OLE_SetDocumentVar(hOleLink, 'endereçoCobrançaIgual', 'True')
+			OLE_ExecuteMacro(hOleLink, 'selecionaBoxEndereçoCobrança')
+		Else
+			OLE_SetDocumentVar(hOleLink, 'A1_ENDCOB', AllTrim(SUS->US_XENDCOB))
+			OLE_SetDocumentVar(hOleLink, 'endereçoCobrançaIgual', 'False')
+			OLE_ExecuteMacro(hOleLink, 'selecionaBoxEndereçoCobrança')
+		endif
+	Endif
+Endif
+
+//Contato do Cliente
+dbSelectArea("AD9")
+AD9->(dbSetOrder(1))				//-- AD9_FILIAL+AD9_NROPOR+AD9_REVISA+AD9_CODCON 
+If (AD9->(dbSeek(FwxFilial("AD9")+ADY->ADY_OPORTU+ADY->ADY_REVISA)))
+	dbSelectArea("SU5")
+	SU5->(dbSetOrder(1))				//--  U5_FILIAL+U5_CODCONT+U5_IDEXC
+	If (SU5->(dbSeek(FwxFilial("SU5")+AD9->AD9_CODCON)))
+		OLE_SetDocumentVar(hOleLink, 'U5_CONTAT', AllTrim(SU5->U5_CONTAT))
+		OLE_SetDocumentVar(hOleLink, 'U5_FUNCAO', AllTrim(Posicione("SUM",1,FwxFilial("SUM")+SU5->U5_FUNCAO,"UM_DESC")))
+		OLE_SetDocumentVar(hOleLink, 'U5_FCOM1', AllTrim(Transform(AllTrim(SU5->U5_DDD) + AllTrim(SU5->U5_FCOM1)	,"@R (999) 9999-9999")))
+		OLE_SetDocumentVar(hOleLink, 'U5_EMAIL', AllTrim(SU5->U5_EMAIL))
+	Endif
+Endif
+
+//Tabela de Produtos
+DbSelectArea("ADZ")
+DbSetOrder(3)	//ADZ_FILIAL+ADZ_PROPOS+ADZ_REVISA+ADZ_FOLDER+ADZ_ITEM
+ADZ->(DbSeek(ADY_FILIAL+ADY_PROPOS+ADY_PREVIS))
+while !ADZ->(EoF()) .and. ADY_FILIAL+ADY_PROPOS+ADY_PREVIS == ADZ_FILIAL+ADZ_PROPOS+ADZ_REVISA
+	nLinha++
+	cDesPro := AllTrim(Posicione("SB1", 1, xFilial("SB1")+ADZ->ADZ_PRODUT, "B1_DESC"))
+	cDescExt := AllTrim(Posicione("SB1", 1, xFilial("SB1")+ADZ->ADZ_PRODUT, "B1_XXDESCR"))
+	cGerDupl := Posicione("SF4", 1, xFilial("SF4")+ADZ->ADZ_TES, "F4_DUPLIC")
+	OLE_SetDocumentVar(hOleLink, 'ADZ_PRODUT'+AllTrim(Str(nLinha)), cDesPro)
+	OLE_SetDocumentVar(hOleLink, 'ADZ_QTDVEN'+AllTrim(Str(nLinha)), AllTrim(TRANSFORM( ADZ->ADZ_QTDVEN, "@E 99,999,999.99" )))
+	OLE_SetDocumentVar(hOleLink, 'ADZ_PRCTAB'+AllTrim(Str(nLinha)), AllTrim(TRANSFORM( ADZ->ADZ_PRCTAB, "@E 99,999,999,999.99")))
+	OLE_SetDocumentVar(hOleLink, 'VALORPARCIAL'+AllTrim(Str(nLinha)), AllTrim(TRANSFORM(ADZ->ADZ_QTDVEN*ADZ->ADZ_PRCTAB, "@E 99,999,999,999.99")))
+	OLE_SetDocumentVar(hOleLink, 'ADZ_VALDES'+AllTrim(Str(nLinha)), AllTrim(TRANSFORM(ADZ->ADZ_VALDES, "@E 99,999,999,999.99")))
+	if cGerDupl=="S"
+		OLE_SetDocumentVar(hOleLink, 'ADZ_TOTAL'+AllTrim(Str(nLinha)), AllTrim(TRANSFORM(ADZ->ADZ_TOTAL, "@E 99,999,999,999.99")))
+		nVlrTotal += ADZ->ADZ_TOTAL
+	else
+		OLE_SetDocumentVar(hOleLink, 'ADZ_TOTAL'+AllTrim(Str(nLinha)), AllTrim(TRANSFORM(0, "@E 99,999,999,999.99")))
+		nVlrTotal += 0
+	endif
+	if AScan(aDescri, {|aDescri| aDescri[3]==ADZ->ADZ_PRODUT})==0
+		Aadd(aDescri, {cDesPro, cDescExt, ADZ->ADZ_PRODUT})
+	endif
+	
+	ADZ->(dbSkip())
+end
+OLE_SetDocumentVar(hOleLink, 'nItens_Proposta', nLinha)
+OLE_ExecuteMacro(hOleLink, 'tabelaDeProdutos')
+
+//IDENTIFICAÇÃO DO(S) SERVIÇO(S)
+OLE_SetDocumentVar(hOleLink, 'ADY_XNECES', AllTrim(ADY->ADY_XNECES))
+OLE_SetDocumentVar(hOleLink, 'ADY_XOBJET', AllTrim(ADY->ADY_XOBJET))
+
+//ETAPAS/DESCRIÇÃO DOS SERVIÇOS/PRODUTOS
+for nLinha := 1 to Len(aDescri)
+	OLE_SetDocumentVar(hOleLink, 'ADZ_DESCRI'+AllTrim(Str(nLinha)), aDescri[nLinha][1])
+	OLE_SetDocumentVar(hOleLink, 'B1_XXDESCR'+AllTrim(Str(nLinha)), aDescri[nLinha][2])
+next
+OLE_SetDocumentVar(hOleLink, 'totalDescricaoProdutos', Len(aDescri))
+OLE_ExecuteMacro(hOleLink, 'imprimeDescricaoProdutos')
+OLE_SetDocumentVar(hOleLink, 'ADY_XCRONO', AllTrim(ADY->ADY_XCRONO))
+
+//CONDIÇÕES GERAIS
+OLE_SetDocumentVar(hOleLink, 'ADZ_TOTAL', AllTrim(TRANSFORM(nVlrTotal, "@E 99,999,999,999.99")))
+OLE_SetDocumentVar(hOleLink, 'ADY_CONDPG', AllTrim(Posicione("SE4", 1, xFilial("SE4")+ADY->ADY_CONDPG, "E4_DESCRI")))
+OLE_SetDocumentVar(hOleLink, 'ADY_XACRIT', AllTrim(ADY->ADY_XACRIT))
+
+//Representante da empresa
+dbSelectArea("SU5")
+SU5->(dbSetOrder(1))
+If (SU5->(dbSeek(FwxFilial("SU5")+ADY->ADY_XASSIN)))
+	OLE_SetDocumentVar(hOleLink, 'U5_CONTAT', Alltrim(SU5->U5_CONTAT))
+	OLE_SetDocumentVar(hOleLink, 'U5_FUNCAO', AllTrim(Posicione("SUM",1,FwxFilial("SUM")+SU5->U5_FUNCAO,"UM_DESC")))
+Endif 
+
+OLE_SetDocumentVar(hOleLink, 'DataAssinatura', AllTrim(DtoC(Date())))
+
+OLE_UpdateFields(hOleLink)
+OLE_SaveAsFile(hOleLink, cPathDes+cFileName+".pdf", '', '', .F., oleWdFormatPDF)
+OLE_CloseFile(hOleLink)
+OLE_CloseLink(hOleLink)
+FErase(cPathDes+cArqDot)
+ShellExecute("open", cPathDes+cFileName+".pdf", "", "", 5)
+MsgInfo(cFileName+" salva no diretório:"+cPathDes, "Atenção")
+
+_lExistPro	:= .t.
+
+Return Nil
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fMail329>
+  Monta o corpo do e-mail para remessa da proposta. Envia proposta comercial
+  por e-mail.
+@type function 
+@author Antonio Dantas
+@since<16/06/2015>
+@version<1.00>
+--------------------------------------------------------------------------------
+*/
+User Function fMail329(_aEMails,_aCopyMail,_cAttach)
+
+Local _cTitMail	:= "Proposta comercial SESI Numero : ["+_cProposta+"]"
+Local _cMens		:= ""
+Local _nVezes 	:= 0
+Local _nCtaA		:= 0
+Local _nProc		:= Len(_aEMails)+Len(_aCopyMail)
+Local _lSendOk	:= .f.
+//+------------------------------------------------------------------+
+//|  Monta mensagem em HTML para o corpo do E-mail                   |
+//+------------------------------------------------------------------+
+_cMens := '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">'+CRLF
+_cMens += '<html lang="pt-br">'+CRLF
+_cMens += '<head>'+CRLF
+_cMens += '  <meta content="text/html; charset=iso-8859-1" http-equiv="Content-Type" name="GENERATOR">'+CRLF
+_cMens += '  <title>Ativação de Contrato</title>'+CRLF
+_cMens += '</head>'+CRLF
+_cMens += '<body bgproperties="fixed">'+CRLF
+_cMens += '	<p class="MsoNormal" style="text-align: left;" align="left">'+CRLF
+_cMens += '		<span style="font-family: &quot;Arial&quot;,&quot;sans-serif&quot;;">'+CRLF
+_cMens += '			<img id="_x0000_i1030" src="http://gps.totvs.com/workflow/titulo_wf_totvs.png" border="0" height="62" width="760">'+CRLF
+_cMens += '		</span>'+CRLF
+_cMens += '	</p>'+CRLF
+_cMens += '	<td style="padding: 0cm;">'+CRLF
+_cMens += '		<p class="MsoNormal" align="left">'+CRLF
+_cMens += '			<span style="font-size: 11pt; font-family:&quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(00,00,64);">'+CRLF
+_cMens += '					<br>'+CRLF 
+_cMens += '					A : '+Alltrim(_cNome)+';'+CRLF  				//-- Declarada PRIVATE no inicio do Programa 
+_cMens += '					<br>'+CRLF 
+_cMens += '					<br>'+CRLF
+_cMens += '					Segue anexo para apreciação e aprovação Proposta Comercial Numero: '+Alltrim(_cProposta)+' <br>'+CRLF
+_cMens += '			</span>'+CRLF
+_cMens += '		</p>'+CRLF
+_cMens += '	</td>'+CRLF
+_cMens += '</body>'+CRLF
+_cMens += '</html>'+CRLF
+//-- 
+ProcRegua(_nProc)
+//+------------------------------------------------------------------+
+//| Envia por e-mail Proposta Comercial ao Cliente.                  |
+//+------------------------------------------------------------------+
+_nCtaA := 0 
+For _nCtaA := 1 to Len(_aEMails) 
+	_nVezes++
+	IncProc("E-mail aos Contatos.. ("+Alltrim(Transform(_nVezes,"@E 999,999"))+") ") 
+	//+---------------------------------------------------------------------+
+	//| Jonas Nascimento/José Leite                              10/07/2015 | 
+	//| Alteração de ACSendMail para U_SFEnvEmail						    |
+	//| Motivo: ACSendMail c/ erro ao enviar e-mail c/ anexo.               |
+	//+---------------------------------------------------------------------+
+	//U_SFEnvEmail(de:, p_cTo, p_cCC, ccopiaoculta , p_cSubject, p_cBody, p_cAttach)
+	_lSendOk := U_SFEnvEmail( , Alltrim(_aEMails[_nCtaA,2]), , , _cTitMail, _cMens, _cAttach)
+	/* 22-07-15 - Jose Leite - CSI
+		Mensagem de Alerta caso envie ou nao o e-mail
+	*/
+	If !_lSendOk
+		Alert('Não foi possivel enviar o e-mail, favor verificar!')
+		Exit
+	Else
+		MsgInfo('E-mail enviado com sucesso!','Atenção')
+	Endif  
+Next _nCtaA 	
+//+------------------------------------------------------------------+
+//| Envia por e-mail ao responsavel copia da Proposta Comercial      |
+//| enviada ao Cliente.                                              |
+//+------------------------------------------------------------------+
+If _lSendOk
+	//_lSendOk := .f.
+	If Len(_aCopyMail) > 0 
+		_nCtaA := 0 
+		For _nCtaA := 1 to Len(_aCopyMail)
+			/* 22-07-15 - Jose Leite - CSI
+				Tratamento para enviar e-mail somente se existir
+			*/
+			If .Not. Empty(Alltrim(_aCopyMail[_nCtaA,2]))  
+				_nVezes++
+				IncProc("E-mail aos Admins.. ("+Alltrim(Transform(_nVezes,"@E 999,999"))+") ")
+				//+---------------------------------------------------------------------+
+				//| Jonas Nascimento/José Leite                              10/07/2015 | 
+				//| Alteração de ACSendMail para U_SFEnvEmail						    |
+				//| Motivo: ACSendMail c/ erro ao enviar e-mail c/ anexo.               |
+				//+---------------------------------------------------------------------+
+				//U_SFEnvEmail(de:, p_cTo, p_cCC, ccopiaoculta , p_cSubject, p_cBody, p_cAttach)  
+				_lSendOk := U_SFEnvEmail( , Alltrim(_aCopyMail[_nCtaA,2]), , , "Copia da proposta enviada ao Cliente.", _cMens, _cAttach)  
+				/* 22-07-15 - Jose Leite - CSI
+					Mensagem de Alerta caso envie ou nao o e-mail
+				*/
+				If !_lSendOk
+					Alert('Não foi possivel enviar o e-mail, favor verificar!')
+					Exit
+				Else
+					MsgInfo('E-mail enviado com sucesso!','Atenção')
+				EndIf 
+			EndIf
+		Next _nCtaA 	
+	Endif 
+Endif
+Return _lSendOk
+
+/*--------------------------------------------------------------------------------
+{Protheus.doc} <fGetCont>
+  Permite que o operador possa selecionar o CONTATO para o qual sera enviado
+  o E-mail com a proposta comercial.
+
+  Considera que foi criado PRIVATE o Array [_aContact], que sera preenchido
+  com as informações dos contatos selecionados:
+  _aContact (a) - {{"Nome do Contato","EmaildoContato@provedor.com.br"}}
+  
+@type function
+@author Antonio Dantas
+@since<18/06/2015>
+--------------------------------------------------------------------------------
+*/
+Static Function fGetCont()
+
+//+-----------------------------------------------------------------------+
+//|   Variavies de controle do MsNewGetDados                              | 
+//+-----------------------------------------------------------------------+
+Local _nOpcA		:= GD_INSERT + GD_DELETE + GD_UPDATE	//-- Define o modo de edicao da MsNewGetDados (Soma dos Modos) 
+Local _cIniCposA	:= ""									//-- Nome dos campos do tipo caracter que utilizarao incremento automatico.
+Local _cLinOkA		:= "AllwaysTrue"						//-- Funcao de usuario na saida da edicao da linha
+Local _cTudoOkA		:= "AllwaysTrue"						//-- Funcao de usuario para validado de toda a grid
+Local _cFieldOkA	:= "AllwaysTrue"						//-- Funcao de usuario para validacao do campo e foco de edicao 
+Local _cDelOkA		:= "AllwaysTrue"						//-- Funcao de usuario para validavao do DEL
+Local _nFreezeA		:= 000									//-- Campos estaticos na GetDados.
+Local _nMaxA		:= 999									//-- Numero Maximo de Elementos na Grid
+Local _cSupDelA		:= NIL                             	//-- Funcao executada quando pressionada as teclas <Ctrl>+<Delete>
+//--
+Local _cTitulo		:= "Contato para Remessa da Proposta"
+//--
+Private _aAlterA	:= {""}									//-- Array dos campos que podem ser editados MsNewGetDados
+Private _aHeaderA	:= {}									//-- Array com os Elementos da Grid
+Private _aColsA	:= {}									//-- Array (Descricao) Cabecalho dos campos da Grid  
+Private _aContact	:= {}  
+Private _oOpcoes	:={	"Pesquisar" 	,;
+						"Visualizar"	,;
+						"Encerrar"   	 }					//-- Array (Descricao) das Opcoes de Operacao 
+//+-----------------------------------------------------------------------+
+//|   Variaveis de controle da Operacao                                   |
+//+-----------------------------------------------------------------------+
+Private _nRec		:= AD1->(Recno())
+//+-----------------------------------------------------------------------+
+//|    Variavies de controle do MsNewGetDados dos Itens da Carga          |
+//+-----------------------------------------------------------------------+
+Private _aTELA 	:= {}
+Private _aGETS 	:= {}
+Private _nUsado 	:= 0
+Private _bCpo 		:= {|nField| Field(nField)}
+//--
+Private _aSize 	:= MsAdvSize()
+Private _aInfo 	:= {_aSize[1],_aSize[2],_aSize[3],_aSize[4],3,3}
+Private _aObjects	:= {{100,002,.T.,.T.},{100,095,.T.,.T.},{100,003,.T.,.T.}}
+Private _APosObj 	:= MsObjSize(_aInfo,_aObjects,.T.)
+Private _APosGet	:= MsObjGetPos((_aSize[3]-_aSize[1]),315,{{004,024,240,270}})
+//+-----------------------------------------------------------------------+
+//|   Declaração de Variaveis Private dos Objetos                         |
+//+-----------------------------------------------------------------------+
+SetPrvt("_oBrwPROP","_oBtnOK","_oBtnVer","_oBtnESC")
+//+-----------------------------------------------------------------------+
+//|  Funcao que Cria a aHeader que sera utilizada pela MsNewGetDados      |
+//+-----------------------------------------------------------------------+
+fCriaHeard()   
+//+-----------------------------------------------------------------------+
+//|  Funcao que Cria a aCols que sera utilizada pela MsNewGetDados        |
+//+-----------------------------------------------------------------------+
+FWMsgRun(, {|| fCriaCols() }, "Verificando Contatos ...", "Aguarde...")
+//+-----------------------------------------------------------------------+
+//| Monta a Interfase (Tela) que sera apresentada ao usuario              | 
+//+-----------------------------------------------------------------------+
+DEFINE MSDIALOG _oDlgPROP TITLE _cTitulo FROM _aSize[7],_aSize[1] TO _aSize[6],_aSize[5] OF oMainWnd PIXEL
+//+-----------------------------------------------------------------------+
+//|  Grid das Matriculas a Serem liberadas                                | 
+//+-----------------------------------------------------------------------+
+_oBrwPROP	:= MsNewGetDados():New(_APosObj[2,1],_APosObj[2,2],_APosObj[2,3],_APosObj[2,4],_nOpcA,_cLinOkA,_cTudoOkA,_cIniCposA,_aAlterA,_nFreezeA,_nMaxA,_cFieldOkA,_cSupDelA,_cDelOkA,_oDlgPROP,_aHeaderA,_aColsA)
+_oBrwPROP:oBrowse:SetFocus()
+//+-----------------------------------------------------------------------+
+//|  Objeto de controle do falso Marca/Desmarca                           |
+//+-----------------------------------------------------------------------+
+_oBrwPROP:oBrowse:bLDblClick := {|| u_fMck7329() }   
+//+-----------------------------------------------------------------------+
+//|  Monta a Botueira da tela                                             |
+//+-----------------------------------------------------------------------+
+_oBtnOK 	:= TButton():New( _APosObj[3,1]	,_APosGet[1,4]-50	,"Confirma"	,_oDlgPROP	,{|| u_fCriaArr()	, _oDlgPROP:End() }	,040,012,,,,.T.,,"",,,,.F. )
+_oBtnESC	:= TButton():New( _APosObj[3,1]	,_APosGet[1,4]		,"Cancela"	,_oDlgPROP	,{|| _oDlgPROP:End() }					,040,012,,,,.T.,,"",,,,.F. )
+_oDlgPROP:Activate(,,,.T.)
+Return _aContact
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fCriaHeard>
+ Funcao de contrucao do aHearder que sera utilizado pelo MsNewGetDados.
+ ATENCAO: Considera criada PRIVATE pela funcao que chamnaou o array [_aHeaderA]
+@type function
+@author Antonio Dantas
+@since<18/06/2015>
+--------------------------------------------------------------------------------
+*/
+Static Function fCriaHeard()          
+
+Aadd(_aHeaderA	,{"  " 				,"SU5XOK"			,"@BMP"        	  				,02							,0							,""	,"","C",""	,""	,,,,,	} )  
+Aadd(_aHeaderA 	,{"Contato"			,"U5_CODCONT"		,TRIM(X3PICTURE("U5_CODCONT"))	,TamSX3("U5_CODCONT")[1]	,TamSX3("U5_CODCONT")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Nome do Contato"	,"U5_CONTAT"		,TRIM(X3PICTURE("U5_CONTAT"))	,TamSX3("U5_CONTAT")[1]		,TamSX3("U5_CONTAT")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Telefone"		,"U5_FCOM1"			,TRIM(X3PICTURE("U5_FCOM1"))	,TamSX3("U5_FCOM1")[1]		,TamSX3("U5_FCOM1")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Celular"			,"U5_CELULAR"		,TRIM(X3PICTURE("U5_CELULAR"))	,TamSX3("U5_CELULAR")[1]	,TamSX3("U5_CELULAR")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"E-Mail"			,"U5_EMAIL"			,TRIM(X3PICTURE("U5_EMAIL"))	,TamSX3("U5_EMAIL")[1]		,TamSX3("U5_EMAIL")[2]		,"" ,"","C",""  ,""})
+Return .t.    	
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fCriaCols>
+  Funcao de contrucao do aCols que sera utilizado pelo MsNewGetDados.
+  ATENCAO: Considera criado PRIVATE pela funcao que chamnaou o array.
+@type function
+@author Antonio Dantas
+@since<18/06/2015>
+@version<1.00>
+--------------------------------------------------------------------------------
+*/
+Static Function fCriaCols()
+
+Local _aNewCols		:= {} 
+Local _lFound		:= .f.  
+//+-----------------------------------------------------------------------+
+//|   Garante que aCols estara vazia, zera os totalizadores               | 
+//+-----------------------------------------------------------------------+
+_aColsA		:= {}
+//-- Localiza as Matriculas 
+dbSelectArea("AD9")
+AD9->(dbSetOrder(1)) 		//-- Oportunidade + Revisao + Proposta No.  
+AD9->(dbSeek(AD1->AD1_FILIAL+AD1->AD1_NROPOR+AD1->AD1_REVISA))
+//-- 
+Do While AD9->(!Eof()) .And. AD9->AD9_FILIAL == AD1->AD1_FILIAL .And. AD9->AD9_NROPOR == AD1->AD1_NROPOR .And. AD9->AD9_REVISA == AD1->AD1_REVISA
+	dbSelectArea("SU5")
+	SU5->(dbSetOrder(1))					//-- Contato + ID Exchange
+	SU5->(dbSeek(FwxFilial("SU5")+AD9->AD9_CODCON))
+	//-- Preenche aCols 
+	aAdd(_aColsA, {	"LBNO"			,; 
+					SU5->U5_CODCONT	,;
+					SU5->U5_CONTAT	,;
+					SU5->U5_FCOM1	,;
+					SU5->U5_CELULAR	,;
+					SU5->U5_EMAIL	,;
+					.f.				} )					
+	AD9->(dbSkip())    
+	_lFound := .T.
+Enddo
+If !_lFound
+	_aColsA := { {"LBNO","","","","","",.f.} }
+Endif
+Return _aNewCols
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fMck7329>
+  Funcao de controle de Marcação da PROPOSTA excolhida pelo Operador
+@type function
+@author Antonio Dantas
+@since<18/06/2015>
+--------------------------------------------------------------------------------
+*/ 
+User Function fMck7329()  
+
+Local _lReturn		:= .t.
+Local _aNewCols		:= aClone(_oBrwPROP:aCols)
+Local _aNewHead		:= aClone(_oBrwPROP:aHeader)
+Local _nPos1 			:= aScan(_aNewHead,{|x| AllTrim(x[2]) == "U5_EMAIL"})  
+Local _nPosCOL		:= _oBrwPROP:OBROWSE:NColPos
+Local _nPosLIN		:= _oBrwPROP:nAt
+Local _cMarca			:= Iif(_oBrwPROP:aCOLS[_nPosLIN,_nPosCOL] == "LBOK" ,"LBNO","LBOK")
+If !Empty(_aNewCols[_nPosLIN,_nPos1])
+	//-- Modifica o MsNewGetDados, modifica o Array 
+	_oBrwPROP:EditCell()
+	_oBrwPROP:aCOLS[_nPosLIN,_nPosCOL]		:= _cMarca
+	_aNewCols[_nPosLIN,_nPosCOL] 			:= _cMarca
+	//-- 
+	_aColsA			:= aClone(_aNewCols) 
+	_oBrwPROP:aCOLS 	:= aClone(_aNewCols) 
+	_oBrwPROP:oBrowse:Refresh()
+	_oDlgPROP:Refresh()
+Else
+	Aviso(FunName()+"/"+ProcName(),"O Contato não pode ser selecionado, pois não tem e-mail informado!",{"OK"})
+Endif 
+Return _lReturn
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fCriaArr>
+  Gera o Array com as Informações do CONTATO Selecionado.
+@type function
+@author Antonio Dantas
+@since<18/06/2015>
+@version<1.00>
+--------------------------------------------------------------------------------
+*/ 
+User Function fCriaArr()  
+
+Local _lReturn		:= .t.
+Local _aSaveArea		:= GetArea()
+Local _aNewCols		:= aClone(_oBrwPROP:aCols)
+Local _aNewHead		:= aClone(_oBrwPROP:aHeader)
+Local _nPosM 			:= aScan(_aNewHead,{|x| AllTrim(x[2]) == "SU5XOK"}) 
+//-- Localizadores dos campos da Chave 
+Local _nPos2 			:= aScan(_aNewHead,{|x| AllTrim(x[2]) == "U5_CONTAT"})
+Local _nPos4 			:= aScan(_aNewHead,{|x| AllTrim(x[2]) == "U5_EMAIL"})  
+Local _nCtaA 			:= 0
+_nCtaA	:= 0
+For _nCtaA := 1 to len(_aNewCols)
+	If _aNewCols[_nCtaA,_nPosM] == "LBOK"
+		aAdd( _aContact,{_aNewCols[_nCtaA,_nPos2],_aNewCols[_nCtaA,_nPos4]} )  
+	Endif 
+Next _nCtaA
+RestArea(_aSaveArea)
+Return _lReturn
+
+/*/{Protheus.doc} fFormNroFun
+Formata o numero de funcionários de acordo com a entidade.
+@type  Function
+@author Franklin de Brito de Oliveira
+@since 08/07/2021
+@param cEntidade, character, Entidade da Proposta.1=Cliente;2=Prospect.
+@param _xNrFunc, character, Numero de funcionários do cliente/prospect.
+@return character, Numero de funcionários do cliente/prospect formatado.
+/*/
+Static Function fFormNroFun(cEntidade, _xNrFunc)
+	Local _aNrFuncs 	:= {"Menos de 50","51 a 200","201 a 500","501 a 1000","1001 a 5000","Mais de 5000"}
+	local _cNrFuncionarios := "Não Informado"
+	
+	if cEntidade==ADY_ENTIDADE_CLIENTE
+		if _xNrFunc>0
+			_cNrFuncionarios := Transform(_xNrFunc, "@E 999,999")
+		endif
+	else
+		if !Empty(_xNrFunc) .and. _xNrFunc$"123456"
+			_cNrFuncionarios := _aNrFuncs[Val(_xNrFunc)]
+		endif
+	endif
+
+Return _cNrFuncionarios

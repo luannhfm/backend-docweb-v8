@@ -1,0 +1,477 @@
+#Include 'protheus.ch'
+#Include 'parmtype.ch'
+#Include "ApWizard.CH"
+
+/*/{Protheus.doc} SF01A02F
+	Wizard para atualização do cadastro de Ativo Fixo
+	por arquivo de importação.
+	
+@author franklin.oliveira
+@since 05/10/2016
+
+@type function
+/*/
+User Function SF01A02F()
+	
+Local aArea	:= GetArea()
+
+Private cAliasTrb
+Private cArqTmp		:= "" 
+Private cLocFile
+Private oWizard 
+Private oGet10
+Private oBrowse
+	
+	DEFINE WIZARD oWizard ;
+		TITLE   "Atualização do cadastro de Ativo Fixo" ;
+		HEADER  "Atenção" ;
+		MESSAGE "Siga atentamente os passos para a Atualização." ; 
+		TEXT 	"Assistente para a atualização do cadastro de Ativo Fixo. " + CRLF ;
+		NEXT {|| Pnl02(), SetPnl(),.T.} ;
+	// panel 02
+	CREATE PANEL oWizard  ;
+		HEADER  "Assistente para atualização do cadastro de Ativo Fixo" ;
+		MESSAGE "Selecione o arquivo desejado." ;
+		BACK {||.T.} ;
+		NEXT {|| GrdTMP()} ;
+		PANEL
+	// panel 03
+	CREATE PANEL oWizard ;
+		HEADER "Confirmação dos registros desejados" ; 
+		MESSAGE "Verifique se os registros apresentados estão corretos." ;
+		BACK {|| .T.} ;
+		FINISH {|| ProcImp()} ;
+		PANEL
+	
+	oWizard:oDlg:nRight		:= 900 
+	oWizard:oDlg:nHeight	:= 580
+
+	ACTIVATE WIZARD oWizard CENTERED
+	
+	RestArea(aArea)
+
+Return Nil
+
+/*/{Protheus.doc} Pnl02
+	Função para criação do painel 2;
+	painel para seleção do arquivo de importação.
+
+@author franklin.oliveira
+@since 05/10/2016
+
+@type function
+/*/
+Static Function Pnl02()
+
+Local cPathIni := "C:\"
+
+	@ 030, 010 SAY 		"Caminho do Arquivo: "	SIZE 050, 010 PIXEL OF oWizard:oMPanel[2]
+	@ 028, 060 GET 		oGet1 VAR cLocFile 		SIZE 200, 012 PIXEL WHEN .F. OF oWizard:oMPanel[2]
+	@ 028, 262 BUTTON 	"Selecionar Arquivo"	SIZE 050, 014 PIXEL OF oWizard:oMPanel[2] ACTION (cLocFile := ;
+		cGetFile("Arquivo CSV | *.csv","Selecione o arquivo CSV",,cPathIni,.T.,GETF_LOCALFLOPPY + GETF_LOCALHARD + GETF_NETWORKDRIVE ))
+	
+Return Nil
+
+/*/{Protheus.doc} SetPnl
+	função para setar o próximo painel.
+
+@author franklin.oliveira
+@since 05/10/2016
+
+@type function
+/*/
+Static Function SetPnl()
+	oWizard:SetPanel(1)
+Return
+
+/*/{Protheus.doc} GrdTMP
+	Função para criação do painel 3 para visualização
+	dos dados carregados do arquivo.
+
+@author franklin.oliveira
+@since 05/10/2016
+
+@type function
+/*/
+Static Function GrdTMP()
+
+Local lRet 			:= .T.
+Local nX,nY
+Local cLin			:=	""
+Local aCampo		:= {}
+Local aEstrut		:= {}
+Local aTXT			:= {}
+Local aPosCampos	:= {}
+Local cChave		:= ""
+	
+	cAliasTrb 	:= GetNextAlias()
+
+	If Empty(cLocFile)
+		lRet := .F.
+		Aviso("Atenção!", "Nenhum arquivo foi selecionado.", {"Ok"})
+		Return lRet
+	EndIf
+	
+	aEstrut := {	{ "N1_FILIAL", "C", 8, 0 },;
+	{ "N1_CBASE"	, "C", 10, 0 },;
+	{ "N1_ITEM"		, "C", 04, 0 },;
+	{ "N1_DESCRIC"	, "C", 40, 0 },;
+	{ "N1_BITMAP"   , "C", 20, 0 },;
+	{ "N3_TIPO"   	, "C", 02, 0 },;
+	{ "N3_CCUSTO"   , "C", 20, 0 },;
+	{ "N3_SUBCTA"   , "C", 20, 0 },;
+	{ "DESCRICAT"	, "C", 40, 0 },;
+	{ "BITMAPAT"	, "C", 20, 0 },;
+	{ "CCUSTOAT"	, "C", 20, 0 },;
+	{ "SUBCTAAT"	, "C", 20, 0 } }
+		
+	cArqTmp := CriaTrab(aEstrut, .T.)
+	
+	dbUseArea( .T.,, cArqTmp, cAliasTrb, .F., .F. )
+	
+	// Cria Indice Temporario do Arquivo de Trabalho.
+	cChave   := "N1_FILIAL+N1_CBASE+N1_ITEM+N3_TIPO"
+	
+	IndRegua(cAliasTrb,cArqTmp,cChave,,,"Criando Arquivo Temporário...")
+	DbSelectArea(cAliasTrb)
+	DbSetIndex(cArqTmp + OrdBagExt())
+	DbSetOrder(1)
+	
+	// ESTRUTURA DO ARQUIVO TEXTO
+	aAdd(aCampo,"N1_FILIAL")
+	aAdd(aCampo,"N1_CBASE")
+	aAdd(aCampo,"N1_ITEM")
+	aAdd(aCampo,"N1_DESCRIC")
+	aAdd(aCampo,"N1_BITMAP")
+	aAdd(aCampo,"N3_TIPO")
+	aAdd(aCampo,"N3_CCUSTO")
+	aAdd(aCampo,"N3_SUBCTA")
+	
+	//Define o valor do array conforme estrutura
+	aPosCampos:= Array(Len(aCampo))
+	
+	If (nHandle := FT_FUse(AllTrim(cLocFile)))== -1
+		lRet := .F.
+		Help(" ",1,"NOFILEIMPOR")
+		Return lRet
+	EndIf
+	
+	//Verifica Estrutura do Arquivo
+	FT_FGOTOP()
+	cLinha := FT_FREADLN()
+	nPos	:=	0
+	nAt	:=	1
+	
+	While nAt > 0
+		nPos++
+		nAt	:=	AT(";",cLinha)
+		If nAt == 0
+			cCampo := cLinha
+		Else
+			cCampo	:=	Substr(cLinha,1,nAt-1)
+		Endif
+		nPosCpo	:=	Ascan(aCampo,{|x| x==cCampo})
+		If nPosCPO > 0
+			aPosCampos[nPosCpo]:= nPos
+		Endif
+		cLinha	:=	Substr(cLinha,nAt+1)
+	Enddo
+	
+	If (nPosNil:= Ascan(aPosCampos,Nil)) > 0
+		lRet := .F.
+		Aviso("Estrutura de arquivo inválido.","O campo "+aCampo[nPosNil]+" nao foi encontrado na estrutura, verifique.",{"Sair"})
+		Return lRet
+	Endif
+	
+	// Inicia Importacao das Linhas
+	FT_FSKIP()
+	While !FT_FEOF()
+		cLinha := FT_FREADLN()
+		AADD(aTxt,{})
+		nCampo := 1
+		While At(";",cLinha)>0
+			aAdd(aTxt[Len(aTxt)],Substr(cLinha,1,At(";",cLinha)-1))
+			nCampo ++
+			cLinha := StrTran(Substr(cLinha,At(";",cLinha)+1,Len(cLinha)-At(";",cLinha)),'"','')
+		End
+		If Len(AllTrim(cLinha)) > 0
+			aAdd(aTxt[Len(aTxt)],StrTran(Substr(cLinha,1,Len(cLinha)),'"','') )
+		Else
+			aAdd(aTxt[Len(aTxt)],"")
+		Endif
+		FT_FSKIP()
+	End
+	
+	// Gravacao dos Itens (TRB)
+	FT_FUSE()
+	For nX:=1 To Len(aTxt)
+		For nY:=1 To Len(aCampo)
+			dbSelectArea(cAliastrb)
+			RecLock(cAliasTrb,.T.)
+			For nY:=1 To Len(aCampo)
+				FieldPut(FieldPos(aCampo[nY]),aTxt[nX,aPosCampos[nY]])
+			Next
+			MsUnLock()
+		Next
+	Next
+	
+	dbSelectArea(cAliasTrb)
+	dbGotop()
+	
+	//Gravo Valores Atuais dos ativos
+	
+	//Ativo Imobilizado
+	DbSelectArea('SN1')
+	DbSetOrder(1)
+	
+	//Saldos e Valores
+	DbSelectArea('SN3')
+	DbSetOrder(1)
+	
+	//Centro de Custo
+	DbSelectArea("CTT")
+	DbSetOrder(1)
+	
+	//Item Contabil
+	DbSelectArea("CTD")
+	DbSetOrder(1)
+	
+	While !( (cAliasTrb)->(EoF()) )
+		If SN1->( DbSeek((cAliasTrb)->N1_FILIAL + (cAliasTrb)->N1_CBASE + (cAliasTrb)->N1_ITEM) )
+			//Não altero bem baixado
+			If !( Empty(SN1->N1_BAIXA) )
+				Aviso("Bem já baixado.","O Bem " + (cAliasTrb)->N1_FILIAL + "/" + (cAliasTrb)->N1_CBASE + "/" + (cAliasTrb)->N1_ITEM + " encontra-se baixado, verifique.",{"Sair"})
+				lRet := .F.
+				Return lRet
+			EndIf
+			
+			//Não altero bem bloqueado
+			If SN1->N1_STATUS $ '2/3'
+				Aviso("Bem Bloqueado.","O Bem " + (cAliasTrb)->N1_FILIAL + "/" + (cAliasTrb)->N1_CBASE + "/" + (cAliasTrb)->N1_ITEM + " encontra-se bloqueado, verifique.",{"Sair"})
+			  	lRet := .F.
+			  	Return lRet
+			EndIf
+			
+			//Gravo dados na tabela temporária
+			Reclock(cAliasTrb, .F.)
+				FieldPut(FieldPos('DESCRICAT'), SN1->N1_DESCRIC)
+				FieldPut(FieldPos('BITMAPAT'), SN1->N1_BITMAP)
+			MsUnlock()
+		Else
+			lRet := .F.
+			Aviso("Bem não encontrado na tabela SN1.","O Bem " + (cAliasTrb)->N1_FILIAL + "/" + (cAliasTrb)->N1_CBASE + "/" + (cAliasTrb)->N1_ITEM + " não foi encontrado na tabela SN1, verifique.",{"Sair"})
+			Return lRet
+		EndIf
+		
+		If SN3->( DbSeek((cAliasTrb)->N1_FILIAL + (cAliasTrb)->N1_CBASE + (cAliasTrb)->N1_ITEM + (cAliasTrb)->N3_TIPO) )
+			//Valido centro de custo
+			If !( Empty((cAliasTrb)->N3_CCUSTO) ) 
+				If !(CTT->(DbSeek( PadR(SubStr((cAliasTrb)->N1_FILIAL, 1, 4), 8)  + (cAliasTrb)->N3_CCUSTO )))
+					lRet := .F.
+					Aviso("Centro de custo inválido.","O centro de custo " + (cAliasTrb)->N3_CCUSTO + " não foi encontrado ou não existe, verifique.",{"Sair"})
+					Return lRet
+				ElseIf CTT->CTT_CLASSE != "2" //Centro de custo sintético
+					lRet := .F.
+					Aviso("Centro de custo inválido.","O centro de custo " + (cAliasTrb)->N3_CCUSTO + " é um centro de custo sintético, verifique.",{"Sair"})
+					Return lRet
+				ElseIf CTT->CTT_BLOQ == "1" //Centro de custo bloqueado
+					lRet := .F.
+					Aviso("Centro de custo inválido.","O centro de custo " + (cAliasTrb)->N3_CCUSTO + " encontra-se bloqueado, verifique.",{"Sair"})
+					Return lRet
+				ElseIf (!Empty(CTT->CTT_DTBLIN) .And. CTT->CTT_DTBLIN >= dDataBase) .Or. (!Empty(CTT->CTT_DTBLFI) .And. CTT->CTT_DTBLFI <= dDataBase) //Data de bloqueio
+					lRet := .F.
+					Aviso("Centro de custo inválido.","O centro de custo " + (cAliasTrb)->N3_CCUSTO + " encontra-se no período de bloqueio, verifique.",{"Sair"})
+					Return lRet
+				ElseIf (!Empty(CTT->CTT_DTEXIS) .And. CTT->CTT_DTEXIS > dDataBase) .Or. (!Empty(CTT->CTT_DTEXSF) .And. CTT->CTT_DTEXSF < dDataBase) //Data de existência
+					lRet := .F.
+					Aviso("Centro de custo inválido.","O centro de custo " + (cAliasTrb)->N3_CCUSTO + " encontra-se fora do período de existência, verifique.",{"Sair"})
+					Return lRet
+				EndIf
+			EndIf
+			//Valido item contábil
+			If !( Empty((cAliasTrb)->N3_SUBCTA) )
+				If !(CTD->(DbSeek( PadR(SubStr((cAliasTrb)->N1_FILIAL, 1, 4), 8) + (cAliasTrb)->N3_SUBCTA )))
+					lRet := .F.
+					Aviso("Item contábil inválido.","O item contábil " + (cAliasTrb)->N3_SUBCTA + " não foi encontrado ou não existe, verifique.",{"Sair"})
+					Return lRet
+				ElseIf CTD->CTD_CLASSE != "2" //Item Sintético
+					lRet := .F.
+					Aviso("Item contábil inválido.","O item contábil " + (cAliasTrb)->N3_SUBCTA + " é um centro de custo sintético, verifique.",{"Sair"})
+					Return lRet
+				ElseIf CTD->CTD_BLOQ == "1" //Item bloqueado
+					lRet := .F.
+					Aviso("Item contábil inválido.","O item contábil " + (cAliasTrb)->N3_SUBCTA + " encontra-se bloqueado, verifique.",{"Sair"})
+					Return lRet
+				ElseIf (!Empty(CTD->CTD_DTBLIN) .And. CTD->CTD_DTBLIN >= dDataBase) .Or. (!Empty(CTD->CTD_DTBLFI) .And. CTD->CTD_DTBLFI <= dDataBase) //Data de bloqueio
+					lRet := .F.
+					Aviso("Item contábil inválido.","O item contábil " + (cAliasTrb)->N3_SUBCTA + " encontra-se no período de bloqueio, verifique.",{"Sair"})
+					Return lRet
+				ElseIf (!Empty(CTD->CTD_DTEXIS) .And. CTD->CTD_DTEXIS > dDataBase) .Or. (!Empty(CTD->CTD_DTEXSF) .And. CTD->CTD_DTEXSF < dDataBase) //Data de existência
+					lRet := .F.
+					Aviso("Item contábil inválido.","O item contábil " + (cAliasTrb)->N3_SUBCTA + " encontra-se fora do período de existência, verifique.",{"Sair"})
+					Return lRet
+				EndIf
+			EndIf
+						
+			If lRet
+				Reclock(cAliasTrb, .F.)
+					FieldPut(FieldPos('CCUSTOAT'), SN3->N3_CCUSTO)
+					FieldPut(FieldPos('SUBCTAAT'), SN3->N3_SUBCTA)
+				MsUnlock()
+			EndIf
+		Else
+			lRet := .F.
+			Aviso("Bem não encontrado na tabela SN3.","O Bem " + (cAliasTrb)->N1_FILIAL + "/" + (cAliasTrb)->N1_CBASE + "/" ;
+					+ (cAliasTrb)->N1_ITEM + "/" + (cAliasTrb)->N3_TIPO + " não foi encontrado na tabela SN3, verifique.", {"Sair"})
+			Return lRet
+		EndIf
+		
+		(cAliasTrb)->( DbSkip() )
+	EndDo
+	
+	(cAliasTrb)->( dbGotop() )
+	
+	If ValType(oBrowse) = "O"
+		oBrowse:FreeChildren()
+		FreeObj(oBrowse)
+	EndIf
+	
+	oBrowse := NIL
+	
+	//oBrowse := MsSelBr():New( 005,001,445,190,,,,oWizard:oMPanel[3],,,,,,,,,,,,.F.,'',.T.,,.F.,,, )
+	oBrowse := TCBrowse():New( 005 , 001, 445, 190,,,, oWizard:oMPanel[3],,,,,,,,,,,,.F.,,.T.,,.F.,,, )
+	
+	oBrowse:cAlias := cAliasTrb
+
+	oBrowse:bLDblClick := {|| _aLinhas[oBrowse:nAT,1] := !_aLinhas[oBrowse:nAT,1] }
+	
+	oBrowse:bHeaderClick := {|o, nCol| fOrdena(nCol) }
+	
+	oBrowse:AddColumn(TCColumn():New('Filial'				,{|| (cAliasTrb)->N1_FILIAL		},,,,'LEFT',,.F.,.F.,,,,.F.,))    
+	oBrowse:AddColumn(TCColumn():New('Cod. Do Bem'			,{|| (cAliasTrb)->N1_CBASE		},,,,'LEFT',,.F.,.F.,,,,.F.,))
+	oBrowse:AddColumn(TCColumn():New('Item'					,{|| (cAliasTrb)->N1_ITEM		},,,,'LEFT',,.F.,.F.,,,,.F.,))
+	oBrowse:AddColumn(TCColumn():New('Tipo'					,{|| (cAliasTrb)->N3_TIPO		},,,,'LEFT',,.F.,.F.,,,,.F.,))    
+	oBrowse:AddColumn(TCColumn():New('Descrição Atual'		,{|| (cAliasTrb)->DESCRICAT		},,,,'LEFT',,.F.,.F.,,,,.F.,))
+	oBrowse:AddColumn(TCColumn():New('Descrição Nova'		,{|| (cAliasTrb)->N1_DESCRIC	},,,,'LEFT',,.F.,.F.,,,,.F.,))
+	oBrowse:AddColumn(TCColumn():New('Foto Do Bem Atual'	,{|| (cAliasTrb)->BITMAPAT		},,,,'LEFT',,.F.,.F.,,,,.F.,))
+	oBrowse:AddColumn(TCColumn():New('Foto Do Bem Nova'		,{|| (cAliasTrb)->N1_BITMAP		},,,,'LEFT',,.F.,.F.,,,,.F.,))
+	oBrowse:AddColumn(TCColumn():New('CC Despesa Atual'		,{|| (cAliasTrb)->CCUSTOAT		},,,,'LEFT',,.F.,.F.,,,,.F.,))
+	oBrowse:AddColumn(TCColumn():New('CC Despesa Novo'		,{|| (cAliasTrb)->N3_CCUSTO		},,,,'LEFT',,.F.,.F.,,,,.F.,))
+	oBrowse:AddColumn(TCColumn():New('Item Despesa Atual'	,{|| (cAliasTrb)->SUBCTAAT		},,,,'LEFT',,.F.,.F.,,,,.F.,))
+	oBrowse:AddColumn(TCColumn():New('Item Despesa Novo'	,{|| (cAliasTrb)->N3_SUBCTA		},,,,'LEFT',,.F.,.F.,,,,.F.,))
+		
+Return lRet
+
+
+/*/{Protheus.doc} ProcImp
+	Função para execução da importação.
+
+@author franklin.oliveira
+@since 05/10/2016
+
+@type function
+/*/
+Static Function ProcImp()
+
+Local lRet := .T.
+
+	Processa( {|| fAtuSN1() }, "Aguarde...", "Realizando importação", .F.)
+	
+	If Select(cAliasTrb) != 0
+		dbSelectArea(cAliasTrb)
+		dbCloseArea()
+		FErase(cArqTmp+GetDBExtension())
+		FErase(cArqTmp+OrdBagExt())
+	EndIf
+	
+	Aviso("Importação de CSV","Processo finalizado.",{"OK"})
+
+Return lRet
+
+/*/{Protheus.doc} fAtuSN1
+	Função para atualizar SN1 conforme arquivo carregado anteriormente.
+
+@author franklin.oliveira
+@since 05/10/2016
+
+@type function
+/*/
+Static Function fAtuSN1()
+
+Local aCab		:= {}
+Local aItem		:= {}
+Local aItens 	:= {}
+Local cFilAtu  	:= cFilAnt
+Local nTotRegs 	:= 0
+Local lRet		:= .T.
+
+	dbEval( {|x| nTotRegs++ }, , {|| (cAliasTrb)->( !EoF() )})
+	ProcRegua(nTotRegs)
+	
+	DbSelectArea(cAliasTrb)
+	(cAliasTrb)->( DbGotop() )
+	
+	While .Not. (cAliasTrb)-> ( EoF() )
+		IncProc("Atualizando o registro: " + (cAliasTrb)->N1_FILIAL + "/" + (cAliasTrb)->N1_CBASE + "/" + (cAliasTrb)->N1_ITEM)
+		
+		cFilAnt := (cAliasTrb)->N1_FILIAL
+		
+		//Ativo Imobilizado
+		DbSelectArea('SN1')
+		DbSetOrder(1)
+		
+		//Saldos e Valores
+		DbSelectArea('SN3')
+		DbSetOrder(1)
+		
+		Begin Transaction
+			If !( Empty((cAliasTrb)->N1_DESCRIC) ) .Or. !( Empty((cAliasTrb)->N1_BITMAP) )
+				If SN1->( DbSeek((cAliasTrb)->N1_FILIAL + (cAliasTrb)->N1_CBASE + (cAliasTrb)->N1_ITEM) )
+					//Atualizo a Descrição
+					If !( Empty((cAliasTrb)->N1_DESCRIC) )
+						Reclock('SN1', .F.)
+							FieldPut(FieldPos('N1_DESCRIC'), (cAliasTrb)->N1_DESCRIC)
+						MsUnlock()
+					EndIf
+					
+					//Atualizo o código da imagem
+					If !( Empty((cAliasTrb)->N1_BITMAP) )
+						Reclock('SN1', .F.)
+							FieldPut(FieldPos('N1_BITMAP'), (cAliasTrb)->N1_BITMAP)
+						MsUnlock()
+					EndIf
+				EndIf
+			EndIf
+			
+			If !( Empty((cAliasTrb)->N3_CCUSTO) ) .Or. !( Empty((cAliasTrb)->N3_SUBCTA) )
+				If SN3->( DbSeek((cAliasTrb)->N1_FILIAL + (cAliasTrb)->N1_CBASE + (cAliasTrb)->N1_ITEM + (cAliasTrb)->N3_TIPO) )
+					//Atualizo a Descrição na SN3
+					If !( Empty((cAliasTrb)->N1_DESCRIC) )
+						Reclock('SN3', .F.)
+							FieldPut(FieldPos('N3_HISTOR'), (cAliasTrb)->N1_DESCRIC)
+						MsUnlock()
+					EndIf
+					
+					//Atualizo o Centro de Custo
+					If !( Empty((cAliasTrb)->N3_CCUSTO) )
+						Reclock('SN3', .F.)
+							FieldPut(FieldPos('N3_CCUSTO'), (cAliasTrb)->N3_CCUSTO)
+						MsUnlock()
+					EndIf
+					
+					//Atualizo o Item contábil
+					If !( Empty((cAliasTrb)->N3_SUBCTA) )
+						Reclock('SN3', .F.)
+							FieldPut(FieldPos('N3_SUBCTA'), (cAliasTrb)->N3_SUBCTA)
+						MsUnlock()
+					EndIf
+				EndIf
+			EndIf
+		End Transaction
+		
+		(cAliasTrb)->( DbSkip() )
+	EndDo
+	
+	cFilAnt := cFilAtu
+
+Return lRet 

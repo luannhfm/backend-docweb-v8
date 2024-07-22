@@ -1,0 +1,170 @@
+#Include 'Protheus.ch'
+#Include 'RWMake.ch'
+
+/*/{Protheus.doc} PSWDATE
+@description Valida a digitação da data-base.
+@description O ponto de entrada receberá como parâmetro (PARAMIXB) um vetor com a data digitada e o ID do usuário logado e deverá 
+@description ter retorno lógico para validar a digitação.
+@description Utilizado para definir um total menor de dias para determinados usuários pertencentes ao grupo.
+@type  Function
+@author Alan Teles de Oliveira
+@since 15/11/2018
+@version 11.8
+@return lRet, logico, verdadeiro se o usuário estiver permitido a alterar a data base. 
+@see http://tdn.totvs.com/pages/releaseview.action?pageId=6815183
+@history 24/07/2019, Franklin de Brito de Oliveira, alterado o calculo da diferença de dias.
+/*/
+User Function PSWDATE()
+
+    Local aArea         := GetArea()
+    Local dDtDigitada   := ParamIXB[1]
+    Local cUsrValid     := ParamIXB[2]        
+    Local cModAtu       := ''
+    Local nDiasDif      := 0
+    Local lPSW          := .F.
+    Local lRet          := .T.
+
+    If Type('_cModAtu') == 'U'
+        Public _cModAtu := ''
+    EndIf
+
+    If __ReadVar != 'dDataBase' .and. dDtDigitada != Date() 
+		
+        If (lPSW := fMVPar())
+
+            If Type('oParam') == 'O' .and. Type('oParam:cAmb') == 'C'
+                cModAtu := oParam:cAmb
+            Else
+                cModAtu := _cModAtu
+            EndIf
+
+            //nDiasDif := (Date() - dDtDigitada)
+            nDiasDif := fCalcDif( dDtDigitada )
+
+            If .not. (((cModAtu == '06' .Or. cModAtu == '97') .and. nDiasDif <= 3) .or. fSQL(cUsrValid, cModAtu, nDiasDif))
+                
+                MsgInfo('O Usuário não pode alterar a data base para o modulo atual.', 'PSWDATE')
+
+                lRet := .F.
+
+            EndIf
+
+        EndIf
+
+    EndIf
+
+    RestArea(aArea)
+
+Return lRet
+
+
+/*/{Protheus.doc} fSQL
+@description Consulta regra de acesso ao modulo
+@type function
+@author alan.oliveira
+@since 15/11/2018
+@version 11.8
+@return lRet, logico, verdadeiro caso tenha privilégios
+@param p_cUser, characters, código do usuário
+@param p_cModulo, characters, código do modulo
+@param p_nDiasDif, numeric, total de dias informado pelo usuário
+/*/
+Static Function fSQL(p_cUser, p_cModulo, p_nDiasDif)
+  
+    Local cAliTMP := GetNextAlias()
+    Local lRet := .F.
+
+	If Select(cAliTMP) > 0
+		(cAliTMP)->(DbCloseArea())
+	EndIf
+
+	BeginSql Alias cAliTMP
+
+        Column ACESSA as Logical
+
+        SELECT 
+            ZUS.ZUS_ACESSA AS ACESSA,
+            ZUS.ZUS_NDIAS AS NDIAS
+        FROM ZUS010 ZUS
+        WHERE
+            ZUS.ZUS_CODUSR = %Exp:p_cUser% AND
+            ZUS.ZUS_CODMOD = %Exp:p_cModulo% AND
+            ZUS.%NotDel%
+
+	EndSql
+
+	//MemoWrite('C:\TEMP\PSWDATE.sql', GetLastQuery()[2])
+
+	dbSelectArea(cAliTMP)
+	(cAliTMP)->(DbGoTop())
+
+	If .not. (cAliTMP)->(Eof()) .and. (cAliTMP)->ACESSA        
+
+        If (cAliTMP)->NDIAS = 0 .or. p_nDiasDif <= (cAliTMP)->NDIAS
+            lRet := .T.
+        EndIf
+
+    EndIf
+	
+	If Select(cAliTMP) > 0
+		(cAliTMP)->(DbCloseArea())
+	EndIf
+
+Return lRet
+
+
+/*/{Protheus.doc} fMVPar
+@description verifica se o parâmetro esta ativo para execução da rotina.
+@type  Static Function
+@author Alan Teles de Oliveira
+@since 15/11/2018
+@version 11.8
+@return lRet, logico, verdadeiro se o parâmetro estiver ativo
+@obs aqui esta sendo utilizado um arquivo ao invés de um parâmetro devido a chamada desse ponto de entrada ocorrer antes 
+@obs da seleção e alguma filial dessa forma inviabilizando a utilização da função getnewpar ou mesmo de um dbseek na SX6.
+/*/
+Static Function fMVPar()
+
+    Local cFile := '\system\MV_STARTPSW.par'
+    Local cTmp := ''
+    Local lRet := .F.
+
+    If File(cFile)
+
+		cStat := Upper(AllTrim(StrTran(StrTran(MemoRead(cFile),Chr(13),''),Chr(10),'')))
+	
+    	If cStat $ ".T.~.F.~T~F~V"
+			lRet := &(cStat)
+		Else
+			lRet := .F.
+		EndIf
+        
+	EndIf
+
+Return lRet
+
+/*/{Protheus.doc} fCalcDif
+Função utilizada para calcular a diferença entre a data atual e a data digitada,
+desconsiderando sábado e domingo
+@author Franklin de Brito de Oliveira
+@since 24/07/2019
+@version 1.0
+@return nDias, Quantidade de dias entre a data atual e a data digitada
+@param p_dDtDig, , data digitada na tela inicial
+@type static function
+/*/
+Static Function fCalcDif( p_dDtDig )
+Local nDias 	:= 0
+Local nDiasDif	:= 0
+Local dDataCal	:= Date()
+
+	If dDataCal > p_dDtDig
+		While dDataCal > p_dDtDig
+			dDataCal -= 1
+			If Dow(dDataCal) > 1 .And. Dow(dDataCal) < 7
+				nDias++
+			EndIf 
+		EndDo
+	EndIf
+
+Return nDias

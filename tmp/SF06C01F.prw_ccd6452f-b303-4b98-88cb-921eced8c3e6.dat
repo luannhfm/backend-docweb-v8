@@ -1,0 +1,248 @@
+#include 'protheus.ch'
+
+/*/{Protheus.doc} SF06C01F
+Browse de consulta dos Titulos x Status do SMS
+@author Franklin Oliveira
+@since 17/03/2020
+@return Nil
+@type User function
+/*/
+User function SF06C01F()
+Local cArqTrb, cIndice1, cIndice2, cIndice3, cTmpZEF
+Local i
+Private oBrowse
+Private aRotina		:= MenuDef()
+Private cCadastro 	:= "Titulos x Status do SMS"
+Private aCampos	:= {}, aSeek := {}, aDados := {}, aValores := {}, aFieFilter := {}
+	//Array contendo os campos da tabela temporária
+	AAdd(aCampos,{"ZEF_STSSMS", "C" , 01 , 0})
+	AAdd(aCampos,{"ZEF_FILIAL", "C" , 08 , 0})
+	AAdd(aCampos,{"ZEF_PREFIX", "C" , 03 , 0})
+	AAdd(aCampos,{"ZEF_NUM   ", "C" , 09 , 0})
+	AAdd(aCampos,{"ZEF_PARCEL", "C" , 03 , 0})
+	AAdd(aCampos,{"ZEF_TIPO  ", "C" , 03 , 0})
+	AAdd(aCampos,{"E1_VENCREA", "D" , 08 , 0})
+	AAdd(aCampos,{"ZEF_CLIENT", "C" , 09 , 0})
+	AAdd(aCampos,{"ZEF_LOJA  ", "C" , 04 , 0})
+	AAdd(aCampos,{"ZEF_DTENSM", "D" , 08 , 0})
+	AAdd(aCampos,{"ZEF_CELSMS", "C" , 11 , 0, })
+	AAdd(aCampos,{"ZEFRECNO"  , "N" , 09 , 0})	
+	//Antes de criar a tabela, verificar se a mesma já foi aberta
+	If (Select("TRB") <> 0)
+		dbSelectArea("TRB")
+		TRB->(dbCloseArea ())
+	Endif
+	//Criar tabela temporária
+	cArqTrb   := CriaTrab(aCampos,.T.)
+	//Definir indices da tabela
+	cIndice1 := Alltrim(CriaTrab(,.F.))
+	cIndice1 := Left(cIndice1,5)+Right(cIndice1,2)+"A"
+	If File(cIndice1+OrdBagExt())
+		FErase(cIndice1+OrdBagExt())
+	EndIf	
+	//Criar e abrir a tabela
+	dbUseArea(.T.,,cArqTrb,"TRB",Nil,.F.)
+	//Criar indice
+	IndRegua("TRB", cIndice1, "ZEF_FILIAL+ZEF_PREFIX+ZEF_NUM+ZEF_PARCEL+ZEF_TIPO",,, "Prefixo+No. Titulo+Parcela+Tipo")
+	dbClearIndex()
+	dbSetIndex(cIndice1+OrdBagExt())
+	//popular a tabela
+	cTmpZEF := GetNextAlias()
+	BeginSql Alias cTmpZEF
+		column ZEF_DTENSM as Date
+		column E1_VENCREA as Date
+		SELECT 
+			ZEF.ZEF_STSSMS,
+			ZEF.ZEF_FILIAL,
+			ZEF.ZEF_PREFIX,
+			ZEF.ZEF_NUM,
+			ZEF.ZEF_PARCEL,
+			ZEF.ZEF_TIPO,
+			SE1.E1_VENCREA,
+			ZEF.ZEF_CLIENT,
+			ZEF.ZEF_LOJA,
+			ZEF.ZEF_DTENSM,
+			ZEF.ZEF_CELSMS,
+			ZEF.R_E_C_N_O_ ZEFRECNO
+		FROM %Table:ZEF% ZEF
+		INNER JOIN %Table:SE1% SE1 ON
+			SE1.%NotDel%
+			AND SE1.E1_FILIAL = ZEF.ZEF_FILIAL
+			AND SE1.E1_PREFIXO =ZEF.ZEF_PREFIX
+			AND SE1.E1_NUM = ZEF.ZEF_NUM
+			AND SE1.E1_PARCELA = ZEF.ZEF_PARCEL
+			AND SE1.E1_TIPO = ZEF.ZEF_TIPO
+		WHERE
+			ZEF.%NotDel%
+			AND ZEF.ZEF_DTENSM <> " "
+			AND ZEF.ZEF_IDENSM <> 0
+			AND ZEF.ZEF_STSSMS <> " "
+	EndSql
+	If !(cTmpZEF)->( EoF() )
+		While !(cTmpZEF)->( EoF() )
+			If RecLock("TRB",.t.)
+				TRB->ZEF_STSSMS	:= (cTmpZEF)->ZEF_STSSMS
+				TRB->ZEF_FILIAL	:= (cTmpZEF)->ZEF_FILIAL
+				TRB->ZEF_PREFIX := (cTmpZEF)->ZEF_PREFIX
+				TRB->ZEF_NUM 	:= (cTmpZEF)->ZEF_NUM
+				TRB->ZEF_PARCEL	:= (cTmpZEF)->ZEF_PARCEL
+				TRB->ZEF_TIPO	:= (cTmpZEF)->ZEF_TIPO
+				TRB->E1_VENCREA	:= (cTmpZEF)->E1_VENCREA
+				TRB->ZEF_CLIENT := (cTmpZEF)->ZEF_CLIENT
+				TRB->ZEF_LOJA	:= (cTmpZEF)->ZEF_LOJA
+				TRB->ZEF_DTENSM := (cTmpZEF)->ZEF_DTENSM
+				TRB->ZEF_CELSMS := (cTmpZEF)->ZEF_CELSMS
+				TRB->ZEFRECNO := (cTmpZEF)->ZEFRECNO
+				MsUnLock()
+			EndIf
+			(cTmpZEF)->( DbSkip() )
+		EndDo
+	EndIf
+	(cTmpZEF)->( DbCloseArea() )
+	dbSelectArea("TRB")
+	TRB->(DbGoTop())
+	//Campos que irão compor o combo de pesquisa na tela principal
+	Aadd(aSeek,{"Filial", {{"", "C",08, 0, "ZEF_FILIAL", "@!"}}, 1, .T. } )
+	Aadd(aSeek,{"Prefixo", {{"", "C", 03, 0, "ZEF_PREFIX", "@!"}}, 1, .T. } )
+	Aadd(aSeek,{"No. Titulo", {{"", "C", 09, 0, "ZEF_NUM", "@!"}}, 1, .T. } )
+	Aadd(aSeek,{"Parcela", {{"", "C", 03, 0, "ZEF_PARCEL", "@!"}}, 1, .T. } )
+	Aadd(aSeek,{"Tipo", {{"", "C", 03, 0, "ZEF_TIPO", "@!"}}, 1, .T. } )
+	//Campos que irão compor a tela de filtro
+	Aadd(aFieFilter,{"ZEF_FILIAL", "Filial", "C", 08, 0,"@!"})
+	Aadd(aFieFilter,{"ZEF_PREFIX", "Prefixo", "C", 03, 0,"@!"})
+	Aadd(aFieFilter,{"ZEF_NUM", "No. Titulo", "C", 09, 0,"@!"})
+	Aadd(aFieFilter,{"ZEF_PARCEL", "Parcela", "C", 03, 0,"@!"})
+	Aadd(aFieFilter,{"ZEF_TIPO", "Tipo", "C", 03, 0,"@!"})
+	Aadd(aFieFilter,{"ZEF_DTENSM", "Dt. Env. SMS", "D", 08, 0,"@!"})
+	Aadd(aFieFilter,{"ZEF_IDENSM", "ID Env. SMS ", "N", 09, 0,"@E 999,999,999"})
+	Aadd(aFieFilter,{"ZEF_STSSMS", "Sts Env SMS ", "C", 01, 0,"@!"})
+	oBrowse := FWmBrowse():New()
+	oBrowse:SetAlias( "TRB" )
+	oBrowse:SetDescription( cCadastro )
+	oBrowse:SetSeek(.T.,aSeek)
+	oBrowse:SetTemporary(.T.)
+	oBrowse:SetLocate()
+	oBrowse:SetUseFilter(.T.)
+	oBrowse:SetDBFFilter(.T.)
+	oBrowse:SetFilterDefault( "" ) //Exemplo de como inserir um filtro padrão >>> "TR_ST == 'A'"
+	oBrowse:SetFieldFilter(aFieFilter)
+	oBrowse:DisableDetails()
+	//Legenda da grade, é obrigatório carregar antes de montar as colunas
+	oBrowse:AddLegend("ZEF_STSSMS=='0'","HGREEN", "Aguardando")
+	oBrowse:AddLegend("ZEF_STSSMS=='1'","WHITE", "Enviado")
+	oBrowse:AddLegend("ZEF_STSSMS=='2'","GREEN", "Entregue")
+	oBrowse:AddLegend("ZEF_STSSMS=='3'","GRAY", "Não Suportada")
+	oBrowse:AddLegend("ZEF_STSSMS=='4'","BLACK", "Não Entregavel")
+	oBrowse:AddLegend("ZEF_STSSMS=='5'","BROWN", "Recebida")
+	oBrowse:AddLegend("ZEF_STSSMS=='6'","BLUE", "Resposta")
+	oBrowse:AddLegend("ZEF_STSSMS=='7'","RED", "Recusada")
+	oBrowse:AddLegend("ZEF_STSSMS=='8'","YELLOW", "Falha Operadora")
+	//Detalhes das colunas que serão exibidas
+	oBrowse:SetColumns(MontaColunas("ZEF_FILIAL", "Filial      ", 02, "@!", 1, 008, 0))
+	oBrowse:SetColumns(MontaColunas("ZEF_PREFIX", "Prefixo"	 	, 03, "@!", 1, 003, 0))
+	oBrowse:SetColumns(MontaColunas("ZEF_NUM"	, "No. Titulo"	, 04, "@!", 1, 009, 0))
+	oBrowse:SetColumns(MontaColunas("ZEF_PARCEL", "Parcela     ", 05, "@!", 1, 003, 0))
+	oBrowse:SetColumns(MontaColunas("ZEF_TIPO"	, "Tipo        ", 06, "@!", 1, 003, 0))
+	oBrowse:SetColumns(MontaColunas("E1_VENCREA", "Vencim. Real", 07, "@!", 1, 008, 0))
+	oBrowse:SetColumns(MontaColunas("ZEF_CLIENT", "Cliente     ", 08, "@!", 1, 009, 0))
+	oBrowse:SetColumns(MontaColunas("ZEF_LOJA  ", "Loja        ", 09, "@!", 1, 004, 0))
+	oBrowse:SetColumns(MontaColunas("ZEF_DTENSM", "Dt. Env. SMS", 10, "@!", 1, 008, 0))
+	oBrowse:SetColumns(MontaColunas("ZEF_CELSMS", "Cel. Env. SMS", 11, "@R (99) 9.9999-9999", 1, 011, 0))	
+	oBrowse:Activate()
+	If !Empty(cArqTrb)
+		Ferase(cArqTrb+GetDBExtension())
+		Ferase(cArqTrb+OrdBagExt())
+		cArqTrb := ""
+		TRB->(DbCloseArea())
+		delTabTmp('TRB')
+    	dbClearAll()
+	Endif
+Return Nil
+
+Static Function MontaColunas(cCampo,cTitulo,nArrData,cPicture,nAlign,nSize,nDecimal)
+Local aColumn
+Local bData 	:= {||}
+Default nAlign 	:= 1
+Default nSize 	:= 20
+Default nDecimal:= 0
+Default nArrData:= 0
+
+	If nArrData > 0
+		bData := &("{||" + cCampo +"}") //&("{||oBrowse:DataArray[oBrowse:At(),"+STR(nArrData)+"]}")
+	EndIf
+	
+	/* Array da coluna
+	[n][01] Título da coluna
+	[n][02] Code-Block de carga dos dados
+	[n][03] Tipo de dados
+	[n][04] Máscara
+	[n][05] Alinhamento (0=Centralizado, 1=Esquerda ou 2=Direita)
+	[n][06] Tamanho
+	[n][07] Decimal
+	[n][08] Indica se permite a edição
+	[n][09] Code-Block de validação da coluna após a edição
+	[n][10] Indica se exibe imagem
+	[n][11] Code-Block de execução do duplo clique
+	[n][12] Variável a ser utilizada na edição (ReadVar)
+	[n][13] Code-Block de execução do clique no header
+	[n][14] Indica se a coluna está deletada
+	[n][15] Indica se a coluna será exibida nos detalhes do Browse
+	[n][16] Opções de carga dos dados (Ex: 1=Sim, 2=Não)
+	*/
+	aColumn := {cTitulo,bData,,cPicture,nAlign,nSize,nDecimal,.F.,{||.T.},.F.,{||.T.},NIL,{||.T.},.F.,.F.,{}}
+Return {aColumn}
+
+Static Function MenuDef()
+Local aArea		:= GetArea()
+Local aRotina 	:= {}
+	
+	//aAdd(aRotina, {"Atualizar Status", "PesqBrw", 0, 4, 0, .T. })
+	aAdd(aRotina, {"Atualizar Status", "U_CNSTSSMS(TRB->ZEFRECNO)", 0, 4})
+	
+Return( aRotina )
+
+User Function CNSTSSMS(nRecno)
+Local aArea		:= GetArea()
+Local cURL		:= SuperGetMV("MV_SMSURLR",,"http://ww2.iagentesms.com.br/webservices/http.php?metodo=consulta" )
+Local cUsuario	:= SuperGetMV("MV_SMSUSER",,"guilherme.castro@sfiemt.ind.br" )
+Local cSmsPsw	:= SuperGetMV("MV_SMSSENH",,"Abcd@1234" )
+Local cStatus	:= ""
+
+	DbSelectArea("ZEF")
+	ZEF->( DbGoTo(nRecno) )
+	cURL := cURL + "&usuario=" + Escape( AllTrim(cUsuario) ) + "&senha=" + Escape( AllTrim(cSmsPsw) )
+	cURL := cURL + "&codigosms=" + Escape( AllTrim(Str(ZEF->ZEF_IDENSM)) )
+	cStatus := HTTPGet( EncodeUTF8(cURL) )
+	
+	MsgInfo('Status da mensagem: ' + cStatus, 'Atualizar Status')
+	
+	Do Case
+		Case Upper(cStatus) == "AGUARDANDO"
+			cStatus := "0"
+		Case Upper(cStatus) == "ENVIADO"
+			cStatus := "1"
+		Case Upper(cStatus) == "ENTREGUE"
+			cStatus := "2"
+		Case Upper(cStatus) == "NAO SUPORTADA"
+			cStatus := "3"
+		Case Upper(cStatus) == "NAO ENTREGAVEL"
+			cStatus := "4"
+		Case Upper(cStatus) == "RECEBIDA"
+			cStatus := "5"
+		Case Upper(cStatus) == "RESPOSTA"
+			cStatus := "6"
+		Case Upper(cStatus) == "RECUSADA"
+			cStatus := "7"
+		Case Upper(cStatus) == "FALHA OPERADORA"
+			cStatus := "8"
+		OtherWise
+			cStatus := ""
+	EndCase
+	If cStatus <> ""
+		RecLock("ZEF", .F.)
+			ZEF->ZEF_STSSMS = cStatus
+		MsUnlock()
+	EndIf
+	oBrowse:Refresh()
+	RestArea(aArea)
+Return Nil

@@ -1,0 +1,122 @@
+#Include 'Protheus.ch'
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} MT240TOK
+
+@author Walmir Junior
+
+@since	02.03.2016
+@Obs:
+	Validações do Estoque de Vacinas. Movimentação Interna Simples.
+
+---------------------------------------------------------------------
+Programador		Data		Motivo
+---------------------------------------------------------------------
+/*/
+User Function MT240TOK()
+Local _lRet 	:= .T.
+Local _aAreaSB1 := SB1->(GetArea())
+Local _aAreaSF5	:= SF5->(GetArea())
+Local _cTxMsOb	:= "Para produtos do tipo imunização, é obrigatório informar o contrato, utilize a função F3 do campo 'Fil Contrato'."
+Local _cTxMVX	:= "Não é possivel continuar a validação sem informar o parâmetro 'MV_XEVAFIL'."
+Local _cTxJus	:= "Esse é um tipo de movimento exclusivo para controle de vacinas é obrigatório informar a justificativa de perda."
+Local _cTxMsCl	:= "Para produtos do tipo imunização, é obrigatório informar o cliente do contrato."
+//Walmir Junior 29/03/2016 Não Validar Lote. 
+//Local _cTxObLt	:= "Para produtos do tipo imunização, é obrigatório informar o lote."
+Local _cFil		:= SubStr(xFilial("SD3"),1,4)
+Local _cValFi	:= GetMV("MV_XEVAFIL")
+Local _cTMPer	:= GetMV("MV_XTMPERD")
+Local _cB1COD	:= M->D3_COD
+Local _nSld		:= 0
+Local _lIM		:= .F.
+
+Private _cTpMRq	:= ""
+Private _cTxMsSl	:= "Não existe saldo de saída para esse contrato, ou a quantidade é inferior a quantidade informada na devolução."
+
+If Empty(_cValFi)
+	Aviso("[MT240TOK] Atenção", _cTxMVX, {"Ok"})
+	Return .F.
+EndIf
+
+If M->D3_TM == _cTMPer .And. Empty(M->D3_XJUSPER)
+	Aviso("[MT240TOK] Atenção", _cTxJus, {"Ok"})
+	Return .F.
+EndIf
+
+DBSelectArea("SF5")
+DBSetOrder(1)
+DBGoTop()
+While SF5->(!Eof())
+	If SF5->F5_TIPO == "R"
+		_cTpMRq := _cTpMRq + SF5->F5_CODIGO
+	EndIf
+	SF5->(DbSkip())
+EndDo
+
+//A validação deve-se aplicar apenas para a unidades do Sesi.
+If !Empty(_cFil) .And. _cFil $ _cValFi .And. !Empty(_cB1COD)
+	DBSelectArea("SB1")
+	DBSetOrder(1)
+	If SB1->(DBSeek(xFilial("SB1")+_cB1COD))
+		//Tipo Imunização do SESI
+		If SB1->B1_TIPO == "IM"
+			_lIM := .T.
+		EndIf
+	EndIf
+ElseIF !(_cFil $ _cValFi)
+	_lRet := .T.
+Else
+	_lRet := .F.
+EndIf
+
+If _lIM .AND. !(M->D3_TM $ '012;505') 
+	//Valida se foi informado o Cliente
+	If Empty(M->D3_XCLIENT)
+		Aviso("[MT240TOK] Atenção", _cTxMsCl, {"Ok"})
+		_lRet := .F.
+	EndIf
+	//Valida se foi informado o Contrato
+	If Empty(M->D3_XFILCN9)
+		Aviso("[MT240TOK] Atenção", _cTxMsOb, {"Ok"})
+		_lRet := .F.
+	ElseIf !(M->D3_TM $ _cTpMRq)
+		_lRet := fValSld(_lRet)				
+	EndIf
+/*	Walmir Junior 29/03/2016 Não Validar Lote
+	If Empty(M->D3_LOTECTL)
+		Aviso("[MT240TOK] Atenção", _cTxObLt, {"Ok"})
+		_lRet := .F.
+	EndIf*/
+EndIf
+
+RestArea(_aAreaSF5)
+RestArea(_aAreaSB1)
+
+/*If _lIM
+	U_SF0212X(M->D3_XFILCN9+M->D3_XNUMCN9+M->D3_XREVCN9)
+EndIf*/
+
+Return _lRet
+
+Static Function fValSld(_lERet)
+Local _lRet 	:= _lERet
+Local _aAreaSF5 := SF5->(GetArea())
+
+If _lRet
+	DBSelectArea("SF5")
+	DBSetOrder(1)
+	If SF5->(DBSeek(xFilial("SF5")+M->D3_TM))
+		If SF5->F5_TIPO = "D"
+			//Verifica o saldo que saiu.
+			_nSld := U_SF0207X("S", M->D3_XFILCN9+M->D3_XNUMCN9+M->D3_XREVCN9, _cTpMRq)
+			If _nSld < M->D3_QUANT
+				Aviso("[MT240TOK] Atenção!", _cTxMsSl, {"Ok"})
+				_lRet := .F.
+			EndIf
+		EndIf
+	EndIf
+EndIf
+
+RestArea(_aAreaSF5)
+
+Return _lRet

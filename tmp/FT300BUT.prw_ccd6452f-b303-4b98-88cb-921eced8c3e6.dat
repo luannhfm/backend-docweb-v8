@@ -1,0 +1,637 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} FT300BUT
+Permite adicionar botões à View da Oportunidade de Vendas (antiga Enchoicebar).
+@type Function
+@author Jose Leite de Barros Neto
+@since 17/05/2016
+@version 11.0
+@param oView, object, Objeto View da Oportunidade de Vendas.
+@return _array, Array com os botões a serem incluídos nas ações relacionadas da view da Oportunidade de Vendas.
+@see http://tdn.totvs.com/pages/releaseview.action?pageId=142813182
+@history 06/04/2018, Franklin B. Oliveira, Compatibilizado com protheus 12.
+@history 01/02/2019, Alan Teles de Oliveira, permitindo acesso do SESI a função Prospect x Cliente.
+@history 21/08/2020, Franklin de Brito de Oliveira, Substituição de uso do campo US_XCODMUN para US_COD_MUN. 
+/*/
+User Function FT300BUT()
+	
+	Local _aArea 	:= GetArea()
+	Local _aUsrBtn 	:= {}
+	
+	aAdd(_aUsrBtn, {"Prosp. x Cliente", "", { || fProCli() }, /*nShortCut*/, ,/*aOperation*/})
+
+	/*	Jose Leite - CSI - 08/11/2016
+		Tratamento para viabilidade compartilhada - somente disponivel para o SENAI DR
+	*/
+	If cFilAnt == '03MT0001'
+		//AAdd( _aUsrBtn, { "ViabXPro", { || u_SN73A02J() 	}, "Viab. x Proposta" } )
+		aAdd(_aUsrBtn, {"Viab. x Proposta", "", { || u_SN73A02J() 	}, /*nShortCut*/, ,/*aOperation*/})
+	EndIf
+	
+	RestArea(_aArea)
+
+Return( _aUsrBtn )
+
+
+/** {Protheus.doc} fProCli
+Funcao para gravar o Prospect como Cliente
+@type function
+@author Jose Leite de Barros Neto
+@since 24/05/2016
+@Uso: SFIEMT
+*/
+Static Function fProCli()
+	
+	Local _cMsg	:= "Prospect x Cliente"
+	Local _lOk	:= .T.
+	Local _cPros	:= M->AD1_PROSPE
+	Local _cLjPr	:= M->AD1_LOJPRO
+	Local _cOpor	:= M->AD1_NROPOR
+	Local _cRvOp	:= M->AD1_REVISA
+	Local _cVend	:= M->AD1_VEND
+	
+	If M->AD1_STATUS == '1'
+		If Empty(M->AD1_CODCLI) .And. Empty(M->AD1_LOJCLI)
+			If MsgNoYes( "Confirma a atualização do Prospect para Cliente?", _cMsg )  
+				
+				Begin Transaction
+				
+					//Grava informacoes do Cliente
+					_lOk := AtuSA1(_cPros,_cLjPr)
+					
+					//Grava informacoes do Prospect
+					If _lOk 
+							
+						_lOk := AtuSUS(_cPros,_cLjPr)
+							
+						If _lOk
+							//Altera os relacionamentos de contatos para a nova entidade
+							AtuAC8(_cPros, _cLjPr)
+							
+							//Altera os relacionamentos de banco de conhecimento para a nova entidade
+							AtuAC9(_cPros, _cLjPr)
+
+							//Grava informacoes da Oportunidade de Vendas
+							AtuAD1(_cPros,_cLjPr,_cOpor,_cRvOp)
+							
+							//Grava informacoes do Apontamento do Contato / Visita
+							AtuAD5(_cPros,_cLjPr,_cOpor)
+								
+							//Grava informacoes da Agenda
+							AtuAD7(_cPros,_cLjPr,_cOpor)
+								
+							//Atualiza carteira de Clientes
+							AtuADL(_cPros,_cLjPr,_cVend)
+							
+							//Atualiza Proposta Comercial - Cabecalho
+							AtuADY(_cPros,_cLjPr,_cOpor,_cRvOp)
+							
+							//Atualiza Orcamento - Cabecalho e Itens
+							AtuSCJ(_cPros,_cLjPr,_cOpor,_cRvOp)
+							
+							//Atualiza Viabilidade de Atendimento
+							AtuZCG(_cPros,_cLjPr)
+							
+						EndIf
+							
+					EndIf
+					
+					If _lOk
+						MsgInfo("Atualização realizada com sucesso.","Info")
+					Else
+						DisarmTransaction()
+						MsgAlert("Atualização não realizada, favor verificar.")
+					EndIf
+					
+				End Transaction
+				
+			EndIf
+		Else
+			MsgInfo("Opção disponível somente para Prospect. Já existe um cliente para essa Oportunidade.","Info")
+		EndIf
+	Else
+		MsgInfo("Opção disponível somente para Propostas em Aberto. Favor verificar Status da Proposta.","Info")
+	EndIf
+	
+Return( Nil )
+
+
+/** {Protheus.doc} AtuSA1
+Funcao para atualizar a tabela de Cliente
+@type function
+@author 	Jose Leite de Barros Neto
+@since 	24/05/2016
+*/
+Static Function AtuSA1(p_cProsp, p_cLjPro)
+	
+	Local _lOk 		:= .T.
+	Local _aArea		:= GetArea()
+	Local _cTipo		:= ""
+	Local 	_cPessoa	:= ""
+	Local 	_cCGC		:= ""
+	Local 	_cCliente	:= ""
+	Local 	_cLoja 	:= ""
+	Local 	_cNome		:= ""
+	Local 	_cNReduz	:= ""
+	Local 	_cEnd		:= ""
+	Local _cCodMun		:= ""
+	Local 	_cMun 		:= ""
+	Local 	_cBairro 	:= ""
+	Local 	_cCep 		:= ""
+	Local 	_cEst		:= ""
+	Local _cEmail	:= ""
+	Local _cClvl		:= ""
+	Local _nOpc		:= 0
+	Local _aCliente	:= {}
+	Local aAI0Auto := {}
+	
+	Private lMsErroAuto := .F.
+	
+	DbSelectArea('SUS')
+	SUS->(DbSetOrder(1)) //US_FILIAL+US_COD+US_LOJA
+	SUS->(DbGotop())
+	If SUS->(DbSeek( xFilial('SUS') + p_cProsp + p_cLjPro ))
+		
+		If Empty(AllTrim(SUS->US_CGC))
+			MsgAlert("Favor informar o CNPJ/CPF no Cadastro do Prospect: " + p_cProsp + ' - ' + p_cLjPro + ' - '+ AllTrim(SUS->US_NOME))
+			_lOk := .F.
+		Else
+			
+			_cTipo		:= PADR(AllTrim(SUS->US_TIPO),TamSX3('A1_TIPO')[1],Space(TamSX3('A1_TIPO')[1]))
+			_cPessoa	:= If(Len(Trim(SUS->US_CGC))<14,'F','J')
+			_cCGC		:= PADR(AllTrim(SUS->US_CGC),TamSX3('A1_CGC')[1],Space(TamSX3('A1_CGC')[1]))
+			_cCliente	:= PADR(AllTrim(SUS->US_CGC),TamSX3('A1_COD')[1]-1,Space(TamSX3('A1_COD')[1]-1))
+			_cLoja 		:= PADR(SubStr(SUS->US_CGC,9,4),TamSX3('A1_LOJA')[1],Space(TamSX3('A1_LOJA')[1]))
+			_cNome		:= PADR(AllTrim(SUS->US_NOME),TamSX3('A1_NOME')[1],Space(TamSX3('A1_NOME')[1]))
+			_cNReduz	:= PADR(AllTrim(SUS->US_NREDUZ),TamSX3('A1_NREDUZ')[1],Space(TamSX3('A1_NREDUZ')[1]))
+			_cEnd		:= PADR(AllTrim(SUS->US_END),TamSX3('A1_END')[1],Space(TamSX3('A1_END')[1]))
+			_cCodMun	:= PADR(AllTrim(SUS->US_COD_MUN),TamSX3('A1_COD_MUN')[1],Space(TamSX3('A1_COD_MUN')[1]))
+			_cMun 		:= PADR(AllTrim(SUS->US_MUN),TamSX3('A1_MUN')[1],Space(TamSX3('A1_MUN')[1]))
+			_cBairro 	:= PADR(AllTrim(SUS->US_BAIRRO),TamSX3('US_BAIRRO')[1],Space(TamSX3('US_BAIRRO')[1]))
+			_cCep 		:= PADR(AllTrim(SUS->US_CEP),TamSX3('A1_CEP')[1],Space(TamSX3('A1_CEP')[1]))
+			_cEst		:= PADR(AllTrim(SUS->US_EST),TamSX3('A1_EST')[1],Space(TamSX3('A1_EST')[1]))
+			If _cPessoa == "J"
+				_cClvl := PADR(AllTrim("CJ" + AllTrim(_cCliente)),TamSX3('A1_CLVL')[1],Space(TamSX3('A1_CLVL')[1]))
+			Else
+				_cClvl := PADR(AllTrim("CF" + AllTrim(_cCliente)),TamSX3('A1_CLVL')[1],Space(TamSX3('A1_CLVL')[1]))
+			EndIf
+			_cEmail	:= PADR(AllTrim(SUS->US_EMAIL),TamSX3('A1_EMAIL')[1],Space(TamSX3('A1_EMAIL')[1]))
+			_cContaC	:= PADR('11030101001',TamSX3('A1_CONTA')[1],Space(TamSX3('A1_CONTA')[1]))
+			
+			DbSelectArea("SA1")
+			SA1->(DbSetOrder(3)) //A1_FILIAL + A1_CGC
+			SA1->(DbGotop())
+			If .Not. SA1->(DbSeek(xFilial("SA1") + SUS->US_CGC ))
+				_nOpc := 3
+			Else
+				_nOpc := 4
+				aAdd( _aCliente ,{"A1_FILIAL" , xFilial("SA1") ,Nil}) // filial
+				_cCliente	:= SA1->A1_COD
+				_cLoja 	:= SA1->A1_LOJA
+			EndIf
+			
+			_aCliente := {}
+			
+			aAdd( _aCliente ,{"A1_TIPO"   	, _cTipo 		,Nil}) // Tipo
+			aAdd( _aCliente ,{"A1_PESSOA"  	, _cPessoa		,Nil}) // Pessoa
+			
+			If _nOpc == 3
+				aAdd( _aCliente ,{"A1_CGC"  , _cCGC	  		,Nil}) // CGC
+			elseif _nOpc==4
+				aAdd( _aCliente ,{"A1_COD"		,_cCliente		,Nil}) // Codigo
+				aAdd( _aCliente ,{"A1_LOJA"  	,_cLoja  		,Nil}) // Loja
+			EndIf
+		
+			aAdd( _aCliente ,{"A1_NOME"    	,_cNome 		,Nil}) // Nome
+			aAdd( _aCliente ,{"A1_NREDUZ"  	,_cNReduz		,Nil}) // Nome reduz.
+			aAdd( _aCliente ,{"A1_END"  	,_cEnd			,Nil}) // Endereco
+			aAdd( _aCliente ,{"A1_EST"     	,_cEst			,Nil}) // Estado
+			aAdd( _aCliente ,{"A1_COD_MUN"  ,Posicione("CC2", 1, xFilial("CC2")+_cEst+_cCodMun,"CC2_CODMUN"),Nil}) // Endereco
+			aAdd( _aCliente ,{"A1_MUN"     	,_cMun			,Nil}) // Cidade
+			aAdd( _aCliente ,{"A1_BAIRRO"  	,_cBairro		,Nil}) // Bairro
+			aAdd( _aCliente ,{"A1_CEP"     	,_cCep			,Nil}) // CEP
+			aAdd( _aCliente ,{"A1_EMAIL"   	,_cEmail		,Nil}) // Email
+			aAdd( _aCliente ,{"A1_ENDCOB"  	,_cEnd			,Nil}) // Endereco Cob.
+			aAdd( _aCliente ,{"A1_MUNC"    	,_cMun			,Nil}) // Cidade Cob.
+			aAdd( _aCliente ,{"A1_BAIRROC" 	,_cBairro		,Nil}) // Bairro Cob.
+			aAdd( _aCliente ,{"A1_CEPC"    	,_cCep			,Nil}) // CEP Cob.
+			aAdd( _aCliente ,{"A1_ESTC"    	,_cEst			,Nil}) // Estado Cob.
+			aAdd( _aCliente ,{"A1_CONTA"   ,_cContaC		,Nil}) // Conta Contabil
+			aAdd( _aCliente ,{ "A1_TPESSOA", AllTrim(SUS->US_TPESSOA), Nil } ) //Classificação natureza jurídica
+			aAdd( _aCliente ,{ "A1_XPORTE", AllTrim(SUS->US_XPORTE), Nil } ) //Porte
+			aAdd( _aCliente ,{ "A1_XSITREC", AllTrim(SUS->US_XSITREC), Nil } ) //Situação Cadastral
+			aAdd( _aCliente ,{ "A1_DTNASC", SUS->US_XDATNAS, Nil } ) //Data abertura
+			aAdd( _aCliente ,{ "A1_CNAE", AllTrim(SUS->US_CNAE), Nil } ) //Data abertura
+			aAdd( _aCliente ,{ "A1_XCNAE2", AllTrim(SUS->US_XCNAE2), Nil } ) //CNAE Secundário
+			aAdd( _aCliente ,{ "A1_TEL", AllTrim(SUS->US_TEL), Nil } ) //Numero de telefone
+			aAdd( _aCliente ,{ "A1_COMPLEM", AllTrim(SUS->US_XCOMPLE), Nil } ) //Complemento
+			aAdd( _aCliente ,{ "A1_XREGINT", AllTrim(SUS->US_XREGINT), Nil } ) //Região Intermediária
+			aAdd( _aCliente ,{ "A1_XCAPSOC", SUS->US_XCAPSOC, Nil } ) //Capital Social
+			aAdd( _aCliente ,{ "A1_XQTEMP", SUS->US_XQTEMP, Nil } ) //Quantidade de funcionários
+			aAdd( _aCliente ,{ "A1_XFATEST", AllTrim(SUS->US_XFATEST), Nil } ) //Faturamento Estimado
+			aAdd( _aCliente ,{ "A1_SIMPLES", AllTrim(SUS->US_XSIMPLE), Nil } ) //Simples Nacional
+			aAdd( _aCliente ,{ "A1_XSIASSO", AllTrim(SUS->US_XSIASSO), Nil } ) //Associado Socio Indústria
+			aAdd( _aCliente ,{ "A1_XSICATE", AllTrim(SUS->US_XSICATE), Nil } ) //Categoria Socio Indústria
+			aAdd( _aCliente ,{ "A1_DDD", AllTrim(SUS->US_DDD), Nil } ) //DDD
+			aAdd( _aCliente ,{ "A1_HPAGE", AllTrim(SUS->US_URL), Nil } ) //Home Page
+			aAdd( _aCliente ,{ "A1_XCODSIN", AllTrim(SUS->US_XCODSIN), Nil } ) //Sindicato
+			aAdd( _aCliente ,{ "A1_XDSCSIN", AllTrim(POSICIONE( "ZCA", 1, XFILIAL("ZCA") + SUS->US_XCODSIN, "ZCA_NOME" ) ), Nil } ) //Desc. Sindicato
+			//Complemento de clientes
+		    aAdd(aAI0Auto, {"AI0_SETPUB", IIF(!Empty(SUS->US_SETPUBL), SUS->US_SETPUBL, "2"), Nil})	//1=Sim; 2=Não
+
+			If _nOpc == 3
+				aAdd( _aCliente ,{"A1_MSBLQL"  	,'1'		,Nil}) // Bloqueio de Tela = Sim
+			EndIf
+			
+			lMsErroAuto := .F.
+			
+			MSExecAuto({|x, y| CRMA980(x, y)}, _aCliente, _nOpc, aAI0Auto)
+			
+			If lMsErroAuto
+				MostraErro()
+				_lOk := .F.
+				Return( _lOk )
+			EndIf
+			
+		EndIf
+		
+	EndIf
+	
+	RestArea(_aArea)
+		
+Return( _lOk )
+
+
+/** {Protheus.doc} AtuSUS
+Funcao para atualizar a tabela de Prospect
+@type function
+@author	Jose Leite de Barros Neto
+@since 24/05/2016
+*/
+Static Function AtuSUS(p_cProsp, p_cLjPro)
+	
+	Local _lOk	:= .F.
+	Local _aArea	:= GetArea()
+	
+	DbSelectArea('SUS')
+	SUS->(DbSetOrder(1))
+	SUS->(DbGoTop())
+	If SUS->(DbSeek(xFilial('SUS') + p_cProsp + p_cLjPro ))
+		DbSelectArea("SA1")
+		SA1->(DbSetOrder(3)) //A1_FILIAL+A1_CGC
+		SA1->(DbGotop())
+		If SA1->(DbSeek(xFilial("SA1") + SUS->US_CGC ))
+			If RecLock("SUS",.F.)
+				SUS->US_CODCLI 	:= SA1->A1_COD
+				SUS->US_LOJACLI	:= SA1->A1_LOJA
+				SUS->US_DTCONV	:= dDataBase
+				SUS->US_STATUS	:= '6' //Cliente
+				SUS->(MsUnlock())
+				_lOk := .T.
+			EndIf
+		EndIf
+	EndIf
+	
+	RestArea(_aArea)	
+	
+Return( _lOk )
+
+/*/{Protheus.doc} AtuAC8
+	Altera os relacionamentos de contatos para a nova entidade
+	@type  Function
+	@author Franklin de Brito de Oliveira
+	@since 04/02/2022
+	@param cCodProsp, character, código do prospect
+	@param cLojProsp, character, loja do prospect
+/*/
+Static Function AtuAC8(cCodProsp, cLojProsp)
+	dbSelectArea("AC8")
+	dbSetOrder(2)	//AC8_FILIAL+AC8_ENTIDA+AC8_FILENT+AC8_CODENT+AC8_CODCON
+	while AC8->(dbSeek(xFilial("AC8")+"SUS"+xFilial("SUS")+cCodProsp+cLojProsp))
+		Reclock("AC8",.F.)
+			Replace AC8_FILIAL With xFilial("AC8")
+			Replace AC8_ENTIDA With "SA1"
+			Replace AC8_FILENT With xFilial("SA1")
+			Replace AC8_CODENT With SUS->US_CODCLI+SUS->US_LOJACLI
+		MsUnlock()
+		DbCommit()
+	end	
+Return NIL
+
+/*/{Protheus.doc} AtuAC9
+	Altera os relacionamentos de Banco de Conhecimento para a nova entidade
+	@type  Function
+	@author Franklin de Brito de Oliveira
+	@since 04/02/2022
+	@param cCodProsp, character, código do prospect
+	@param cLojProsp, character, loja do prospect
+/*/
+Static Function AtuAC9(cCodProsp, cLojProsp)
+	DbSelectArea("AC9")
+	DbSetOrder(2) 		//AC9_FILIAL+AC9_ENTIDA+AC9_FILENT+AC9_CODENT+AC9_CODOBJ
+	While AC9->(dbSeek(xFilial("AC9")+"SUS"+xFilial("SUS")+cCodProsp+cLojProsp))
+		Reclock("AC9",.F.)
+			Replace AC9_FILIAL With xFilial("AC9")
+			Replace AC9_ENTIDA With "SA1"
+			Replace AC9_FILENT With xFilial("SA1")
+			Replace AC9_CODENT With SUS->US_CODCLI+SUS->US_LOJACLI
+		MsUnlock()
+		DbCommit()               
+	EndDo
+Return NIL
+
+/** {Protheus.doc} AtuAD1
+Funcao para atualizar a tabela de Oportunidade
+@type function
+@author Jose Leite de Barros Neto
+@since 24/05/2016
+*/
+Static Function AtuAD1(p_cProsp, p_cLjPro, p_cOpor, p_cRevOp)
+
+	Local _aArea	:= GetArea()
+	
+	DbSelectArea('SUS')
+	SUS->(DbSetOrder(1))
+	SUS->(DbGoTop())
+	If SUS->(DbSeek(xFilial('SUS') + p_cProsp + p_cLjPro ))
+		DbSelectArea("AD1")
+		AD1->(DbSetOrder(1)) //AD1_FILIAL+AD1_NROPOR+AD1_REVISA
+		AD1->(DbGotop())
+		If AD1->(DbSeek(xFilial("AD1") + p_cOpor + p_cRevOp ))
+			If RecLock("AD1",.F.)
+				AD1->AD1_PROSPE	:= ""
+				AD1->AD1_LOJPRO	:= ""
+				AD1->AD1_CODCLI	:= SUS->US_CODCLI
+				AD1->AD1_LOJCLI	:= SUS->US_LOJACLI
+				AD1->(MsUnlock())
+			EndIf
+		EndIf
+	EndIf
+	
+	RestArea(_aArea)	
+
+Return
+
+
+/** {Protheus.doc} AtuAD5
+Funcao para atualizar a tabela de Apontamento do Contato / Visita
+@type function
+@author Jose Leite de Barros Neto
+@since 24/05/2016
+*/
+Static Function AtuAD5(p_cProsp, p_cLjPro, p_cOpor)
+	
+	Local _aArea	:= GetArea()
+	
+	DbSelectArea('SUS')
+	SUS->(DbSetOrder(1))
+	SUS->(DbGoTop())
+	If SUS->(DbSeek(xFilial('SUS') + p_cProsp + p_cLjPro ))
+		DbSelectArea('AD5')
+		AD5->(DbSetOrder(2)) //AD5_FILIAL+AD5_NROPOR
+		AD5->(DbGoTop())
+		If AD5->(DbSeek(xFilial('AD5') + p_cOpor))
+			While .Not. AD5->( Eof() ) .And. AD5->AD5_FILIAL == xFilial('AD5') .AND. AD5->AD5_NROPOR == p_cOpor
+				If RecLock("AD5",.F.)
+					AD5->AD5_CODCLI	:= SUS->US_CODCLI
+					AD5->AD5_LOJA 	:= SUS->US_LOJACLI
+					AD5->AD5_PROSPE	:= ''
+					AD5->AD5_LOJPRO	:= ''
+					AD5->(MsUnlock())
+				EndIf
+				AD5->(DbSkip())
+			End
+			
+		EndIf
+	EndIf
+	
+	RestArea(_aArea)
+	
+Return
+
+
+/** {Protheus.doc} AtuAD7
+Funcao para atualizar a tabela de Agenda
+@type function
+@author Jose Leite de Barros Neto
+@since 	24/05/2016
+*/
+Static Function AtuAD7(p_cProsp, p_cLjPro, p_cOpor)
+	
+	Local _aArea	:= GetArea()
+	
+	DbSelectArea('SUS')
+	SUS->(DbSetOrder(1))
+	SUS->(DbGoTop())
+	If SUS->(DbSeek(xFilial('SUS') + p_cProsp + p_cLjPro ))
+		DbSelectArea('AD7')
+		AD7->(DbSetOrder(3)) //AD7_FILIAL + AD7_PROSPE + AD7_LOJPRO
+		AD7->(DbGoTop())
+		If AD7->(DbSeek(xFilial('AD7') + p_cProsp +  p_cLjPro))
+			While .Not. AD7->( Eof() ) .And. AD7->AD7_FILIAL == xFilial('AD7') .And. AD7->AD7_PROSPE == p_cProsp .And. AD7->AD7_LOJPRO == p_cLjPro
+				If AD7->AD7_NROPOR == p_cOpor
+					If RecLock("AD7",.F.)
+						AD7->AD7_CODCLI	:= SUS->US_CODCLI
+						AD7->AD7_LOJA 	:= SUS->US_LOJACLI
+						AD7->AD7_PROSPE	:= ''
+						AD7->AD7_LOJPRO	:= ''
+						AD7->(MsUnlock())
+					EndIf
+				EndIf
+				AD7->(DbSkip())
+			End
+		EndIf
+	EndIf
+	
+	RestArea(_aArea)
+	
+Return
+
+
+/** {Protheus.doc} AtuADL
+Funcao para atualizar a Carteira de Clientes
+@type function
+@author Jose Leite de Barros Neto
+@since 24/05/2016
+*/
+Static Function AtuADL(p_cProsp, p_cLjPro, p_cVend)
+	
+	Local _aArea	:= GetArea()
+	
+	DbSelectArea('SUS')
+	SUS->(DbSetOrder(1))
+	SUS->(DbGoTop())
+	If SUS->(DbSeek(xFilial('SUS') + p_cProsp + p_cLjPro ))
+		DbSelectArea('ADL')
+		ADL->(DbSetOrder(4)) //ADL_FILIAL+ADL_CODENT+ADL_LOJENT
+		ADL->(DbGoTop())
+		If ADL->(DbSeek(xFilial('ADL') + p_cProsp +  p_cLjPro))
+			If ADL->ADL_VEND == p_cVend
+				If RecLock("ADL",.F.)
+					ADL->ADL_ENTIDA := 'SA1'
+					ADL->ADL_CODENT := SUS->US_CODCLI
+					ADL->ADL_LOJENT := SUS->US_LOJACLI
+					ADL->ADL_FILENT	:= ''
+					ADL->(MsUnlock())
+				EndIf
+			EndIf
+		EndIf
+	EndIf
+	
+	RestArea(_aArea)
+	
+Return
+
+
+/** {Protheus.doc} AtuADY
+Funcao para atualizar a Proposta comercial - Cabecalho
+@type function
+@author Jose Leite de Barros Neto
+@since 28/06/2016
+*/
+Static Function AtuADY(p_cProsp, p_cLjPro, p_cOpor, p_cRvOp)
+	
+	Local _aArea	:= GetArea()
+	
+	DbSelectArea('SUS')
+	SUS->(DbSetOrder(1))
+	SUS->(DbGoTop())
+	If SUS->(DbSeek(xFilial('SUS') + p_cProsp + p_cLjPro ))
+		DbSelectArea('ADY')
+		ADY->(DbSetOrder(2)) //ADY_FILIAL+ADY_OPORTU+ADY_REVISA+ADY_PROPOS
+		ADY->(DbGoTop())
+		If ADY->(DbSeek( xFilial('ADY') + p_cOpor + p_cRvOp))
+			While .Not. ADY->(Eof()) .And. ADY->(ADY_FILIAL + ADY_OPORTU + ADY_REVISA) == xFilial('ADY') + p_cOpor + p_cRvOp
+				If RecLock('ADY',.F.)
+					ADY->ADY_ENTIDA	:= '1'
+					ADY->ADY_CODIGO	:= SUS->US_CODCLI
+					ADY->ADY_LOJA 	:= SUS->US_LOJACLI
+					ADY->(MsUnlock())
+				EndIf
+				ADY->(DbSkip())
+			End
+		EndIf
+	EndIf
+	
+	RestArea(_aArea)
+	
+Return
+
+
+/** {Protheus.doc} AtuSCJ
+Funcao para atualizar o Orcamento - Cabecalho (SCJ) e Itens (SCK)
+@type function
+@author Jose Leite de Barros Neto
+@since 	29/06/2016
+*/
+Static Function AtuSCJ(p_cProsp, p_cLjPro, p_cOpor, p_cRvOp)
+	
+	Local _aArea	:= GetArea()
+	Local _cOrc	:= ''
+	
+	DbSelectArea('SUS')
+	SUS->(DbSetOrder(1))
+	SUS->(DbGoTop())
+	If SUS->(DbSeek(xFilial('SUS') + p_cProsp + p_cLjPro ))
+		
+		DbSelectArea('SCJ')
+		SCJ->(DbSetOrder(5)) //CJ_FILIAL+CJ_NROPOR+CJ_REVISA
+		SCJ->(DbGoTop())
+		If SCJ->( DbSeek( xFilial('SCJ') + p_cOpor + p_cRvOp) )
+			_cOrc := SCJ->CJ_NUM
+			While .Not. SCJ->(Eof()) .And. SCJ->(CJ_FILIAL + CJ_NROPOR + CJ_REVISA) == xFilial('SCJ') + p_cOpor + p_cRvOp
+				If RecLock('SCJ',.F.)
+					SCJ->CJ_PROSPE 	:= ''
+					SCJ->CJ_LOJPRO 	:= ''
+					SCJ->CJ_CLIENTE	:= SUS->US_CODCLI 
+					SCJ->CJ_LOJA		:= SUS->US_LOJACLI
+					SCJ->CJ_CLIENT	:= SUS->US_CODCLI
+					SCJ->CJ_LOJAENT	:= SUS->US_LOJACLI
+				EndIf
+				SCJ->(DbSkip())
+			End
+		EndIf
+		
+		If .Not. Empty(_cOrc)
+			
+			DbSelectArea('SCK')
+			SCK->(DbSetOrder(1)) //CK_FILIAL+CK_NUM+CK_ITEM+CK_PRODUTO
+			SCK->(DbGoTop())
+			If SCK->( DbSeek( xFilial('SCK') + _cOrc) )
+				While .Not. SCK->(Eof()) .And. SCK->( CK_FILIAL + CK_NUM) == xFilial('SCK') + _cOrc
+					If RecLock('SCK',.F.)
+						SCK->CK_CLIENTE	:= SUS->US_CODCLI 
+						SCK->CK_LOJA		:= SUS->US_LOJACLI
+						SCK->(MsUnlock())
+					EndIf
+					SCK->( DbSkip() )
+				End
+			EndIf
+			
+		EndIf
+		
+	EndIf
+	
+	RestArea(_aArea)
+	
+Return
+
+/*/{Protheus.doc} AtuZCG
+Função para atualizar a tabela ZCG - Viabilidade de atendimento
+@author Franklin B. Oliveira
+@since 08/02/2017
+@param p_cProsp, character, Código do Prospect
+@param p_cLjPro, character, Loja do Prospect
+@type function
+/*/
+Static Function AtuZCG(p_cProsp, p_cLjPro)
+
+Local aArea		:= GetArea()
+Local cQuery	:= ""
+	
+	IncProc("ZCG - Viabilidade de Atendimento")
+	
+	DbSelectArea('SUS')
+	SUS->(DbSetOrder(1)) //US_FILIAL+US_COD+US_LOJA
+	SUS->(DbGoTop())
+	
+	//Seleciono o cadastro do prospect
+	If SUS->(DbSeek(xFilial('SUS') + p_cProsp + p_cLjPro ))
+		//Seleciono todas as viabilidades existentes para este Prospect
+		cQuery := "SELECT ZCG.ZCG_FILIAL, ZCG.ZCG_CODIGO	" + CRLF
+		cQuery += "FROM " + RetSqlName("ZCG") + " ZCG		" + CRLF
+		cQuery += "WHERE ZCG.D_E_L_E_T_ = ' '	" + CRLF
+		cQuery += "AND ZCG.ZCG_PROSPE = '" + p_cProsp + "' " + CRLF
+		cQuery += "AND ZCG.ZCG_LOJPRO = '" + p_cLjPro + "' " + CRLF
+		
+		DbUseArea(.T., "TOPCONN", TcGenQry( , , cQuery),"TMPZCG", .T., .T.)
+		
+		While .Not. TMPZCG->(Eof())
+			//Seleciono o cadastro de viabilidade de atendimento
+			DbSelectArea("ZCG")
+			ZCG->(DbSetOrder(1)) //ZCG_FILIAL+ZCG_CODIGO
+			ZCG->(DbGoTop())
+			If ZCG->(DbSeek( TMPZCG->ZCG_FILIAL + TMPZCG->ZCG_CODIGO))
+				//Modifico as viabilidades encontradas
+				While .Not. ZCG->(Eof()) .And. ZCG->(ZCG_FILIAL + ZCG_CODIGO) == TMPZCG->ZCG_FILIAL + TMPZCG->ZCG_CODIGO
+					If RecLock('ZCG',.F.)
+						ZCG->ZCG_PROSPE	:= ""
+						ZCG->ZCG_LOJPRO	:= ""
+						ZCG->ZCG_CLIENT	:= SUS->US_CODCLI
+						ZCG->ZCG_LOJA 	:= SUS->US_LOJACLI
+						ZCG->ZCG_NOME	:= Posicione("SA1", 1, xFilial("SA1") + SUS->US_CODCLI + SUS->US_LOJACLI,"A1_NOME")
+						ZCG->(MsUnlock())
+					EndIf
+					ZCG->(DbSkip())
+				End
+			EndIf
+			TMPZCG->(DbSkip())
+		EndDo
+		
+		TMPZCG->(DbCloseArea())
+		
+	EndIf
+	
+	RestArea(aArea)
+
+Return()

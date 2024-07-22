@@ -1,0 +1,148 @@
+#include "Rwmake.ch"
+#include "totvs.ch"
+
+/*/{Protheus.doc} SF02R04X
+Relatorio de documentos estornados, lista registros deletados da tabela SF3
+@author j2a.caiolima
+@since 16/03/2020
+/*/
+User Function SF02R03X()
+	Local oReport
+
+	Private _cPerg := "SF02R03X"
+	Private _cALias := GetNextAlias()
+	Private _oNF // variaveis dos objetos de secao
+	Private _cPicture := TM(999999999.99,14,2) // "@E 999,999,999.99"
+
+	If FindFunction("TRepInUse") // .And. TRepInUse()
+		//-- Interface de impressao
+		oReport := ReportDef()
+		oReport:PrintDialog()
+	EndIf
+
+Return
+//ــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــ
+// funcao Definicoes dos objetos treport
+//كككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككك
+Static Function ReportDef()
+	Local oReport
+	Local _cDescri := "Notas fiscais de entrada classificadas e estornadas"
+
+	fAjustSX1(_cPerg)
+
+	Pergunte(_cPerg, .F.)
+
+	oReport := TReport():New("NF Estornadas ",_cDescri,_cPerg,{|oReport| PrintReport(oReport)},_cDescri)
+	oReport:SetLeftMargin(2)
+	oReport:SetPortrait() // Retrato
+	oReport:oPage:SetPaperSize(9) // papel A4
+	oReport:SetEnvironment(2) // local
+	oReport:SetTotalInLine(.F.)
+
+	_oNF := TRSection():New(oReport,"NF Entrada",{_cALias, "SF3", "SA2"} )
+	TRCell():New(_oNF,"F3_FILIAL"     ,"SF3")
+	TRCell():New(_oNF,"F3_NFISCAL"    ,"SF3")
+	TRCell():New(_oNF,"F3_CLIEFOR"    ,"SF3")
+	TRCell():New(_oNF,"A2_NREDUZ"     ,"SA2")
+	TRCell():New(_oNF,"F3_ENTRADA"    ,"SF3")
+	TRCell():New(_oNF,"STATUS"        ,_cALias,"Status","",12)
+	//Icluido por J2A-->Gustavo krebs--> adicinado o capo usu�rio para o relat�rio.  --> atualizado 
+	TRCell():New(_oNF,"USUARIO" 	 ,_cAlias,"Usuario", ,20 , , {|| FWLeUserlg("F3_USERLGI", 1)})
+
+
+
+	
+
+	// posicionamento das tabelas auxiliares
+	TRPosition():New( _oNF, "SF3", 1, {|| SF3->(dbGoTo((_cAlias)->RECSF3)) }, .F. )
+	TRPosition():New( _oNF, "SA2", 1, {|| SA2->(dbGoTo((_cAlias)->RECSA2)) }, .F. )
+
+
+Return(oReport)
+
+//ــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــ
+//³funcao que realiza o filtro e imprimi os dados na tela³
+//كككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككك
+Static Function PrintReport(oReport)
+
+	MsgRun( "Selecionando registros...", "Aguarde" ,  {|| GeraQuery() } )
+
+	_oNF:Print()
+
+	(_cALias)->(dbClosearea())
+
+Return
+//ــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــ
+// funcao que realiza o sql do relatorio
+//كككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككككك
+Static Function GeraQuery()
+	Local _cSql := ""
+
+	//_cSql += " SELECT F3_FILIAL, F3_NFISCAL, F3_CLIEFOR, A2_NREDUZ, F3_ENTRADA, " + CRLF 
+	_cSql += " SELECT SF3.R_E_C_N_O_ AS RECSF3, SA2.R_E_C_N_O_ AS RECSA2, " + CRLF 
+	_cSql += " CASE SF3.D_E_L_E_T_ WHEN '*' THEN 'Estornada' ELSE 'Classificada' END AS Status " + CRLF
+	_cSql += " FROM "+RetSQLName("SF3")+" SF3 " + CRLF
+	_cSql += " INNER JOIN "+RetSQLName("SA2")+" SA2 ON SA2.D_E_L_E_T_<>'*' AND A2_COD=F3_CLIEFOR AND A2_LOJA=F3_LOJA " + CRLF
+	_cSql += " WHERE F3_ENTRADA BETWEEN '"+DTOS(MV_PAR01)+"' AND '"+DTOS(MV_PAR02)+"' " + CRLF
+	_cSql += " AND EXISTS (SELECT * FROM "+RetSQLName("SFT")+" SFT WHERE FT_FILIAL=F3_FILIAL AND FT_NFISCAL=F3_NFISCAL AND FT_SERIE=F3_SERIE AND FT_CLIEFOR=F3_CLIEFOR " + CRLF
+	_cSql += " AND FT_LOJA=F3_LOJA AND FT_TIPOMOV='E') " + CRLF
+
+	If MV_PAR03 = 1
+		_cSql += " AND SF3.D_E_L_E_T_='*' " + CRLF
+	ElseIf MV_PAR03 = 2
+		_cSql += " AND SF3.D_E_L_E_T_<>'*' " + CRLF
+	EndIf
+
+	_cSql += " ORDER BY F3_FILIAL, F3_SERIE, F3_NFISCAL, F3_CLIEFOR, F3_LOJA, SF3.R_E_C_N_O_ " + CRLF
+
+	// escreve em arquivo de texto e se nao encontrar cria o arquivo
+	MemoWrite("D:\LOGSQL\"+FunName()+"-"+ProcName()+".txt" , _cSql)
+	If Select(_cALias) > 0
+		(_cALias)->(dbClosearea())
+	Endif
+
+	DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSql)), _cALias, .F., .F.)
+
+Return
+
+/*/{Protheus.doc} AjustSX1
+Atualiza o grupo de perguntas
+a partir do protheus 12 a funcao putsx1 nمo funciona mais - abaixo atualiza da SX1 via RecLock
+@author caio.lima
+@since 13/09/2017
+@version undefined
+@param _cPerg, obrigatorio, Grupo de perguntas a ser atualizada
+/*/
+Static Function fAjustSX1(_cPerg)
+	Local _aPerg := {}
+	Local _ny := 0
+	Local _nz := 0
+	Local _aHeadSX1 := {"X1_ORDEM",  "X1_PERGUNT", "X1_VARIAVL", "X1_TIPO", "X1_TAMANHO", "X1_DECIMAL", "X1_PRESEL", "X1_GSC", "X1_VALID", "X1_F3", "X1_VAR01","X1_HELP",;
+	"X1_DEF01","X1_DEF02","X1_DEF03","X1_DEF04","X1_DEF05" }
+	Local _aHlp01 := {}
+
+	_cPerg := PadR(_cPerg, 10)
+
+	Aadd( _aPerg, {"01", "Dt Digit de?"  , "mv_ch1","D",08,00,00,"G","" ,""      , "mv_par01",""})
+	Aadd( _aPerg, {"02", "Dt Digit ate?" , "mv_ch2","D",08,00,00,"G","" ,""      , "mv_par02",""})
+	Aadd( _aPerg, {"03", "Considerar?"   , "mv_ch3","N",01,00,00,"C","" ,""      , "mv_par03","","Apenas doc estornado","Apenas classificados","Ambos"})
+
+	For _ny:= 1 to Len(_aPerg)
+		dbSelectArea("SX1")
+		SX1->(dbSetOrder(1))
+		If SX1->( dbSeek(_cPerg + _aPerg[_ny, 1] ) )
+			Loop // caso precise atualizar a pergunta basta comentar essa linha
+			RecLock("SX1" ,  .F. )
+		ELse
+			RecLock("SX1" ,  .T. )
+			SX1->X1_GRUPO := _cPerg
+		EndIf
+
+		For _nz:= 1 to Len(_aHeadSX1)
+			If Len(_aPerg[_ny]) >= _nz
+				FieldPut(FieldPos(_aHeadSX1[_nz]),_aPerg[_ny, _nz] )
+			EndIf
+		next
+		SX1->(MsUnlock())
+	Next
+Return

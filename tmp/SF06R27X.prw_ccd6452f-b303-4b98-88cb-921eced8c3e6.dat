@@ -1,0 +1,255 @@
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE 'IDATOOLS.CH'
+
+
+/*/{Protheus.doc} SF06R27X
+@description  Relatorio de auditoria de alterados titulos enviado pela API
+
+@author  Helitom Silva
+@since   19/11/2020
+@version 12.1.17
+
+/*/
+User Function SF06R27X()
+
+	Local oReport := Nil
+	Local cPerg   := PadR('SF06R27X',10,Space(1))
+
+	//Criando Pergunta
+	AjustaSX1(cPerg)
+
+	//Inicializando Pergunta
+	If Pergunte(cPerg, .T.)
+
+		//Cria as definições do relatório
+		oReport := ReportDef(cPerg)
+
+		If Valtype( oReport ) == 'O'
+
+			If !Empty( oReport:uParam )
+				Pergunte( oReport:uParam, .F. )
+			EndIf
+
+			oReport:PrintDialog()
+		Endif
+
+	EndIf
+
+Return
+
+
+/*/{Protheus.doc} ReportDef
+@description Definicoes do relatorio de inconsistencias.
+
+@author  Helitom Silva
+@since   19/11/2020
+@version 12.1.27
+/*/
+Static Function ReportDef(cPerg)
+
+	Local oReport	:= Nil
+	Local oSection	:= Nil
+	Local cTitulo   := "Demonstrativo Alterações de Titulos Enviados ao BB"
+	Local cDescTit  := "Este programa tem o objetivo de imprimir status de retorno dos titulos Alterados enviado ao BB"
+
+	//Criação do componente de impressão
+	oReport:=TReport():New("SF06R27X",cTitulo,cPerg,{|oReport| ReportPrint(oReport)},cDescTit)
+	oReport:SetTotalInLine(.F.)
+	oReport:SetTitle(cTitulo)
+	oReport:SetLandscape(.F.)
+	oReport:SetLineHeight(40)
+	oReport:SetColSpace(1)
+	oReport:SetLeftMargin(0)
+	oReport:cFontBody := 'Courier New'
+	oReport:nFontBody := 6
+	oReport:lBold := .F.
+	oReport:lUnderLine := .F.
+	oReport:lHeaderVisible := .T.
+	oReport:lFooterVisible := .T.
+	oReport:lParamPage := .F.
+
+	//Criando a seção de dados
+	oSection:= TRSection():New(oReport,"oSection",{"TRBREL"})
+	oSection:AddTable("oSection")
+	oSection:SetHeaderPage(.T.)
+
+	//Criando Cell
+	TRCell():New(oSection,"FILIAL"		,, "Filial"     ,                   ,FWSizeFilial()+2			, .F.							)
+	TRCell():New(oSection,"PREFIXO"	    ,, "Prefixo"    ,                   ,TamSX3("EA_PREFIXO")[1]	, .F.							)
+	TRCell():New(oSection,"TITULO"	    ,, "Titulo"     ,                   ,TamSX3("EA_NUM")[1]	    , .F.							)
+	TRCell():New(oSection,"PARCELA"	    ,, "Parcela"    ,                   ,TamSX3("EA_PARCELA")[1]	, .F.							)
+	TRCell():New(oSection,"TIPO"	    ,, "Tipo"       ,                   ,TamSX3("EA_TIPO")[1]	    , .F.							)    
+	TRCell():New(oSection,"NUMBCO"	    ,, "Nosso Num"  ,                   ,TamSX3("E1_NUMBCO")[1]		, .F.							)
+	TRCell():New(oSection,"XCONV"	    ,, "Conv/Var"   ,                   ,20							, .F.	    				    )
+	TRCell():New(oSection,"VENCTO"	    ,, "Vencto"     ,                   ,TamSX3("E1_VENCTO")[1]		, .F.							)
+	TRCell():New(oSection,"CLIENTE"	    ,, "Cliente"    ,                   ,25  						, .F.							)
+	TRCell():New(oSection,"NOME"	    ,, "Nome Cli"   ,                   ,25					        , .F.							)
+	TRCell():New(oSection,"VALOR"		,, "Vlr Orig"   ,"@R 999,999,999.99",TamSX3("E1_VALOR")[1]      ,/*[lPixel]*/,,"RIGHT",,"RIGHT"	)
+	TRCell():New(oSection,"DATA"	    ,, "Dt.Altera"  ,                   ,TamSX3("ZHU_DATA")[1]      , .F.							)
+	TRCell():New(oSection,"USUARIO"	    ,, "Usuário"    ,                   ,40							, .F.							)
+	TRCell():New(oSection,"ALTERA"	    ,, "Alteração"  ,                   ,40							, .F.							)
+	TRCell():New(oSection,"STATUS"	    ,, "Status"     ,                   ,20							, .F.							)
+	TRCell():New(oSection,"MSGAPI"	    ,, "Msg API"    ,                   ,60					        , .F.							)
+	TRCell():New(oSection,"CAMPO"	    ,, "Campo Orig.",                   ,15					        , .F.							)
+	TRCell():New(oSection,"ANTES"	    ,, "Valor Antes",                   ,20					        , .F.							)
+	TRCell():New(oSection,"DEPOIS"	    ,, "Vlr. Novo"  ,                   ,20					        , .F.							)
+
+	//Totalizador Geral
+	TRFunction():New(oSection:Cell("VALOR")		,"TOTALORI"	,"SUM",,,,,.F.,.T.)
+
+Return oReport
+
+
+/*/{Protheus.doc} ReportPrint
+@description Funcao para impressao do relatorio de inconsistencias.
+
+@author  Helitom Silva
+@since   19/11/2020
+@version 12.1.27
+/*/
+Static Function ReportPrint(oReport)
+
+	Local cQuery      := ""
+	Local oSection    := oReport:Section(1)
+
+	//Montando consulta de dados
+	cQuery += "SELECT SE1.E1_FILIAL,"
+	cQuery += "       SE1.E1_NUMBCO, "
+	cQuery += "       SE1.E1_EMISSAO,"
+	cQuery += "       SE1.E1_VENCTO,"
+	cQuery += "       SA6.A6_XCONV,"
+	cQuery += "       SA6.A6_XVARCAR,"
+	cQuery += "       SE1.E1_PREFIXO,"
+	cQuery += "       SE1.E1_NUM,"
+	cQuery += "       SE1.E1_PARCELA,"
+	cQuery += "       SE1.E1_TIPO,"
+	cQuery += "       SE1.E1_CLIENTE,"
+	cQuery += "       SE1.E1_LOJA,"
+	cQuery += "       SA1.A1_NOME,"
+	cQuery += "       SE1.E1_VALOR,"
+	cQuery += "       SE1.E1_JUROS,"
+	cQuery += "       SE1.E1_MULTA,"
+	cQuery += "       SE1.E1_DESCONT,"
+	cQuery += "       SE1.E1_BAIXA, "
+	cQuery += "       SE1.E1_XENVBOL, "
+    cQuery += "       ZHU.ZHU_FILIAL, " 
+    cQuery += "       ZHU.ZHU_CODIGO, " 
+    cQuery += "       ZHU.ZHU_DATA, " 
+    cQuery += "       ZHU.ZHU_PREFIX, " 
+    cQuery += "       ZHU.ZHU_NUM, " 
+    cQuery += "       ZHU.ZHU_PARCEL, " 
+    cQuery += "       ZHU.ZHU_TIPO, " 
+    cQuery += "       ZHU.ZHU_TPALT, " 
+    cQuery += "       ZHU.ZHU_ALTERA, " 
+    cQuery += "       ZHU.ZHU_STATUS, " 
+    cQuery += "       ZHU.ZHU_MSGAPI, " 
+    cQuery += "       ZHU.ZHU_NUMBCO, " 
+    cQuery += "       ZHU.ZHU_USER, "     
+    cQuery += "       ZHU.ZHU_CAMPO, "     
+    cQuery += "       ZHU.ZHU_ANTES, "     
+    cQuery += "       ZHU.ZHU_DEPOIS "     
+	cQuery += " FROM " + RetSqlName("ZHU") + "  ZHU "
+	cQuery += " INNER JOIN " + RetSqlName("SE1") + " SE1 ON SE1.E1_PREFIXO = ZHU.ZHU_PREFIX "
+	cQuery += "              						    AND SE1.E1_NUM     = ZHU.ZHU_NUM    "    
+	cQuery += "              						    AND SE1.E1_PARCELA = ZHU.ZHU_PARCEL "
+	cQuery += "              						    AND SE1.E1_TIPO    = ZHU.ZHU_TIPO   "      
+	cQuery += "              						    AND SE1.E1_FILIAL  = ZHU_FILIAL"
+	cQuery += "              						    AND SE1.D_E_L_E_T_ = ' ' "
+	cQuery += " LEFT JOIN " + RetSqlName("SA6") + "  SA6 ON SA6.A6_COD     = SE1.E1_PORTADO "
+	cQuery += "              						    AND SA6.A6_AGENCIA = SE1.E1_AGEDEP"
+	cQuery += "              						    AND SA6.A6_NUMCON  = SE1.E1_CONTA "
+	cQuery += "              						    AND SA6.A6_FILIAL  = SE1.E1_FILIAL"
+	cQuery += "              						    AND SA6.D_E_L_E_T_ = ' ' "	
+	cQuery += " LEFT JOIN " + RetSqlName("SA1") + " SA1 ON SA1.A1_COD     = SE1.E1_CLIENTE "
+	cQuery += "                                        AND SA1.A1_LOJA    = SE1.E1_LOJA "
+	cQuery += "                                        AND SA1.A1_FILIAL  = '" + xFilial("SA1") + "'"
+	cQuery += "                                        AND SA1.D_E_L_E_T_ = ' ' "
+    cQuery += " WHERE ZHU.ZHU_DATA BETWEEN '" + DtoS(MV_PAR03) + "' AND '" + DtoS(MV_PAR04) + "'" 
+	cQuery += "   AND ZHU.ZHU_FILIAL BETWEEN '" + MV_PAR01 + "' AND '" + MV_PAR02 + "' "
+
+    If MV_PAR05 <> 5
+	    cQuery += "   AND ZHU.ZHU_STATUS  = '" + cValToChar(MV_PAR05) + "'"   
+    EndIf
+
+	cQuery += "   AND ZHU.D_E_L_E_T_ = ' ' "
+	cQuery += " ORDER BY "+ SqlOrder(SE1->(IndexKey()))
+	cQuery:= ChangeQuery(cQuery)
+
+	//Executa a Query e cria uma tabela temporária
+	DbUseArea(.T.,"TOPCONN",TCGenQry(,,cQuery),"TRBREL",.F.,.T.)
+
+   TcSetField("TRBREL", 'E1_EMISSAO', TamSX3('E1_EMISSAO')[3], TamSX3('E1_EMISSAO')[1], TamSX3('E1_EMISSAO')[2])
+   TcSetField("TRBREL", 'ZHU_DATA', TamSX3('ZHU_DATA')[3], TamSX3('ZHU_DATA')[1], TamSX3('ZHU_DATA')[2])
+   TcSetField("TRBREL", 'E1_VENCTO', TamSX3('E1_VENCTO')[3], TamSX3('E1_VENCTO')[1], TamSX3('E1_VENCTO')[2])
+   TcSetField("TRBREL", 'E1_VALOR', TamSX3('E1_VALOR')[3], TamSX3('E1_VALOR')[1], TamSX3('E1_VALOR')[2])
+
+	//Define o limite da régua de progressão do relatório.
+	oReport:SetMeter(TRBREL->(RecCount()))
+
+	//Enquanto houver dados
+	TRBREL->(DbGoTop())
+	While TRBREL->(!Eof())
+		
+		// Impressao da oSection
+		oSection:Init()
+		oReport:IncMeter()
+
+		If oReport:Cancel()
+			Exit
+		EndIf
+
+		oSection:Cell("FILIAL"):SetValue(Alltrim(TRBREL->E1_FILIAL))
+		oSection:Cell("PREFIXO"):SetValue(Alltrim(TRBREL->E1_PREFIXO))
+		oSection:Cell("TITULO"):SetValue(Alltrim(TRBREL->E1_NUM))
+		oSection:Cell("PARCELA"):SetValue(Alltrim(TRBREL->E1_PARCELA))
+		oSection:Cell("TIPO"):SetValue(Alltrim(TRBREL->E1_TIPO))
+		oSection:Cell("NUMBCO"):SetValue(Alltrim(TRBREL->E1_NUMBCO))
+		oSection:Cell("XCONV"):SetValue(Alltrim(TRBREL->A6_XCONV + '-' + TRBREL->A6_XVARCAR))
+		oSection:Cell("VENCTO"):SetValue(TRBREL->E1_VENCTO)
+		oSection:Cell("CLIENTE"):SetValue(TRBREL->E1_CLIENTE + '-'+ TRBREL->E1_LOJA)
+		oSection:Cell("NOME"):SetValue(Alltrim(TRBREL->A1_NOME))
+		oSection:Cell("VALOR"):SetValue(TRBREL->E1_VALOR)
+		oSection:Cell("DATA"):SetValue(TRBREL->ZHU_DATA)
+		oSection:Cell("USUARIO"):SetValue(TRBREL->ZHU_USER)
+		oSection:Cell("ALTERA"):SetValue(U_F06A64XY(TRBREL->ZHU_TPALT, 1))
+		oSection:Cell("STATUS"):SetValue(U_F06A64XT(TRBREL->ZHU_STATUS, 1))
+		oSection:Cell("MSGAPI"):SetValue(TRBREL->ZHU_MSGAPI)
+		oSection:Cell("CAMPO"):SetValue(TRBREL->ZHU_CAMPO)
+		oSection:Cell("ANTES"):SetValue(TRBREL->ZHU_ANTES)
+		oSection:Cell("DEPOIS"):SetValue(TRBREL->ZHU_DEPOIS)
+
+		//Imprimindo a linha atual
+		oSection:PrintLine()
+
+		TRBREL->(DbSkip())
+
+	End
+
+	TRBREL->(DbCloseArea())
+
+	//Fechando Secao
+	oSection:Finish()
+
+Return
+
+
+/*/{Protheus.doc} AjustaSx1
+@description Criando as Perguntas
+
+@author  Helitom Silva
+@since   19/11/2020
+@version 12.1.27
+/*/
+Static Function AjustaSx1(p_cPerg)
+
+	Local aHelp := {}
+
+	AAdd(aHelp, {{""}, {""}, {""}})
+
+	iPutSX1( p_cPerg , "01", "Da  Filial","","","MV_CH1","C", 08,00,00,"G","","SM0EMP","","","MV_PAR01","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")	
+	iPutSX1( p_cPerg , "02", "Ate  Filial","","","MV_CH2","C", 08,00,00,"G","","SM0EMP","","","MV_PAR02","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")	
+	iPutSX1( p_cPerg , "03", "Da  Data","","","MV_CH3","D", 08,00,00,"G","","","","","MV_PAR03","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")	
+	iPutSX1( p_cPerg , "04", "Ate  Data","","","MV_CH4","D", 08,00,00,"G","","","","","MV_PAR04","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")	
+	iPutSX1( p_cPerg , "05", "Status","","","MV_CH5","C", 01,00,00,"C","","","","","MV_PAR05","Pendente","","","","Enviada","","","Erro no Envio","","","Não Enviar","","","Todos","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")	
+
+Return

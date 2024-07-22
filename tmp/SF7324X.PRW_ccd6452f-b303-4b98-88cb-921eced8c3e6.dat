@@ -1,0 +1,280 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"  
+#INCLUDE "PARMTYPE.CH"     
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"    
+
+#DEFINE CRLF chr(13)+chr(10)
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <SF7324X>
+  #CONTROLE_DN - Modelo 3 MVC para Cadastros das Remessas 
+  Browser MVC para lancamentos dos [ZCK - Remessas de Integracao DN]
+
+@author Antonio Dantas 
+@since 26/11/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/                                                                       
+User Function SF7324X()
+
+Local cEstat := U_SFGN001A(ProcName(0), "SF7324X")
+Local _oBrowse 		:= FWMBrowse():New()
+Private aRotina 	:= MenuDef() 
+DbSelectArea("ZCK")                                                                                  	
+DbSetOrder(1)
+ZCK->(DbGoTop())
+//-- Define o Alias
+_oBrowse:SetAlias("ZCK")
+//-- Descricao
+_oBrowse:SetDescription("Remessas de Integracao DN")
+//-- Define a Legenda para modelo
+_oBrowse:AddLegend("ZCK_STATUS == 'P'"	,"WHITE"	,"Preparacao" 		)
+_oBrowse:AddLegend("ZCK_STATUS == 'E'"	,"YELLOW" 	,"Gerada" 			)
+_oBrowse:AddLegend("ZCK_STATUS == 'D'"	,"RED" 		,"Devolvida" 		)
+_oBrowse:AddLegend("ZCK_STATUS == 'R'"	,"ORANGE" 	,"Re-Gerada" 		)
+_oBrowse:AddLegend("ZCK_STATUS == 'V'"	,"BLUE" 	,"Validada" 		)
+_oBrowse:AddLegend("ZCK_STATUS == 'F'"	,"GREEN" 	,"Finalizada OK"	)
+_oBrowse:AddLegend("ZCK_STATUS == 'C'"	,"BLACK" 	,"Cancelada" 		)
+//-- 
+_oBrowse:lLocate	:= .t.
+//-- Para nao apresentar a Palheta de Detalhes do Registro
+_oBrowse:oBrowseUI:lDetails	:= .f.	 
+//-- Nao Permite que o Usuario Modifique (Altere) registros de outras filiais
+_oBrowse:SetChgAll(.f.) 			  
+//-- Não Permite que o usuario Visualize registro de outras filiais
+_oBrowse:SetSeeAll(.f.) 			 
+//-- Ativa o browse
+_oBrowse:Activate()
+Return Nil
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <MenuDef>
+   Responsavel pela criacao dos botoes, alterar, incluir, excluir e demais. 
+
+@author Antonio Dantas 
+@since 26/11/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/                                                                       
+Static Function MenuDef()
+
+Local cEstat := U_SFGN001A(ProcName(0), "SF7324X")
+Local _aRotina 	:= {}
+ADD OPTION _aRotina TITLE "Pesquisar"			ACTION "PESQBRW"       		OPERATION 1 ACCESS 0
+ADD OPTION _aRotina TITLE "Visualizar"			ACTION "VIEWDEF.SF7324X"	OPERATION 2 ACCESS 0
+ADD OPTION _aRotina TITLE "Incluir"				ACTION "VIEWDEF.SF7324X"	OPERATION 3 ACCESS 0
+ADD OPTION _aRotina TITLE "Alterar"				ACTION "VIEWDEF.SF7324X" 	OPERATION 4 ACCESS 0
+ADD OPTION _aRotina TITLE "Excluir"				ACTION "VIEWDEF.SF7324X" 	OPERATION 5 ACCESS 0
+ADD OPTION _aRotina TITLE "Imprimir"			ACTION "VIEWDEF.SF7324X" 	OPERATION 8 ACCESS 0
+ADD OPTION _aRotina TITLE "Copiar"				ACTION "VIEWDEF.SF7324X" 	OPERATION 9 ACCESS 0
+//-- Rotinas Proprias 
+ADD OPTION _aRotina TITLE "Gerar remessa"		ACTION "u_SF7325X()" 		OPERATION 4 ACCESS 0
+ADD OPTION _aRotina TITLE "Devolver remessa"	ACTION "u_SF7340X()"		OPERATION 4 ACCESS 0
+ADD OPTION _aRotina TITLE "Validar remessa"		ACTION "u_SF7341X()" 		OPERATION 4 ACCESS 0
+ADD OPTION _aRotina TITLE "Re-Gerar remessas"	ACTION "u_SF7342X()" 		OPERATION 4 ACCESS 0
+ADD OPTION _aRotina TITLE "Cancelar remessa "	ACTION "u_SF7343X()" 		OPERATION 4 ACCESS 0
+ADD OPTION _aRotina TITLE "Finaliza OK"			ACTION "u_SF735AX()" 		OPERATION 4 ACCESS 0
+Return _aRotina
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <ModelDef>
+   Contem  a  construcao e a definicao do Model, lembrando que o Modelo de
+   dados (Model) contem as regras de negocio.
+
+@author Antonio Dantas 
+@since 26/11/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function ModelDef()
+
+Local cEstat := U_SFGN001A(ProcName(0), "SF7324X")
+Local _oModel	:= Nil 
+Local _oStZCK	:= FWFormStruct(1,"ZCK")
+//-- Objeto de modelo de dados
+_oModel := MPFormModel():New("SF7324XX",/*PreValid*/,/*Valid*/,/*Commit*/,/*Cancel*/)
+//-- A  estrutura  do  modelo  de  dados  (Model) 
+_oModel:AddFields("ZCKMASTER",/*cOwner*/,_oStZCK)
+//-- Chave Primaria
+_oModel:SetPrimaryKey({"ZCK_FILIAL","ZCK_CODIGO"})
+//-- Valida o Formulario conforme ou STATUS 
+_oModel:SetVldActivate( {|_oMod| fPreVldF(_oMod) } )
+Return _oModel
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <ViewDef>
+   Contem a construcao e a definicao da View, ou seja, contrucao da interface
+
+@author Antonio Dantas 
+@since 26/11/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function ViewDef()
+
+Local cEstat := U_SFGN001A(ProcName(0), "SF7324X")
+Local _oModel 		:= FWLoadModel("SF7324X")
+Local _oStZCKV		:= FWFormStruct(2,"ZCK") 
+Local _oView   	:= FWFormView():New()
+//-- Defino modelo da view
+_oView:SetModel(_oModel)
+//-- Mesma regra do modeldef
+_oView:AddField("VW_ZCK",_oStZCKV,"ZCKMASTER")
+//-- Crio a tela
+_oView:CreateHorizontalBox("JUSTICAR",100)
+//-- Defino owner da tela
+_oView:SetOwnerView("VW_ZCK","JUSTICAR")
+
+Return _oView
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fPreVldF>
+ Validas as acoes do operador com relacao ao STATUS da Remessa. Não permite 
+ ALTERAR ou EXCLUIR Remessa que não estejam em preparacao.
+ 
+@author Antonio Dantas 
+@since 08/12/2015
+@version<1.00>
+@receive
+<   _oModel (o) - Objeto do Formulario em edicao 
+>
+@return
+<  _lReturn (l) - (.t.) Operacao VALIDA; (.f.) - Operacao Invalida
+>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/ 
+Static Function fPreVldF(_oModel)
+
+Local cEstat := U_SFGN001A(ProcName(0), "SF7324X")
+Local _lReturn 		:= .t. 
+Local _nOper		:= _oModel:GetOperation()
+Local _oStruZFB		:= _oModel:GetModel("ZCKMASTER")
+Local _cStatus		:= ZCK->ZCK_STATUS
+Local _aOpcoes 		:={	"Pesquisada", "Visualizada", "Incluida","Alterada","Excluida","Impressa","Copiada"}
+Local _cMasrk		:= "PEDRVFC" 
+Local _aStatus 		:={	"PREPARAÇÃO" 	,;
+						"ENVIADA"		,;
+						"DEVOLVIDA"		,;
+						"REENVIADA"		,;
+						"VALIDADA"		,;
+						"FINALIZADA OK"	,;
+						"CANCELADA"		}
+//--
+Do Case
+	Case _nOper == 3 		//-- Incluir
+		_lReturn 	:= .t.
+	Case _nOper == 4 		//-- Alterar
+		_lReturn 	:= .t.
+	Case _nOper == 5 		//-- Excluir 
+		_lReturn 	:= .t.
+	Case _nOper == 8 		//-- Imprimir 
+		_lReturn 	:= .t.
+	Case _nOper == 9 		//-- Copiar  
+		_lReturn 	:= .t.
+EndCase
+If ( _nOper == 4 .Or. _nOper == 5 ) .And.  _cStatus != "P"
+	_lReturn 	:= .f.
+	Help(,,"HELP",,"A Remessa encontra-se "+_aStatus[At(Upper(_cStatus),_cMasrk)]+" Não pode mais ser "+_aOpcoes[_nOper]+"!",1,0)
+Endif 
+Return _lReturn 
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldMast>
+ Valida a inclusao de uma remessa, nao permite a inclussao de uma remessa
+ para um mesmo MASTER se os ja existentes estiverem com STATUS:   
+        P=Preparacao
+        E=Enviada
+        R=Reenviada
+        V=Validada
+ 
+@author Antonio Dantas 
+@since 08/12/2015
+@version<1.00>
+@receive
+<   _oModel (o) - Objeto do Formulario em edicao 
+>
+@return
+<  _lReturn (l) - (.t.) Operacao VALIDA; (.f.) - Operacao Invalida
+>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/ 
+User Function fVldMast(_cLayout)
+
+Local cEstat := U_SFGN001A(ProcName(0), "SF7324X")
+Local _aArea		:= GetArea()
+Local _lReturn		:= .t. 
+Local _cMaster		:= ""
+Local _cQuery 		:= ""
+Local _nOper		:= 0	
+Local _Opcoes 		:= {}
+
+aAdd(_Opcoes,{ "SA1","Contas" 				})
+aAdd(_Opcoes,{ "AD9","Contatos" 			})
+aAdd(_Opcoes,{ "AD1","Oportunidades" 		})
+aAdd(_Opcoes,{ "ADJ","Produtos da Oport." 	}) 
+aAdd(_Opcoes,{ "ADY","Propostas" 			})
+aAdd(_Opcoes,{ "ADZ","Produtos Proposta" 	})
+aAdd(_Opcoes,{ "CN9","Contratos" 			})
+aAdd(_Opcoes,{ "CNB","Produtos Contratos"	}) 
+aAdd(_Opcoes,{ "SB1","Produtos"				})
+						                 
+//-- 
+dbSelectArea("ZCJ")
+ZCJ->(dbSetOrder(1))
+If (ZCJ->(dbSeek(FWxFilial("ZCJ")+_cLayout))) 
+	_nOper		:= Ascan( _Opcoes, {|X| X[1] == Upper(ZCJ->ZCJ_MASTER)} )	
+	//-- 
+	_cQuery := ""
+	_cQuery += "Select * From "+RetSqlName("ZCK")+" ZCK "+ CRLF
+	_cQuery += "Where ZCK.D_E_L_E_T_ = ' ' "+ CRLF 
+	_cQuery += "And ZCK.ZCK_FILIAL = '"+FwxFilial("ZCK")+"' "+ CRLF
+	_cQuery += "And ZCK.ZCK_MASTER = '"+ZCJ->ZCJ_MASTER+"' "+ CRLF
+	_cQuery += "And ZCK.ZCK_STATUS In ('P','E','R') "+ CRLF
+	//+------------------------------------------------------------------+
+	//| Grava o Resultado da Query para consulta                         |
+	//+------------------------------------------------------------------+
+	//-- MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+	If Select("TMPZCK")>0
+		TMPZCK->(DbCloseArea())
+	Endif
+	DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPZCK",.t.,.t.)
+	TMPZCK->(dbGotop())
+	If TMPZCK->(!Eof()) .And. TMPZCK->(!Bof()) 
+		Aviso(FunName()+"/"+ProcName(),"Não Possivel Incluir remessa para "+ _Opcoes[_nOper,2] +", pois, ainda existem Remessa em Andamento!",{"OK"})
+		_lReturn := .f. 
+  	Endif 
+Endif 
+TMPZCK->(DbCloseArea())
+RestArea(_aArea)
+Return _lReturn

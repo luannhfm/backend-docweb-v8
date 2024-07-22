@@ -1,0 +1,1877 @@
+#Include "Protheus.ch"
+#Include "Tbiconn.ch"
+#Include "Topconn.ch"
+
+/*/{Protheus.doc} IMPFINRM
+Funcao responsavel por realizar a integracao dos Titulos a Receber RM Classis x Protheus
+@type function
+@author Jose Leite de Barros Neto
+@since 12/11/2015
+@version 1.0
+@param _aParams, Array, Array contendo a empresa e filial do Job
+@history 09/03/2021, Franklin de Brito de Oliveira, Removido a variável _lRet que não era utilizada.
+/*/
+User Function IMPFINRM(_aParams)
+
+	Local _aArea	:= GetArea()
+	
+	//Walmir Junior 21/12/2018 - objeto para gravação de log de usuário.
+	Private _oGrOcr     := SF06A26X():New()
+	Private _cLogOc		:= ""
+	
+	Private _cAliasRM	:= ""
+	Private _aParX		:= _aParams
+	//Walmir Junior 16/11/2018 - Tratativa para habilitar ou desabilitar envio de email.
+	Private _lRMail := .F.
+	
+	//Walmir Junior 27/01/2020 - Variável utilizada para setar a coligada com base na filial de execução do Job.
+	Private _cColJob := "0" 
+	
+	ConOut(Replicate("=",80))
+	ConOut( "["+ dToC(Date()) + " " + Time() + "] - " +  'IMPFINRM: Iniciando Importacao - Financeiro RM x Protheus' )
+	
+	If Valtype( _aParams ) != "U"
+		//+--------------------------------------------------------------+
+		//| Se for SCHEDULE prepara o ambiente                           |
+		//+--------------------------------------------------------------+
+		PREPARE ENVIRONMENT EMPRESA _aParams[1] FILIAL _aParams[2]    
+		
+		If _aParams != Nil
+			ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  "IMPFINRM: Empresa: "+ _aParams[1])   
+			ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  "IMPFINRM: Filial: "+ _aParams[2])
+			
+			//Walmir Junior 27/01/2020 - Com base na filial de execução, seta variável de coligada.
+			If "03MT0001" == _aParams[2] 
+				_cColJob := "3"
+			ElseIf "02MT0001" == _aParams[2]
+				_cColJob := "2"
+			EndIf 
+			
+			//Walmir Junior 27/01/2020 - Com a unificação de base, torna-se obrigatório o uso do dbLink pra Sesi ou Senai.
+			_cAliasRM := GetNewPar("MV_XSGEABD", "") //"@RMSGE"
+			If Empty(_cAliasRM)
+				ConOut(Replicate("-",30))
+				Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Encerrou Job...")
+				Conout(" ")
+				Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Parametro com o Alias do BD SGE Senai nao Preenchido, favor verificar! MV_XSGEABD")
+				ConOut(Replicate("-",30))
+				Return
+			EndIf
+			/*
+			If "03MT0001" == _aParams[2] 
+				_cAliasRM := AllTrim(GetNewPar("MV_XSGEABD", ""))
+				If Empty(_cAliasRM)
+					ConOut(Replicate("-",30))
+					Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Encerrou Job...")
+					Conout(" ")
+					Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Parametro com o Alias do BD SGE Senai nao Preenchido, favor verificar! MV_XSGEABD")
+					ConOut(Replicate("-",30))
+					Return
+				EndIf
+			EndIf
+			*/ 
+		EndIf
+		 
+	EndIf
+	
+	_lRMail := GetNewPar("MV_XRMMAIL",.F.)
+	
+	If JobAtivo()
+		Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "IMPFINRM: Job de Importacao - Inclusao do Contrato RM x Protheus ja esta sendo executada.")
+ 		Conout(Replicate("-", 80))	
+	Else
+		/*
+		If "03MT0001" == cFilAnt 
+			_cAliasRM := AllTrim(GetNewPar("MV_XSGEABD", "")) //"@RMSGE"
+			If Empty(_cAliasRM)
+				ConOut(Replicate("-",30))
+				Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Encerrou Job...")
+				Conout(" ")
+				Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Parametro com o Alias do BD SGE SENAI nao Preenchido, favor verificar! MV_XSGEABD")
+				ConOut(Replicate("-",30))
+				Return
+			EndIf
+		EndIf
+		*/
+		//Bloqueia a tabela de importacao
+	  	AtuaZZA('N')
+	  	
+		/* Inclusao de Contas a Receber */
+		ConOut(Replicate("-",30))
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + 'IMPFINRM: Iniciando Importacao - Contas a Receber RM x Protheus' )
+		IMPF040() 
+		
+		/* Baixa de Contas a Receber */
+		ConOut(Replicate("-",30))
+		IMPF070() 
+		ConOut(Replicate("-",30))
+		
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + 'IMPFINRM: Finalizando Importacao - Financeiro RM x Protheus')
+		ConOut(Replicate("=",80))
+		
+		//Desbloqueia a tabela de importacao
+	  	AtuaZZA('S')
+		
+	EndIf
+	
+	FreeObj(_oGrOcr)
+	
+	RestArea( _aArea )
+	
+	If Valtype( _aParams ) != "U"
+		RESET ENVIRONMENT
+	EndIf
+	
+Return
+
+/*/ {Protheus.doc} IMPF040
+Funcao para gravar o titulo a receber (FINA040).
+@type function
+@author 	Jose Leite de Barros Neto
+@since 	12/11/2015
+@Uso: 		SFIEMT
+@History 09/03/2021, Franklin de Brito de Oliveira, alteração no preenchimento da variável _cIdParc, _cCodCFO.
+*/
+Static Function IMPF040()
+	
+	Local _lRet		    := .T.
+	Local _cMsg		    := ''
+	Local _nSeq		    := 0
+	Local _cColig	    := '' 
+	Local _cRa		    := ''
+	Local _cCtrRM	    := '' 
+	Local _cIdPLe	    := ''
+	Local _nOpc		    := 0
+	Local _cIdLan 	    := ''
+	Local _cFilFin 	    := '' 	 	
+	Local	_cPrefixo	:= ''  	
+	Local	_cNumero	:= ''
+	Local	_cParcela	:= ''
+	Local	_cTipo 	    := ''
+	Local	_cNaturez	:= ''
+	Local	_cHist	 	:= ''
+	Local	_dEmissao	:= dDataBase
+	Local	_dVencto	:= dDataBase
+	Local	_dVenctoR	:= dDataBase
+	Local	_nValor 	:= 0
+	Local	_cCredit 	:= ''
+	Local	_nDescont	:= 0
+	Local	_nDescF	    := 0
+	Local	_cCCC		:= ''
+	Local	_cItemC	    := ''
+	Local	_cXIdCnab	:= ''
+	Local	_cXNumBco	:= ''
+	Local	_cXIdEsb	:= ''
+	Local	_cTurma 	:= ''
+	Local	_nDecresc	:= 0
+	Local	_cMultNat	:= ''
+	Local	_cOrigem	:= ''
+	Local	_cXtitFun	:= ''
+	Local _aTitulo	    := {}
+	Local _cChvRM 	    := ''
+	Local _cChvPr	    := ''
+	Local _cLocErr 	    := GetNewPar( "MV_XLOCERR", "\xml\retorno\rmc\log\") 	//GetMv("MV_XLOCERR")
+	Local _cChvErr 	    := ''
+	Local _cNvldCtr	    := AllTrim(GetNewPar( "MV_XRMVPRE", "EJA")) 				//Prefixo de titulos que nao precisam validar contratos
+	Local _cIdParc	    := ''
+	Local _cCodCFO	    := ''
+	Local cCodImp       := ""
+	Local cCodTur       := ""
+	Local cPerLet       := ""
+	//Walmir Junior 14/09/2018 - evitar re-execução da alteração de Cliente.
+	Local _cCFOld		:= "0000000000000"
+	
+	Private _cCliente	:= ''
+	Private _cLoja		:= ''
+	Private lMsErroAuto	:= .F.
+	
+	If Select('TMPFIN') > 0
+		DbSelectArea('TMPFIN')
+		TMPFIN->( DbCloseArea() )
+	EndIf
+				
+	//INCLUSAO					
+	_cQuery := " SELECT *											"
+	If Empty(_cAliasRM)		 
+		_cQuery += " FROM RM.ZMD_INT_PRT_FIN					"
+	Else
+		_cQuery += " FROM RM.ZMD_INT_PRT_FIN" + _cAliasRM
+	EndIf
+	_cQuery += " WHERE STS_RM_INC = 1							" //Incluido no RM.
+	_cQuery += "			AND Coalesce(STS_PROT_INC,0) <> 2	" //Não Incluido no Protheus. //Flag para dizer se o financeiro nao foi integrado prot
+	//Walmir Junior 23/11/2018 - Remoção do trecho, para que todos os títulos sejam importados, mesmo que seja para serem cancelados em seguida.
+	//_cQuery += "			AND Coalesce(STS_RM_CANC,0)  <> 1	" //Não canceladono RM. //Flag para dizer se o financeiro nao foi integrado rm
+	_cQuery += "		AND CODCOLIGADA 	= " + _cColJob + " 		"	
+	_cQuery += "	UNION ALL											"
+	
+	//ALTERACAO
+	_cQuery += "	SELECT *											"
+	If Empty(_cAliasRM)		 
+		_cQuery += " FROM RM.ZMD_INT_PRT_FIN					"
+	Else
+		_cQuery += " FROM RM.ZMD_INT_PRT_FIN" + _cAliasRM
+	EndIf
+	_cQuery += "	WHERE STS_RM_INC = 1							" //Incluido no RM. //Flag ja integrado rm
+	_cQuery += "	AND STS_PROT_INC = 2							" //Incluido no Protheus. //Flag ja integrado rm
+	_cQuery += "	AND STS_RM_ALT = 1								" //Alterado no RM. //Flag ja alterado rm
+	_cQuery += "	AND COALESCE(STS_PROT_ALT,0) <> 2			" //Não Alterado no Protheus. //Flag nao alterado prot
+	_cQuery += "	AND CODCOLIGADA 	= " + _cColJob + " 		"
+	_cQuery += "	ORDER BY 1 "
+	
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPFIN',.T.,.F.)
+	
+	If .Not. TMPFIN->( Eof() )
+
+		/*========================================================================
+		== Rafael Karczevski - J2A - 29/07/2019  								==
+		== Retidaro abertura e ordenação de tabelas das estruturas de repetição ==
+		========================================================================*/
+
+		DbSelectArea('SE1')
+		SE1->(DbSetOrder(1)) //E1_FILIAL+E1_PREFIXO+E1_NUM+E1_PARCELA+E1_TIPO
+		DbSelectArea('CN9')
+		CN9->( DbOrderNickName("CN9RMGCT") ) //CN9_FILIAL+CN9_XCTRRM+CN9_XCOLRM
+
+		While .Not. TMPFIN->( Eof() )
+			
+			Begin Transaction
+				
+				_nSeq   := TMPFIN->(SEQ) 
+				_cColig := cValToChar( TMPFIN->(CODCOLIGADA) )
+				_cRa    := TMPFIN->(RA)
+				_cIdPLe := cValToChar( TMPFIN->(IDPERLET) )
+				_cIdParc := cValToChar( TMPFIN->(IDPARCELA) )
+				_cCodCFO := cValToChar( TMPFIN->(CODCFO) )
+
+				If /*Empty(_cAliasRM)*/ Val(_cColig) = 2 
+					_cIdLan := cValToChar( TMPFIN->(IDLAN) )
+				EndIf	
+				
+				//Walmir Junior 17/01/2019 - Melhoria na lógica.
+				If _cCtrRM <> TMPFIN->(CODCONTRATO)
+					_cCtrRM := TMPFIN->(CODCONTRATO)
+				EndIf
+				//Walmir Junior
+				If .Not. Empty(_cCodCFO)
+					_cCodCFO := cValToChar( TMPFIN->(CODCFO) )
+				EndIf
+				
+				//Walmir Junior 14/09/2018 - Adição [_cCFOld != TMPFIN->(CODCFO)] para evitar re-execução da alteração de Cliente.
+				If _cCFOld != TMPFIN->(CODCFO)
+					_cCFOld := TMPFIN->(CODCFO)
+					//Walmir Junior	17/10/2018 - Adição de ConOut para mapear erro.
+					ConOut("["+ dToC(Date()) + " " + Time() + "] - IMPF040: Contrato RM: " + _cCtrRM + "/Cliente SGE: " + _cCFOld + "/IDLan SGE: " + Str(TMPFIN->(IDLAN)))
+					_lRet := U_IMPM030RM( _nSeq, _cColig, _cRa, AllTrim(_cCtrRM), _cIdPLe, _cAliasRM, _cCodCFO, ,_aParX, @_cLogOc)
+					ConOut(Iif(_lRet,"","["+ dToC(Date()) + " " + Time() + "] - IMPF040 ERRO NA MANIPULACAO DE CLIENTE [IMPM030RM]"))
+				ElseIf _cCFOld == TMPFIN->(CODCFO)
+					_lRet := .T.
+				EndIf	
+				
+				If _lRet
+					_oGrOcr:EXCOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,'FIN', 1, 'X')
+					If /*Empty(_cAliasRM)*/ Val(_cColig) = 2
+						_cChvRM 	:= "["+ dToC(Date()) + " " + Time() + "] - " + 'IMPF040: Coligada: '+ _cColig + ' / Ra: '+ AllTrim(_cRa) + ' / CtrRM: '+ AllTrim(_cCtrRM) + ' / IdPerLet: ' + _cIdPLe + ' / IdLan: '+ _cIdLan
+					Else
+						_cChvRM 	:= "["+ dToC(Date()) + " " + Time() + "] - " + 'IMPF040: Coligada: '+ _cColig + ' / Ra: '+ AllTrim(_cRa) + ' / CtrRM: '+ AllTrim(_cCtrRM) + ' / IdPerLet: ' + _cIdPLe + ' / IdParc: '+ _cIdParc + ' / CodCFO: '+ _cCodCFO
+					EndIf
+					
+					If /*Empty(_cAliasRM)*/ Val(_cColig) = 2
+						_cChvErr	:= 'Col_'+ _cColig +'_Ra_'+ AllTrim(_cRa) + '_CtrRM_'+ AllTrim(_cCtrRM) + '_IdPerLet_' + _cIdPLe + '_IdLan_'+ _cIdLan
+					Else
+						_cChvErr	:= 'Col_'+ _cColig +'_Ra_'+ AllTrim(_cRa) + '_CtrRM_'+ AllTrim(_cCtrRM) + '_IdPerLet_' + _cIdPLe + '_IdParc_'+ _cIdParc + '_CodCFO_'+ _cCodCFO
+					EndIf
+					
+					ConOut(_cChvRM)
+					
+					If Select('TMPSE1') > 0
+						DbSelectArea('TMPSE1')
+						TMPSE1->( DbCloseArea() )
+					EndIf
+					
+					_cQuery := " SELECT *				"
+					If Empty(_cAliasRM)
+						_cQuery += " FROM RM.PROT_SE1	"
+					Else
+						_cQuery += " FROM RM.PROT_SE1" + _cAliasRM 
+					EndIf
+					
+					_cQuery += " WHERE	CODCOLIGADA 			= "+ _cColig 
+					_cQuery += " 		AND RA 				= "+ cValToChar(_cRa) 		 
+					_cQuery += " 		AND CODCONTRATO 	= "+ cValToChar(_cCtrRM) 	
+					_cQuery += " 		AND IDPERLET 		= "+ _cIdPLe
+					
+					If /*Empty(_cAliasRM)*/ Val(_cColig) = 2
+						_cQuery += " 		AND IDLAN 		= "+ _cIdLan
+					Else
+						_cQuery += " 		AND IDPARCELA	= "+ _cIdParc
+						_cQuery += " 		AND CODCFO		= "+ _cCodCFO
+					EndIf
+					
+					DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPSE1',.T.,.F.)
+					
+					If .Not. TMPSE1->( EOF() )
+						_oGrOcr:EXCOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,'FIN', 5, Str(TMPSE1->IDPARCELA))
+						While .Not. TMPSE1->( EOF() )
+								
+							_cFilFin 	:= TMPSE1->( E1_FILIAL )
+							_cPrefixo	:= PadR(TMPSE1->( E1_PREFIXO ),TamSX3("E1_PREFIXO")[1])  	
+							_cNumero	:= PadR(TMPSE1->( E1_NUM ),TamSX3("E1_NUM")[1])
+							_cParcela	:= PadR(TMPSE1->( E1_PARCELA ),TamSX3("E1_PARCELA")[1])
+							_cTipo 	    := PadR(TMPSE1->( E1_TIPO ),TamSX3("E1_TIPO")[1])
+							_cNaturez	:= PadR(TMPSE1->( E1_NATUREZA ),TamSX3("E1_NATUREZA")[1])
+							_cHist	 	:= PadR(TMPSE1->( E1_HIST ),TamSX3("E1_HIST")[1])
+							_dEmissao	:= StoD(TMPSE1->( E1_EMISSAO ))
+							_dVencto	:= StoD(TMPSE1->( E1_VENCTO ))
+							_dVenctoR	:= DataValida(_dVencto)
+							_nValor 	:= TMPSE1->( E1_VALOR )
+							_cCredit 	:= PadR(TMPSE1->( E1_CREDIT ),TamSX3("E1_CREDIT")[1])
+							_nDescont	:= TMPSE1->( E1_DESCONT )
+							_nDescF	    := TMPSE1->( E1_DESCFIN )
+							_cCCC		:= PadR(TMPSE1->( E1_CCC ),TamSX3("E1_CCC")[1])
+							_cItemC	    := PadR(TMPSE1->( E1_ITEMC ),TamSX3("E1_ITEMC")[1])
+							_cXIdCnab	:= PadR(TMPSE1->( E1_XIDCNAB ),TamSX3("E1_XIDCNAB")[1])
+							_cXNumBco	:= Substr(TMPSE1->( E1_XNUMBCO ),8,10)
+							_cXIdEsb	:= PadR(TMPSE1->( E1_XIDESB ),TamSX3("E1_XIDESB")[1])
+							_cTurma	    := PadR(TMPSE1->( E1_TURMA ),TamSX3("E1_TURMA")[1])
+							_nDecresc	:= Val(TMPSE1->( E1_DECRESC ))
+							_cMultNat	:= '2' 
+							_cOrigem	:= PadR(TMPSE1->( E1_ORIGEM ),TamSX3("E1_ORIGEM")[1])
+							_cXtitFun	:= PadR(TMPSE1->( E1_XTITFUN ),TamSX3("E1_XTITFUN")[1])
+							
+							cCodTur     := TMPSE1->(TURMA)
+							cPerLet     := TMPSE1->(PERIODO_LETIVO)
+							
+							_cChvPr  := "["+ dToC(Date()) + " " + Time() + "] - " + 'IMPF040: Filial: '+ _cFilFin + ' / Prefixo: '+ _cPrefixo + ' / Numero: '+ _cNumero + ' / Parcela: '+ _cParcela + ' / Tipo: '+ _cTipo + ' / Cliente: '+ _cCliente + ' / Loja: '+ _cLoja
+							ConOut(_cChvPr)
+							
+							SE1->(DbGoTop())
+							If .Not. SE1->( MsSeek( _cFilFin + _cPrefixo + _cNumero + _cParcela + _cTipo ) )
+								_nOpc := 3
+							Else
+								_cLoja := SE1->E1_LOJA
+								If AllTrim(SE1->E1_STATUS) == 'A'
+									_nOpc := 4  
+									_oGrOcr:EXCOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,'FIN', 2, Str(TMPSE1->IDPARCELA))
+								//Walmir Junior	- Se ainda não persistiu nosso numero.
+								ElseIf !Empty(_cXNumBco) .And. Empty(SE1->E1_XNUMBCO)
+									_nOpc := 9
+									_lRet := .T.
+									_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + 'IMPF040: Titulo ja baixado ou baixado parcialmente - favor verificar - ' + _cChvPr
+									ConOut(_cMsg)
+									cCodImp := "003"
+									fGrvStRMF( _nSeq, _cColig, _cRa, _cCtrRM, _cIdPLe, _cIdLan, _lRet, _cMsg, _nOpc, dDataBase, _cIdParc, _cCodCFO, cCodImp, cCodTur, cPerLet, _cFilFin, _cPrefixo, _cNumero, _cParcela, _cTipo )
+									_oGrOcr:EXCOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,'FIN', 2,Str(TMPSE1->IDPARCELA))
+								Else
+									_nOpc := 9 // Wjr _nOpc := 3 //WALMIR JUNIOR 04/07/2018 - ATUALIZAÇÃO DA SITUAÇÃO NO HISTORICO PARA TITULO BAIXADO.
+									//Wjr DisarmTransaction()
+									_lRet := .T.
+									_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + 'IMPF040: Titulo ja baixado ou baixado parcialmente - favor verificar - ' + _cChvPr
+									ConOut(_cMsg)
+									cCodImp := "003"
+									//fGrvStRMF( _nSeq, _cColig, _cRa, _cCtrRM, _cIdPLe, _cIdLan, _lRet, _cMsg, _nOpc, dDataBase, _cIdParc, _cCodCFO, cCodImp, cCodTur, cPerLet,_cFilFin ) //Erro
+									_cLogOc := 'BAIXA DE TÍTULO - IMPF040: Titulo ja baixado ou baixado parcialmente - favor verificar'
+									_oGrOcr:GRVOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,_cLogOc,'FIN','2', 2, Str(TMPSE1->IDPARCELA))
+									fGrvStRMF( _nSeq, _cColig, _cRa, _cCtrRM, _cIdPLe, _cIdLan, _lRet, _cMsg, _nOpc, dDataBase, _cIdParc, _cCodCFO, cCodImp, cCodTur, cPerLet, _cFilFin, _cPrefixo, _cNumero, _cParcela, _cTipo )
+									TMPSE1->( DBSkip() )
+									Exit								
+								EndIf
+								
+							EndIf
+							
+							If AllTrim(_cPrefixo) $ _cNVldCtr
+								_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + "IMPF040: Titulo com Prefixo "+ _cPrefixo +" - Nao valida Contrato" + _cChvPr
+								ConOut(_cMsg)
+							Else
+								
+								CN9->( DbGotop() )
+								If .Not. CN9->( MsSeek( _cFilFin +  PadR(AllTrim(_cCtrRM),TamSX3("CN9_XCTRRM")[1]) + _cColig )  )
+									DisarmTransaction()
+									_lRet := .F.
+									_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + 'IMPF040: O Contrato RM ' + _cCtrRM + ' Nao esta integrado ao Protheus, favor verificar!'
+									ConOut(_cMsg)
+									fGrvStRMF( _nSeq, _cColig, _cRa, _cCtrRM, _cIdPLe, _cIdLan, _lRet, _cMsg, _nOpc, dDataBase, _cIdParc, _cCodCFO ) //Erro
+									Exit
+								EndIf
+
+							EndIf
+							
+							_aTitulo := {}
+							
+							aAdd( _aTitulo ,{"E1_FILIAL"  	,_cFilFin	 	,Nil})
+							aAdd( _aTitulo ,{"E1_PREFIXO" 	,_cPrefixo  	,Nil})
+							aAdd( _aTitulo ,{"E1_NUM"		,_cNumero 	    ,Nil})
+							aAdd( _aTitulo ,{"E1_PARCELA" 	,_cParcela  	,Nil})
+							aAdd( _aTitulo ,{"E1_TIPO"	 	,_cTipo 	 	,Nil})
+							aAdd( _aTitulo ,{"E1_NATUREZ" 	,_cNaturez  	,Nil})
+							aAdd( _aTitulo ,{"E1_CLIENTE" 	,_cCliente  	,Nil})
+							aAdd( _aTitulo ,{"E1_LOJA"	 	,_cLoja 	 	,Nil})
+							aAdd( _aTitulo ,{"E1_HIST"	 	,_cHist	 	    ,Nil})
+							If _nOpc == 3
+								aAdd( _aTitulo ,{"E1_EMISSAO" 	,_dEmissao	,NIL})
+							EndIf
+							//Walmir Junior 09/07/2018 - Tratativa para o caso de alteração de título baixado, informação de nosso numero.
+							If _nOpc == 9
+								aAdd( _aTitulo ,{"E1_XIDCNAB" 	,_cXIdCnab  	,Nil})
+								aAdd( _aTitulo ,{"E1_XNUMBCO" 	,_cXNumBco  	,Nil})
+								aAdd( _aTitulo ,{"E1_NUMBCO"  	,_cXIdCnab  	,Nil})
+							Else
+								aAdd( _aTitulo ,{"E1_VENCTO"	,_dVencto	 	,NIL})
+								aAdd( _aTitulo ,{"E1_VENCREA" 	,_dVenctoR  	,NIL})
+								aAdd( _aTitulo ,{"E1_VALOR"	 	,_nValor 	 	,Nil})
+								aAdd( _aTitulo ,{"E1_CREDIT"	,_cCredit 	    ,Nil})
+								aAdd( _aTitulo ,{"E1_DESCONT" 	,_nDescont  	,Nil})
+								aAdd( _aTitulo ,{"E1_DESCFIN" 	,_nDescF 		,Nil})
+								aAdd( _aTitulo ,{"E1_CCC"		,_cCCC 	 	    ,Nil})
+								aAdd( _aTitulo ,{"E1_ITEMC"	 	,_cItemC	 	,Nil})
+								aAdd( _aTitulo ,{"E1_XIDCNAB" 	,_cXIdCnab  	,Nil})
+								aAdd( _aTitulo ,{"E1_XNUMBCO" 	,_cXNumBco  	,Nil})
+								aAdd( _aTitulo ,{"E1_NUMBCO"  	,_cXIdCnab  	,Nil})
+								aAdd( _aTitulo ,{"E1_XIDESB" 	,_cXIdEsb	 	,Nil})
+								aAdd( _aTitulo ,{"E1_TURMA"	 	,_cTurma 	 	,Nil})
+								aAdd( _aTitulo ,{"E1_DECRESC" 	,_nDecresc	    ,Nil})
+								aAdd( _aTitulo ,{"E1_MULTNAT" 	,_cMultNat	    ,Nil})
+								aAdd( _aTitulo ,{"E1_ORIGEM"  	,_cOrigem	 	,Nil})
+								aAdd( _aTitulo ,{"E1_XTITFUN" 	,_cXtitFun	    ,Nil})
+								//Walmir Junior 28/09/2020 - 	Se o título existir e estiver sendo setado neste momento o nosso número OU 
+								//								se for a inclusão do título e ele já for inserido com nosso número.
+								If	/*Título não cancelado,*/(Empty(TMPFIN->STS_RM_CANC) .Or. (!Empty(TMPFIN->STS_RM_CANC) .And. (TMPFIN->STS_RM_CANC != 1))) .And.;
+									/*Não é Título de funcionário.*/Valtype(_cXtitFun) == 'C' .And. _cXtitFun != 'S' .And.;
+									/*Não é final de arquivo, o nosso numero atual é vázio e tem o nosso número para inclusão.*/( (!SE1->(EOF()) .And. Empty(SE1->(E1_NUMBCO)) .And. !Empty(_cXNumBco)) .Or.;
+								 	/*É final do arquivo e tem o nosso número para inclusão.*/(SE1->(EOF()) .And. !Empty(_cXNumBco)) )
+								 	
+								 	//Marca título como para envio ao banco pela API de integração BB.
+								 	aAdd( _aTitulo ,{"E1_XENVBOL","1"	    	,Nil})
+								//ElseIf	/*Se o título já estiver no Protheus, marcado para envio ao BB*/ !SE1->(EOF()) .And. SE1->(E1_XENVBOL) == "1" .And.;
+								//		/*E estiver sendo cancelado*/!Empty(TMPFIN->STS_RM_CANC) .And. TMPFIN->STS_RM_CANC == 1
+									
+									//Desmarca título para envio ao banco pela API de integração BB.
+								// 	aAdd( _aTitulo ,{"E1_XENVBOL","2"	    	,Nil})
+								EndIf
+							EndIf
+							
+							//Walmir Junior	09/07/2018 - Voltando variável para valor válido para rotina automática.
+							_nOpc	:= Iif(_nOpc == 9, 4, _nOpc)
+							
+							lMsErroAuto := .F.
+							
+							_cFilAtu := cFilAnt
+							cFilAnt	:= _cFilFin
+							
+							_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + "ROTINA AUTOMATICA: "+ cFilAnt
+							ConOut(_cMsg)
+							
+							// Walmir Junior 13/09/2018 - Validação para verificar Lock no Registro.
+							Private _cChvE1 := _cFilFin + _cPrefixo + _cNumero + _cParcela + _cTipo
+							Private _lLck	:= .T.
+							If _nOpc == 4
+								SE1->(MsSeek(_cChvE1))
+								If	SE1->(DBRLock())
+									ConOut("["+ dToC(Date()) + " " + Time() + "] - " + "IMPF040: Lockou Registro - " + _cChvE1)
+									SE1->(MsUnlock())
+								Else
+									_lLck		:= .F.
+								EndIf
+							EndIf
+							
+							If _lLck
+							
+								MSExecAuto({|x,y| Fina040(x,y)},_aTitulo, _nOpc)
+								_oGrOcr:EXCOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,'FIN', 3,Str(TMPSE1->IDPARCELA))
+							Else
+								_cLogOc := "BAIXA DE TÍTULO - IMPF040: Não Lockou Registro - SE1"
+								_oGrOcr:GRVOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,_cLogOc,'FIN','2', 3,Str(TMPSE1->IDPARCELA))
+								lMsErroAuto := .T.
+								ConOut("["+ dToC(Date()) + " " + Time() + "] - " + "IMPF040: Não Lockou Registro - " + _cChvE1)							
+							EndIf							
+							cFilAnt	:= _cFilAtu
+								
+							If lMsErroAuto
+								If _lLck
+									_cLogOc := MostraErro(_cLocErr, _cChvErr+".LOG")
+									_oGrOcr:GRVOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,_cLogOc,'FIN','1', 4,Str(TMPSE1->IDPARCELA))
+								EndIf
+								DisarmTransaction()
+								_lRet := .F.
+								If _nOpc = 3
+									_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + "IMPF040: ERRO AO INCLUIR FINA040 - " + _cChvPr + ' - Favor verificar o errolog em: '+ _cLocErr
+									ConOut(_cMsg)
+								ElseIf _nOpc = 4
+									_cMsg := Iif( _lLck	, "["+ dToC(Date()) + " " + Time() + "] - " + "IMPF040: ERRO AO ALTERAR FINA040 - " + _cChvPr + ' - Favor verificar o errolog em: '+ _cLocErr, "["+ dToC(Date()) + " " + Time() + "] - " + "IMPF040: ERRO AO ALTERAR FINA040 - " + _cChvPr + " - Registro bloqueado.")
+									cCodImp := "004"
+									ConOut(_cMsg)
+								EndIf
+								//fGrvStRMF( _nSeq, _cColig, _cRa, _cCtrRM, _cIdPLe, _cIdLan, _lRet, _cMsg, _nOpc, dDataBase, _cIdParc, _cCodCFO, cCodImp, cCodTur, cPerLet,_cFilFin ) //Erro
+								fGrvStRMF(   _nSeq, _cColig, _cRa, _cCtrRM, _cIdPLe, _cIdLan, _lRet, _cMsg, _nOpc, dDataBase, _cIdParc, _cCodCFO, cCodImp, cCodTur, cPerLet, _cFilFin, _cPrefixo, _cNumero, _cParcela, _cTipo ) //Erro
+								Exit
+									
+							Else
+									
+								_lRet := .T.
+								
+								If _nOpc = 3
+									_cMsg := "[*"+ dToC(Date()) + " " + Time() + "] - " + "IMPF040: INCLUSAO EFETUADA - " + _cChvPr 
+									ConOut(_cMsg)
+								ElseIf _nOpc = 4
+									_cMsg := "[*"+ dToC(Date()) + " " + Time() + "] - " + "IMPF040: ALTERACAO EFETUADA - " + _cChvPr
+									ConOut(_cMsg)
+								EndIf
+								//rvStRMF( p_nSe, p_cCoig, _cRa, cCtrRM , _cIdPLe,p_cIdLan,p_lRet,p_cMsg,p_nOpc,   p_dDtBx,p_cIdParc,p_cCodCFO, p_CodImp, p_CodTur, p_PerLet,p_FilFin,p_Prefixo,p_Numero,p_Parcela,p_Tipo,p_NumBco /* NumBco */ ) 
+								fGrvStRMF( _nSeq, _cColig, _cRa, _cCtrRM, _cIdPLe, _cIdLan, _lRet, _cMsg, _nOpc, dDataBase, _cIdParc, _cCodCFO,         ,         ,         ,        ,         ,        ,         ,      , _cXNumBco ) //Correto
+								_oGrOcr:EXCOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,'FIN', 4,Str(TMPSE1->IDPARCELA))
+							EndIf
+							TMPSE1->( DbSkip() )
+						EndDo
+					
+					Else
+						_lRet 	:= .F.
+						_cMsg 	:= "["+ dToC(Date()) + " " + Time() + "] - " + 'IMPF040: Nao existe titulos a importar - PROT_SE1'
+						_cLogOc	:=	'IMPF040: Nao existe titulos a importar - PROT_SE1'
+						_oGrOcr:GRVOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,_cLogOc,'FIN','2', 5, 'X')
+						ConOut(_cMsg)
+					EndIf
+				Else
+					_cLogOc := "IMPF040: Erro ao tentar incluir/alterar cliente " + _cLogOc
+					_oGrOcr:GRVOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,_cLogOc,'FIN','1', 1, 'X')
+					_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + 'IMPF040: Erro ao tentar incluir/alterar cliente, favor verificar!'
+					ConOut(_cMsg)
+				EndIf
+				
+			End Transaction
+			
+			TMPFIN->( DbSkip() )
+		EndDo
+		
+		SE1->(DbCloseArea())
+		CN9->( DbCloseArea() )
+
+	Else
+		_lRet := .F.
+		_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + 'IMPF040: Nao existe titulos a importar - ZMD_INT_PRT_FIN'
+		ConOut(_cMsg)
+	EndIf
+	
+Return
+
+/** {Protheus.doc} IMPF070
+Funcao para gravar a baixa/cancelamento do titulo a receber (FINA040)
+@type function
+@author Jose Leite de Barros Neto
+@since 12/11/2015
+@History 09/03/2021, Franklin de Brito de Oliveira, alteração no preenchimento da variável _cIdParc, _cCodCFO.
+*/
+Static Function IMPF070()
+	
+	Local _cQuery 	:= ''
+	Local _nSeq   	:= 0 
+	Local _cColig 	:= ''
+	Local _cRa    	:= ''
+	Local _cCtrRM 	:= ''
+	Local _cIdPLe 	:= '' 
+	Local _cIdLan 	:= ''
+	Local _cChvRM 	:= ''
+	Local _cFilFin 	:= ''
+	Local _cPrefixo	:= ''  	
+	Local _cNumero	:= ''
+	Local _cParcela	:= ''
+	Local _cTipo 	:= ''
+	Local _cNumBord := ''
+	Local _cChvPr	:= ''
+	Local _nSaldo	:= 0 
+	Local _aBaixa 	:= {}
+	Local _cLocErr	:= GetNewPar( "MV_XLOCERR", "\xml\retorno\rmc\log\")
+	Local _cHist		:= 'Distrato/Cancelamento CTR'
+	Local _nBaixa 	:= 0
+	Local _cIdParc 	:= ""
+	Local _cCodCFO	:= ''
+	Local _cChvErr	:= ''
+	Local cCodImp   := ""
+	Local cCodTur   := ""
+	Local cPerLet   := ""
+	
+	Private _cCliente		:= ''
+	Private _cLoja 			:= ''
+	Private lMsErroAuto	:= .F.
+	Private nRecSe1 := 0
+	
+	ConOut("["+ dToC(Date()) + " " + Time() + "] - " + 'IMPFINRM: Iniciando Cancelamento de Titulos - Contas a Receber RM x Protheus' )
+	
+	If Select('TMPFIN') > 0
+		DbSelectArea('TMPFIN')
+		TMPFIN->( DbCloseArea() )
+	EndIf
+	
+	_cQuery := " SELECT *											"
+	If Empty(_cAliasRM)		 
+		_cQuery += " FROM RM.ZMD_INT_PRT_FIN						"
+	Else
+		_cQuery += " FROM RM.ZMD_INT_PRT_FIN" + _cAliasRM
+	EndIf
+	_cQuery += " WHERE STS_RM_INC = 1								"
+	_cQuery += "			AND STS_PROT_INC = 2					" //Flag para dizer se o Titulo ja foi integrado
+	_cQuery += "			AND STS_RM_CANC = 1						" //Flag para dizer se o Titulo ja foi cancelado no RM
+	_cQuery += "			AND Coalesce(STS_PROT_CANC,0) <> 2		" //Flag para dizer se o Titulo nao foi cancelado no Protheus
+	_cQuery += "			AND CODCOLIGADA = " + _cColJob + " 		"
+	_cQuery += "	ORDER BY SEQ "
+	
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPFIN',.T.,.F.)
+		
+	If .Not. TMPFIN->( Eof() )
+			
+		/*========================================================================
+		== Rafael Karczevski - J2A - 29/07/2019  								==
+		== Retidaro abertura e ordenação de tabelas das estruturas de repetição ==
+		========================================================================*/
+
+		DbSelectArea('SE1')
+		SE1->(DbSetOrder(1)) //E1_FILIAL+E1_PREFIXO+E1_NUM+E1_PARCELA+E1_TIPO
+
+		While .Not. TMPFIN->( Eof() )
+			
+			Begin Transaction
+				
+				_nSeq   := TMPFIN->(SEQ) 
+				_cColig := cValToChar(TMPFIN->(CODCOLIGADA))
+				_cRa    := AllTrim(TMPFIN->(RA))
+				_cCtrRM := AllTrim(TMPFIN->(CODCONTRATO))
+				_cIdPLe := cValToChar(TMPFIN->(IDPERLET)) 
+				_cIdParc := cValToChar( TMPFIN->(IDPARCELA) )
+				_cCodCFO := cValToChar( TMPFIN->(CODCFO) )
+
+				If /*Empty(_cAliasRM)*/ Val(_cColig) = 2
+					_cIdLan := cValToChar(TMPFIN->(IDLAN))
+				EndIf
+				
+				If /*Empty(_cAliasRM)*/ Val(_cColig) = 2
+					_cChvRM 	:= "["+ dToC(Date()) + " " + Time() + "] - " + 'IMPF070: Coligada: '+ _cColig + ' / Ra: '+ _cRa + ' / CtrRM: '+ AllTrim(_cCtrRM) + ' / IdPerLet: ' + _cIdPLe + ' / IdLan: '+ _cIdLan
+				Else
+					_cChvRM 	:= "["+ dToC(Date()) + " " + Time() + "] - " + 'IMPF070: Coligada: '+ _cColig + ' / Ra: '+ _cRa + ' / CtrRM: '+ AllTrim(_cCtrRM) + ' / IdPerLet: ' + _cIdPLe + ' / IdParc: '+ _cIdParc + ' / CodCFO: '+ _cCodCFO
+				EndIf
+				
+				ConOut(_cChvRM)
+				
+				If /*Empty(_cAliasRM)*/ Val(_cColig) = 2 
+					_cChvErr	:= 'Col_'+ _cColig +'_Ra_'+ AllTrim(_cRa) + '_CtrRM_'+ AllTrim(_cCtrRM) + '_IdPerLet_' + _cIdPLe + '_IdLan_'+ _cIdLan
+				Else
+					_cChvErr	:= 'Col_'+ _cColig +'_Ra_'+ AllTrim(_cRa) + '_CtrRM_'+ AllTrim(_cCtrRM) + '_IdPerLet_' + _cIdPLe + '_IdParc_'+ _cIdParc + '_CodCFO_'+ _cCodCFO
+				EndIf
+				
+				If Select('TMPSE1') > 0
+					DbSelectArea('TMPSE1')
+					TMPSE1->( DbCloseArea() )
+				EndIf
+				
+				_cQuery := " SELECT *				"
+				If Empty(_cAliasRM) 
+					_cQuery += " FROM RM.PROT_SE1	"
+				Else
+					_cQuery += " FROM RM.PROT_SE1" + _cAliasRM
+				EndIf
+				
+				_cQuery += " WHERE	CODCOLIGADA 		=  "+ _cColig 
+				_cQuery += " 		AND RA 				= '"+ _cRa 		+ "'" 
+				_cQuery += " 		AND CODCONTRATO 	= '"+ _cCtrRM 	+ "'"
+				_cQuery += " 		AND IDPERLET 		=  "+ _cIdPLe
+				
+				If /*Empty(_cAliasRM)*/ Val(_cColig) = 2
+					_cQuery += " 		AND IDLAN 		= "+ _cIdLan
+				Else
+					_cQuery += " 		AND IDPARCELA	= "+ _cIdParc
+					_cQuery += " 		AND CODCFO		= "+ _cCodCFO
+				EndIf
+				
+				DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPSE1',.T.,.F.)
+				
+				If .Not. TMPSE1->( EOF() )
+					
+					While .Not. TMPSE1->( EOF() )
+						
+						_cFilFin 	:= TMPSE1->( E1_FILIAL )
+						_cPrefixo	:= PadR(TMPSE1->( E1_PREFIXO ),TamSX3("E1_PREFIXO")[1])  	
+						_cNumero	:= PadR(TMPSE1->( E1_NUM ),TamSX3("E1_NUM")[1])
+						_cParcela	:= PadR(TMPSE1->( E1_PARCELA ),TamSX3("E1_PARCELA")[1])
+						_cTipo 	    := PadR(TMPSE1->( E1_TIPO ),TamSX3("E1_TIPO")[1])
+						_cCliente	:= PadR(TMPSE1->( E1_CLIENTE ),TamSX3("E1_CLIENTE")[1])
+						_cLoja 	    := PadR('00PF',TamSX3("E1_LOJA")[1])
+						
+						cCodTur     := TMPSE1->(TURMA)
+						cPerLet     := TMPSE1->(PERIODO_LETIVO)
+
+						SA1->(dbGotop())
+						If .Not. SA1->(MsSeek(xFilial("SA1") + _cCliente + _cLoja))
+							SA1->(dbGotop())
+							If SA1->(MsSeek(xFilial("SA1") + _cCliente + '0001'))
+								_cLoja	  := '0001'
+							EndIf
+						EndIf
+						
+						SA1->(DbCloseArea())
+							
+						_cChvPr  := 'IMPF070: Filial: '+ _cFilFin + ' / Prefixo: '+ _cPrefixo + ' / Numero: '+ _cNumero + ' / Parcela: '+ _cParcela + ' / Tipo: '+ _cTipo + ' / Cliente: '+ _cCliente + ' / Loja: '+ _cLoja
+						ConOut("["+ dToC(Date()) + " " + Time() + "] - " + _cChvPr)
+
+						SE1->(DbGoTop())
+						If SE1->( MsSeek( _cFilFin + _cPrefixo + _cNumero + _cParcela + _cTipo ) )
+							nRecSe1 := SE1->(RecNo())
+							_oGrOcr:EXCOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,'FIN', 7,Str(TMPSE1->(IDPARCELA)))
+							_cLoja := SE1->E1_LOJA
+							_cNumBord := " "
+							If AllTrim(SE1->E1_STATUS) == 'A'
+								If Empty(SE1->E1_NUMBOR)
+									_lRet := .T.
+									_nSaldo := SE1->E1_VALOR - (SE1->E1_DECRESC + Round(( SE1->E1_VALOR * SE1->E1_DESCFIN / 100),2) )
+									_oGrOcr:EXCOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,'FIN', 6,Str(TMPSE1->(IDPARCELA)))
+								Else
+									_cNumBord := SE1->E1_NUMBOR
+									_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + "Titulo em bordero (Sera realizado a tentativa de cancelamento): " + _cNumBord + " - " + _cChvPr
+									ConOut(_cMsg)
+									If !FinRMBord(SE1->E1_FILIAL, SE1->E1_NUM, SE1->E1_PREFIXO, SE1->E1_PARCELA, SE1->E1_TIPO, SE1->E1_CLIENTE)
+										_lRet := .F.
+										_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + 'IMPF070: Titulo em bordero, nao foi possivel remover - favor verificar - ' + _cChvPr
+										cCodImp := "001"
+										ConOut(_cMsg)
+										_cLogOc := "Titulo em bordero, nao foi possivel remover - favor verificar - " + _cChvPr
+										_oGrOcr:GRVOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,_cLogOc,'FIN','2', 6,Str(TMPSE1->(IDPARCELA)))
+										fGrvStRMF( _nSeq, _cColig, _cRa, _cCtrRM, _cIdPLe, _cIdLan, _lRet, _cMsg, 5, dDataBase, _cIdParc, _cCodCFO, cCodImp, cCodTur, cPerLet,_cFilFin,_cPrefixo,_cNumero,_cParcela,_cTipo) //Erro
+										Exit
+									Else
+										_lRet := .T.
+										_nSaldo := SE1->E1_VALOR - (SE1->E1_DECRESC + Round(( SE1->E1_VALOR * SE1->E1_DESCFIN / 100),2) )
+										//_oGrOcr:EXCOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,'FIN', 6,Str(TMPSE1->IDPARCELA))
+									EndIf
+								EndIf
+							Else
+								//Walmir Junior 16/07/2018 - Alterada variável para não sinalizar erro.
+								_lRet := .T.
+								_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + 'IMPF070: Titulo ja baixado ou baixado parcialmente - favor verificar - ' + _cChvPr
+								ConOut(_cMsg)
+								//Walmir Junior 13/07/2018 - Tratativa para não deixar em loop títulos já baixados de contratos cancelados.
+								fGrvStRMF( _nSeq, _cColig, _cRa, _cCtrRM, _cIdPLe, _cIdLan, _lRet, _cMsg, /*5*/7, dDataBase, _cIdParc, _cCodCFO ) //Erro
+								_lRet := .F.
+								Exit
+							EndIf
+						Else
+							
+							_cLogOc := 'IMPF070: Titulo nao encontrado no Protheus: ' + _cChvPr
+							_oGrOcr:GRVOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,_cLogOc,'FIN','2', 7,Str(TMPSE1->IDPARCELA))
+							_lRet := .F.
+							_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + 'IMPF070: Titulo nao encontrado no Protheus: ' + _cChvPr
+							ConOut(_cMsg)
+						EndIf
+						
+						If _lRet
+							SE1->(dbGoTo(nRecSe1))
+							_nSaldo := SE1->E1_VALOR - (SE1->E1_DECRESC + Round(( SE1->E1_VALOR * SE1->E1_DESCFIN / 100),2) )
+							_nOpc := 3
+							_nBaixa := 5
+							
+							_aBaixa 	:= {}
+								
+							_aBaixa := {{"E1_FILIAL"  ,_cFilFin      ,Nil    },;
+							           {"E1_PREFIXO"  ,_cPrefixo     ,Nil    },;
+							           {"E1_NUM"      ,_cNumero      ,Nil    },;
+							           {"E1_PARCELA"  ,_cParcela     ,Nil    },;
+							           {"E1_TIPO"     ,_cTipo        ,Nil    },;
+							           {"AUTDESCONT"  ,Iif( dDataBase <= SE1->E1_VENCREA , Round(SE1->E1_VALOR * (SE1->E1_DESCFIN/100),2),0) ,Nil    },;
+							           {"AUTMOTBX"    ,"CAN"         ,Nil    },;
+							           {"AUTDTBAIXA"  ,dDataBase     ,Nil    },;
+							           {"AUTDTCREDITO",dDataBase     ,Nil    },;
+							           {"AUTHIST"     ,_cHist        ,Nil    },;
+							           {"AUTJUROS"    ,0             ,Nil,.T.},;
+							           {"AUTVALREC"   ,_nSaldo       ,Nil    }}
+							
+							RecLock("SE1", .F.)
+							SE1->E1_DESCONT := Iif(dDataBase <= SE1->E1_VENCREA , SE1->E1_VALOR * (SE1->E1_DESCFIN/100),0)
+							SE1->(MsUnlock())
+							
+							lMsErroAuto := .F.
+								
+							_cFilAtu := cFilAnt
+							cFilAnt	:= _cFilFin
+							 
+							_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + "IMPF070 - ROTINA AUTOMATICA : "+ cFilAnt
+							ConOut(_cMsg)
+							
+							MSExecAuto({|x,y| Fina070(x,y)},_aBaixa, _nOpc)
+							
+							cFilAnt := _cFilAtu
+							
+							If lMsErroAuto
+								_cLogOc := MostraErro(_cLocErr, _cChvErr+".LOG")
+								DisarmTransaction()
+								_lRet := .F.
+								_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + "IMPF070: ERRO AO BAIXAR CANCELAMENTO FINA070 - " + _cChvPr + ' - Favor verificar o errolog em: '+ _cLocErr
+								ConOut(_cMsg)
+								cCodImp := "002"
+								_oGrOcr:GRVOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,_cLogOc,'FIN','1',8,Str(TMPSE1->IDPARCELA))
+								fGrvStRMF( _nSeq, _cColig, _cRa, _cCtrRM, _cIdPLe, _cIdLan, _lRet, _cMsg, _nBaixa, dDataBase, _cIdParc, _cCodCFO, cCodImp, cCodTur, cPerLet,_cFilFin ) //Erro 5- canc baixa
+								Exit
+							Else
+								_lRet := .T.
+								_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + "IMPF070: BAIXA CANCELAMENTO EFETUADA FINA070 - " + _cChvPr 
+								ConOut(_cMsg)
+								u_SF633XA(_cFilFin, "IMPFINRM", "N", Posicione("CN9", 10, _cFilFin+_cCtrRM, "CN9_NUMERO"), Posicione("CN9", 10, _cFilFin+_cCtrRM, "CN9_REVISA"), _cPrefixo, _cNumero, _cParcela, _cTipo, _cNumBord)
+								fGrvStRMF( _nSeq, _cColig, _cRa, _cCtrRM, _cIdPLe, _cIdLan, _lRet, _cMsg, _nBaixa, dDataBase, _cIdParc, _cCodCFO ) //Correto 5-canc baixa
+								_oGrOcr:EXCOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,'FIN', 8,Str(TMPSE1->IDPARCELA))
+							EndIf
+							
+						EndIf
+					
+						TMPSE1->( DbSkip() )
+					EndDo
+					
+				EndIf
+			
+			End Transaction
+			
+			TMPFIN->( DbSkip() )
+		EndDo
+		
+		SE1->(DbCloseArea())
+					
+	Else
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + 'IMPFINRM: Nao existe Cancelamento de Titulos a importar' )
+	EndIf
+	
+	ConOut(Replicate("-",30))
+	ConOut("["+ dToC(Date()) + " " + Time() + "] - " + 'IMPFINRM: Iniciando Baixa de Titulos - Contas a Receber RM x Protheus' )
+	
+	//Walmir Junior 27/01/2020 - Com base na filial de execução, seta variável de coligada.
+	If "03MT" == SubStr(cFilAnt,1,4) 
+		_cColig := "3"
+	ElseIf "02MT" == SubStr(cFilAnt,1,4)
+		_cColig := "2"
+	EndIf
+	
+	If Select('TMPFIN') > 0
+		DbSelectArea('TMPFIN')
+		TMPFIN->( DbCloseArea() )
+	EndIf
+	
+	_cQuery   := " SELECT E5_FILIAL,          					"
+	_cQuery   += "        E5_PREFIXO,         					"
+	_cQuery   += "        E5_NUMERO,          					"
+	_cQuery   += "        E5_PARCELA,         					"
+	_cQuery   += "        E5_TIPO,             					"
+	_cQuery   += "        E5_DATA             					"
+	_cQuery   += " FROM "+RetsqlName("SE5")
+	If /*Empty(_cAliasRM)*/ Val(_cColig) = 2
+		_cQuery   += " WHERE  (E5_FILIAL <> '02MT0001' AND E5_FILIAL LIKE '02MT%') "
+		_cQuery   += " AND    E5_PREFIXO	IN ('RMC','RMX') 	"
+	Else
+		_cQuery   += " WHERE  (E5_FILIAL <> '03MT0001' AND E5_FILIAL LIKE '03MT%') "
+		_cQuery   += " AND    E5_PREFIXO	IN ('SGE')			"
+	EndIf
+	_cQuery   += " AND    E5_TIPO 		= 'BOL'					"
+	_cQuery   += " AND    E5_XGERARM  	= ' '   					"
+	_cQuery   += " AND    E5_RECPAG  	= 'R'   					"
+	_cQuery   += " AND    E5_TIPODOC  	IN ('BA','VL','CP')	"
+	_cQuery   += " AND    E5_MOTBX		NOT IN ('CAN','TEF')		"
+	_cQuery   += " AND    D_E_L_E_T_ 	<> '*'   					"
+	_cQuery   += " ORDER BY R_E_C_N_O_        					"
+	
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPFIN',.T.,.F.)
+	
+	//ConOut(_cQuery)
+		
+	If .Not. TMPFIN->( Eof() )
+			
+		DbSelectArea('SE1')
+		SE1->(DbSetOrder(1))
+		DbSelectArea("SE5")
+		SE5->(DbSetOrder(7))
+
+		While .Not. TMPFIN->( Eof() )
+			
+			_cFilFin 	:= TMPFIN->( E5_FILIAL )
+			_cPrefixo	:= PadR(TMPFIN->( E5_PREFIXO ),TamSX3("E5_PREFIXO")[1])  	
+			_cNumero	:= PadR(TMPFIN->( E5_NUMERO ),TamSX3("E5_NUMERO")[1])
+			_cParcela	:= PadR(TMPFIN->( E5_PARCELA ),TamSX3("E5_PARCELA")[1])
+			_cTipo 	:= PadR(TMPFIN->( E5_TIPO ),TamSX3("E5_TIPO")[1])
+			_dDtBx		:= StoD(TMPFIN->( E5_DATA ))
+			
+			_cChvPr :=  _cFilFin + _cPrefixo + _cNumero + _cParcela + _cTipo
+			_cChvPr1 := "["+ dToC(Date()) + " " + Time() + "] - " + 'IMPF070: Filial: '+ _cFilFin + ' / Prefixo: '+ _cPrefixo + ' / Numero: '+ _cNumero + ' / Parcela: '+ _cParcela + ' / Tipo: '+ _cTipo + ' / Cliente: '+ _cCliente + ' / Loja: '+ _cLoja
+			ConOut(_cChvPr1)
+			
+			SE1->(DbGoTop())
+			If SE1->(MsSeek(_cChvPr)) .AND. .NOT. SE1->E1_HIST == "Transferencia de Titulo SESI Escola"
+				
+				_lRet 		:= .F.
+				_nBaixa 	:= 6
+				_cMsg 		:= "IMPF070: BAIXA EFETUADA FINA070 - " + _cChvPr1
+				_cIdLan	:= SubStr(SE1->E1_XIDESB,2,10)
+				
+				If SE5->(MsSeek( _cChvPr ))
+					While .Not. SE5->(Eof()) .And. _cChvPr == SE5->E5_FILIAL + SE5->E5_PREFIXO + SE5->E5_NUMERO + SE5->E5_PARCELA + SE5->E5_TIPO
+						If RecLock("SE5",.F.)
+							SE5->E5_XGERARM := "S"
+							_lRet := .T.
+							SE5->(MsUnlock())
+						EndIf
+						SE5->(DbSkip())
+					EndDo
+				EndIf
+				
+				If _lRet 
+					If /*Empty(_cAliasRM)*/ "02MT" == SubStr(cFilAnt,1,4)
+						
+						If Select('TMP1') > 0
+							DbSelectArea('TMP1')
+							TMP1->( DbCloseArea() )
+						EndIf
+					
+						_cQuery1	:= " SELECT * FROM RM.ZMD_INT_PRT_FIN " + _cAliasRM 
+						_cQuery1	+= " WHERE IDLAN = "+ cValToChar(_cIdLan)
+						_cQuery1 	+= "		AND CODCOLIGADA 	= " + _cColig + " 		"
+						
+						//Walmir Junior 08/02/2019 - Tratativa
+						If .Not. Empty(_cIdLan)
+							TcQuery _cQuery1 New Alias 'TMP1'
+							
+							_nSeq   := TMP1->(SEQ) 
+							_cColig := cValToChar( TMP1->(CODCOLIGADA) )
+							_cRa    := TMP1->(RA)
+							_cCtrRM := TMP1->(CODCONTRATO)
+							_cIdPLe := cValToChar( TMP1->(IDPERLET) ) 
+							_cIdLan := cValToChar( TMP1->(IDLAN) )
+							
+							If _nSeq <> 0
+								ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  "IMPF070: Baixa Sesi")
+								_cIdParc := '0'
+								_cCodCFO := ''
+								fGrvStRMF( _nSeq, _cColig, _cRa, _cCtrRM, _cIdPLe, _cIdLan, _lRet, _cMsg, _nBaixa, _dDtBx, _cIdParc, _cCodCFO )
+							EndIf
+							
+							TMP1->( DbCloseArea() )
+						EndIf
+					Else
+						ConOut("["+ dToC(Date()) + " " + Time() + "] - " + "IMPF070: Baixa Senai - Gravado na ZZU")
+					EndIf
+					//Walmir Junior 09/05/2018 - Adição de tratativa para evitar execução do DBCloseArea quando já estiver fechado.
+					If Select('TMP1') > 0
+						TMP1->( DbCloseArea() )
+					EndIf
+				EndIf
+				
+			EndIf
+			
+			TMPFIN->( DbSkip() )
+		End
+			SE5->( DbCloseArea() )
+			SE1->( DbCloseArea() )
+	Else
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + 'IMPFINRM: Nao existe Baixa de Titulos a importar' )
+	EndIf
+	
+	TMPFIN->( DbCloseArea() )
+	
+Return
+
+/*/{Protheus.doc} JobAtivo
+Função que verifica se o job está ativo.
+@type function
+@author Jose Leite de Barros Neto
+@since 15/09/2015
+@version 1.0
+@return logical, indica se o JOB está ativo.
+/*/
+Static function JobAtivo()
+  
+	Local cQuery	:= ''
+	Local lRet 	:= .F.
+	Local cBlq 	:= IIf(/*Empty(_cAliasRM)*/ Val(_cColJob) = 2,'2','4')
+  
+	If Select('TMP') > 0
+		TMP->(DbCloseArea())
+	EndIf
+ 
+	cQuery := " SELECT ZZA_STATUS "
+	cQuery += " FROM "+RetSqlName("ZZA")
+	cQuery += " WHERE D_E_L_E_T_ != '*' "
+	cQuery += " AND   ZZA_TIPO    = '"+ cBlq +"' "
+ 
+	TcQuery cQuery New Alias 'TMP'
+ 
+	If TMP->ZZA_STATUS == 'S'
+		lRet := .T. 
+	EndIf
+	
+	TMP->(DbCloseArea())
+
+Return( lRet )
+
+
+/*/{Protheus.doc} AtuaZZA
+Função responsável por bloquear/desbloquear a tabela de importacao
+@type function
+@author Jose Leite de Barros Neto
+@since 19/08/2015
+@version 1.0
+/*/
+Static Function AtuaZZA(p_cBloq)
+	
+	Local cMsg := If(p_cBloq == 'N','IMPFINRM: Bloqueando ZZA.','IMPFINRM: Liberando ZZA.')
+	Local cBlq := IIf(/*Empty(_cAliasRM)*/Val(_cColJob) = 2,'2','4')
+	
+	Begin Transaction
+		
+		DbSelectArea("ZZA")
+		ZZA->( DbSetOrder(1) )
+		If ZZA->( MsSeek(xFilial("ZZA") + p_cBloq + cBlq) )
+	   		If RecLock("ZZA",.F.)
+				ZZA->ZZA_STATUS := IIF( p_cBloq == 'N','S','N')
+				ZZA->ZZA_DATA   := dDataBase
+				ZZA->ZZA_HORA   := Time()
+				ZZA->( MsUnlock() )
+		   EndIf
+		EndIf
+		
+		ZZA->( DbCloseArea() )
+		
+	End Transaction
+	
+	ConOut(cMsg)
+	
+Return( Nil )
+
+/*/{Protheus.doc} fMailIFin
+Função responsável por enviar E-mails de erros na inclusão de Titulos - Protheus x RM. 
+@type function
+@author Jose Leite de Barros Neto
+@since 10/02/2017
+@version 1.0
+/*/
+User Function fMailIFin(_aParams)
+
+	Local _aArea		:= GetArea()
+	Local _cMsg 		:= ""
+	Local _cQuery	:= ""
+	Local _cAliasRM	:= ""
+	Local _cChvRM	:= ""
+	Local _cPara		:= ""
+	Local _cAssunt	:= "Integracao SGE x FIN - Inclusão de Contas a Receber"
+	Local _cMsgMail	:= ""
+	Local _cCtrRM	:= ""
+	Local _cColig	:= ""
+	Local _cRa		:= ""
+	Local _cIdPLe	:= ""
+	Local _cIdLan	:= ""
+	Local _cIdParc	:= ""
+	Local _cCodCFO	:= ""
+	Local _cLocErr 	:= ""
+	
+	ConOut(Replicate("=",80))
+	ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'IMPFINRM - fMailIFin: Iniciando Envio de E-mails de Inclusão de Titulos a Receber - Financeiro SGE x Protheus' )
+
+	//+--------------------------------------------------------------+
+	//| Se for SCHEDULE prepara o ambiente                           |
+	//+--------------------------------------------------------------+
+	If Valtype( _aParams ) != "U"
+	
+		PREPARE ENVIRONMENT EMPRESA _aParams[1] FILIAL _aParams[2]    
+		
+		If _aParams != Nil
+			ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  "IMPFINRM - fMailIFin: Empresa: "+ _aParams[1])   
+			ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  "IMPFINRM - fMailIFin: Filial: "+ _aParams[2])
+			
+			//Walmir Junior 27/01/2020 - Com base na filial de execução, seta variável de coligada.
+			If "03MT0001" == _aParams[2] 
+				_cColJob := "3"
+			ElseIf "02MT0001" == _aParams[2]
+				_cColJob := "2"
+			EndIf 
+			
+			//Walmir Junior 27/01/2020 - Com a unificação de base, torna-se obrigatório o uso do dbLink pra Sesi ou Senai.
+			_cAliasRM := GetNewPar("MV_XSGEABD", "") //"@RMSGE"
+			If Empty(_cAliasRM)
+				ConOut(Replicate("-",30))
+				Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Encerrou Job...")
+				Conout(" ")
+				Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Parametro com o Alias do BD SGE Senai nao Preenchido, favor verificar! MV_XSGEABD")
+				ConOut(Replicate("-",30))
+				Return
+			EndIf 
+		EndIf
+	Else
+		//Wjr 27/01/2020 If "03MT0001" == cFilAnt 
+			_cAliasRM := AllTrim(GetNewPar("MV_XSGEABD", "")) //"@RMSGE"
+			If Empty(_cAliasRM)
+				ConOut(Replicate("-",30))
+				Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Encerrou Job...")
+				Conout(" ")
+				Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Parametro com o Alias do BD SGE SENAI nao Preenchido, favor verificar! MV_XSGEABD")
+				ConOut(Replicate("-",30))
+				Return
+			EndIf
+		//EndIf
+	EndIf
+	
+	_cPara 	:= GetNewPar('MV_XSGEME',"desenvolvedorsge.csi@fiemt.com.br")
+	_cLocErr 	:= GetNewPar('MV_XLOCERR', "\xml\retorno\rmc\log\")
+	//_cMsgMail	:= "IMPFINRM - fMailIFin: ERRO AO INCLUIR O CONTAS A RECEBER - FINA040 - Favor verificar o errolog em: "+ _cLocErr
+	
+	If Select('TRA') > 0
+		DbSelectArea('TRA')
+		TRA->(DbCloseArea())
+	EndIf
+	
+	_cQuery := " SELECT * "
+	If Empty(_cAliasRM)		 
+		_cQuery += " FROM RM.ZMD_INT_PRT_FIN "
+	Else
+		_cQuery += " FROM RM.ZMD_INT_PRT_FIN" + _cAliasRM
+	EndIf
+	_cQuery += " WHERE STS_PROT_INC = 3 "
+	_cQuery += "		AND CODCOLIGADA 	= " + _cColJob + " 		"
+	
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TRA',.T.,.F.)
+
+	If .Not. TRA->( Eof() )
+		
+		While .Not. TRA->( Eof() )
+  			
+  			_cCtrRM := cValToChar(TRA->CODCONTRATO)
+  			_cColig := cValToChar(TRA->CODCOLIGADA)
+			_cRa    := TRA->RA
+			_cIdPLe := cValToChar(TRA->IDPERLET)
+				
+			If /*Empty(_cAliasRM)*/ Val(_cColig) = 2 
+				_cIdLan := cValToChar(TRA->IDLAN)
+			Else
+				_cIdParc := cValToChar(TRA->IDPARCELA)
+				_cCodCFO := cValToChar(TRA->CODCFO)
+			EndIf
+  			
+  			If /*Empty(_cAliasRM)*/ Val(_cColig) = 2 
+				_cChvRM := 'Coligada: '+ _cColig + ' / Ra: '+ _cRa + ' / CtrRM: '+ AllTrim(_cCtrRM) + ' / IdPerLet: ' + _cIdPLe + ' / IdLan: '+ _cIdLan
+			Else
+				_cChvRM := 'Coligada: '+ _cColig + ' / Ra: '+ _cRa + ' / CtrRM: '+ AllTrim(_cCtrRM) + ' / IdPerLet: ' + _cIdPLe + ' / IdParc: '+ _cIdParc + ' / CodCFO: '+ _cCodCFO
+			EndIf
+			
+			If Select('TRB') > 0
+				DbSelectArea('TRB')
+				TRB->(DbCloseArea())
+			EndIf
+	
+			_cQuery := " SELECT MAX(SEQ) SEQ, OBSERVACAO "
+			If Empty(_cAliasRM)		 
+				_cQuery += " FROM RM.ZMD_INT_PRT_FIN_HIST"
+			Else
+				_cQuery += " FROM RM.ZMD_INT_PRT_FIN_HIST" + _cAliasRM
+			EndIf
+			_cQuery += " WHERE STS_PROT = 3 "
+			_cQuery += " 		AND CODCONTRATO 	= '"+ Alltrim(_cCtrRM) + "'	"
+			_cQuery += "		AND CODCOLIGADA 	= " + _cColJob + " 		"
+			_cQuery += " GROUP BY OBSERVACAO "
+			
+			DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TRB',.T.,.F.)
+			
+			_cMsgMail := AllTrim(TRB->OBSERVACAO)
+			
+			TRB->(DbCloseArea())
+  			
+			//+------------------------------------------------------------------+
+			//|  Monta mensagem em HTML para o corpo do E-mail                   |
+			//+------------------------------------------------------------------+
+			_cMsg := '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">'+CRLF
+			_cMsg += '<html lang="pt-br">'+CRLF
+			_cMsg += '<head>'+CRLF
+			_cMsg += '  <meta content="text/html; charset=iso-8859-1" http-equiv="Content-Type" name="GENERATOR">'+CRLF
+			_cMsg := '<title>Erro na inclusao de Titulos a Receber</title>' + CRLF
+			_cMsg += '</head>'+CRLF
+			_cMsg += '<body bgproperties="fixed">'+CRLF
+			_cMsg += '	<p class="MsoNormal" style="text-align: left;" align="left">'+CRLF
+			_cMsg += '		<span style="font-family: &quot;Arial&quot;,&quot;sans-serif&quot;;">'+CRLF
+			_cMsg += '			<img id="_x0000_i1030" src="http://gps.totvs.com/workflow/titulo_wf_totvs.png" border="0" height="62" width="760">'+CRLF
+			_cMsg += '		</span>'+CRLF
+			_cMsg += '	</p>'+CRLF
+			_cMsg += '	<td style="padding: 0cm;">'+CRLF
+			_cMsg += '		<p class="MsoNormal" align="left">'+CRLF
+			_cMsg += '			<span style="font-size: 11pt; font-family:&quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(00,00,64);">'+CRLF
+			_cMsg += '					<br>'+CRLF 
+			_cMsg += '					'+ Alltrim(_cChvRM)+''+CRLF 
+			_cMsg += '					<br>'+CRLF
+			_cMsg += '					<br>'+CRLF
+			_cMsg += '					'+ Alltrim(_cMsgMail)+''+CRLF
+			_cMsg += '			</span>'+CRLF
+			_cMsg += '		</p>'+CRLF
+			_cMsg += '	</td>'+CRLF
+			_cMsg += '</body>'+CRLF
+			_cMsg += '</html>'+CRLF
+			
+			
+			//Walmir Junior 16/11/2018 - Tratativa para habilitar ou desabilitar envio de email.				
+			If _lRMail									
+				//p_cDe, p_cPara, p_cCC, p_cCCO, p_cAssunto, p_cMsg, p_cAnexo, p_lConLe
+				_lEnviou := U_SFEnvEmail(,_cPara,,,_cAssunt,_cMsg,,, .F.)
+			EndIf
+			
+			
+			If .Not. _lEnviou
+				ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'IMPFINRM - fMailIFin: Nao foi possivel enviar o e-mail para: '+ _cPara + ', favor verificar!')
+			EndIf
+			TRA->(DbSkip())
+		EndDo
+	EndIf
+		
+	TRA->(DbCloseArea())
+	
+	ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'IMPFINRM - fMailCFin: Finalizando Envio de E-mails - Financeiro SGE x Protheus')
+	ConOut(Replicate("=",80))
+		
+	RestArea(_aArea)
+	
+Return
+
+/*/{Protheus.doc} fMailCFin
+Função responsável por enviar E-mails de erros no Cancelamento de Titulos - Protheus x RM.
+@type function
+@author Jose Leite de Barros Neto
+@since 07/12/2015
+@version 1.0
+/*/
+User Function fMailCFin(_aParams)
+
+	Local _aArea		:= GetArea()
+	Local _cMsg 		:= ""
+	Local _cQuery	:= ""
+	Local _cAliasRM	:= ""
+	Local _cChvRM	:= ""
+	Local _cPara		:= ""
+	Local _cAssunt	:= "Integracao SGE x FIN - Cancelamento de Baixas"
+	Local _cMsgMail	:= ""
+	Local _cCtrRM	:= ""
+	Local _cColig	:= ""
+	Local _cRa		:= ""
+	Local _cIdPLe	:= ""
+	Local _cIdLan	:= ""
+	Local _cIdParc	:= ""
+	Local _cCodCFO	:= ""
+	Local _cLocErr 	:= ""
+	
+	//Walmir Junior 27/01/2020 - Variável utilizada para setar a coligada com base na filial de execução do Job.
+	Private _cColJob := "0" 
+	
+	ConOut(Replicate("=",80))
+	ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'IMPFINRM - fMailCFin: Iniciando Envio de E-mails de Titulos Cancelados - Financeiro SGE x Protheus' )
+
+	//+--------------------------------------------------------------+
+	//| Se for SCHEDULE prepara o ambiente                           |
+	//+--------------------------------------------------------------+
+	If Valtype( _aParams ) != "U"
+	
+		PREPARE ENVIRONMENT EMPRESA _aParams[1] FILIAL _aParams[2]    
+		
+		If _aParams != Nil
+			ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  "IMPFINRM - fMailCFin: Empresa: "+ _aParams[1])   
+			ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  "IMPFINRM - fMailCFin: Filial: "+ _aParams[2])
+			
+			//Walmir Junior 27/01/2020 - Com base na filial de execução, seta variável de coligada.
+			If "03MT0001" == _aParams[2] 
+				_cColJob := "3"
+			ElseIf "02MT0001" == _aParams[2]
+				_cColJob := "2"
+			EndIf 
+			
+			//Walmir Junior 27/01/2020 - Com a unificação de base, torna-se obrigatório o uso do dbLink pra Sesi ou Senai.
+			_cAliasRM := GetNewPar("MV_XSGEABD", "") //"@RMSGE"
+			If Empty(_cAliasRM)
+				ConOut(Replicate("-",30))
+				Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Encerrou Job...")
+				Conout(" ")
+				Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Parametro com o Alias do BD SGE Senai nao Preenchido, favor verificar! MV_XSGEABD")
+				ConOut(Replicate("-",30))
+				Return
+			EndIf  
+		EndIf
+	Else
+		//Wjr 27/01/2020 If "03MT0001" == cFilAnt 
+			_cAliasRM := AllTrim(GetNewPar("MV_XSGEABD", "")) //"@RMSGE"
+			If Empty(_cAliasRM)
+				ConOut(Replicate("-",30))
+				Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Encerrou Job...")
+				Conout(" ")
+				Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Parametro com o Alias do BD SGE SENAI nao Preenchido, favor verificar! MV_XSGEABD")
+				ConOut(Replicate("-",30))
+				Return
+			EndIf
+		//EndIf
+	EndIf
+	
+	_cPara 	:= GetNewPar('MV_XSGEME',"desenvolvedorsge.csi@fiemt.com.br")
+	_cLocErr 	:= GetNewPar('MV_XLOCERR', "\xml\retorno\rmc\log\")
+	//_cMsgMail	:= "IMPFINRM - fMailCFin: ERRO AO BAIXAR CANCELAMENTO FINA070 - Favor verificar o errolog em: "+ _cLocErr
+	
+	If Select('TRA') > 0
+		DbSelectArea('TRA')
+		TRA->(DbCloseArea())
+	EndIf
+	
+	_cQuery := " SELECT * "
+	If Empty(_cAliasRM)		 
+		_cQuery += " FROM RM.ZMD_INT_PRT_FIN "
+	Else
+		_cQuery += " FROM RM.ZMD_INT_PRT_FIN" + _cAliasRM
+	EndIf
+	_cQuery += " WHERE STS_PROT_CANC = 3"
+	_cQuery += "		AND CODCOLIGADA 	= " + _cColJob + " 		"
+	
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TRA',.T.,.F.)
+
+	If .Not. TRA->( Eof() )
+		
+		While .Not. TRA->( Eof() )
+  			
+  			_cCtrRM := cValToChar(TRA->CODCONTRATO)
+  			_cColig := cValToChar(TRA->CODCOLIGADA)
+			_cRa    := TRA->RA
+			_cIdPLe := cValToChar(TRA->IDPERLET)
+				
+			If /*Empty(_cAliasRM)*/ Val(_cColig) = 2 
+				_cIdLan := cValToChar(TRA->IDLAN)
+			Else
+				_cIdParc := cValToChar(TRA->IDPARCELA)
+				_cCodCFO := cValToChar(TRA->CODCFO)
+			EndIf
+  			
+  			If /*Empty(_cAliasRM)*/ Val(_cColig) = 2
+				_cChvRM := 'Coligada: '+ _cColig + ' / Ra: '+ _cRa + ' / CtrRM: '+ AllTrim(_cCtrRM) + ' / IdPerLet: ' + _cIdPLe + ' / IdLan: '+ _cIdLan
+			Else
+				_cChvRM := 'Coligada: '+ _cColig + ' / Ra: '+ _cRa + ' / CtrRM: '+ AllTrim(_cCtrRM) + ' / IdPerLet: ' + _cIdPLe + ' / IdParc: '+ _cIdParc + ' / CodCFO: '+ _cCodCFO
+			EndIf
+			
+			If Select('TRB') > 0
+				DbSelectArea('TRB')
+				TRB->(DbCloseArea())
+			EndIf
+	
+			_cQuery := " SELECT MAX(SEQ) SEQ, OBSERVACAO "
+			If Empty(_cAliasRM)		 
+				_cQuery += " FROM RM.ZMD_INT_PRT_FIN_HIST"
+			Else
+				_cQuery += " FROM RM.ZMD_INT_PRT_FIN_HIST" + _cAliasRM
+			EndIf
+			_cQuery += " WHERE STS_PROT = 3 "
+			_cQuery += " 		AND CODCONTRATO = '"+ Alltrim(_cCtrRM) + "'	"
+			_cQuery += "		AND CODCOLIGADA 	= " + _cColJob + " 		"
+			_cQuery += " GROUP BY OBSERVACAO "
+			_cQuery += " ORDER BY SEQ DESC "
+			
+			DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TRB',.T.,.F.)
+			
+			_cMsgMail := AllTrim(TRB->OBSERVACAO)
+			
+			TRB->(DbCloseArea())
+  			
+			//+------------------------------------------------------------------+
+			//|  Monta mensagem em HTML para o corpo do E-mail                   |
+			//+------------------------------------------------------------------+
+			_cMsg := '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">'+CRLF
+			_cMsg += '<html lang="pt-br">'+CRLF
+			_cMsg += '<head>'+CRLF
+			_cMsg += '  <meta content="text/html; charset=iso-8859-1" http-equiv="Content-Type" name="GENERATOR">'+CRLF
+			_cMsg := '<title>Erro no Cancelamento de Titulos a Receber</title>' + CRLF
+			_cMsg += '</head>'+CRLF
+			_cMsg += '<body bgproperties="fixed">'+CRLF
+			_cMsg += '	<p class="MsoNormal" style="text-align: left;" align="left">'+CRLF
+			_cMsg += '		<span style="font-family: &quot;Arial&quot;,&quot;sans-serif&quot;;">'+CRLF
+			_cMsg += '			<img id="_x0000_i1030" src="http://gps.totvs.com/workflow/titulo_wf_totvs.png" border="0" height="62" width="760">'+CRLF
+			_cMsg += '		</span>'+CRLF
+			_cMsg += '	</p>'+CRLF
+			_cMsg += '	<td style="padding: 0cm;">'+CRLF
+			_cMsg += '		<p class="MsoNormal" align="left">'+CRLF
+			_cMsg += '			<span style="font-size: 11pt; font-family:&quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(00,00,64);">'+CRLF
+			_cMsg += '					<br>'+CRLF 
+			_cMsg += '					'+ Alltrim(_cChvRM)+''+CRLF 
+			_cMsg += '					<br>'+CRLF
+			_cMsg += '					<br>'+CRLF
+			_cMsg += '					'+ Alltrim(_cMsgMail)+''+CRLF
+			_cMsg += '			</span>'+CRLF
+			_cMsg += '		</p>'+CRLF
+			_cMsg += '	</td>'+CRLF
+			_cMsg += '</body>'+CRLF
+			_cMsg += '</html>'+CRLF
+			
+			//Walmir Junior 16/11/2018 - Tratativa para habilitar ou desabilitar envio de email.				
+			If _lRMail									
+				//p_cDe, p_cPara, p_cCC, p_cCCO, p_cAssunto, p_cMsg, p_cAnexo, p_lConLe
+				_lEnviou := U_SFEnvEmail(,_cPara,,,_cAssunt,_cMsg,,, .F.)
+			EndIf
+			
+			
+			If .Not. _lEnviou
+				ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'IMPFINRM - fMailCFin: Nao foi possivel enviar o e-mail para: '+ _cPara + ', favor verificar!')
+			EndIf
+			TRA->(DbSkip())
+		EndDo
+	EndIf
+		
+	TRA->(DbCloseArea())
+	
+	ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'IMPFINRM - fMailCFin: Finalizando Envio de E-mails - Financeiro RM x Protheus')
+	ConOut(Replicate("=",80))
+		
+	RestArea(_aArea)
+	
+Return
+
+/*/ {Protheus.doc} fGrvStRMF
+Funcao para gravar tabelas intermediarias do Contrato RM
+@type function
+@author Jose Leite de Barros Neto
+@since 12/11/2015
+@History 09/03/2021, Franklin de Brito de Oliveira, Adição do _cAliasRM na consulta do SEQ na tabela RM.ZMD_INT_PRT_FIN_HIST.
+*/
+Static Function fGrvStRMF( p_nSeq, p_cColig, p_cRa, p_cCtrRM, p_cIdPLe, p_cIdLan, p_lRet, p_cMsg, p_nOpc, p_dDtBx, p_cIdParc, p_cCodCFO, p_CodImp, p_CodTur, p_PerLet,p_FilFin,p_Prefixo,p_Numero,p_Parcela,p_Tipo,p_NumBco /* NumBco */ ) 
+	
+	Local _cQuery 	:= ''
+	Local _nStatus 	:= 0
+	Local _cPara	:= GetNewPar('MV_XSGEME','desenvolvedorsge.csi@fiemt.com.br')
+	Local _cAssunt	:= 'Integracao SGE x GCT'
+	Local _cChvRM	:= 'Colig: ' + p_cColig + ' / RA: '+ p_cRa + ' / IdPerLet: '+ p_cIdPLe + ' / CTR: '+ AllTrim(p_cCtrRM)
+	Local _cMsgMail	:= '' 
+	Local _cMsg		:= '' 
+	Local _cObserv 	:= ''
+	Local _lEnviou	:= .F.
+	Local _cAliasRM := GetNewPar("MV_XSGEABD", "")
+	
+	Default p_nOpc 	:= 3
+	Default p_NumBco := ""
+
+	_cFilName := FWFilialName( cEmpAnt, p_FilFin, 1 )
+	
+	Do Case
+		Case p_CodImp == "001"		
+			_cChvRM	:= 'Colig: ' + p_cColig + ' / Filial: ' + _cFilName + ' / RA: '+ p_cRa + ' / Contrato: '+ AllTrim(p_cCtrRM) + ' / Turma: ' + AllTrim(p_CodTur) + ' / Periodo Letivo: ' + p_PerLet + ' / Lançamento Financeiro: ' + p_cIdLan			
+			p_cMsg  += CRLF
+			p_cMsg  += "IMPF070: Titulo em bordero - favor verificar - IMPF070: Filial: " + p_FilFin + " / Prefixo: " + p_Prefixo + " / Numero: " + p_Numero + " / Parcela: " + p_Parcela + " / Tipo: " + p_Tipo + CRLF
+			p_cMsg  += " / Cliente: " + _cCliente + " / Loja: " + _cLoja			 
+		Case p_CodImp == "002"
+			_cChvRM	:= 'Colig: ' + p_cColig + ' / Filial: ' + _cFilName + ' / RA: '+ p_cRa + ' / Contrato: '+ AllTrim(p_cCtrRM) + ' / Turma: ' + AllTrim(p_CodTur) + ' / Periodo Letivo: ' + p_PerLet + ' / Lançamento Financeiro: ' + p_cIdLan
+			p_cMsg  += CRLF
+			p_cMsg  += "IMPFINRM - fMailCFin: Favor entrar em contato com a CSI e informar: ERRO AO BAIXAR CANCELAMENTO FINA070 - Favor verificar o errolog em:" + CRLF
+			p_cMsg  += "\xml\retorno\rmc\log\"
+		Case p_CodImp == "003"
+			_cChvRM	:= 'Colig: ' + p_cColig + ' / Filial: ' + _cFilName + ' / RA: '+ p_cRa + ' / Contrato: '+ AllTrim(p_cCtrRM) + ' / Turma: ' + AllTrim(p_CodTur) + ' / Periodo Letivo: ' + p_PerLet + ' / Lançamento Financeiro: ' + p_cIdLan
+			p_cMsg  += CRLF
+			p_cMsg  += "IMPF070: Titulo ja baixado ou baixado parcialmente - Favor entrar em contato com a CSI e informar: favor verificar - IMPF070: Filial: " + p_FilFin + " / Prefixo: " + p_Prefixo + CRLF
+			p_cMsg  += " / Numero: " + p_Numero + " / Parcela: " + p_Parcela + " / Tipo: " + p_Tipo + " / Cliente: " + _cCliente + " / Loja: " + _cLoja
+		Case p_CodImp == "004"
+			_cChvRM	:= 'Colig: ' + p_cColig + ' / Filial: ' + _cFilName + ' / RA: '+ p_cRa + ' / Contrato: '+ AllTrim(p_cCtrRM) + ' / Turma: ' + AllTrim(p_CodTur) + ' / Periodo Letivo: ' + p_PerLet + ' / Lançamento Financeiro: ' + p_cIdLan
+			p_cMsg  += CRLF
+			p_cMsg  += "IMPF040: ERRO AO ALTERAR FINA040 - Favor entras em contato com a CSI e informar: IMPF040: Filial: " + p_FilFin + " / Prefixo: " + p_Prefixo + CRLF
+			p_cMsg  += " / Numero: " + p_Numero + " / Parcela: " + p_Parcela + " / Tipo: " + p_Tipo + " / Cliente: " + _cCliente + " / Loja: " + _cLoja + "Favor verificar o errorlog em \xml\retorno\rmc\log"					 					
+	EndCase
+		
+	If p_lRet
+		If p_nOpc == 6
+			_nStatus := 1
+		Else
+			_nStatus := 2
+		EndIf
+	Else
+		_nStatus := 3
+		_cMsgMail := 'Erro '+ p_cMsg
+	EndIf
+	
+	/*	Gravar Status do Titulo Financeiro	*/
+	If Empty(_cAliasRM)
+		_cQuery := " UPDATE RM.ZMD_INT_PRT_FIN "
+	Else
+		_cQuery := " UPDATE RM.ZMD_INT_PRT_FIN" + _cAliasRM 
+	EndIf
+	
+	//Inclusao do Titulo Financeiro
+	If p_nOpc == 3
+		
+		If _nStatus == 2
+			_cObserv := 'REGISTRO STS_PROT_INC INSERIDO PELA ROTINA DE INTEGRACAO PROTHEUS x RM'
+		Else
+			_cObserv := _cMsgMail
+		EndIf
+		
+		_cQuery += " SET STS_PROT_INC 			= "+ cValToChar(_nStatus)
+
+		If !Empty(p_NumBco)
+			_cQuery += " , STS_PROT_ALT 			= "+ cValToChar(_nStatus)
+			If _nStatus == 2
+				_cObserv := 'REGISTRO STS_PROT_INC E STS_PROT_ALT INSERIDO PELA ROTINA DE INTEGRACAO PROTHEUS x RM'
+			Else
+				_cObserv := _cMsgMail
+			EndIf
+		EndIf
+		
+	//Alteracao do Titulo Financeiro
+	ElseIf p_nOpc == 4 
+		
+		If _nStatus == 2
+			_cObserv 	:= 'REGISTRO STS_PROT_ALT INSERIDO PELA ROTINA DE INTEGRACAO PROTHEUS x RM'
+		Else
+			_cObserv := _cMsgMail
+		EndIf
+		
+		_cQuery += " SET STS_PROT_ALT 			= "+ cValToChar(_nStatus)
+		
+	//Cancelamento do Titulo Financeiro
+	ElseIf p_nOpc == 5 
+		
+		If Select('TMP') > 0
+			DbSelectArea('TMP')
+			TMP->( DbCloseArea() )
+		EndIf
+		
+		If Empty(_cAliasRM)
+			_cQuery1 := " SELECT * FROM RM.ZMD_INT_PRT_FIN								"
+		Else
+			_cQuery1 := " SELECT * FROM RM.ZMD_INT_PRT_FIN" + _cAliasRM
+		EndIf
+		
+		_cQuery1 += " WHERE	CODCOLIGADA 		=  "+ p_cColig 
+		_cQuery1 += " 		AND RA 				= '"+ p_cRa +"' 					" 
+		_cQuery1 += " 		AND CODCONTRATO 	= '"+ Alltrim(p_cCtrRM) + "'	"
+		_cQuery1 += " 		AND IDPERLET 		=  "+ p_cIdPLe
+		
+		If /*Empty(_cAliasRM)*/ Val(p_cColig) = 2
+			_cQuery1 += " 		AND IDLAN 		= "+ p_cIdLan
+		Else
+			_cQuery1 += " 		AND IDPARCELA	= "+ p_cIdParc
+			_cQuery1 += " 		AND CODCFO		= "+ p_cCodCFO
+		EndIf
+		
+		_cQuery1 += " 		AND STS_RM_CANC		= 1"		
+		
+		If (TCSQLExec(_cQuery1) < 0)
+			Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "IMPF040: fGrvStRMF - TCSQLError() " + TCSQLError())
+		Else
+			
+			DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery1),'TMP',.T.,.F.)
+			
+			If TMP->(STS_RM_CANC) == 1
+				If _nStatus == 2
+					_cObserv 	:= 'REGISTRO STS_PROT_CANC INSERIDO PELA ROTINA DE INTEGRACAO PROTHEUS x RM'
+				Else
+					_cObserv := _cMsgMail
+				EndIf
+				_cQuery += " SET STS_PROT_CANC 			= "+ cValToChar(_nStatus)
+			Else
+				_cMsg := 'O Contrato SGE - RM: '+ Alltrim(p_cCtrRM)+ ', não esta cancelado no SGE - RM, Favor verificar!'
+				ConOut(_cMsg)
+				Return
+			EndIf
+			TMP->(DbCloseArea())
+		EndIf	
+	
+	//Baixa do Titulo Financeiro
+	ElseIf p_nOpc == 6
+		
+		If _nStatus == 1
+			_cObserv 	:= "REGISTRO STS_PROT_BX INSERIDO PELA ROTINA DE INTEGRACAO PROTHEUS x RM - "+ DtoC(dDataBase) 
+		Else
+			_cObserv := _cMsgMail
+		EndIf
+		
+		_cQuery += " SET STS_PROT_BX = "+ cValToChar(_nStatus)
+		_cQuery += " ,DT_PROT_BX = '"+ DtoC(p_dDtBx) + "'"
+	//WALMIR JUNIOR 13/07/2018 - ATUALIZAÇÃO DA SITUAÇÃO NO HISTORICO PARA TITULO BAIXADO - cancelamento.
+	ElseIf p_nOpc == 7
+		
+		If Select('TMP') > 0
+			DbSelectArea('TMP')
+			TMP->( DbCloseArea() )
+		EndIf
+		
+		If Empty(_cAliasRM)
+			_cQuery1 := " SELECT * FROM RM.ZMD_INT_PRT_FIN								"
+		Else
+			_cQuery1 := " SELECT * FROM RM.ZMD_INT_PRT_FIN" + _cAliasRM
+		EndIf
+		
+		_cQuery1 += " WHERE	CODCOLIGADA 		=  "+ p_cColig 
+		_cQuery1 += " 		AND RA 				= '"+ p_cRa +"' 					" 
+		_cQuery1 += " 		AND CODCONTRATO 	= '"+ Alltrim(p_cCtrRM) + "'	"
+		_cQuery1 += " 		AND IDPERLET 		=  "+ p_cIdPLe
+		
+		If /*Empty(_cAliasRM)*/ Val(p_cColig) = 2
+			_cQuery1 += " 		AND IDLAN 		= "+ p_cIdLan
+		Else
+			_cQuery1 += " 		AND IDPARCELA	= "+ p_cIdParc
+			_cQuery1 += " 		AND CODCFO		= "+ p_cCodCFO
+		EndIf
+		
+		_cQuery1 += " 		AND STS_RM_CANC		= 1"		
+		
+		If (TCSQLExec(_cQuery1) < 0)
+			Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "IMPF070: fGrvStRMF - TCSQLError() " + TCSQLError())
+		Else
+			
+			DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery1),'TMP',.T.,.F.)
+			
+			If TMP->(STS_RM_CANC) == 1
+				If _nStatus == 2
+					_cObserv 	:= '[BX PROTHEUS] REGISTRO STS_PROT_CANC INSERIDO PELA ROTINA DE INTEGRACAO PROTHEUS x RM'
+				Else
+					_cObserv := _cMsgMail
+				EndIf
+				_cQuery += " SET STS_PROT_CANC 			= "+ cValToChar(_nStatus)
+			Else
+				_cMsg := 'O Contrato SGE - RM: '+ Alltrim(p_cCtrRM)+ ', não esta cancelado no SGE - RM, Favor verificar!'
+				ConOut(_cMsg)
+				Return
+			EndIf
+			TMP->(DbCloseArea())
+		EndIf
+				
+	//WALMIR JUNIOR 04/07/2018 - ATUALIZAÇÃO DA SITUAÇÃO NO HISTORICO PARA TITULO BAIXADO.
+	ElseIf p_nOpc == 9
+		
+		If _nStatus == 2
+			_cObserv := '[BX PROTHEUS] REGISTRO STS_PROT_ALT INSERIDO PELA ROTINA DE INTEGRACAO PROTHEUS x RM'
+		Else
+			_cObserv := _cMsgMail
+		EndIf
+		
+		_cQuery += " SET STS_PROT_ALT 			= "+ cValToChar(_nStatus)
+		
+	EndIf
+	 
+	_cQuery += " WHERE	CODCOLIGADA 			=  "+ p_cColig 
+	_cQuery += " 		AND RA 				=  "+ p_cRa  
+	_cQuery += " 		AND CODCONTRATO 	= '"+ Alltrim(p_cCtrRM) + "'	"
+	_cQuery += " 		AND IDPERLET 		=  "+ p_cIdPLe 
+	
+	If /*Empty(_cAliasRM)*/ Val(p_cColig) = 2
+		_cQuery += " 		AND IDLAN 		= "+ p_cIdLan
+	Else
+		_cQuery += " 		AND IDPARCELA	= "+ p_cIdParc
+		_cQuery += " 		AND CODCFO		= "+ p_cCodCFO
+	EndIf
+	
+	/*
+	Franklin B. Oliveira - 06/06/2018
+		No SGE, a baixa do Titulo Financeiro [p_nOpc == 6] ocorre por leitura na tabela ZZU.
+	*/
+	If /*Empty(_cAliasRM)*/ Val(p_cColig) = 2 .Or. p_nOpc <> 6
+		If (TCSQLExec(_cQuery) < 0)
+			Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "IMPF040: fGrvStRMF - TCSQLError() " + TCSQLError())
+		Else
+			ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'IMPF040: Gravou tabela de Status - RM.ZMD_INT_PRT_FIN')
+		EndIf
+	EndIf
+	
+	If /*Empty(_cAliasRM)*/ Val(p_cColig) = 2
+		_cQuery := "SELECT MAX(SEQ)+1 SEQ FROM RM.ZMD_INT_PRT_FIN_HIST" + _cAliasRM
+		_cQuery += " WHERE IDLAN = "+ p_cIdLan
+		_cQuery += "		AND CODCOLIGADA 	= " + _cColJob + " 		"
+	Else
+		_cQuery := "SELECT MAX(SEQ)+1 SEQ FROM RM.ZMD_INT_PRT_FIN_HIST" + _cAliasRM
+		_cQuery += " WHERE IDPARCELA 	= "+ p_cIdParc
+		_cQuery += " 		AND CODCFO	= "+ p_cCodCFO
+		_cQuery += "		AND CODCOLIGADA 	= " + _cColJob + " 		"
+	EndIf
+	
+	If (TCSQLExec(_cQuery) < 0)
+		Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "IMPF040: fGrvStRMF - TCSQLError() " + TCSQLError())
+	Else
+		DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPSEQ',.T.,.F.)
+		_nNewSeq := TMPSEQ->(SEQ)
+		TMPSEQ->(DbCloseArea())
+	EndIf
+	
+	/*	Gravar Log de Integracao	*/
+	If Empty(_cAliasRM)
+		_cQuery := " INSERT INTO RM.ZMD_INT_PRT_FIN_HIST "
+	Else
+		_cQuery := " INSERT INTO RM.ZMD_INT_PRT_FIN_HIST" + _cAliasRM
+	EndIf
+	
+	If /*Empty(_cAliasRM)*/ Val(p_cColig) = 2
+		_cQuery += " (SEQ, CODCOLIGADA, RA, CODCONTRATO, IDPERLET, IDPARCELA, CODCFO, IDLAN, DATA, HORA, STS_PROT, OBSERVACAO) "
+		_cQuery += " VALUES ( "+ cValToChar(_nNewSeq)
+		_cQuery += "         ,"+ p_cColig
+		_cQuery += "         ,"+ p_cRa
+		_cQuery += "         ,"+ p_cCtrRM
+		_cQuery += "         ,"+ p_cIdPLe
+		_cQuery += "         ,"+ p_cIdParc
+		_cQuery += "         ,'"+ p_cCodCFO +"'"
+		_cQuery += "         ,"+ p_cIdLan
+		_cQuery += "         ,to_char(sysdate, 'DD/MM/YYYY') "
+		_cQuery += "         ,to_char(sysdate, 'HH24:MI:SS')	"//Walmir Junior 03/07/2018 - Correção no formato da data (Anterior: to_char(sysdate, 'HH:MM:SS')).
+		_cQuery += "         ,"+ cValToChar(_nStatus)
+		_cQuery += "         ,'"+ SubsTr(_cObserv,1,500) +"') "
+	Else
+		_cQuery += " (SEQ, CODCOLIGADA, RA, CODCONTRATO, IDPERLET, IDPARCELA, CODCFO, DATA, HORA, STS_PROT, OBSERVACAO) "
+		_cQuery += " VALUES ( "+ cValToChar(_nNewSeq)
+		_cQuery += "         ,"+ p_cColig
+		_cQuery += "         ,'"+ p_cRa +"'"
+		_cQuery += "         ,"+ p_cCtrRM
+		_cQuery += "         ,"+ p_cIdPLe
+		_cQuery += "         ,"+ p_cIdParc
+		_cQuery += "         ,'"+ p_cCodCFO +"'"
+		_cQuery += "         ,to_char(sysdate, 'DD/MM/YYYY') "
+		_cQuery += "         ,to_char(sysdate, 'HH24:MI:SS')	"//Walmir Junior 03/07/2018 - Correção no formato da data (Anterior: to_char(sysdate, 'HH:MM:SS')).
+		_cQuery += "         ,"+ cValToChar(_nStatus)
+		_cQuery += "         ,'"+ SubsTr(_cObserv,1,500) +"') "
+	EndIf
+	
+	If (TCSQLExec(_cQuery) < 0)
+		Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "IMPF040: fGrvStRMF - TCSQLError() " + TCSQLError())
+	Else
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'IMPF040: Gravou tabela de Log - RM.ZMD_INT_PRT_FIN_HIST')
+	EndIf
+	
+	/*	07/12/2016 - Jose Leite - CSI
+		coloquei o tratamento para ignorar a opcao 5 (Cancelamento)
+		Devido a estar travando a cota de e-mail diario do SFIEMT.
+		Nova rotina implementada para o cancelamento (U_fMailCFin()), neste mesmo fonte.
+		
+		10/02/2017 - Jose Leite - CSI
+		O Envio do e-mail esta sendo tratado nas funcoes fMailIFin e fMailCFin
+		devido ao tempo do schedule ser diferente da integracao para o senai.
+	
+	*/
+	If _nStatus == 3 .And. /*Empty(_cAliasRM)*/ Val(p_cColig) = 2 .And. p_nOpc <> 5
+		
+		//+------------------------------------------------------------------+
+		//|  Monta mensagem em HTML para o corpo do E-mail                   |
+		//+------------------------------------------------------------------+
+		_cMsg := '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">'+CRLF
+		_cMsg += '<html lang="pt-br">'+CRLF
+		_cMsg += '<head>'+CRLF
+		_cMsg += '  <meta content="text/html; charset=iso-8859-1" http-equiv="Content-Type" name="GENERATOR">'+CRLF
+		If _nStatus == 2
+			_cMsg := '<title>Inclusao de Titulos a Receber</title>' + CRLF
+		Else
+			_cMsg := '<title>Erro na Inclusao de Titulos a Receber</title>' + CRLF
+		EndIf
+		_cMsg += '</head>'+CRLF
+		_cMsg += '<body bgproperties="fixed">'+CRLF
+		_cMsg += '	<p class="MsoNormal" style="text-align: left;" align="left">'+CRLF
+		_cMsg += '		<span style="font-family: &quot;Arial&quot;,&quot;sans-serif&quot;;">'+CRLF
+		_cMsg += '			<img id="_x0000_i1030" src="http://gps.totvs.com/workflow/titulo_wf_totvs.png" border="0" height="62" width="760">'+CRLF
+		_cMsg += '		</span>'+CRLF
+		_cMsg += '	</p>'+CRLF
+		_cMsg += '	<td style="padding: 0cm;">'+CRLF
+		_cMsg += '		<p class="MsoNormal" align="left">'+CRLF
+		_cMsg += '			<span style="font-size: 11pt; font-family:&quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(00,00,64);">'+CRLF
+		_cMsg += '					<br>'+CRLF 
+		_cMsg += '					'+ Alltrim(_cChvRM)+''+CRLF 
+		_cMsg += '					<br>'+CRLF
+		_cMsg += '					<br>'+CRLF
+		_cMsg += '					'+ Alltrim(_cMsgMail)+''+CRLF
+		_cMsg += '			</span>'+CRLF
+		_cMsg += '		</p>'+CRLF
+		_cMsg += '	</td>'+CRLF
+		_cMsg += '</body>'+CRLF
+		_cMsg += '</html>'+CRLF
+		
+		//Walmir Junior 16/11/2018 - Tratativa para habilitar ou desabilitar envio de email.				
+		If _lRMail									
+			//p_cDe, p_cPara, p_cCC, p_cCCO, p_cAssunto, p_cMsg, p_cAnexo, p_lConLe
+			_lEnviou := U_SFEnvEmail(,_cPara,,,_cAssunt,_cMsg,,, .F.)
+		EndIf
+				
+		If .Not. _lEnviou
+			ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'IMPF040: Nao foi possivel enviar o e-mail para: '+ _cPara + ', favor verificar!')
+		EndIf
+		
+	EndIf
+	
+Return
+
+/*/{Protheus.doc} FinRMBord
+Remove o titulo do bordero
+@type function
+@author Rafael Karczevski
+@since 26/08/2019
+@version 1.0
+@param p_cFilial, Character, Filial do Titulo
+@param p_cNumTit, Character, Numero do Titulo
+@param p_cPfxTit, Character, Prefixo do Titulo
+@param p_cParTit, Character, Parcela do Titulo
+@param p_cTipTit, Character, Tipo do Titulo
+@param p_cCliTit, Character, Codigo do Cliente
+@return logical, Retorna verdadeiro caso sucesso ao realizar a tranferencia.
+/*/
+Static Function FinRMBord(p_cFilial, p_cNumTit, p_cPfxTit, p_cParTit, p_cTipTit, p_cCliTit)
+
+	Local aArea := SE1->(GetArea())
+	Local aTit := {}
+	Local aErroAuto := {}
+	Local cErroRet := ""
+	Local nCntErr := 0
+	Local lRet := .F.
+	Local cOldFil := cFilAnt
+	Local cNumBord := ""
+	Private lMsErroAuto := .F.
+	Private lMsHelpAuto := .T.
+	Private lAutoErrNoFile := .T.
+	Public cSF7_TpPrt := Space(3)
+
+	/*RPCClearEnv()
+	RPCSetType(3)
+	RPCSetEnv("01",p_cFilial)*/
+
+	cFilAnt	:= p_cFilial
+
+	ConOut("Preparando empresa 01, filial " + p_cFilial + " para busca de titulo e tentativa de cancelamento deo bordero!" )
+	DbSelectArea("SE1")
+    SE1->(dbSetOrder(1))
+    //E1_FILIAL+E1_PREFIXO+E1_NUM+E1_PARCELA+E1_TIPO
+    If SE1->(MsSeek(xFilial("SE1") + Padr(p_cPfxTit, TamSX3("E1_PREFIXO") [1]) + Padr(p_cNumTit, TamSX3("E1_NUM") [1]) + Padr(p_cParTit, TamSX3("E1_PARCELA")[1] ) + Padr(p_cTipTit, TamSX3("E1_TIPO") [1])))
+        
+		ConOut("Titulo encontrato! " + p_cNumTit + "/" + p_cParTit )
+		If !(SE1->E1_XCOBJ == "S")
+			cNumBord := SE1->E1_NUMBOR
+			//Chave do Titulo
+			aAdd( aTit, {"E1_NUM"		, SE1->E1_NUM       , Nil} )
+			aAdd( aTit, {"E1_PREFIXO"	, SE1->E1_PREFIXO   , Nil} )
+			aAdd( aTit, {"E1_PARCELA"	, SE1->E1_PARCELA   , Nil} )
+			aAdd( aTit, {"E1_TIPO"		, SE1->E1_TIPO      , Nil} )
+			//aAdd( aTit, {"E1_CLIENTE"	, Padr(p_cCliTit, TamSX3("E1_CLIENTE") [1]) , Nil} )
+
+			//Dados bancarios
+			aAdd( aTit, {"AUTDATAMOV"	, Date(), Nil})
+			aAdd( aTit, {"AUTBANCO"		, Space(TamSX3("A6_COD")[1])		, Nil})
+			aAdd( aTit, {"AUTAGENCIA"	, Space(TamSX3("A6_AGENCIA")[1])	, Nil})
+			aAdd( aTit, {"AUTCONTA"		, Space(TamSX3("A6_NUMCON")[1])		, Nil})
+			aAdd( aTit, {"AUTSITUACA"	, PadR("0",TamSX3("E1_SITUACA")[1])	, Nil})
+			aAdd( aTit, {"AUTNUMBCO"	, Space(TamSX3("E1_NUMBCO")[1])		, Nil})
+			aAdd( aTit, {"AUTGRVFI2" 	, .F.                               , Nil})
+
+			MSExecAuto({|a, b| Fina060(a,b)}, 2, aTit)
+
+			If lMsErroAuto
+				lRet := .F.
+				aErroAuto := GetAutoGRLog()
+				For nCntErr := 1 to Len(aErroAuto)
+					cErroRet += aErroAuto[nCntErr]
+				Next
+
+				_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + "Erro ao remover do Bordero: " + cErroRet
+				ConOut(_cMsg)
+			Else
+				lRet := .t.
+				_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + "Titulo " + p_cNumTit + "/" + p_cParTit + " removido do Bordero " + cNumBord + " com sucesso!"
+				ConOut(_cMsg)
+			EndIf
+		Else
+			lRet := .f.
+			_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + "Titulo " + p_cNumTit + "/" + p_cParTit + " em cobranca judicial, o processo nao sera continuado!"
+			ConOut(_cMsg)
+		EndIf
+    Else
+		ConOut("Titulo nao encontrato! " + p_cNumTit + "/" + p_cParTit )
+        lRet := .f.
+    EndIf
+
+    SE1->(dbCloseArea())
+
+	/*RPCClearEnv()
+	RPCSetType(3)
+	RPCSetEnv("01",cOldFil)
+	ConOut("Retornando a filial antiga! (" + cOldFil + ")" )*/
+
+	cFilAnt := cOldFil
+    RestArea(aArea)
+
+Return lRet

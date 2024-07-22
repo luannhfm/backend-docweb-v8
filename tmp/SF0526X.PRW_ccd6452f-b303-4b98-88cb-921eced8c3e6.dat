@@ -1,0 +1,192 @@
+#INCLUDE "PROTHEUS.CH" 
+
+/*/{Protheus.doc} SF0526X
+@description Relatório de acessos ao park.
+@author j2a.luizjunior
+@since 30/08/2017
+@version 11.0
+/*/
+User Function SF0526X
+
+	Local cEstat	:= U_SFGN001A(ProcName(0), "SF0526X")
+	Local cPerg   	:= "SF0526X"
+	Local oReport 	:= Nil	
+	
+	Private cAlZH4  := GetNextAlias()
+	
+	CriaSX1(cPerg)
+	If !Pergunte(cPerg,.T.)
+		Return(Nil)
+	EndIf
+
+	oReport := ReportDef(cPerg)
+	oReport:PrintDialog()	
+
+Return 
+
+
+/*/{Protheus.doc} ReportDef
+(long_description)
+@author j2a.luizjunior
+@since 30/08/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+Static Function ReportDef(pcPerg)
+	
+	Local cEstat 	:= U_SFGN001A(ProcName(0), "SF0526X")	
+	Local cTitRel	:= "Relatorio Sintetico de Acessos por Dia"
+	Local oReport	:= Nil
+
+	oReport := TReport():New( pcPerg, cTitRel, pcPerg, { |oReport| ReportPrint(oReport) }, cTitRel )
+	
+	oReport:SetPortrait() 
+	oReport:SetTotalInLine(.F.) 
+	oReport:Page()
+	
+	//-> Total
+	oIngressos:= TRSection():New(oReport,"Resumo Total" ,{"ZH4"}                     )	
+	oSocio    := TRCell():New(oIngressos,"SOCIO" ,cAlZH4,"Tipo"       ,"@!"          )
+	oSocio:SetSize(30)
+	oVenCupom := TRCell():New(oIngressos,"VENDA" ,cAlZH4,"Quantidade" ,"@E 99999999" )
+	
+	oResumo   := TRSection():New(oReport,"Detalhes" ,{"ZH4"}                         )
+	oTipo     := TRCell():New(oResumo,"TIPO"     ,cAlZH4,"Tipo Ingresso" ,"@!"       )
+	oTipo:SetSize(30) 
+	oVenCupom := TRCell():New(oResumo,"ACESSO"   ,cAlZH4,"Acesso" ,"@E 99999999"     )
+	
+	TRFunction():New(oResumo:Cell("ACESSO"),,"COUNT",/*oBrFor*/,,,,.F.,.T.,.F.       )
+
+Return oReport
+
+
+/*/{Protheus.doc} ReportPrint
+(long_description)
+@author j2a.luizjunior
+@since 30/08/2017
+@version 1.0
+@param oReport, objeto, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+Static Function ReportPrint(oReport)
+
+	Local cEstat	:= U_SFGN001A(ProcName(0), "SF0526X")		 
+	Local cSql    	:= ""
+	Local cAux    	:= ""
+	Local nQtdTot 	:= 0 
+	Local nQuant  	:= 0 
+	Local oSec1   	:= oReport:Section(1)
+	Local oSec2   	:= oReport:Section(2)
+	 
+	If !Empty(MV_PAR01) .And. !Empty(MV_PAR02) 
+		cSql += " AND H4.ZH4_FILIAL BETWEEN '"  + MV_PAR01 + "' AND '" + MV_PAR02 + "'"
+	EndIf
+
+	If !Empty(MV_PAR03) .And. !Empty(MV_PAR04) 
+		cSql += " AND H4.ZH4_DTACES BETWEEN '"  + DToS(MV_PAR03) + "' AND '" + DToS(MV_PAR04) + "'"
+	EndIf
+
+	cSql := "%"+cSql+"%"
+	
+	BeginSql Alias cAlZH4
+		
+		SELECT 
+			COUNT(ZH4.ZH4_TIPO)	AS QUANT,
+			ZH4.ZH4_TIPO 		AS ZH4_TIPO,
+			ZH4.DESCRI 			AS DESCRI
+		FROM (SELECT 
+					H4.ZH4_TIPO,       
+					CASE H4.ZH4_TIPO
+						WHEN '1' THEN 'TITULAR' 
+						WHEN '2' THEN 'DEPENDENTE' 
+						WHEN '3' THEN (SELECT DISTINCT H0.ZH0_DESC FROM ZH0010 H0 WHERE H0.%NotDel% AND H0.ZH0_FILIAL = H4.ZH4_FILIAL AND H0.ZH0_NUMNOT = H4.ZH4_COD AND H0.ZH0_ITEM = H4.ZH4_ITEM ) 
+						WHEN '4' THEN (SELECT DISTINCT H5.ZH5_DESC FROM ZH5010 H5 WHERE H5.%NotDel% AND H5.ZH5_FILIAL = H4.ZH4_FILIAL AND H5.ZH5_COD    = H4.ZH4_COD)
+						WHEN '5' THEN (SELECT DISTINCT H6.ZH6_DESC FROM ZH6010 H6 WHERE H6.%NotDel% AND H6.ZH6_FILIAL = H4.ZH4_FILIAL AND H6.ZH6_COD    = H4.ZH4_COD)
+					END DESCRI       
+				FROM   %Table:ZH4% H4
+				WHERE  H4.%NotDel%
+				AND    H4.ZH4_ACESSO  != '2'
+				%Exp:cSql%
+				ORDER  BY H4.ZH4_TIPO) ZH4
+		GROUP BY ZH4.ZH4_TIPO, ZH4.DESCRI
+					
+	EndSql
+	
+	While !(cAlZH4)->(Eof())
+		
+		If nQuant > 0 .And. AllTrim(cDescri) != AllTrim((cAlZH4)->DESCRI)
+			oSec2:Init()
+			oSec2:Cell("TIPO")  :SetValue(cDescri)
+			oSec2:Cell("ACESSO"):SetValue(nQuant)
+			oSec2:Printline()
+			nQuant := 0
+		EndIf
+		
+		If !((cAlZH4)->ZH4_TIPO + AllTrim((cAlZH4)->DESCRI) $ cAux)  
+			cDescri := AllTrim((cAlZH4)->DESCRI)
+			cAux    += (cAlZH4)->ZH4_TIPO + AllTrim((cAlZH4)->DESCRI) + "u"
+		EndIf
+		
+		nQtdTot += (cAlZH4)->QUANT
+		
+		If oReport:Cancel()
+			Return(Nil)
+		EndIf		
+		
+		nQuant += (cAlZH4)->QUANT
+		
+		(cAlZH4)->(DbSkip())
+		
+		If (cAlZH4)->(Eof()) .And. nQuant > 0
+			oSec2:Init()
+			oSec2:Cell("TIPO")  :SetValue(cDescri)
+			oSec2:Cell("ACESSO"):SetValue(nQuant)
+			oSec2:Printline()
+		EndIf
+		
+	EndDo
+
+	oSec1:Init()
+	oSec1:Cell("SOCIO"):SetValue("TOTAL DE ACESSO")
+	oSec1:Cell("VENDA"):SetValue(nQtdTot)
+	oSec1:Printline()
+	
+	(cAlZH4)->(DbCloseArea())
+	
+	oSec2:Finish()
+	oSec1:Finish()
+		
+Return
+
+
+/*/{Protheus.doc} CriaSX1
+(long_description)
+@author j2a.luizjunior
+@since 30/08/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+Static Function CriaSX1(pcPerg)
+
+	Local cEstat	:= U_SFGN001A(ProcName(0), "SF0526X")
+	Local aHelp 	:= {}
+
+	//-> Texto do help em português,inglês, espanhol
+	AAdd(aHelp, {{"De  Filial"       }  ,{""},{""}})//01
+	AAdd(aHelp, {{"Ate Filial"       }  ,{""},{""}})//02
+	AAdd(aHelp, {{"Data De"                            }  ,{""},{""}})//1
+	AAdd(aHelp, {{"Data Ate"                           }  ,{""},{""}})//2
+
+	u_SFPUTSX1(pcPerg,"01","De Filial" ,"","","mv_ch1","C",08,00,00,"G","","SM0","","","mv_par01","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")
+	u_SFPUTSX1(pcPerg,"02","Ate Filial","","","mv_ch2","C",08,00,00,"G","","SM0","","","mv_par02","","","","","","","","","","","","","","","","",aHelp[2,1],aHelp[2,2],aHelp[2,3],"")
+	u_SFPUTSX1(pcPerg,"03","Data De"   ,"","","mv_ch3","D",08,00,00,"G","",""   ,"","","mv_par03","","","","","","","","","","","","","","","","",aHelp[3,1],aHelp[3,2],aHelp[3,3],"")
+	u_SFPUTSX1(pcPerg,"04","Data Ate"  ,"","","mv_ch4","D",08,00,00,"G","",""   ,"","","mv_par04","","","","","","","","","","","","","","","","",aHelp[4,1],aHelp[4,2],aHelp[4,3],"")
+
+Return

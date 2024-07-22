@@ -1,0 +1,124 @@
+/*/
+===============================================================================
+Autor.............: Peder Munksgaard (Do.it Sistemas)
+-------------------------------------------------------------------------------
+Data..............: 23/07/2014
+-------------------------------------------------------------------------------
+Descrição.........: Ponto de entrada ao fim da importação de um pedido de 
+                    compras para a planilha de um contrato, utilizado para 
+                    bloquear a edição de campos determinados pela usuária
+                    Carla Barzsina.
+-------------------------------------------------------------------------------
+Alteração.........: (dd/mm/aaaa) - Motivo
+
+                    (11/08/2014) - Melhoria na forma de bloquear os campos  
+                    através da criação do parâmetro MV_XXNEDIT.
+                    
+                    (11/08/2014) - Gravação do número e item da solicitação de 
+                    compras que originou o pedido de compras que será importado
+                    para a planilha de medição.
+                    
+                    (11/08/2014) - Bloqueio de inclusão de um pedido de compras
+                    mais de uma vez na mesma planilha.
+                    
+                    (11/08/2014) - Gravação do CC, ITEMCTA e CONTA na planilha
+                    de medição a partir do pedido de compras importado.
+                    
+                    (12/08/2014) - Gravação de variável public _aPlanFil para
+                    armazenas as filiais de que cada um dos PCs importados para
+                    a planilha tem suas origens.
+-------------------------------------------------------------------------------
+Partida...........: CNTA200()
+-------------------------------------------------------------------------------
+Função............: u_CN200PED()
+===============================================================================
+/*/
+
+#Include "Protheus.ch"
+
+User Function CN200PED()
+
+   Local _aArea     := GetArea()
+   Local _nDel      := 0      
+   Local _nX
+   
+   Local _aHeader := oGetDados:aHeader
+   Local _aCols   := oGetDados:aCols
+   
+   Local _nPosFlPC  := aScan(_aHeader,{|x| Alltrim(x[2]) == "CNB_XFILPC"})
+   Local _nPosNmPC  := aScan(_aHeader,{|x| Alltrim(x[2]) == "CNB_XPC"})
+   Local _nPosItPC  := aScan(_aHeader,{|x| Alltrim(x[2]) == "CNB_XITMPC"})
+   Local _nConta    := aScan(_aHeader,{|x| Alltrim(x[2]) == "CNB_CONTA"})
+   Local _nCC       := aScan(_aHeader,{|x| Alltrim(x[2]) == "CNB_CC"})
+   Local _nITCON    := aScan(_aHeader,{|x| Alltrim(x[2]) == "CNB_ITEMCT"})
+         
+   Local _aCampos := StrTokArr(SuperGetMV("MV_XXNEDIT"),";")    // Recebo do parametro, campos da CNB que não poderão ser 
+                                                                // editados caso haja importação do Pedido de Compras
+
+
+   For _nX := Len(_aCols) To 1 Step -1                                                   // Verifico se o pedido já foi importado e não permito
+                                                                                         // que hajam itens repetidos na planilha.
+      If _aCols[_nX][_nPosFlPC]+_aCols[_nX][_nPosNmPC]+_aCols[_nX][_nPosItPC] == SC7->(C7_FILIAL+C7_NUM+C7_ITEM) ;
+         .And. !IsInCallStack("U_FMTA002")
+                  
+         _cMsg := Alltrim(cUserName) + " atenção !"                                                     + CRLF
+         _cMsg += CRLF
+         _cMsg += "O pedido com SC de número: " + SC7->C7_NUMSC + " e item número : " + SC7->C7_ITEMSC    + CRLF
+         _cMsg += "já foi importado para esta planilha."                                                + CRLF
+         _cMsg += "De acordo com especificações do CAQC, este tipo de operação não pode ser"            + CRLF
+         _cMsg += "realizada. O item já encontrado será removido de sua planilha de medição."           + CRLF
+
+         MsgAlert(_cMsg,"[CN200PED]")
+         
+         Adel(_aCols,_nX)                                                     
+         Asize(_aCols,Len(_aCols)-1)
+   
+      Endif  
+   
+   Next _nX                                                                        
+                                                                
+   For _nX := 1 to Len(_aCampos)                                // Removo do array de permissões para alteração os campos
+                                                                // que constam no array criado a partir do parametro 
+      _nDel := Ascan(oGetDados:aAlter,_aCampos[_nX])            // MV_XXNEDIT
+
+      If _nDel > 0
+   
+         Adel(oGetDados:aAlter,_nDel) 
+         Asize(oGetDados:aAlter,Len(oGetDados:aAlter)-1)
+      
+      Endif      
+      
+   Next _nX
+
+   For _nX := 1 to Len(_aHeader)                                                        // Armazeno os números da SC e ITEM da SC dos
+                                                                                        // pedidos de compras originados de SC na
+                                                                                        // planilha de medição do contrato.                                                                                        
+      If _nPosFlPC > 0 .And. _nPosNmPC > 0 .And. _nPosItPC > 0 .And. ;
+         !gdDeleted(Len(_aCols),_aHeader,_aCols) .And. !IsInCallStack("U_FMTA002")
+                                     
+         _aCols[Len(_aCols)][_nPosFlPC]  := SC7->C7_FILIAL
+         _aCols[Len(_aCols)][_nPosNmPC]  := SC7->C7_NUM
+         _aCols[Len(_aCols)][_nPosItPC]  := SC7->C7_ITEM
+                                     
+      Endif
+      
+      /*
+       * Inclusão por Peder Munksgaard (Do.it Sistemas) em 11/08/2014
+       *
+       * Acrescentados os campos Conta Contábil, Centro de Custo(UO) e Item Contábil
+       *
+      */
+      If !gdDeleted(Len(_aCols),_aHeader,_aCols)
+      
+         _aCols[Len(_aCols)][_nConta]  := SC7->C7_CONTA
+         _aCols[Len(_aCols)][_nCC]     := SC7->C7_CC
+         _aCols[Len(_aCols)][_nITCON]  := SC7->C7_ITEMCTA
+         
+      Endif
+      /* Fim inclusão */      
+   
+   Next _nX   
+                    
+   RestArea(_aArea)
+   
+Return NiL

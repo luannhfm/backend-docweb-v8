@@ -1,0 +1,79 @@
+#Include 'Protheus.ch'
+
+User Function PONAPO3()
+
+Local nX 		:= 0
+Local aEveAbo 	:= {}
+Local cDatas	:= ''
+Local aArea		:= GETAREA()
+
+
+//VARRE SPK PARA VERIFICAR SE EXISTE ABONO PARA O EVENTO 120 E LOGO ATUALIZAR A SPC
+cQuery	:= "SELECT * FROM "+RetSqlName("SPK")+" "
+cQuery	+= "Where PK_CODEVE = '120' "
+cQuery	+= "AND D_E_L_E_T_ <>'*' "
+cQuery	+= "AND PK_MAT = '"+SRA->RA_MAT+"' "
+cQuery	+= "AND PK_FILIAL = '"+SRA->RA_FILIAL+"' "
+
+cQuery := ChangeQuery(cQuery)
+dbUseArea(.T.,"TOPCONN",TcGenQry(, ,cQuery),"TRB",.T.,.T.)
+
+While TRB->(!EOF())
+
+	AADD(aEveAbo,{TRB->PK_DATA,TRB->PK_CODABO,TRB->PK_HRSABO})
+	cDatas := cDatas+"'"+TRB->PK_DATA+"',"
+	TRB->(DbSkip())
+EndDo
+
+TRB->(DbCloseArea())
+
+
+nX		:= LEN(cDatas) 
+cDatas 	:= SUBSTR(cDatas,1,nX-1)
+
+If Len(aEveAbo) > 0
+
+	//ATUALIZA SPC
+	cQuery	:= "SELECT * FROM "+RetSqlName("SPC")
+	cQuery	+= "Where D_E_L_E_T_ <> '*' "
+	cQuery	+= "AND PC_PD = '120' "
+	cQuery	+= "AND PC_MAT = '"+SRA->RA_MAT+"' "
+	cQuery	+= "AND PC_FILIAL = '"+SRA->RA_FILIAL+"' "
+	cQuery	+= "AND PC_DATA IN ("+cDatas+") "
+	cQuery	+= "AND PC_ABONO = ' ' "
+	cQuery	+= "ORDER BY PC_DATA"
+	
+	cQuery := ChangeQuery(cQuery)
+	dbUseArea(.T.,"TOPCONN",TcGenQry(, ,cQuery),"TRB1",.T.,.T.) 
+	
+	While TRB1->(!EOF())
+	
+		nPos := Ascan( aEveAbo, {|x| x[1] == TRB1->PC_DATA } )
+		
+		aArea1 := GetArea()
+		DBSELECTAREA("SPC")
+		DbSetOrder(1)
+		
+		If DbSeek(XFILIAL("SPC") + SRA->RA_MAT + '120' + TRB1->PC_DATA + '  '+ SRA->RA_CC + ''+ '' + '')
+		
+			RecLock("SPC", .F. )  
+			
+				SPC->PC_ABONO 	:= aEveAbo[nPos][2]
+				SPC->PC_QTABONO := aEveAbo[nPos][3]
+			
+			SPC->( MsUnLock() )
+		
+		EndIf
+		RestArea(aArea1)
+		
+		TRB1->(DbSkip())
+	EndDo
+	
+	TRB1->(DbCloseArea())
+
+EndIf
+
+RestArea(aArea)
+
+Return
+

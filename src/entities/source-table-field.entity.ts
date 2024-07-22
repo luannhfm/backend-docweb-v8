@@ -6,12 +6,10 @@ export class SourceTableField {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column('varchar')
-  uuid: string;
 
   @Column('varchar')
   name: string;
 
-  @ManyToOne(() => SourceTable, sourceTable => sourceTable.sourceTableFields, { onDelete: 'CASCADE' })
+  @ManyToOne(() => SourceTable, sourceTable => sourceTable.fields, { onDelete: 'CASCADE' })
   sourceTable: SourceTable;
 }

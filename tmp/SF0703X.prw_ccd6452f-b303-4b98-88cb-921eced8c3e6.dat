@@ -1,0 +1,122 @@
+#Include 'Protheus.ch'
+
+/* 
+-------------------------------------------------------------------------------
+	{Protheus.doc}<SF0703X>
+	@Parametros<Nil> 
+	@author<Walmir Junior> 
+	@since<01/12/2016> 
+	@version 1.0
+		< 
+		--------------------------------------------------------------------
+		 Walmir Junior 
+		--------------------------------------------------------------------
+		>
+	@receive<Nil>
+	@return<Nil>
+	@example<U_SF0703X()> 
+-------------------------------------------------------------------------------
+*/
+User Function SF0703X()
+Local _cQuery	:= ""
+Local _cMask    := "Arquivos Texto (*.*) |*.*|"
+Local _cDir		:= cGetFile(_cMask,"Selecione o diretório de destino",,,.T.,nOR(GETF_RETDIRECTORY,GETF_LOCALHARD))
+Local _cUsAut	:= GetMV("MV_XUSEZET", ,'')
+
+//Verifica se o diretório existe, se não existir, cria o diretório.
+If !ExistDir(_cDir)
+	MakeDir(_cDir)
+EndIf
+
+If RetCodUsr() $ _cUsAut .And. !Empty(_cDir)
+	FWMsgRun(,{|| fExpFun(_cDir) }, "Gerando Arquivo...", "Aguarde...")
+ElseIf Empty(_cDir)
+	Return
+Else
+	Aviso("Acesso Negado!", "Você não tem permissão para executar esta operação."+CRLF+"[MV_XUSEZET]", {"Ok"})
+EndIf
+
+Return
+
+Static Function fExpFun(_cDir)
+Local _cQuery	:=	""
+Local _cFolMs	:=	StrZero(Val(SubStr(GetMV("MV_FOLMES"), 5, 2)) - 1,2)
+Local _cFolAn	:=	SubStr(GetMV("MV_FOLMES"), 3, 2)
+Local _cArq		:=	""
+Local _cTxtAux	:=	""
+Local _nOpen
+
+_cFolAn			:=	Iif(_cFolMs == "00", AllTrim(Str(Val(_cFolAn)-1)), _cFolAn)
+_cFolMs			:=  Iif(_cFolMs == "00", "12", _cFolMs)
+
+_cArq := "MGM_" + _cFolMs + _cFolAn + "_" + ;
+					AllTrim(Str(Day(Date()))) + StrTran(time(),":","") + ".txt"
+
+//Tenta abrir o arquivo, caso o arquivo não exista, a variável _nOpen é preenchida com -1.
+_nOpen := FOpen(_cDir+_cArq,2)
+
+//Efetua Consulta de Funcionários.
+_cQuery += "	Select" 
+_cQuery += "		RA_FILIAL,"	
+_cQuery += "		RA_MAT,"
+_cQuery += "		RA_CIC,"
+_cQuery += "		RA_NOME,"
+_cQuery += "		RA_NASC,"
+_cQuery += "		RA_ADMISSA,"
+_cQuery += "		RA_RG,"
+_cQuery += "		RA_RGUF,"
+_cQuery += "		CAST(RC_VALOR * 0.30 As Number(9,2)) As MARGEM"
+_cQuery += "	From "+RetSqlName("SRA")+" SRA LEFT JOIN"
+_cQuery += "		RC" + FWGrpCompany() + _cFolAn + _cFolMs +" RC ON RC.D_E_L_E_T_ = ' ' AND SRA.RA_FILIAL = RC.RC_FILIAL AND SRA.RA_MAT = RC.RC_MAT AND '799' = RC.RC_PD"
+_cQuery += "	Where "
+_cQuery += "	  SRA.D_E_L_E_T_ = ' ' AND"
+_cQuery += "	  SRA.RA_SITFOLH != 'D' AND"
+_cQuery += "	  SRA.RA_CATFUNC in ('M','J')"
+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+
+If Select("TMP")>0
+	TMP->(DbCloseArea())
+EndIf
+
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMP",.t.,.t.)  
+
+If _nOpen == -1
+	_nOpen := FCreate(_cDir+_cArq)
+EndIf
+
+If _nOpen == -1 
+	Alert("Erro ao abrir ou gerar o arquivo: '" +_cDir+_cArq+"'")
+Else
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Seleciona a Tabela temporaria e Inicia Loop para Tratar os Dados |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	dbSelectArea("TMP")
+	TMP->(dbGoTop())    
+	Do While TMP->(!Eof())
+		_cTxtAux := StrZero(Val(TMP->RA_MAT), 10) 									+; //Matrícula
+					TMP->RA_CIC 													+; //CPF
+					PadR(AllTrim(TMP->RA_NOME),50)									+; //Nome do Servidor
+					StrZero(Val(SubStr(TMP->RA_FILIAL,1,2)), 3)							+; //Estabelecimento
+					SubStr(TMP->RA_FILIAL,6,3)		 								+; //Órgão
+					StrZero(TMP->MARGEM, 10,2)										+; //Margem
+					GravaData(sToD(TMP->RA_NASC), .F., 5)							+; //Data de Nascimento
+					GravaData(sToD(TMP->RA_ADMISSA), .F., 5)						+; //Data de Admissão
+					Space(8)	 													+; //Data Fim do Contrato
+					PadR("CLT", 40)													+; //Regime trabalho(Vínculo)
+					SubStr(FWFilialName(FWGrpCompany(), TMP->RA_FILIAL, 1),1,40)	+; //Local do Trabalho
+					StrZero(Val(TMP->RA_RG),13)+TMP->RA_RGUF + Space(1) + CRLF		   //Carteira de Identidade					
+		
+		//Posiciona no fim do arquivo.
+		FSeek(_nOpen,0,2) 
+		//Escreve Linha no arquivo.
+		FWrite(_nOpen, _cTxtAux)
+		
+		TMP->(DbSkip())
+	EndDo 
+	FClose(_nOpen)
+EndIf
+
+Aviso("Atenção", "O arquivo '"+_cDir+_cArq+"' foi gerado com sucesso!", {"Ok"})
+
+Return

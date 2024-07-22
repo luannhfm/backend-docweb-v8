@@ -1,0 +1,242 @@
+#INCLUDE "PROTHEUS.CH"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIESBA34   ºAutor  ³Microsiga          º Data ³  23/05/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Receptor de EAI - Participantes de Edital                  º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ MP 11.5 - Sistema Industria                                º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function SIESBA34(_cXML)
+Local _cError   := ""
+Local _cWarning := ""
+Local _cDelimit := "_"
+Local _lInput   := GetRemoteType() == -1 //-1 = sem remote/ 0 = delphi/ 1 = QT windows/ 2 = QT Linux
+Default _cXML   := ""
+               
+IF !_lInput // Chamada via ESB/EAI                                 
+	Return
+ENDIF
+                                                  
+Conout(_cXML)
+//Gera o Objeto XML com a estrutura recebida
+oXml := XmlParser(_cXML, _cDelimit, @_cError, @_cWarning)
+
+//Verifica se a estrutura foi criada
+IF !(Empty(_cError) .and. Empty(_cWarning))
+	Return()
+ENDIF
+
+_nOperac := Val(oXml:_GCP02PART:_OPERATION:TEXT)
+_cIDESB  := IIF(Type("oXml:_GCP02PART:_CO3MASTER:_CO3_XIDESB:REALNAME") <> "U",&("oXml:_GCP02PART:_CO3MASTER:_CO3_XIDESB:_VALUE:TEXT"),"")
+
+// Verifica se mensagem trata-se de Pedido de Venda
+IF Type('oXml:_GCP02PART:_CO3MASTER') == "U" .or. Type("oXml:_GCP02PART:_CO3MASTER:_CO3DETAIL") == "U"
+	_cMotivo := "Mensagem invalida para a rotina GCP02PART - Participantes de Edital"
+	// Gera XML de retorno
+	U_SIXMLMSG("GCP02PART","GCP02PART - Participantes de Edital",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+	Return()
+ENDIF
+
+_cCODEDT := IIF(Type("oXml:_GCP02PART:_CO3MASTER:_CO3_CODEDT") == "U","",oXml:_GCP02PART:_CO3MASTER:_CO3_CODEDT:_VALUE:TEXT)
+_cNUMPRO := IIF(Type("oXml:_GCP02PART:_CO3MASTER:_CO3_NUMPRO") == "U","",oXml:_GCP02PART:_CO3MASTER:_CO3_NUMPRO:_VALUE:TEXT)
+
+// Verifica faltam campos do cabecalho
+IF Empty(_cCODEDT) .or. Empty(_cNUMPRO)
+	_cMotivo := "Alguns campos do cabecalho nao foram informados. Verifique!"
+	// Gera XML de retorno
+	U_SIXMLMSG("GCP02PART","GCP02PART - Participantes de Edital",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+	Return()
+ENDIF
+
+_cCODEDT := Padr(_cCODEDT,TamSX3("CO3_CODEDT")[1])
+_cNUMPRO := Padr(_cNUMPRO,TamSX3("CO3_NUMPRO")[1])
+
+CO1->(dbSetOrder(1))                                  
+CO2->(dbSetOrder(1)) //CO2_FILIAL+CO2_CODEDT+CO2_NUMPRO+CO2_CODPRO                                                                                                                     
+IF !CO1->(dbSeek(XFilial("CO1")+_cCODEDT+_cNUMPRO)) .Or. !CO2->(dbSeek(XFilial("CO2")+_cCODEDT+_cNUMPRO))  
+	_cMotivo := "Codigo de edital informado nao localizado. Verifique!"
+	// Gera XML de retorno
+	U_SIXMLMSG("GCP02PART","GCP02PART - Participantes de Edital",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+	Return()
+ENDIF
+
+_aItem    := {}
+_aTotItem := {}
+
+_nLaco := IIF(Type("oXml:_GCP02PART:_CO3MASTER:_CO3DETAIL:_ITEMS:_ITEM") == "A",Len(oXml:_GCP02PART:_CO3MASTER:_CO3DETAIL:_ITEMS:_ITEM),1)
+
+For i := 1 to _nLaco
+	
+	SX3->(dbSetOrder(1))
+	SX3->(dbGoTop())
+	SX3->(dbSeek("CO3"))
+	
+	// Carrega vetor com os campos
+	While SX3->(!Eof()) .and. SX3->X3_ARQUIVO == "CO3"
+		
+		IF Type("oXml:_GCP02PART:_CO3MASTER:_CO3DETAIL:_ITEMS:_ITEM"+IIF(_nLaco>1,"["+Alltrim(Str(i))+"]:",":")+"_"+Alltrim(SX3->X3_CAMPO)+":REALNAME") <> "U"
+			// Carrega conteudo do variavel
+			_cCampo := &("oXml:_GCP02PART:_CO3MASTER:_CO3DETAIL:_ITEMS:_ITEM"+IIF(_nLaco>1,"["+Alltrim(Str(i))+"]:",":")+"_"+Alltrim(SX3->X3_CAMPO)+":TEXT")
+			If Alltrim(SX3->X3_CAMPO) == "CO3_CODEDT"
+			//oXml:_GCP02PART:_CO3MASTER:_CO3DETAIL:_ITEMS:_ITEM[2]:_CO3_CODEDT:TEXT
+				_cEdital := &("oXml:_GCP02PART:_CO3MASTER:_CO3DETAIL:_ITEMS:_ITEM"+IIF(_nLaco>1,"["+Alltrim(Str(i))+"]:",":")+"_"+Alltrim(SX3->X3_CAMPO)+":TEXT")
+				If Alltrim(_cEdital) <> Alltrim(_cCODEDT)
+					_cMotivo := "Codigo de edital informado no item nao é igual ao Codigo de Edital informado no cabeçalho. Verifique!"
+					// Gera XML de retorno
+					U_SIXMLMSG("GCP02PART","GCP02PART - Participantes de Edital",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+					Return()
+				Endif
+			Endif
+			// Faz tratamento do dado
+			IF SX3->X3_TIPO == "C"
+				_cCampo := PadR(_cCampo,SX3->X3_TAMANHO)
+			ELSEIF SX3->X3_TIPO == "N"
+				_cCampo := Val(_cCampo)
+			ELSEIF SX3->X3_TIPO == "D"
+				_cCampo := Stod(_cCampo)
+			ENDIF
+			IF SX3->X3_CONTEXT == "V"
+				SX3->(dbSkip())
+				Loop
+			ENDIF
+			
+			// Carrega vetor para rotina automatica
+			Aadd(_aItem,{Alltrim(SX3->X3_CAMPO),_cCampo,NIL} )
+		ENDIF
+		SX3->(dbSkip())
+	Enddo
+	
+	Aadd(_aTotItem, _aItem )
+	_aItem := {}
+Next
+
+IF Len(_aTotItem) == 0
+	_cMotivo := "Nao foram encontrados itens no arquivo. Verifique!"
+	// Gera XML de retorno
+	U_SIXMLMSG("GCP02PART","GCP02PART - Participantes de Edital",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+	Return()
+ENDIF
+
+Begin Transaction
+
+For i := 1 to Len(_aTotItem)
+	
+	// Codigo do Produto
+	IF (_nPos := Ascan(_aTotItem[i],{|x| Alltrim(x[1]) == "CO3_CODPRO" })) > 0
+		_cCodPro := _aTotItem[i][_nPos,2]
+		
+		CO2->(dbSetOrder(1))
+		IF !CO2->(dbSeek(XFilial("CO2")+_cCODEDT+_cNUMPRO+_cCodPro))
+			DisarmTransaction()
+			_cMotivo := "Produto informado ("+Alltrim(_cCodPro)+") não localizado no edital. Verifique!"
+			// Gera XML de retorno
+			U_SIXMLMSG("GCP02PART","GCP02PART - Participantes de Edital",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+			Break
+		ENDIF
+		
+	ELSE
+		DisarmTransaction()
+		_cMotivo := "O campo CO3_CODPRO não foi localizado no XML. Verifique!"
+		// Gera XML de retorno
+		U_SIXMLMSG("GCP02PART","GCP02PART - Participantes de Edital",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+		Break
+	ENDIF
+	
+	// Codigo do Fornecedor
+	IF (_nPos := Ascan(_aTotItem[i],{|x| Alltrim(x[1]) == "CO3_CODIGO" })) > 0
+		_cCodFor := _aTotItem[i][_nPos,2]
+	ELSE
+		DisarmTransaction()
+		_cMotivo := "O campo CO3_CODIGO não foi localizado no XML. Verifique!"
+		// Gera XML de retorno
+		U_SIXMLMSG("GCP02PART","GCP02PART - Participantes de Edital",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+		Break
+	ENDIF
+	
+	// Loja da Fornecedor
+	IF (_nPos := Ascan(_aTotItem[i],{|x| Alltrim(x[1]) == "CO3_LOJA" })) > 0
+		_cLojFor := _aTotItem[i][_nPos,2]
+	ELSE
+		DisarmTransaction()
+		_cMotivo := "O campo CO3_LOJA não foi localizado no XML. Verifique!"
+		// Gera XML de retorno
+		U_SIXMLMSG("GCP02PART","GCP02PART - Participantes de Edital",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+		Break
+	ENDIF
+	
+	SA2->(dbSetOrder(1))
+	IF !SA2->(dbSeek(XFilial("SA2")+_cCodFor+_cLojFor))
+		DisarmTransaction()
+		_cMotivo := "Fornecedor informado ("+Alltrim(_cCodFor)+"/"+_cLojFor+") não nao cadastrado. Verifique!"
+		// Gera XML de retorno
+		U_SIXMLMSG("GCP02PART","GCP02PART - Participantes de Edital",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+		Break
+	ENDIF
+	
+	// Classificacao
+	IF (_nPos := Ascan(_aTotItem[i],{|x| Alltrim(x[1]) == "CO3_CLASS" })) > 0
+		_cClasse := _aTotItem[i][_nPos,2]
+	ELSE
+		DisarmTransaction()
+		_cMotivo := "O campo CO3_CLASS não foi localizado no XML. Verifique!"
+		// Gera XML de retorno
+		U_SIXMLMSG("GCP02PART","GCP02PART - Participantes de Edital",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+		Break
+	ENDIF
+	
+	// Valor Unitario
+	IF (_nPos := Ascan(_aTotItem[i],{|x| Alltrim(x[1]) == "CO3_VLUNIT" })) > 0
+		_nVrUnit := _aTotItem[i][_nPos,2]
+	ELSE
+		DisarmTransaction()
+		_cMotivo := "O campo CO3_VLUNIT não foi localizado no XML. Verifique!"
+		// Gera XML de retorno
+		U_SIXMLMSG("GCP02PART","GCP02PART - Participantes de Edital",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+		Break
+	ENDIF
+	
+	CO3->(dbSetOrder(1))
+	IF CO3->(dbSeek(XFilial("CO3")+_cCODEDT+_cNUMPRO+_cCodPro+"2"+_cCodFor+_cLojFor))
+		RecLock("CO3",.f.)
+		IF _nOperac == 3 // Inclusao
+			CO3->(msUnlock())
+			DisarmTransaction()
+			_cMotivo := "Fornecedor informado ("+Alltrim(_cCodFor)+"/"+_cLojFor+") em duplicidade. Verifique!"
+			// Gera XML de retorno
+			U_SIXMLMSG("GCP02PART","GCP02PART - Participantes de Edital",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+			Break
+		ELSEIF _nOperac == 5 // Exclusao
+			CO3->(dbDelete())
+			Loop
+		ENDIF
+	ELSE
+		RecLock("CO3",.t.)
+		CO3->CO3_FILIAL := XFilial("CO3")
+		CO3->CO3_CODEDT	:= _cCODEDT
+		CO3->CO3_NUMPRO	:= _cNUMPRO
+		CO3->CO3_TIPO	:= "2" // Fixo 2 = Fornecedor
+	ENDIF
+	
+	// Gravacao dos campos
+	For x := 1 to Len(_aTotItem[i])
+		&("CO3->"+_aTotItem[i][x,1]) := _aTotItem[i][x,2]
+	Next
+	
+	CO3->(msUnlock())
+Next
+
+// Gera XML de retorno
+U_SIXMLMSG("GCP02PART","GCP02PART - Participantes de Edital",Alltrim(Str(_nOperac)),_cIDESB,"0","")
+
+End Transaction
+
+Return()

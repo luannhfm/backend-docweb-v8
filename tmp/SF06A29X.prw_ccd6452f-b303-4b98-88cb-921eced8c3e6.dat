@@ -1,0 +1,286 @@
+#include 'protheus.ch'
+#include 'parmtype.ch'
+
+/*/{Protheus.doc} SF06A29X
+@description Cancelamento de rec. cartão.
+@type  User Function
+@author Walmir Junior
+@since 07/05/2019
+@return 
+@see J2A044 -  FIEMT - Canc Rec Cartão .docx
+/*/
+User Function SF06A29X()
+Private _aSel 		:= {}
+Private lMsErroAuto	:= .F. 
+Private _oProc		:= Nil
+Private _lEnd		:= .F.
+
+_oProc := MSNewProcess():New({|_lEnd|fExCan(_oProc)}, 'Processando', 'Processando cancelamento da renegociação...')
+_oProc:Activate()	
+
+Return Nil 
+
+/*/{Protheus.doc} fExCan
+@description Executa cancelamento do receb. cartão.
+@type  Static Function
+@author Walmir Junior
+@since 07/05/2019
+@return Nil.
+/*/
+Static Function fExCan(_pProc)
+
+Local _aArea 	:= GetArea()
+Local _cNLiq	:= ""
+Local _aTitRec	:= {}
+Local _aTitDel	:= {}
+Local _lOk		:= .F.
+Local _cMsEr	:= ""
+Local _aVld		:= {}
+
+//Valida títulos de renegociação e em aberto.
+Processa({||_aVld := fVlReCt()}, "Validando...", "Validando títulos do recebimento...")
+
+If !_aVld[1]
+	MsgAlert(_aVld[2], 'Atenção')
+	Return Nil
+EndIf
+
+//Monta chave da renegociação para buscar títulos renegociados.
+_cNLiq := SE1->E1_XNLIQ
+
+//Busca títulos de origem para cancelar baixa.
+Processa({||_aTitRec := fGtReCt(_cNLiq)}, "Validando...", "Validando títulos origem...")
+
+_pProc:SetRegua1(Len(_aTitRec))
+
+Begin Transaction
+
+If Len(_aSel) == 0
+	MsgStop("Não foi possível obter os títulos da renegociação.", "Erro!")
+Else
+	//Desfaz baixa dos títulos de origem.
+	For _nx := 1 To Len(_aTitRec)
+		
+		_pProc:IncRegua1("Cancel bx... " + AllTrim(_aTitRec[_nx,1]) +"||"+ AllTrim(_aTitRec[_nx,2]) +"||"+;
+		 				AllTrim(_aTitRec[_nx,3]) +"||"+ AllTrim(_aTitRec[_nx,4]))
+		
+		_aBx := {}
+		AADD(_aBx , {"E1_FILIAL"    , _aTitRec[_nx,1]		, NIL})
+		AADD(_aBx , {"E1_PREFIXO"   , _aTitRec[_nx,2]		, NIL})
+		AADD(_aBx , {"E1_NUM"       , _aTitRec[_nx,3]		, NIL})
+		AADD(_aBx , {"E1_PARCELA"   , _aTitRec[_nx,4]		, NIL})
+		AADD(_aBx , {"E1_TIPO"      , _aTitRec[_nx,5]		, NIL})
+		
+		MSExecAuto({|x, y| Fina070(x, y )}, _aBx, 5)
+		
+		If lMsErroAuto
+			_cMsEr	:= MostraErro()	
+			_lOk 	:= .F.
+			DisarmTransaction()
+			Break
+			Exit  
+		Else
+			//Walmir Junior 07/10/2019 - Limpa campo E1_XNLIQ
+			DBSelectArea("SE1")
+			SE1->(DBSetOrder(1))
+			SE1->(DbGoTop())
+			If SE1->(DBSeek( _aTitRec[_nx,1]+_aTitRec[_nx,2]+_aTitRec[_nx,3]+_aTitRec[_nx,4]+_aTitRec[_nx,5] ))
+				If RecLock("SE1",.F.)
+					SE1->E1_XNLIQ := ' '
+					SE1->(MsUnlock())
+				EndIf
+			EndIf	 
+		Endif
+		
+		_lOk := .T.
+	Next _nx
+
+	If _lOk
+		_pProc:SetRegua2(Len(_aSel))
+		//Exclui títulos de renegociação.
+		For _nx := 1 To Len(_aSel)
+			DBSelectArea("SE1")
+			SE1->(DbSetOrder(1))
+			SE1->(DbGoTop())
+			
+			_aTitDel := {}
+			
+			If SE1->(DbSeek( _aSel[_nx, 1] + _aSel[_nx, 2] + _aSel[_nx, 3] + _aSel[_nx, 4] + _aSel[_nx, 5]))
+				_pProc:IncRegua2("Excluindo... " + AllTrim(SE1->E1_FILIAL) +'||'+ AllTrim(SE1->E1_PREFIXO) +'||'+;
+				 				AllTrim(SE1->E1_NUM) +'||'+ AllTrim(SE1->E1_PARCELA))
+				 				
+				AADD(_aTitDel , {"E1_FILIAL"    , SE1->E1_FILIAL	, NIL})
+				AADD(_aTitDel , {"E1_PREFIXO"   , SE1->E1_PREFIXO	, NIL})
+				AADD(_aTitDel , {"E1_NUM"       , SE1->E1_NUM		, NIL})
+				AADD(_aTitDel , {"E1_PARCELA"   , SE1->E1_PARCELA	, NIL})
+				AADD(_aTitDel , {"E1_TIPO"      , SE1->E1_TIPO		, NIL})
+				AADD(_aTitDel , {"E1_CLIENTE"   , SE1->E1_CLIENTE	, NIL})
+				AADD(_aTitDel , {"E1_LOJA"      , SE1->E1_LOJA		, NIL})
+				
+				MSExecAuto({|x, y| FINA040(x, y)}, _aTitDel, 5)
+				
+				If lMsErroAuto
+					_cMsEr	:= MostraErro()	
+					_lOk 	:= .F.
+					DisarmTransaction()
+					Break
+					Exit  
+				EndIf
+				
+			EndIf
+			
+		Next _nx
+	ElseIf Len(_aTitRec) == 0
+		MsgAlert('Não foram localizados os títulos recebidos.', 'Atenção')
+	EndIf
+	
+	If !_lOk
+		MsgStop(_cMsEr, "Erro!")
+	EndIf
+	
+EndIf
+
+End Transaction
+
+RestArea(_aArea)
+
+Return Nil
+
+/*/{Protheus.doc} fGtReCt
+@description Obtem os títulos recebidos pela rotina de cartão.
+@type  Static Function
+@author Walmir Junior
+@since 07/05/2019
+@return array com títulos baixados pela rotina de recebimento cartão.
+/*/
+Static Function fGtReCt(_pNLiq)
+Local _aRet := {}
+Local _cTMP := GetNextAlias()
+
+BeginSQL Alias _cTMP
+
+    Column E1_VENCTO as Date
+    Column E1_VENCREA as Date
+    Column E1_EMISSAO as Date
+    Column E1_BAIXA as Date
+
+    SELECT DISTINCT
+        SE1.E1_FILIAL,        
+        SE1.E1_PREFIXO,
+        SE1.E1_NUM,
+        SE1.E1_PARCELA,
+        SE1.E1_TIPO,
+        SE1.E1_VENCTO,
+    	SE1.E1_VENCREA,
+    	SE1.E1_EMISSAO,
+    	SE1.E1_BAIXA
+    FROM %Table:SE1% SE1 INNER JOIN 
+    	%Table:SE5% SE5 ON SE5.%NotDel% AND E1_FILIAL = E5_FILIAL AND E1_PREFIXO = E5_PREFIXO AND 
+    	E1_NUM = E5_NUMERO AND E1_PARCELA = E5_PARCELA
+    WHERE 
+    	SE1.%NotDel% AND
+        SE1.E1_FILIAL   = %Exp:xFilial('SE1')% AND
+        SE1.E1_XNLIQ 	= %Exp:_pNLiq% AND 
+        SE5.E5_ORIGEM	= %Exp:'SFFN462A'%
+    ORDER BY  
+    	SE1.E1_FILIAL,
+        SE1.E1_PREFIXO, 
+        SE1.E1_NUM, 
+        SE1.E1_PARCELA
+
+EndSQL
+
+dbSelectArea(_cTMP)
+
+(_cTMP)->(dbGoTop())
+
+While .not. (_cTMP)->(Eof())
+	aAdd(_aRet, {(_cTMP)->E1_FILIAL, (_cTMP)->E1_PREFIXO, (_cTMP)->E1_NUM, (_cTMP)->E1_PARCELA, (_cTMP)->E1_TIPO})
+	(_cTMP)->(DBSkip())
+EndDo
+
+If Select(_cTMP) > 0
+	(_cTMP)->( DbCloseArea() )
+EndIf
+
+Return _aRet
+
+/*/{Protheus.doc} fVlReCt
+@description Valida títulos rec cartão.
+@type  Static Function
+@author Walmir Junior
+@since 07/05/2019
+@return array, {valido ou não, mensagem de erro}.
+/*/
+Static Function fVlReCt()
+Local _aRet := {.F., ""}
+Local _cTMP := GetNextAlias()
+
+If SE1->E1_PREFIXO != 'CRT' .Or. (SE1->E1_PREFIXO == 'CRT' .And. SE1->E1_SALDO != SE1->E1_VALOR)
+		_aRet[1] := .F.
+		_aRet[2] := "Operação permitida apenas para títulos de rec cartão 'Em Aberto'."+;
+					" Verifique todos os títulos do recebimento."
+		Return _aRet
+EndIf
+
+//Busca todos os títulos da renegociação selecionada
+BeginSQL Alias _cTMP
+
+    SELECT 
+        SE1.E1_FILIAL,        
+        SE1.E1_PREFIXO,
+        SE1.E1_NUM,
+        SE1.E1_PARCELA,
+        SE1.E1_TIPO,
+        SE1.E1_VALOR,
+        SE1.E1_SALDO,
+        SE1.E1_SITUACA
+    FROM %Table:SE1% SE1
+    WHERE 
+        SE1.E1_FILIAL   = %Exp:SE1->E1_FILIAL%	AND
+        SE1.E1_PREFIXO	= %Exp:SE1->E1_PREFIXO%	AND
+        SE1.E1_NUM 		= %Exp:SE1->E1_NUM%		AND
+        SE1.E1_TIPO		= %Exp:SE1->E1_TIPO%	AND
+        SE1.%NotDel%
+    ORDER BY  
+    	SE1.E1_FILIAL,
+        SE1.E1_PREFIXO, 
+        SE1.E1_NUM, 
+        SE1.E1_PARCELA
+
+EndSQL
+
+dbSelectArea(_cTMP)
+
+(_cTMP)->(dbGoTop())
+
+While .not. (_cTMP)->(Eof())
+
+	If (_cTMP)->E1_PREFIXO != 'CRT' .Or. ((_cTMP)->E1_PREFIXO == 'CRT' .And. (_cTMP)->E1_SALDO != (_cTMP)->E1_VALOR)
+		_aRet[1] := .F.
+		_aRet[2] := "Operação permitida apenas para títulos de rec cartão 'Em Aberto'."+;
+					" Verifique todos os títulos do recebimento."
+		Exit
+	EndIf
+	
+	If AllTrim((_cTMP)->E1_SITUACA) != '0'
+		_aRet[1] := .F.
+		_aRet[2] := "Título não se encontra em carteira."+;
+					" Verifique todos os títulos do recebimento."
+		Exit
+	EndIf
+	
+	//Alimenta array private, para utilização posterior na exclusão dos títulos da renegociação.
+	aAdd(_aSel, {(_cTMP)->E1_FILIAL, (_cTMP)->E1_PREFIXO, (_cTMP)->E1_NUM, (_cTMP)->E1_PARCELA, (_cTMP)->E1_TIPO})
+	
+	(_cTMP)->(dbSkip())
+	
+	_aRet[1] := .T.
+	
+EndDo
+
+If Select(_cTMP) > 0
+	(_cTMP)->( DbCloseArea() )
+EndIf
+
+Return _aRet

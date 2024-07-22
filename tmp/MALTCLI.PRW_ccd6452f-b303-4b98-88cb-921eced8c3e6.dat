@@ -1,0 +1,164 @@
+#INCLUDE "PROTHEUS.CH"
+
+/*/{Protheus.doc} MALTCLI
+Este ponto de entrada pertence à rotina de cadastro de clientes, MATA030. 
+Ele é executado após a gravação das alterações.
+@type function
+@author 	Jose Leite de Barros Neto
+@since 	02/07/2014
+@see http://tdn.totvs.com/display/public/mp/MALTCLI
+@history 26/02/2015, Antônio Dantas, Criacao neste mesmo fonte, logo abaixo, a funcao: [fMarkSA1()]
+que preenche o Campo [A1_XOPER - Dta Alteracao - DN] com a data de alteracao no formato AAAAMMAA, 
+para ser utilizado na INTEGRACAO CRM x DN.
+@history 26/02/2015, Antônio Dantas, Incluida a Chamada a funcao [fMarkSA1()].
+/*/
+
+User Function MALTCLI()
+	
+	Local _aArea 		:= GetArea()
+	Local _cCodCli 		:= SA1->(A1_COD)
+	Local _cLojCli		:= SA1->(A1_LOJA)
+	Local _cPessoa		:= SA1->(A1_PESSOA)
+	Local _cClvl		:= ""
+	Local _cUserAlt 	:= " - Alt. por: "+cUserName+" - "+DtoC(dDataBase)+" - "+Time()
+	
+	If _cPessoa == "F"
+		_cClvl := "CF"+_cCodCli
+	Else
+		_cClvl := "CJ"+_cCodCli 
+	EndIf
+	
+	If RecLock("SA1",.F.)
+		SA1->A1_CLVL 	:= _cClvl
+		SA1->A1_XORIGEM	:= _cUserAlt
+		SA1->(MsUnlock())
+	EndIf
+				
+	fAltCTH(_cClvl)
+	
+	/* 	07-10-15 - Jose Leite - CSI
+		Integracao de Cliente PJ (Sige x Protheus)
+		12-06-17 - Jose Leite - CSI
+		Integracao com o SIGE Descontinuada
+	*/
+	/*If _cPessoa == "J" .AND. SA1->(A1_MSBLQL) == '2'
+		Begin Transaction
+			U_SN73A01J()
+		End Transaction
+	EndIf*/
+	
+	//+------------------------------------------------------------------+
+	//| Antonio Dantas                                        26/11/2015 |
+	//| Preenche o Campo [A1_XOPER - Dta Alteracao - DN] com a data da |
+	//| alteracao no formato AAAAMMAA, para ser utilizado na INTEGRACAO  |
+	//| CRM x DN.                                                        |        
+	//+------------------------------------------------------------------+
+	fMarkSA1()
+	
+	If SA1->(A1_MSBLQL) == '2' //2=Não
+		fIncZ06(_cCodCli, _cLojCli, _cPessoa) //Inclusão na tabela Z06 - COMPLEMENTO CLIENTE SA1
+		fIncZDM(_cCodCli, _cLojCli)
+	EndIf
+	
+	//Função para adicionar complemento de cliente
+	fIncAI0(_cCodCli, _cLojCli)
+
+	RestArea(_aArea)
+
+Return( Nil )
+
+/** {Protheus.doc} fAltCTH
+Funcao para alterar a Classe Valor do Cliente
+@type function
+@author Jose Leite de Barros Neto
+@since 02/07/2014
+*/
+Static Function fAltCTH(pClvl)
+
+	DbSelectArea("CTH")
+	DbSetOrder(1) //CTH_FILIAL+CTH_CLVL
+	If DbSeek(xFilial("CTH")+pClvl)
+		
+		If RecLock("CTH",.F.)
+		
+			If SA1->(A1_MSBLQL) == "1"
+				Replace CTH_BLOQ	WITH "1" //"1" - Bloqueado
+			ElseIf SA1->(A1_MSBLQL) == "2"
+				Replace CTH_BLOQ	WITH "2" //"2" - Nao Bloqueado
+			EndIf
+			
+			MsUnlock()
+		EndIf
+		
+	EndIf
+
+Return( Nil )
+
+/*
+{Protheus.doc} <fMarkSA1>
+Preenche o Campo [A1_XOPER - OPER DN] com a data da Alteracao no formato AAAAMMAA:hh:mm, para ser 
+utilizado na INTEGRACAO CRM x DN.  	
+@type function
+@author Antonio Dantas
+@since 26/11/2015
+*/
+Static Function fMarkSA1()
+If SA1->(RecLock("SA1",.f.))
+	Replace SA1->A1_XOPER With Substr(SA1->A1_XOPER,1,15)+Dtos(dDataBase)+':'+Substr(Time(),1,5) 
+	SA1->(MsUnlock())
+	SA1->(dbCommit())
+Endif
+Return Nil
+
+/*/{Protheus.doc} fIncZ06
+Função para inclusão de dados complementares do cliente.
+@author franklin.oliveira
+@since 24/01/2020
+@param pCodCli, Character, Código do cliente que está em edição
+@param pLojCli, Character, Loja do cliente que está em edição
+@param pPessoa, Character, tipo de pessoa do cliente que está em edição: J=Jurídica;F=Física
+@type function
+/*/
+Static Function fIncZ06(pCodCli, pLojCli, pPessoa)
+	
+	DbSelectArea("Z06")
+	Z06->( DbSetOrder(1) ) //Z06_FILIAL+Z06_CODCLI+Z06_LOJCLI
+	
+	If .Not. Z06->( DbSeek(xFilial("Z06") + pCodCli + pLojCli) )
+		If RecLock("Z06",.T.)
+			Replace Z06_FILIAL	WITH xFilial("Z06")
+			Replace Z06_CODCLI 	WITH pCodCli 						//Codigo cliente
+			Replace Z06_LOJCLI	WITH pLojCli						//Loja cliente
+			Replace Z06_INCSGT	WITH IIf(pPessoa == "J", "1", "2")	//Incluir Cadastro no SGT? 1=Sim;2=Não
+			Replace Z06_SGTINC  WITH .F.							//Incluido no SGT
+			MsUnlock()
+		EndIf
+	EndIf
+
+Return Nil
+
+Static Function fIncZDM(_cCodCli, _cLojCli)
+	U_F99A01S1(FunName(), xFilial("SA1") + _cCodCli + _cLojCli,)
+Return Nil
+
+/*/{Protheus.doc} fIncAI0
+	Função para incluir os dados do cliente no complemento de cliente
+	@type  Function
+	@author Franklin de Brito de Oliveira
+	@since 17/01/2022
+	@param cCodigo, charactere, código do cliente
+	@param cLoja, charactere, loja do cliente
+/*/
+Static Function fIncAI0(cCodigo, cLoja)
+	DbSelectArea("AI0")
+	DbSetOrder(1)	//AI0_FILIAL+AI0_CODCLI+AI0_LOJA
+	if .Not. DBSEEK( xFilial("AI0")+cCodigo+cLoja )
+		if RecLock("AI0", .T.)
+			Replace AI0_FILIAL WITH xFilial("AI0")
+			Replace AI0_CODCLI WITH cCodigo
+			Replace AI0_LOJA WITH cLoja
+			Replace AI0_XTPCNP WITH "3"	//1=Agencia de Fomento;2=ICT;3=Empresa;4=Sistema Industria;
+			MsUnlock()
+		endif
+	endif
+Return NIL

@@ -1,0 +1,215 @@
+#Include 'Protheus.ch'
+#INCLUDE "TOPCONN.CH"
+#Include "TOTVS.ch"
+
+// VARIÁVEL DE RETORNO
+Static MP_CODPROD As Character
+Static MP_DESCPROD As Character
+Static MP_VALPROD As Character
+
+/*/{Protheus.doc} SF69C01X
+    Filtro para a consulta padrão no campo de Produto da tela de Necessidade de Docente
+    @type  User Function
+    @author Daniel Castro - TOTVS
+    @since 16/09/2020
+    @version 1
+    /*/
+
+User Function SF69C01X()
+
+	Local aArea   As Array   // ÁREA DE TRABALHO CORRENTE
+	Local lFind   As Logical // CONTROLE DE VARIÁVEL ENCONTRADA
+	Local oDialog As Object  // CAIXA DE DIÁLOGO
+
+	If Empty(SA2->A2_TIPO)
+		MsgAlert("Fornecedor não preenchido.","Atenção")
+		lFind := .F.
+		Return(lFind)
+	EndIf
+
+	// INICIALIZAÇÃO DE VARIÁVEIS
+	lFind   := .F.
+	aArea   := GetArea()
+	oDialog := GenDialog(70)
+
+	// // INCORPORA A GRID
+	GenMarkBrw(@oDialog)
+
+	// EXIBE A CAIXA DE DIÁLOGO
+	ACTIVATE MSDIALOG oDialog CENTERED
+
+	// RESTAURA A ÁREA DE TRABALHO ANTERIOR
+	RestArea(aArea)
+
+	// VALIDA SE ALGO FOI SELECIONADO
+	IIf (MP_CODPROD != NIL .And. Len(MP_CODPROD) > 0, lFind := .T., lFind := .F.)
+Return (lFind)
+
+//--------------------------------------------------------
+// EFETUA A MONTAGEM DA CAIXA DE DIÁLOGO DE FUNDO
+//--------------------------------------------------------
+Static Function GenDialog(nPercent As Numeric)
+	Local oSize   As Object // TAMANHO DOS COMPONENTES
+	Local oDialog As Object // CAIXA DE DIÁLOGO
+
+	// INICIALIZAÇÃO DE VARIÁVEIS
+	oSize := FwDefSize():New(.F.)
+
+	// DEFINIÇÃO DA CAIXA DE DIÁLOGO
+	DEFINE MSDIALOG oDialog TITLE "Consulta Padrão - Produtos" FROM 000,000 TO Round(oSize:aWindSize[3] * (nPercent/100), 0), Round(oSize:aWindSize[4] * (nPercent/100), 0) PIXEL
+Return (oDialog)
+
+//--------------------------------------------------------
+// INCORPORA A GRID EM UMA CAIXA DE DIÁLOGO
+//--------------------------------------------------------
+Static Function GenMarkBrw(oDialog As Object)
+	Local oMark   As Object // GRID DE SELEÇÃO
+	Local aFields As Array  // CAMPOS DO NAVEGADOR
+
+	// INICIALIZAÇÃO DE VARIÁVEIS
+	cAlias  := GetNextAlias()
+	aFields := {}
+
+	// MONTA A ESTRUTURA E O CONTEÚDO DOS CAMPOS
+	GenTable(cAlias)
+
+	// CAMPOS DO NAVEGADOR
+	AAdd(aFields, {"Código",    "TRB_COD",  "C", 15, 00})
+	AAdd(aFields, {"Descrição", "TRB_DESC", "C", 50, 00})
+
+	// DEFINIÇÕES DO NAVEGADOR
+	oMark := FwMarkBrowse():New()
+	oMark:SetIgnoreARotina(.T.)
+	oMark:SetMenuDef("SF69C01X")
+	oMark:SetAlias(cAlias)
+	oMark:SetTemporary(.T.)
+	oMark:SetFields(aFields)
+	oMark:SetFieldMark("TRB_OK")
+	oMark:SetOwner(oDialog)
+	oMark:IsInvert(.T.)
+	oMark:SetDescription("Produtos")
+	oMark:SetOnlyFields({"TRB_OK", "TRB_COD", "TRB_DESC"})
+
+	// BOTÕES DA ROTINA
+	oMark:AddButton("Confirmar", {|| CheckSelected(@oMark)})
+	oMark:Activate()
+Return (NIL)
+
+//--------------------------------------------------------
+// GERA O ARQUIVO DE TRABALHO
+//--------------------------------------------------------
+Static Function GenTable(cAlias As Character)
+	Local oTable  As Object  // OBJETO DA TABELA TEMPORÁRIA
+	Local aFields As Array   // VETOR DE CAMPOS
+	Local aData   As Array   // CONTEÚDO DOS CAMPOS
+	Local nX      As Numeric // CONTROLADOR DE LAÇO
+
+	// INICIALIZAÇÃO DE VARIÁVEIS
+	nX      := 0
+	aData   := {}
+	aFields := {}
+	oTable  := FwTemporaryTable():New(cAlias)
+
+	// DEFINE A ESTRUTURA DE CAMPOS
+	AAdd(aFields, {"TRB_OK",   "C", 02, 00})
+	AAdd(aFields, {"TRB_COD",  "C", 15, 00})
+	AAdd(aFields, {"TRB_DESC", "C", 50, 00})
+
+	// INSERE OS CAMPOS NA TABELA TEMPORÁRIA
+	oTable:SetFields(aFields)
+
+	// ÍNDICE DA TABELA TEMPORÁRIA
+	oTable:AddIndex("01", {"TRB_COD"})
+
+	// CRIA A TABELA
+	oTable:Create()
+
+	//CRIA TABELA DE TRABALHO
+	cQuery := " SELECT B5_COD , B1_DESC, B5_XVLDC FROM " + RetSqlTab("SB5")
+	cQuery += " INNER JOIN " + RetSqlTab("SB1") + " ON SB1.D_E_L_E_T_ = '' "
+	cQuery += " AND B1_COD = B5_COD "
+
+	If SA2->A2_TIPO == "F"
+		cQUery += " AND B1_TIPO = 'TF' "
+	elseIf SA2->A2_TIPO == "J"
+		cQUery += " AND B1_TIPO IN ('TJ','TS') "
+	EndIF
+
+	cQuery += " WHERE B5_XVLDC <> 0 "
+	cQuery += " AND SB5.D_E_L_E_T_ = ' ' "
+	cQUery += " AND B5_FILIAL = '" + xFilial("SB5") + "' "
+	cQUery += " AND B1_MSBLQL  =  '2' " //Somente produtos nao bloqueados. 
+
+	cQuery := CHANGEQUERY( cQuery )
+
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),"QRY",.T.,.F.)
+
+	QRY->(dbGotop())
+
+	While QRY->(!EOF())
+		AAdd(aData, {Alltrim(QRY->B5_COD),  Alltrim(QRY->B1_DESC)})
+		QRY->(dbSkip())
+	EndDO
+	QRY->(dbCloseArea())
+
+	// INSERE OS DADOS NA TABELA TEMPORÁRIA
+	For nX := 1 To Len(aData)
+		RecLock(cAlias, .T.)
+		TRB_COD  := aData[nX][1]
+		TRB_DESC := aData[nX][2]
+		MsUnlock()
+	Next nX
+
+	// POSICIONA NO INÍCIO DO ARQUIVO
+	(cAlias)->(DbGoTop())
+Return (NIL)
+
+//--------------------------------------------------------
+// PREPARA O RETORNO PARA O CAMPO
+//--------------------------------------------------------
+Static Function CheckSelected(oMark As Object)
+	Local cSelected As Character // RETORNO DA CONSULTA
+
+	// INICIALIZAÇÃO DE VARIÁVEIS
+	cSelected := Space(0)
+
+	// PERCORRE A TABELA CORRENTE E CONCATENA CAMPOS MARCADOS
+	DbGoTop()
+	DbEval({|| IIf(oMark:IsMark(oMark:Mark()), cSelected += "+" + AllTrim(TRB_COD), cSelected += Space(0))})
+
+	// REMOVE O PRIMEIRO CARACTERE E ATRIBUI A VARIÁVEL DE RETORNO
+	MP_CODPROD := IIf(Len(cSelected) > 0, SubStr(cSelected, 2), cSelected)
+	MP_DESCPROD := Alltrim(Posicione("SB1",1, xFilial("SB1") + MP_CODPROD, "B1_DESC") )
+	MP_VALPROD := Posicione("SB5",1, xFilial("SB5") + MP_CODPROD, "B5_XVLDC" )
+
+	// FECHA A CAIXA DE DIÁLOGO
+	oMark:oBrowse:oOwner:End()
+Return (NIL)
+
+//--------------------------------------------------------
+// SOBRESCRIÇÃO DAS OPERAÇÕES DA ROTINA PADRÃO
+//--------------------------------------------------------
+Static Function MenuDef()
+	Local aRotina As Array // OPERAÇÕES DA ROTINA
+
+	// INICIALIZAÇÃO DE VARIÁVEIS
+	aRotina := {}
+Return (aRotina)
+
+//--------------------------------------------------------
+// RETORNA A VARIÁVEL ESTÁTICA PARA O CAMPO de CODIGO
+//--------------------------------------------------------
+User Function 69C01XG1()
+Return (MP_CODPROD)
+
+//--------------------------------------------------------
+// RETORNA A VARIÁVEL ESTÁTICA PARA O CAMPO de DESCRIÇÃO
+//--------------------------------------------------------
+User Function 69C01XG2()
+Return (MP_DESCPROD)
+
+//--------------------------------------------------------
+// RETORNA A VARIÁVEL ESTÁTICA PARA O CAMPO de VALOR
+//--------------------------------------------------------
+User Function 69C01XG3()
+Return (MP_VALPROD)

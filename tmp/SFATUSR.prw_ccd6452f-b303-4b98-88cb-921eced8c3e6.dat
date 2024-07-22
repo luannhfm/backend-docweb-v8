@@ -1,0 +1,151 @@
+#INCLUDE "TOTVS.CH"
+
+/*/{Protheus.doc} SFATUSR
+	@description Tela de validaçào de Usuario e senhas.  
+	@type  Static Function
+	@author Luciano Maia
+	@since 03/05/08
+	@version 1.0
+	@param aDados, Array, 	[1] - Nome do parametro que define quais Usuario tem permissao para realizar a liberacao.
+							[2] - Mesagem da liberacao em questao.
+	@return _aRetorno, Array, Informações da liberação.
+	@history
+		Rafael Karczevski, 06/03/2019, Conformidade com analise de codigo da TOTVS.
+	/*/
+User Function SFATUSR(aDados,lId)
+
+	Local _aArea		:= GetArea()
+	Local _oDlg
+	Local _oMemo
+	Local _oNomSep
+
+	Local _nOpc			:= 0
+	Local _aRetorno 	:= {.F.,'',''}
+	Local _cSenUsu		:= Space(30)
+	Local _cNomSep		:= Space(25)
+	Local vbResp		:= .F.
+	Local _cUsers   	:= ''
+	Local _cMemo 		:= ''
+	Local _bTecla	  
+
+	Default aDados := {'MV_XXXXXX','Nenhuma informação disponível!'}
+	Default lId		:= .F.
+
+	_cUsers := GetNewPar(aDados[1],'000000')
+	_cMemo 	:= aDados[2]
+
+	//Caso o usuario logado ja esteja entre os usuarios autorizados, retorno direto os dados de autorizacao
+	If !lId .And. __cUserID $ _cUsers
+		_aRetorno[1] := .T.       					//.T. (Validado)    .F. (Não Validado)
+		_aRetorno[2] := __cUserID   				//ID do Usuario
+		_aRetorno[3] := AllTrim(cUserName)   	//Nome do Usuario
+		Return( _aRetorno )
+	EndIf
+
+	DEFINE MSDIALOG _oDlg TITLE "Liberação por senha" OF oMainWnd PIXEL FROM 0,0 TO 160 , 365
+
+	@ 001, 003 TO 065, 177 OF _oDlg PIXEL LABEL 'Dados da Liberação'
+
+	@ 007, 007 GET _oMemo VAR _cMemo When .F. OF _oDlg MEMO SIZE 163 , 39 PIXEL FONT _oDlg:oFont COLOR CLR_BLACK,CLR_HGRAY
+	_oMemo:bRClicked := {||AllwaysTrue()}
+
+	//@ 045, 007 Say 'Informe a senha para a Liberação descrita...' Of _oDlg Pixel
+	@ 045, 007 Say 'Informe Usuário' Of _oDlg Pixel
+	@ 045, 110 Say 'Informe a senha' Of _oDlg Pixel
+	@ 052, 007 Get _oNomSep Var _cNomSep Valid ( If( RetUsr(@_cNomSep) , (_oNomSep:Refresh(),SysRefresh(),ProcessMessage()) , Nil ) ) SIZE 90,09 OF _oDlg Pixel
+	@ 052, 110 Get _cSenUsu Password SIZE 60,09 OF _oDlg PIXEL
+
+	DEFINE SBUTTON FROM 068, 110 TYPE 1 ACTION (_nOpc:=1,_oDlg:End()) 	ENABLE OF _oDlg
+	DEFINE SBUTTON FROM 068, 145 TYPE 2 ACTION (_oDlg:End())					ENABLE OF _oDlg
+
+	ACTIVATE MSDIALOG _oDlg CENTERED
+
+	If _nOpc = 1
+
+		//Sempre pego novamente os usuarios liberados
+		_cUsers := GetNewPar(aDados[1], '000000')
+
+		If !Empty(_cNomSep)
+
+			PswOrder(2)
+			If PswSeek(ALLTRIM(_cNomSep),.T.)
+				If PSWNAME( _cSenUsu ) //.and. !(aUsr[1][17] .or. (aUsr[1][6] != StoD('  /  /    ') .and. aUsr[1][6] <= dDataBase))
+					_aUsr  := PswRet(1)
+					vbResp := AllTrim(_aUsr[1][1]) $ _cUsers
+				EndIf
+			EndIf
+			
+		EndIf
+
+		If !vbResp
+			Aviso('Inválido!','Senha invalida ou Usuário não autorizado a efetuar esta liberação!',{'OK'})
+		else
+			_aRetorno[1] := .T.       				//.T. (Validado)    .F. (Não Validado)
+			_aRetorno[2] := AllTrim(_aUsr[1][1])   	//ID do Usuario
+			_aRetorno[3] := AllTrim(_aUsr[1][2])   	//Nome do Usuario
+		EndIf
+
+	EndIf
+
+	RestArea(_aArea)
+
+Return( _aRetorno )
+
+/*/{Protheus.doc} RetUSR
+	@description Transforma o codigo do usuario em seu nome para a funcao original
+	@type  Static Function
+	@author JULIO STORINO
+	@since 11/30/12
+	@version 1.0
+	/*/
+Static Function RetUSR(_cNomSep)
+
+	Local _lRet	:= .T.
+
+	If SONUMERO(_cNomSep,1)
+
+		_cNomSep := StrZero(Val(AllTrim(_cNomSep)),6)
+		PswOrder(1)
+		If (_lRet := PswSeek(_cNomSep))
+			_aUsr := PswRet(1)
+			_cNomSep := _aUsr[1][2]
+		EndIf
+
+	EndIf
+
+Return( _lRet )
+
+/*/{Protheus.doc} SONUMERO
+	@description RETIRA OU ANALISA OS CARACTERES NAO NUMERICOS DE UMA STRING.
+	@type Static Function
+	@author JULIO STORINO
+	@since 10/10/06
+	@version 1.0
+	@param _cStrin, Caracter, Codigo a ser analisado
+		_nAcao, 0 - Retorna somente os caracteres numericos, 1 - Retorno .T. OU .F. conforme analise
+	@return _xRet, _nAcao = 0 - Retorna os caracteres numericos, .F. se houver algum nao numerico
+	/*/
+Static Function SONUMERO(_cString,_nAcao)
+
+	Local _xRet
+	Local _cRetorno	:= ''
+	Local _nI       	:= 0
+
+	Default _nAcao		:= 0
+
+	For _nI := 1 to Len(AllTrim(_cString))
+
+		If Substr(_cString,_nI,1) $ '0123456789'
+			_cRetorno += Substr(_cString,_nI,1)
+		EndIF
+
+	Next _nI
+
+	Do Case
+		Case _nAcao = 0		//Retorna string somente com os numeros
+			_xRet := _cRetorno
+		Case _nAcao = 1		//Retorna .T. se a string passada so tinha numerou, .f. se havia outros caracteres.
+			_xRet := Len(AllTrim(_cString)) == Len(AllTrim(_cRetorno))
+	EndCase
+
+Return( _xRet )

@@ -1,0 +1,521 @@
+#Include 'Protheus.ch'
+#Include 'Topconn.ch'
+
+/*/{Protheus.doc} SN73A01J
+Funcao responsavel por realizar integracao de clientes Protheus X Sige
+
+Funcao chamada no PE (MALTCLI)
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	07/10/2015
+@version 	1.0
+@return 	Nil, Nulo
+/*/
+User Function SN73A01J()
+	
+	Local _aArea		:= GetArea()
+	Local _cDbSql	:= SuperGetMV("MV_XDBSIGE")
+	Local _cSrvSql	:= SuperGetMV("MV_XSRVSIG")
+	Local _nHndSql	:= 0
+	Local _nHErp 	:= AdvConnection()
+	Local _cQuery	:= ''
+	Local _cSttm		:= ''
+	Local _lUpdate	:= .F.
+	Local _cCodCli	:= AllTrim(SA1->A1_COD)
+	Local _cLojCli	:= AllTrim(SA1->A1_LOJA)
+	Local _cCnae		:= SubStr(AllTrim(SA1->A1_CNAE),1,At("/",SA1->A1_CNAE)-1)
+	Local _nIdCnae	:= 0
+	Local _cCGC		:= AllTrim(SA1->A1_CGC)
+   Local _cInsEst	:= AllTrim(SA1->A1_INSCR)
+   Local _cRazaoS	:= SubStr(AllTrim(SA1->A1_NOME),1,60)
+   Local _cNomeFan	:= AllTrim(SA1->A1_NREDUZ)
+   Local _cEmail	:= AllTrim(SA1->A1_EMAIL)
+   Local _nNumEmp	:= SA1->A1_XQTEMP
+	Local _cTel		:= AllTrim(SA1->A1_TEL)  
+  	Local _cCidade	:= Upper(AllTrim(Posicione("CC2",1,xFilial("CC2")+ SA1->(A1_EST + A1_COD_MUN),"CC2_MUN")))
+  	Local _nCodCid	:= 0
+  	Local _cEnd		:= SubStr(AllTrim(SA1->A1_END),1,60)
+  	Local _cEndNum	:= 'S/N' 
+  	Local _cCep		:= AllTrim(SA1->A1_CEP)
+  	Local _cBairro	:= AllTrim(SA1->A1_BAIRRO)
+  	Local _cEstado	:= AllTrim(SA1->A1_EST)
+  	Local _cComplem	:= AllTrim(SA1->A1_COMPLEM)
+  	Local _cAdmSind	:= IIF(AllTrim(SA1->A1_XCNTSIN)=='S','sim','nao')
+  	Local _cAdmConf	:= IIF(AllTrim(SA1->A1_XCNTCON)=='S','sim','nao')
+  	Local _cAdmSen	:= IIF(AllTrim(SA1->A1_XICDSEN)=='S','sim','nao')
+  	Local _nCodEmp	:= 0
+  	Local _nEmpCat	:= 0
+  	Local _cContat	:= AllTrim(SA1->A1_CONTATO)
+  	Local _cFaixa	:= ""
+  	Local _cMsg		:= ""
+  	
+  	If ";" $ _cEmail
+  		_cEmail := SubStr(AllTrim(SA1->A1_EMAIL),1,At(";",AllTrim(SA1->A1_EMAIL))-1) 
+  	EndIf
+  	
+  	ConOut(" ")
+  	ConOut(Replicate("=",80))
+  	ConOut('SN73A01J: Iniciando Integracao de Clientes Protheus x Sige')
+	Conout("SN73A01J: Conectando ao Banco Sige")
+	  	
+	//Conecta no Sige
+	_nHndSql := TcLink(_cDbSql,_cSrvSql,7890)
+	
+	If _nHndSql < 0
+		_cMsg := "SN73A01J: Erro ("+ str(_nHndSql,4) +") ao conectar com "+ _cDBSql +" em "+ _cSrvSql
+		Conout(_cMsg)
+		TCSetConn(_nHErp)
+		GeraLog(_cMsg)
+		Alert(_cMsg)
+		Return
+	Endif
+	
+	If .Not. TCSetConn(_nHndSql)
+		_cMsg := "SN73A01J: Houve problema na troca de conexao para o Ambiente, contate o Administrador - Processo Finalizado"
+		Conout(_cMsg)
+		TCSetConn(_nHErp)
+		GeraLog(_cMsg)
+		Alert(_cMsg)
+		Return
+	EndIf
+
+	Conout("SN73A01J: MSSQL Server conectado - Handler"+ str(_nHndSql,4))
+	
+	If Select("TRA") > 0
+		DbSelectarea("TRA")
+		TRA->(DbCloseArea())
+	EndIf
+	
+	//Recupera Cnae no formato Sige
+	_cQuery := "	SELECT *											" 
+	_cQuery += "	FROM [COMPARTILHADO_MT].[dbo].[CO_CNAE] 	"
+	_cQuery += "	WHERE CNAE = '"+ _cCnae +"'					"
+	_cQuery += "	AND CNAEFISCAL IS NULL 						"
+	_cQuery += "	AND CNAE_STATUS = 'A'							"
+	
+	TCQUERY _cQuery NEW ALIAS "TRA"
+	
+	If (TCSQLExec(_cQuery) < 0)
+		_cMsg := "SN73A01J: TCSQLError() " + TCSQLError()
+		Conout(_cMsg)
+		TcUnlink(_nHndSql)
+		TCSetConn(_nHErp)
+		GeraLog(_cMsg)
+		Alert(_cMsg)
+		Return
+	EndIf
+	
+	If .Not. TRA->( Eof() )
+		_nIdCnae := TRA->ID_CNAE
+	Else
+		_cMsg := "SN73A01J: CNAE nao encontrado no Sige -> " + _cCnae
+		Conout(_cMsg)
+		TcUnlink(_nHndSql)
+		TCSetConn(_nHErp)
+		GeraLog(_cMsg)
+		Alert(_cMsg)
+		Return
+	EndIf
+	
+	TRA->(DbCloseArea())
+	
+	//Recupera ID Cidade no formato Sige
+	_cQuery := "	SELECT *															" 
+	_cQuery += "	FROM [COMPARTILHADO_MT].[dbo].[CO_CIDADE] 				" 
+	_cQuery += "	WHERE UPPER(CID_DESCRICAO) LIKE '"+ StrTran(_cCidade,"'","%") +"%' 	"
+	
+	TCQUERY _cQuery NEW ALIAS "TRA"
+	
+	If (TCSQLExec(_cQuery) < 0)
+		_cMsg := "SN73A01J: TCSQLError() " + TCSQLError()
+		Conout(_cMsg)
+		TcUnlink(_nHndSql)
+		TCSetConn(_nHErp)
+		GeraLog(_cMsg)
+		Alert(_cMsg)
+		Return
+	EndIf
+	
+	If .Not. TRA->( Eof() )
+		_nCodCid := TRA->ID_CIDADE
+	Else
+		_cMsg := "SN73A01J: Cidade nao encontrada no Sige -> " + _cCidade 
+		Conout(_cMsg)
+		TcUnlink(_nHndSql)
+		TCSetConn(_nHErp)
+		GeraLog(_cMsg)
+		Alert(_cMsg)
+		Return
+	EndIf
+	
+	TRA->(DbCloseArea())
+		
+	If Select("TMP") > 0
+		DbSelectarea("TMP")
+		TMP->(DbCloseArea())
+	EndIf
+	
+	//Select pra ver se existe o cliente no SIGE, se existir atualiza, se nao inclui	
+	_cQuery := "	SELECT *												" 
+	_cQuery += "	FROM [COMPARTILHADO_MT].[dbo].[CO_EMPRESA]	" 
+	_cQuery += "	WHERE CNPJ = '"+ _cCGC +"'						"
+	
+	TCQUERY _cQuery NEW ALIAS "TMP"
+	
+	If (TCSQLExec(_cQuery) < 0)
+		_cMsg := "SN73A01J: TCSQLError() " + TCSQLError()
+		Conout(_cMsg)
+		TcUnlink(_nHndSql)
+		TCSetConn(_nHErp)
+		GeraLog(_cMsg)
+		Alert(_cMsg)
+		Return
+	EndIf
+	
+	//Atualiza
+	If .Not. TMP->( EOF() )
+	
+		_cSttm := "	UPDATE [COMPARTILHADO_MT].[dbo].[CO_EMPRESA]							 					 				"
+		_cSttm += "	SET 	[ID_CNAE] 								= "+ 		cValToChar(_nIdCnae)
+      	_cSttm += "		  	,[INSC_ESTADUAL]						= '"+ 		_cInsEst 					+"'"
+      	_cSttm += "			,[RAZAO_SOCIAL]							= '"+ 		_cRazaoS 					+"'"
+      	_cSttm += "			,[NOME_FANTASIA]						= '"+ 		_cNomeFan					+"'"
+      	_cSttm += "		  	,[EMAIL]									= '"+ 		_cEmail 					+"'"
+      	_cSttm += "		  	,[NUM_EMPREGADOS]						= "+ 		cValToChar(_nNumEmp) 	
+      	_cSttm += "		  	,[FONE_GERAL]							= '"+ 		_cTel 						+"'"				
+      	_cSttm += "		  	,[ID_CIDADE]								= "+ 		cValToChar(_nCodCid)	
+      	_cSttm += "		  	,[END_LOGRADOURO]						= '"+ 		_cEnd 						+"'"
+      	_cSttm += "		  	,[END_NUMERO]							= '"+ 		_cEndNum 					+"'"
+      	_cSttm += "		  	,[CEP]										= '"+ 		_cCep 						+"'"
+      	_cSttm += "		  	,[BAIRRO]									= '"+ 		_cBairro 					+"'"
+      	_cSttm += "		  	,[CIDADE]									= '"+ StrTran(_cCidade,"'","")	+"'"
+      	_cSttm += "		  	,[ESTADO]									= '"+ 		_cEstado 					+"'"
+      	_cSttm += "		  	,[COMPLEMENTO]							= '"+ 		_cComplem					+"'"
+      	_cSttm += "		  	,[ADIMPLENTE_SINDICAL]				= '"+ 		_cAdmSind					+"'"
+      	_cSttm += "		  	,[ADIMPLENTE_CONFEDERATIVA]			= '"+ 		_cAdmConf					+"'"
+      	_cSttm += "		  	,[ADIMPLENTE_CONTRIBUICAO_SENAI]	= '"+ 		_cAdmSen					+"'"
+      	_cSttm += "		  	,[CONTATO_INSTITUCIONAL]				= '"+ 		_cContat					+"'"
+		_cSttm += "	WHERE CNPJ = '"+ _cCGC +"'	"
+			
+		If Select("TRA") > 0
+			DbSelectarea("TRA")
+			TRA->(DbCloseArea())
+		EndIf
+		
+		//Busca o codigo da empresa		
+		_cQuery := "	SELECT ID_EMPRESA AS CodEmp						" 
+		_cQuery += "	FROM [COMPARTILHADO_MT].[dbo].[CO_EMPRESA]	" 
+		_cQuery += "	WHERE CNPJ = '"+ _cCGC +"'	"
+		
+		TCQUERY _cQuery NEW ALIAS "TRA"
+			
+		If (TCSQLExec(_cQuery) < 0)
+			_cMsg := "SN73A01J: TCSQLError() " + TCSQLError()
+			Conout(_cMsg)
+			TcUnlink(_nHndSql)
+			DisarmTransaction()
+			TCSetConn(_nHErp)
+			GeraLog(_cMsg)
+			Alert(_cMsg)
+			Return
+		EndIf
+			
+		If .Not. TRA->( Eof() )
+			_nCodEmp := TRA->CodEmp
+		EndIf
+		
+		TRA->(DbCloseArea())
+		
+		_lUpdate := .T.
+		
+	//Insere
+	Else
+			
+		//Select para retornar o ultimo codigo da empresa	
+		_cQuery := "	SELECT *												" 
+		_cQuery += "	FROM [COMPARTILHADO_MT].[dbo].[CO_CODIGOS]	" 
+		_cQuery += "	WHERE TABELA = 'CO_EMPRESA'						"
+			
+		TCQUERY _cQuery NEW ALIAS "TRA"
+			
+		If (TCSQLExec(_cQuery) < 0)
+			_cMsg := "SN73A01J: TCSQLError() " + TCSQLError()
+			Conout(_cMsg)
+			TcUnlink(_nHndSql)
+			DisarmTransaction()
+			TCSetConn(_nHErp)
+			GeraLog(_cMsg)
+			Alert(_cMsg)
+			Return
+		EndIf
+			
+		If .Not. TRA->( Eof() )
+			_nCodEmp := TRA->Codigo + 1
+		EndIf
+	
+		_cSttm := " INSERT INTO [COMPARTILHADO_MT].[dbo].[CO_EMPRESA]				"
+      	_cSttm += "		(	[ID_EMPRESA]								"
+      	_cSttm += "			,[ID_CNAE]								"
+      	_cSttm += "		  	,[CNPJ]									"
+      	_cSttm += "		  	,[INSC_ESTADUAL]						"
+      	_cSttm += "			,[RAZAO_SOCIAL]							"
+      	_cSttm += "			,[NOME_FANTASIA]						"
+      	_cSttm += "		  	,[EMAIL]									"
+      	_cSttm += "		  	,[NUM_EMPREGADOS]						"
+      	_cSttm += "		  	,[FONE_GERAL]							"					
+      	_cSttm += "		  	,[ID_CIDADE]								"
+      	_cSttm += "		  	,[END_LOGRADOURO]						"
+      	_cSttm += "		  	,[END_NUMERO]							"
+      	_cSttm += "		  	,[CEP]										"
+     	_cSttm += "		  	,[BAIRRO]									"
+     	_cSttm += "		  	,[CIDADE]									"
+     	_cSttm += "		  	,[ESTADO]									"
+     	_cSttm += "		  	,[COMPLEMENTO]							"
+     	_cSttm += "		  	,[ADIMPLENTE_SINDICAL]				"
+     	_cSttm += "		  	,[ADIMPLENTE_CONFEDERATIVA]			"
+     	_cSttm += "		  	,[ADIMPLENTE_CONTRIBUICAO_SENAI]	" 
+     	_cSttm += "		  	,[CONTATO_INSTITUCIONAL]				"
+     	_cSttm += "		  	,[STATUS]									"
+     	_cSttm += "		  	,[ID_SISTEMA]							"
+     	_cSttm += "			)											"
+		_cSttm += "	VALUES		"
+     	_cSttm += "		( 		"+ 		cValToChar(_nCodEmp) 
+     	_cSttm += "			,	"+ 		cValToChar(_nIdCnae) 		
+     	_cSttm += "			,	'"+	 	_cCGC 							+"'"
+     	_cSttm += "			,	'"+	 	_cInsEst 						+"'"
+     	_cSttm += "			,	'"+	 	_cRazaoS						+"'"
+     	_cSttm += "			,	'"+	 	_cNomeFan						+"'"
+     	_cSttm += "			,	'"+	 	_cEmail						+"'"
+     	_cSttm += "			,	"+	 	cValToChar(_nNumEmp)		
+     	_cSttm += "			,	'"+	 	_cTel							+"'"
+     	_cSttm += "			,	"+	 	cValToChar(_nCodCid)		
+     	_cSttm += "			,	'"+	 	_cEnd							+"'"
+     	_cSttm += "			,	'"+	 	_cEndNum						+"'"
+     	_cSttm += "			,	'"+	 	_cCep							+"'"
+     	_cSttm += "			,	'"+	 	_cBairro						+"'"
+     	_cSttm += "			,	'"+	 StrTran(_cCidade,"'","")	+"'"
+     	_cSttm += "			,	'"+	 	_cEstado						+"'"
+     	_cSttm += "			,	'"+	 	_cComplem						+"'"
+     	_cSttm += "			,	'"+	 	_cAdmSind						+"'"
+     	_cSttm += "			,	'"+	 	_cAdmConf						+"'"
+     	_cSttm += "			,	'"+	 	_cAdmSen						+"'"
+     	_cSttm += "			,	'"+	 	_cContat						+"'"
+     	_cSttm += "			,	'A'											"
+     	_cSttm += "			,	186											"
+		_cSttm += "   	)	"
+		
+		_lUpdate := .F.
+	EndIf
+		
+	If _nNumEmp <= 10
+		_cFaixa := '10'
+	ElseIf _nNumEmp > 10 .And. _nNumEmp <= 99
+		_cFaixa := '99'
+	ElseIf _nNumEmp > 99 .And. _nNumEmp <= 499
+		_cFaixa := '499'
+	Else
+		_cFaixa := '500'
+   	EndIf
+    		
+	If (TCSQLExec(_cSttm) < 0)
+		_cMsg := "SN73A01J: TCSQLError() " + TCSQLError()
+    	Conout(_cMsg)
+    	TcUnlink(_nHndSql)
+		DisarmTransaction()
+		TCSetConn(_nHErp)
+		GeraLog(_cMsg)
+		Alert(_cMsg)
+		Return	    		
+   Else
+   		
+    	If _lUpdate
+    		
+    		Conout("SN73A01J: Registro Atualizado: " + _cCodCli + "/" + _cLojCli + "/" + _cCGC + "/" + _cRazaoS )
+    		
+    		_cSttm := " UPDATE [COMPARTILHADO_MT].[dbo].[SI_CONTRIB] 	"
+    		_cSttm += "		SET PessoalOcupado = '"+ _cFaixa +"' 			" 
+    		_cSttm += "	WHERE Id_Empresa = "+ cValToChar(_nCodEmp)
+    		
+    		If (TCSQLExec(_cSttm) < 0)
+    			_cMsg := "SN73A01J: TCSQLError() " + TCSQLError()
+	    		Conout(_cMsg)
+	    		TcUnlink(_nHndSql)
+				DisarmTransaction()
+				TCSetConn(_nHErp)
+				GeraLog(_cMsg)
+				Alert(_cMsg)
+				Return
+	    	Else
+	    		Conout("SN73A01J: Faixa Atualizada. ")
+	    	EndIf
+    		
+    	Else
+    	
+    		Conout("SN73A01J: Registro Inserido: " + _cCodCli + "/" + _cLojCli + "/" + _cCGC + "/" + _cRazaoS )
+    		
+    		_cSttm := "	UPDATE [COMPARTILHADO_MT].[dbo].[CO_CODIGOS]	" 
+    		_cSttm += "		SET CODIGO = "+ cValToChar(_nCodEmp) 
+    		_cSttm += "	WHERE TABELA = 'CO_EMPRESA' 						"
+    		
+    		If (TCSQLExec(_cSttm) < 0)
+    			_cMsg := "SN73A01J: TCSQLError() " + TCSQLError()
+    			Conout(_cMsg)
+    			TcUnlink(_nHndSql)
+				DisarmTransaction()
+				TCSetConn(_nHErp)
+				GeraLog(_cMsg)
+				Alert(_cMsg)
+				Return
+    		Else
+    			
+    			Conout("SN73A01J: CO_CODIGOS - Registro Atualizado: " + cValToChar(_nCodEmp))	
+    			
+    			If Select("TRA") > 0
+					DbSelectarea("TRA")
+					TRA->(DbCloseArea())
+				EndIf
+	
+    			//Select para retornar o ultimo codigo da empresa e suas categorias
+				_cQuery := "	SELECT *												" 
+				_cQuery += "	FROM [SIGE_MT].[dbo].[TAB_ULTIMO_CODIGO]		" 
+				_cQuery += "	WHERE TABELA = 'EMPRESA_E_SUAS_CATEGORIAS'	"
+					
+				TCQUERY _cQuery NEW ALIAS "TRA"
+					
+				If (TCSQLExec(_cQuery) < 0)
+					_cMsg := "SN73A01J: TCSQLError() " + TCSQLError()
+					Conout(_cMsg)
+					TcUnlink(_nHndSql)
+					DisarmTransaction()
+					TCSetConn(_nHErp)
+					GeraLog(_cMsg)
+					Alert(_cMsg)
+					Return
+				EndIf
+					
+				If .Not. TRA->( Eof() )
+					_nEmpCat := TRA->Codigo + 1
+				EndIf
+		
+    			//Insere Categoria da empresa
+    			_cSttm := "	INSERT INTO [SIGE_MT].[dbo].[EMPRESA_E_SUAS_CATEGORIAS]	"
+    			_cSttm += "		(	[EMPCAT_ID]
+      			_cSttm += "			,[ID_OPERADOR]
+      			_cSttm += "			,[ID_EMPRESA]
+      			_cSttm += "			,[EMPCAT_DATA_CADASTRO]
+      			_cSttm += "			,[EMPCAT_STATUS]
+      			_cSttm += "			,[CATE_ID]							" 
+    			_cSttm += "		)												"
+				_cSttm += "	VALUES
+     			_cSttm += "		(	"+ cValToChar(_nEmpCat)
+     			_cSttm += "			,Null"
+     			_cSttm += "			,"+ cValToChar(_nCodEmp)
+     			_cSttm += "			,getdate()							"
+     			_cSttm += "			,'A'									"
+     			_cSttm += "			,9										"
+     			_cSttm += "   	)
+    			
+    			If (TCSQLExec(_cSttm) < 0)
+    				_cMsg := "SN73A01J: TCSQLError() " + TCSQLError()
+    				Conout(_cMsg)
+    				TcUnlink(_nHndSql)
+					DisarmTransaction()
+					TCSetConn(_nHErp)
+					GeraLog(_cMsg)
+					Alert(_cMsg)
+					Return
+    			Else
+    				Conout("SN73A01J: Categoria da Empresa Inserida.")
+    				
+    				_cSttm := "	UPDATE [SIGE_MT].[dbo].[TAB_ULTIMO_CODIGO]	" 
+		    		_cSttm += "		SET CODIGO = "+ cValToChar(_nEmpCat) 
+		    		_cSttm += "	WHERE TABELA = 'EMPRESA_E_SUAS_CATEGORIAS'	"
+		    		
+		    		If (TCSQLExec(_cSttm) < 0)
+		    			_cMsg := "SN73A01J: TCSQLError() " + TCSQLError()
+    					Conout(_cMsg)
+		    			TcUnlink(_nHndSql)
+						DisarmTransaction()
+						TCSetConn(_nHErp)
+						GeraLog(_cMsg)
+						Alert(_cMsg)
+						Return
+		    		EndIf
+		    		
+		    		_cSttm := " INSERT INTO [COMPARTILHADO_MT].[dbo].[SI_CONTRIB] 	"
+		    		_cSttm += "		( 	[Id_Empresa]
+		    		_cSttm += "			,[PessoalOcupado]
+		    		_cSttm += "		)
+		    		_cSttm += "	VALUES 
+		    		_cSttm += "		( 		"+ cValToChar(_nCodEmp)
+		    		_cSttm += "			, 	"+ _cFaixa
+		    		_cSttm += "   	)
+		    		
+		    		If (TCSQLExec(_cSttm) < 0)
+			    		_cMsg := "SN73A01J: TCSQLError() " + TCSQLError()
+    					Conout(_cMsg)
+		    			TcUnlink(_nHndSql)
+						DisarmTransaction()
+						TCSetConn(_nHErp)
+						GeraLog(_cMsg)
+						Alert(_cMsg)
+						Return
+			    	Else
+			    		Conout("SN73A01J: Faixa Inserida. ")
+			    	EndIf
+		    		
+    			EndIf
+    			
+    			TRA->(DbCloseArea())
+    			
+    		EndIf
+    		
+    	EndIf
+    	
+	EndIf
+	
+	If Select("TMP") > 0
+		DbSelectarea("TMP")
+		TMP->( DbCloseArea() )
+	EndIf
+	
+	If Select("TRA") > 0
+		DbSelectarea("TRA")
+		TRA->( DbCloseArea() )
+	EndIf
+	
+	Conout('SN73A01J: Fechando conexao ao Banco Sige')
+   	TcUnlink( _nHndSql )
+   	
+	ConOut('SN73A01J: Finalizando Integracao de Clientes Protheus x Sige')
+	ConOut(Replicate("=",80))
+	ConOut(" ")
+	
+	TcsetConn(_nHErp)
+		
+	RestArea(_aArea)
+	
+Return( Nil )
+
+
+/** {Protheus.doc} GeraLog
+Funcao para gerar log de acompanhamento da importacao
+
+@param: 	<Nil>
+@author: 	Jose Leite de Barros Neto
+@since: 	03/03/2016
+@Uso: 		SFIEMT
+*/
+Static Function GeraLog( p_cMsg )
+	
+	Local _cLocErr	:= GetNewPar( "MV_SDIREXP", "\xml\retorno\senai\log\")
+	Local _cFileLog	:= "CLI_PRO_SIGE_"+ AllTrim(SA1->A1_CGC) + "_" + DtoS(dDataBase) + StrTran(Time(),":","")+".LOG"
+	Local _nHdl_log	:= fCreate(_cLocErr + _cFileLog)
+	Local _cMsgErr	:= AllTrim(SA1->A1_CGC) + " - " + p_cMsg
+	
+	fWrite(_nHdl_Log,_cMsgErr,Len(_cMsgErr)) != Len(_cMsgErr)
+	
+	fClose(_nHdl_Log)
+	
+Return( Nil )

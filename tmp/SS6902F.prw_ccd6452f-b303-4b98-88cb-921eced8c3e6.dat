@@ -1,0 +1,177 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "ApWizard.ch"
+
+//Situacoes de contrato
+#DEFINE DEF_SCANC "01" //Cancelado
+#DEFINE DEF_SELAB "02" //Em Elaboracao
+#DEFINE DEF_SEMIT "03" //Emitido
+#DEFINE DEF_SAPRO "04" //Em Aprovacao
+#DEFINE DEF_SVIGE "05" //Vigente
+#DEFINE DEF_SPARA "06" //Paralisado
+#DEFINE DEF_SSPAR "07" //Sol Fina.
+#DEFINE DEF_SFINA "08" //Finalizado
+#DEFINE DEF_SREVS "09" //Revisao
+#DEFINE DEF_SREVD "10"//Revisado
+
+//Tipos de Revisao
+#DEFINE DEF_ADITI "1" //Aditivo
+#DEFINE DEF_REAJU "2" //Reajuste
+#DEFINE DEF_REALI "3" //Realinhamento
+#DEFINE DEF_READQ "4" //Readequacao
+#DEFINE DEF_PARAL "5" //Paralisacao
+#DEFINE DEF_REINI "6" //Reinicio
+#DEFINE DEF_CLAUS "7" //Alteracao de Clausula    
+#DEFINE DEF_CRCTB "8" //Cronograma Contabil
+#DEFINE DEF_INDIC "9" //Indice
+#DEFINE DEF_FORNE "A" //Fornecedor
+#DEFINE DEF_RENOV "B" //Renovacao (Aditivo + Realinhamento)
+
+//Transacoes
+#DEFINE DEF_TRAAPR "030"//Aprovação de revisoes
+
+/*/{Protheus.doc} SS6901F
+	Função utilizada para aprovar um aditivo de venda do SESI.
+	Premissas para execução da rotina:
+		-O contrato deve ser da entidade SESI;
+		-O contrato deve possuir vinculo com uma oportunidade de venda;
+		-O contrato não pode ter controle de acesso;
+		-O contrato deve possuir medição eventual;
+		-O contrato deve ser de venda;
+		-O contrato deve ser flexível;
+	Caso o contrato não atenda uma destas premissas, a revisão deve ser aprovada 
+	pela rotina padrão.
+
+@author franklin.oliveira
+@since 19/04/2016
+@version undefined
+@param cAlias, characters
+@type function
+/*/
+User Function SS6902F(cAlias)
+
+Local aArea   		:= GetArea()
+Local _aProposta 	:= {} 
+
+Local cFilter 	:= CN9->( dbFilter() )
+Local cQuery  	:= ""
+Local cAliasQr	:= ""
+Local cORev     := ""
+Local cContra 	:= CN9->CN9_NUMERO
+Local cRevisa 	:= CN9->CN9_REVISA
+
+Local lRet    	:= .T.
+Local lMedEvent	:= Posicione("CN1", 1, xFilial("CN1") + CN9->CN9_TPCTO, "CN1_MEDEVE") == "1"
+Local lCtoVenda	:= Posicione("CN1", 1, xFilial("CN1") + CN9->CN9_TPCTO, "CN1_ESPCTR") == "2"
+Local lCtoFlex	:= Posicione("CN1", 1, xFilial("CN1") + CN9->CN9_TPCTO, "CN1_CTRFIX") == "2"
+Local lVldCtr	:= CN9->CN9_VLDCTR == "1"	//Verifica validação de contrato
+Local lDocObr	:= .T.
+
+Local nReg	:= CN9->( RecNo() )
+
+	//Valida contrato
+	If SubStr(CN9->CN9_FILIAL, 1, 4) == '02MT'
+		If Empty(CN9->CN9_XOPORT) .Or. Empty(CN9->CN9_XREVOP) .Or. lVldCtr .Or. !lMedEvent .Or. !lCtoVenda .Or. !lCtoFlex
+			Aviso(FunName() + "/" + ProcName(), "O Contrato selecionado deve ser aditivado pela opção 'Revisar'", {"OK"})
+			lRet := .F.
+		EndIf
+	EndIf
+
+	If lRet
+		//Remove filtro do Alias CN9
+		dbSelectArea("CN9")
+		Set Filter to &("")		
+		
+		//Encontra revisão inicial
+		cQuery := "SELECT CN9.CN9_REVISA "
+		cQuery += "  FROM " + RetSqlName("CN9") + " CN9 "
+		cQuery += " WHERE CN9.CN9_FILIAL = '" + xFilial("CN9") + "'"
+		cQuery += "   AND CN9.CN9_NUMERO = '" + cContra + "'"
+		cQuery += "   AND CN9.CN9_REVATU = '" + cRevisa + "'"
+		cQuery += "   AND CN9.D_E_L_E_T_ = ' '"
+		
+		cAliasQr := GetNextAlias()
+		
+		cQuery := ChangeQuery(cQuery)
+		dbUseArea(.T., "TOPCONN", TcGenQry(,,cQuery), cAliasQr, .F., .T.)	
+		
+		cORev := (cAliasQr)->CN9_REVISA
+		
+		(cAliasQr)->( dbCloseArea() )
+		
+		//Valida documentação
+		lRet := U_CN100Doc(nReg, {DEF_SREVS}, .F., lDocObr)
+		
+		//Visualiza contrato na tela para aprovação da revisão
+		If lRet .And. CN100Manut(cAlias, nReg, 2) == 1
+			Begin Transaction
+				//Filtra os contratos com o mesmo código de contrato que estão em processo de aprovação
+				cQuery := "SELECT CN9.CN9_REVISA, CN9.CN9_SITUAC, CN9.CN9_TIPREV, CN9.R_E_C_N_O_ as RECNO "
+				cQuery += "  FROM " + RetSQLName("CN9") + " CN9 "
+				cQuery += " WHERE CN9.CN9_FILIAL = '" + xFilial("CN9") + "'"
+				cQuery += "   AND CN9.CN9_NUMERO = '" + cContra + "'"
+				cQuery += "   AND CN9.D_E_L_E_T_ <> '*'"
+				
+				cQuery := ChangeQuery(cQuery)
+				dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),"TRBCN9",.F.,.T.)
+				
+				While !TRBCN9->(Eof())
+					CN9->(DbGoTo(TRBCN9->RECNO))
+					
+					RecLock("CN9", .F.)
+						//O contrato vigente assume a situação de revisado
+						If AllTrim(TRBCN9->CN9_SITUAC) == DEF_SVIGE .OR. AllTrim(TRBCN9->CN9_SITUAC) == DEF_SPARA
+							CN9->CN9_SITUAC := DEF_SREVD
+							cORev           := TRBCN9->CN9_REVISA
+						EndIf
+						
+						//A revisão assume a nova situação:Vigente/Paralizado
+						If  TRBCN9->CN9_REVISA == cRevisa
+							CN9->CN9_SITUAC := DEF_SVIGE
+							CN9->CN9_REVATU := ""
+						Else
+							//Os outros contratos apenas alteram a flag de revisão atual
+							CN9->CN9_REVATU := cRevisa
+						EndIf
+						
+					MsUnLock()
+					TRBCN9->(dbSkip())
+				EndDo
+				
+				TRBCN9->(dbCloseArea())
+				
+				//Verifica se o CONTRATO foi vinculado a uma Oportunidade/Proposta
+				//de Venda (Integração CRM). 
+				If !Empty(Alltrim(CN9->CN9_XOPORT))
+					_aProposta := u_fGetProC(CN9->CN9_XOPORT,CN9->CN9_XREVOP, "B")
+					//Grava a [ADY_XREVCT - Revisao do Contrato] na PROPOSTA
+					dbSelectArea("ADY")
+					ADY->(dbSetOrder(1))
+					If (ADY->(dbSeek(FwxFilial("ADY")+_aProposta[1])))
+						ADY->(RecLock("ADY",.f.))    
+						Replace ADY->ADY_XREVCT With cRevisa		//-- Revisão do Contrato  
+						ADY->(MsUnLock())
+						ADY->(dbCommit()) 
+					Endif 
+					//Grava a [ADY_XREVCT - Revisao do Contrato] na Oportunidade de Venda
+					dbSelectArea("AD1")
+					AD1->(dbSetOrder(1))
+					If (AD1->(dbSeek(FwxFilial("AD1")+CN9->CN9_XOPORT+CN9->CN9_XREVOP)))
+						AD1->(RecLock("AD1",.f.))
+						Replace AD1->AD1_XREVCT With cRevisa		//-- Revisão do Contrato  
+						AD1->(MsUnLock())
+						AD1->(dbCommit()) 
+					Endif
+				EndIf
+				
+			End Transaction		
+		EndIf
+		
+	EndIf
+		
+	//Restaura filtro do Alias CN9
+	dbSelectArea("CN9")
+	Set Filter to &(cFilter)
+	
+	RestArea(aArea)
+	
+Return (lRet)

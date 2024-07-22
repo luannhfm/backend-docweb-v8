@@ -91,7 +91,7 @@ Reserv = __decorateClass([
 ], Reserv);
 
 // src/lib/typeorm/typeorm.ts
-var import_typeorm5 = require("typeorm");
+var import_typeorm6 = require("typeorm");
 
 // src/env/index.ts
 var import_config = require("dotenv/config");
@@ -167,7 +167,7 @@ var User = class {
   }
 };
 __decorateClass([
-  (0, import_typeorm4.PrimaryColumn)("uuid")
+  (0, import_typeorm4.PrimaryColumn)("varchar")
 ], User.prototype, "id", 2);
 __decorateClass([
   (0, import_typeorm4.Column)({ type: "varchar" })
@@ -191,16 +191,33 @@ User = __decorateClass([
   (0, import_typeorm4.Entity)("users")
 ], User);
 
+// src/entities/analysis.entity.ts
+var import_typeorm5 = require("typeorm");
+var Analysis = class {
+};
+__decorateClass([
+  (0, import_typeorm5.PrimaryColumn)({ type: "varchar" })
+], Analysis.prototype, "id_analysis", 2);
+__decorateClass([
+  (0, import_typeorm5.Column)({ type: "json" })
+], Analysis.prototype, "analysis", 2);
+__decorateClass([
+  (0, import_typeorm5.Column)({ type: "varchar" })
+], Analysis.prototype, "status", 2);
+Analysis = __decorateClass([
+  (0, import_typeorm5.Entity)("analysis")
+], Analysis);
+
 // src/lib/typeorm/typeorm.ts
-var appDataSource = new import_typeorm5.DataSource({
+var appDataSource = new import_typeorm6.DataSource({
   type: "postgres",
   host: env.DATABASE_HOST,
   port: env.DATABASE_PORT,
   username: env.DATABASE_USER,
   password: env.DATABASE_PASSWORD,
   database: env.DATABASE_NAME,
-  entities: [Category, Hist, User],
-  //migrations: [ProductAutoGenerateUUID1719264459763],
+  entities: [Category, Hist, User, Analysis],
+  // migrations: ['src/lib/typeorm/migrations/*.ts'],
   logging: env.NODE_ENV === "development"
 });
 appDataSource.initialize().then(() => {

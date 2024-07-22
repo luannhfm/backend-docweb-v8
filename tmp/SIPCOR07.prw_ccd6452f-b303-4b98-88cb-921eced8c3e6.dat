@@ -1,0 +1,557 @@
+#INCLUDE "PROTHEUS.ch"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ SIPCOR07     ºAutor  ³Microsiga         º Data ³ 09/09/12  º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Funcao para impressao do relatorio de Demosntrativo        º±±
+±±º          ³ Receita e da Despesa Segundo Categoria Economicas.         º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function SIPCOR07(aConfig2)
+Local aArea  	  := GetArea()
+Private nRow	  := 8000
+Private nTamForm  := 3000 // Tamanho formulario
+Private lFirst	  := .f.
+Private nPag	  := 0
+Private aRet      := {}
+Private cCadastro := OemToAnsi("Relatório Oficial")
+Private cAliasTmp := ""
+Private nCart	  := 0
+Private lOracle	  := "ORACLE"$Upper(TCGetDB())
+Private oFont09	  := TFont():New("Courier",9,9,.T.,.F.,5,.T.,5,.T.,.F.)
+Private oFont09b  := TFont():New("Courier",9,9,.T.,.T.,5,.T.,5,.T.,.F.)
+Private oFont12b  := TFont():New("Courier",9,12,.T.,.T.,5,.T.,5,.T.,.F.)
+Private oFont12   := TFont():New("Courier",9,12,.T.,.F.,5,.T.,5,.T.,.F.)
+Private oFont18b  := TFont():New("Courier",9,18,.T.,.T.,5,.T.,5,.T.,.F.)
+Private oPrint
+
+// Parametros:
+Private _dDataIni := aConfig2[1]
+Private _dDataFim := aConfig2[2]
+Private _nMoeda   := Val(aConfig2[3])
+Private _cVisao   := aConfig2[6]
+Private _cModelo  := aConfig2[7]
+Private COD_CUBO  := Posicione("AKL",1,XFilial("AKL")+ Posicione("AKN",1,XFilial("AKN")+_cVisao,"AKN_CONFIG") ,"AKL_CUBE")
+
+Private aConfig := {}
+Private aCfgCub := {}
+
+IF Empty(_cVisao)
+	Aviso("Visão","Visão Gerencial inválida ou não informada.",{"Voltar"})
+	Return()
+ENDIF
+
+nCfgCubo  := 1
+cPicture := PadR("@E 999,999,999,999.99",25)
+nTpPer	:= 3
+
+aCuboCfg := {}
+aCfgCub  := {}
+
+nDetalhe := 2 //If(ValType(aConfig[7])=="N", aConfig[7], Val(aConfig[7]))
+nCasas	 := aConfig2[4]
+cPicture := Alltrim(aConfig2[5])
+lProcNlv := .f. //!aConfig2[Len(aConfig2)]
+
+MV_PAR01 := Space(LEN(AL4->AL4_CODIGO))
+MV_PAR02 := 1
+
+aAdd(aCuboCfg, { 1  ,"Config.Cubo Serie",Space(LEN(AL3->AL3_CODIGO))		  ,"@!" 	 ,''  ,"AL3" ,"" ,25 ,.F. }) //
+aAdd(aCuboCfg, { 3 ,"Exibe Configurações",1,{"Sim","Nao"},40,,.F.}) //######
+
+If ParamBox(aCuboCfg, "Configuracao de Cubos", aCfgCub,/*bOk*/,/*aButtons*/,/*lCentered*/,/*nPosx*/,/*nPosy*/, /*oDlgWizard*/, "PCOC360_02"/*cArqParam*/,,.T.)
+	nTpPer		:= If(ValType(aConfig2[3])=="N", aConfig2[3], Val(aConfig2[3]))
+	aConfig2[4]	:= If(ValType(aConfig2[4])=="N", aConfig2[4], Val(aConfig2[4]))
+	aPeriodo	:= PcoRetPer(aConfig2[1]/*dIniPer*/, aConfig2[2]/*dFimPer*/, Str(nTpPer,1)/*cTipoPer*/, .F./*lAcumul*/)
+	// Salta o primeiro nivel da visão
+	
+	//	For nX := 1 TO //aConfig2[6]
+	//		aAdd(aPrcSldIni, aCfgCub[nX*4])
+	//		aAdd(aSeriesCfg, Str(nX,1,0)+"="+aCfgCub[nX*4-1])
+	//	Next
+	
+	aPrcSldIni := {}
+	aSeriesCfg := {}
+	
+	//processa primeira configuracao do cubo sempre
+	nProcCubo := 1
+	aAuxCube := {}
+	
+	aVarPriv := {}
+	aAdd(aVarPriv, {"aPeriodo", aClone(aPeriodo)})
+	aAdd(aVarPriv, {"aPrcSldIni", aClone(aPrcSldIni)})
+	aAdd(aVarPriv, {"nProcCubo", nProcCubo})
+	aAdd(aVarPriv, {"aConfig", aClone(aConfig2)})
+	
+	aProcessa := PcoCubeVis(_cVisao,1/*Len(aPeriodo)*aConfig2[6]*/,"U__PCO07Sld"/*"Pcoc361Sld"*/,aCfgCub[1],aCfgCub[2],nDetalhe,.T.,aClone(aVarPriv),lProcNlv)
+	
+EndIf
+
+SIPCO07Imp(lEnd,aConfig2,aProcessa)
+
+RestArea(aArea)
+Return()
+
+/*/
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÚÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄ¿±±
+±±³Fun‡„o    ³ SIPCO07Imp ³ Autor ³ Microsiga           ³ Data ³ Abr/2012 ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Descri‡„o ³ Rotina de impressao do relatorio                           ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³ Uso      ³ P11 - SISTEMA INDUSTRIA                                    ³±±
+±±ÀÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+/*/
+
+Static Function SIPCO07Imp(lEnd,aConfig2,aProcessa)
+// Receitas Correntes
+Private _n11  := 0 // Receitas Correntes
+Private _n111 := 0 // Receitas de Contribuicoes
+Private _n112 := 0 // Receita Patrimonial
+Private _n113 := 0 // Receita Industrial
+Private _n114 := 0 // Receitas de Servicos
+Private _n115 := 0 // Outras Receitas Correntes
+// Receitas de Capital
+Private _n12  := 0 // Receitas de Capital
+Private _n121 := 0 // Operacoes de Credito
+Private _n122 := 0 // Alienacao de Bens
+Private _n123 := 0 // Transferencia de Capital
+Private _n124 := 0 // Outras Receitas de Capital
+Private _n125 := 0 // Outras Receitas
+// Despesas Correntes
+Private _n21  := 0 // Despesas Correntes
+Private _n211 := 0 // Pessoal e Encargos Sociais
+Private _n212 := 0 // Juros e Encargos da Divida
+Private _n213 := 0 // Outras Despesas Correntes
+// Despesas de Capital
+Private _n22  := 0 // Despesas de Capital
+Private _n221 := 0 // Investimentos
+Private _n222 := 0 // Inversoes Financeiras
+Private _n223 := 0 // Amortizacao da Divida
+
+// Alimenta as variaveis
+_PCO07Var()
+
+oPrint:= TMSPrinter():New(cCadastro)
+
+// Este comando configura a saida do TMSPRINTER e eh importante te-lo pois o Servidor ASP nao tem impressora instalada
+oPrint:Setup()
+oPrint:SetLandscape()	//SetPortrait()
+oPrint:StartPage()	// Inicia uma nova página
+
+SIPCO07Cab(aConfig2)
+
+/*
+If nRow >= nTamForm
+If lFirst //Para fazer o controle da primeira impressao.
+oPrint:EndPage()
+oPrint:StartPage()
+EndIf
+SIPCO07Cab(aConfig2)
+lFirst := .t.
+EndIf
+*/
+
+//So p/ defnir quantos registros vao imprimir
+//nQtd := aConfig2[2]-aConfig2[1]
+
+oPrint:Preview()
+oPrint:End()
+Return()
+
+/*/
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÚÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄ¿±±
+±±³Fun‡„o    ³SIPCO07Cab³ Autor ³ Microsiga             ³ Data ³ Abr/2012 ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Descri‡„o ³ Imprime cabecalho e trata quebra de pagina.                ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³ Uso      ³ P11 - SISTEMA INDUSTRIA                                    ³±±
+±±ÀÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+/*/
+
+Static Function SIPCO07Cab(aConfig2)
+
+Local _cDescOrg:= ''
+Local A:= 0
+Local B:= 0
+
+nRow := 150
+oPrint:Say(nRow,0100,"ANEXO IV",oFont12b)
+
+nRow:=nRow+50
+oPrint:Say(nRow,0100,"DEMOSTRATIVO DA RECEITA E DA DESPESA SEGUNDO AS CATEGORIAS ECÔNOMICAS",oFont12b)
+
+If _cModelo == '1' //SESI
+	_cDescOrg:='Ministério do Desenvolvimento Social e Combate à Fome'
+Elseif _cModelo == '2' //SENAI
+	_cDescOrg:='Ministério do Trabalho e Emprego'
+Endif
+
+nRow:=nRow+50
+oPrint:Say(nRow,0100,"ÓRGÃO: " +_cDescOrg ,oFont12b)
+
+nRow:=nRow+50
+oPrint:Say(nRow,0100,"Unidade: "+SM0->M0_NOMECOM,oFont12b)
+
+nRow:=nRow+50
+oPrint:Say(nRow,2940,"R$1,00",oFont12b)
+
+nRow:=nRow+150
+oPrint:Box(nRow,0100,0410,1550)//Box da Receita
+oPrint:Box(nRow,1550,0410,3100)//Box da Despesa
+
+nRow:=nRow-70
+oPrint:Say(nRow,0750,"Receita",oFont12b)
+oPrint:Say(nRow,2170,"Despesa",oFont12b)
+
+nRow:=nRow+70
+//Grade Quadros Superior
+oPrint:Box(nRow,0100,1300,0860)//Box da Especificacao da receita
+oPrint:Box(nRow,0860,1300,1200)//Box da Parcial da receita
+oPrint:Box(nRow,1200,1300,1550)//Box do Total da receita
+
+oPrint:Box(nRow,1550,1300,2390)//Box da Especificacao da despesa
+oPrint:Box(nRow,2390,1300,2740)//Box da Parcial da despesa
+oPrint:Box(nRow,2740,1300,3100)//Box do Total da despesa
+
+nRow:=nRow+0800
+//Grade Quadros Inferior
+oPrint:Box(nRow,0100,2100,0860)//Box da Especificacao da receita
+oPrint:Box(nRow,0860,2100,1200)//Box da Parcial da receita
+oPrint:Box(nRow,1200,2100,1550)//Box do Total da receita
+
+oPrint:Box(nRow,1550,2100,2390)//Box da Especificacao da despesa
+oPrint:Box(nRow,2390,2100,2740)//Box da Parcial da despesa
+oPrint:Box(nRow,2740,2100,3100)//Box do Total da despesa
+
+//Textos dos Quadros Superior
+nRow:=nRow-750
+oPrint:Say(nRow,0340,"Especificação",oFont12)
+oPrint:Say(nRow,0950,"Parcial",oFont12)
+oPrint:Say(nRow,1320,"Total",oFont12)
+
+oPrint:Say(nRow,1830,"Especificação",oFont12)
+oPrint:Say(nRow,2500,"Parcial",oFont12)
+oPrint:Say(nRow,2860,"Total",oFont12)
+
+nRow:=nRow+100
+oPrint:Say(nRow,0130,"Receitas Correntes",oFont09b)
+oPrint:Say(nRow,0870,Transform(0,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,1210,Transform(_n11,"@E 9,999,999,999.99"),oFont09)
+
+oPrint:Say(nRow,1590,"Despesas Correntes",oFont09b)
+oPrint:Say(nRow,2410,Transform(0,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,2750,Transform(_n21,"@E 9,999,999,999.99"),oFont09)
+
+nRow:=nRow+100
+oPrint:Say(nRow,0150,"Receitas de Contribuições",oFont09)
+oPrint:Say(nRow,0870,Transform(_n111,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,1210,Transform(0,"@E 9,999,999,999.99"),oFont09)
+
+oPrint:Say(nRow,1610,"Pessoal e Encargos Sociais",oFont09)
+oPrint:Say(nRow,2410,Transform(_n211,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,2750,Transform(0,"@E 9,999,999,999.99"),oFont09)
+
+nRow:=nRow+50
+oPrint:Say(nRow,0150,"Receita Patrimonial",oFont09)
+oPrint:Say(nRow,0870,Transform(_n112,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,1210,Transform(0,"@E 9,999,999,999.99"),oFont09)
+
+oPrint:Say(nRow,1610,"Juros e Encargos da Dívida",oFont09)
+oPrint:Say(nRow,2410,Transform(_n212,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,2750,Transform(0,"@E 9,999,999,999.99"),oFont09)
+
+nRow:=nRow+50
+oPrint:Say(nRow,0150,"Receita Industrial",oFont09)
+oPrint:Say(nRow,0870,Transform(_n113,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,1210,Transform(0,"@E 9,999,999,999.99"),oFont09)
+
+oPrint:Say(nRow,1610,"Outras Despesas Correntes",oFont09)
+oPrint:Say(nRow,2410,Transform(_n213,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,2750,Transform(0,"@E 9,999,999,999.99"),oFont09)
+
+nRow:=nRow+50
+oPrint:Say(nRow,0150,"Receitas de Serviços",oFont09)
+oPrint:Say(nRow,0870,Transform(_n114,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,1210,Transform(0,"@E 9,999,999,999.99"),oFont09)
+
+nRow:=nRow+50
+oPrint:Say(nRow,0150,"Outras Receitas Correntes",oFont09)
+oPrint:Say(nRow,0870,Transform(_n115,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,1210,Transform(0,"@E 9,999,999,999.99"),oFont09)
+
+//Receitas Correntes(_n11) - Despesas Correntes(_n21) 
+A:=_n11-_n21
+
+nRow:=nRow+100
+oPrint:Say(nRow,1590,"SUPERAVIT DO ORÇAMENTO CORRENTE",oFont09b)
+//oPrint:Say(nRow,2410,Transform(0,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,2750,Transform(A,"@E 9,999,999,999.99"),oFont09)
+
+nRow:=nRow+150
+oPrint:Say(nRow,0400,"TOTAL",oFont12b)
+oPrint:Say(nRow,1210,Transform(_n11,"@E 9,999,999,999.99"),oFont09)
+
+oPrint:Say(nRow,1880,"TOTAL",oFont12b)
+oPrint:Say(nRow,2750,Transform(_n21 + A,"@E 9,999,999,999.99"),oFont09)
+
+///////////Impressao no quadro inferior/////////////////////
+
+nRow:=nRow+200
+oPrint:Say(nRow,0130,"Receitas de Capital",oFont09b)
+oPrint:Say(nRow,0870,Transform(0,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,1210,Transform(_n12,"@E 9,999,999,999.99"),oFont09)
+
+oPrint:Say(nRow,1590,"Despesas de Capital",oFont09b)
+oPrint:Say(nRow,2410,Transform(0,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,2750,Transform(_n22,"@E 9,999,999,999.99"),oFont09)
+
+nRow:=nRow+100
+oPrint:Say(nRow,0150,"Operações de Crédito",oFont09)
+oPrint:Say(nRow,0870,Transform(_n121,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,1210,Transform(0,"@E 9,999,999,999.99"),oFont09)
+
+oPrint:Say(nRow,1610,"Investimentos",oFont09)
+oPrint:Say(nRow,2410,Transform(_n221,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,2750,Transform(0,"@E 9,999,999,999.99"),oFont09)
+
+nRow:=nRow+50
+oPrint:Say(nRow,0150,"Alienação de Bens",oFont09)
+oPrint:Say(nRow,0870,Transform(_n122,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,1210,Transform(0,"@E 9,999,999,999.99"),oFont09)
+
+oPrint:Say(nRow,1610,"Inversões Finaceiras",oFont09)
+oPrint:Say(nRow,2410,Transform(_n222,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,2750,Transform(0,"@E 9,999,999,999.99"),oFont09)
+
+nRow:=nRow+50
+oPrint:Say(nRow,0150,"Transferência de Capital",oFont09)
+oPrint:Say(nRow,0870,Transform(_n123,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,1210,Transform(0,"@E 9,999,999,999.99"),oFont09)
+
+nRow:=nRow+50
+oPrint:Say(nRow,0150,"Outras Receitas de Capital",oFont09)
+oPrint:Say(nRow,0870,Transform(_n124,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,1210,Transform(0,"@E 9,999,999,999.99"),oFont09)
+
+nRow:=nRow+50
+oPrint:Say(nRow,0150,"Outras Receitas",oFont09)
+oPrint:Say(nRow,0870,Transform(_n125,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,1210,Transform(0,"@E 9,999,999,999.99"),oFont09)
+
+oPrint:Say(nRow,1610,"Amortização da Dívida",oFont09)
+oPrint:Say(nRow,2410,Transform(_n223,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,2750,Transform(0,"@E 9,999,999,999.99"),oFont09)
+
+nRow:=nRow+100
+oPrint:Say(nRow,0150,"SUPERAVIT DO ORÇAMENTO CORRENTE",oFont09b)
+//oPrint:Say(nRow,0870,Transform(0,"@E 9,999,999,999.99"),oFont09)
+oPrint:Say(nRow,1210,Transform(A,"@E 9,999,999,999.99"),oFont09)
+
+nRow:=nRow+150
+oPrint:Say(nRow,0400,"TOTAL",oFont12b)
+oPrint:Say(nRow,1210,Transform(A + _n12,"@E 9,999,999,999.99"),oFont09)
+
+oPrint:Say(nRow,1880,"TOTAL",oFont12b)
+oPrint:Say(nRow,2750,Transform(_n22,"@E 9,999,999,999.99"),oFont09)
+
+///////////////////Resumo/////////////////
+nRow:=nRow+200
+oPrint:Say(nRow,1500,"Resumo",oFont12b)
+
+nRow:=nRow+100
+oPrint:Say(nRow,500,"Receitas Correntes",oFont09)
+oPrint:Say(nRow,1210,Transform(_n11,"@E 9,999,999,999.99"),oFont09)
+
+oPrint:Say(nRow,1610,"Despesas Correntes",oFont09)
+oPrint:Say(nRow,2410,Transform(_n21,"@E 9,999,999,999.99"),oFont09)
+
+nRow:=nRow+50
+oPrint:Say(nRow,500,"Receitas de Capital",oFont09)
+oPrint:Say(nRow,1210,Transform(_n12,"@E 9,999,999,999.99"),oFont09)
+
+oPrint:Say(nRow,1610,"Despesas de Capital",oFont09)
+oPrint:Say(nRow,2410,Transform(_n22,"@E 9,999,999,999.99"),oFont09)
+
+nRow:=nRow+100
+oPrint:Say(nRow,1000,"Total",oFont09b)
+oPrint:Say(nRow,1210,Transform(_n11+_n12,"@E 9,999,999,999.99"),oFont09)
+
+oPrint:Say(nRow,2200,"Total",oFont09b)
+oPrint:Say(nRow,2410,Transform(_n21+_n22,"@E 9,999,999,999.99"),oFont09)
+
+nRow:=nRow+180
+
+Return()
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³_PCO08Sld ºAutor  ³Microsiga           º Data ³  09/12/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Retorna saldo para o cubo                                  º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function _PCO07Sld(cConfig,cChave)
+Local aRetSld := {}
+Local nSldIni := 0
+Local nSldFim := 0
+Local _nRet   := 0
+
+aRetIni := PcoRetSld(cConfig,cChave,_dDataIni-1)
+nCrdIni := aRetIni[1, _nMoeda]
+nDebIni := aRetIni[2, _nMoeda]
+
+aRetFim := PcoRetSld(cConfig,cChave,_dDataFim)
+nCrdFim := aRetFim[1, _nMoeda]
+nDebFim := aRetFim[2, _nMoeda]
+
+nSldIni := nCrdIni-nDebIni
+nMovCrd := nCrdFim-nCrdIni
+nMovDeb := nDebFim-nDebIni
+nMovPer := nMovCrd-nMovDeb
+
+_nRet += nMovPer
+
+Return {_nRet}
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³_PCO07Var ºAutor  ³Microsiga           º Data ³  28/01/13   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³Alimenta variaveis                                          º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function _PCO07Var()
+
+// Receitas Correntes
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "1.1" })) > 0
+	_n11 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Receitas de Contribuicoes
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "1.1.1" })) > 0
+	_n111 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Receita Patrimonial
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "1.1.2" })) > 0
+	_n112 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Receita Industrial
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "1.1.3" })) > 0
+	_n113 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Receitas de Servicos
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "1.1.4" })) > 0
+	_n114 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Outras Receitas Correntes
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "1.1.5" })) > 0
+	_n115 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Receitas de Capital
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "1.2" })) > 0
+	_n12 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Operacoes de Credito
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "1.2.1" })) > 0
+	_n121 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Alienacao de Bens
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "1.2.2" })) > 0
+	_n122 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Transferencia de Capital
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "1.2.3" })) > 0
+	_n123 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Outras Receitas de Capital
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "1.2.4" })) > 0
+	_n124 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Outras Receitas
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "1.2.5" })) > 0
+	_n125 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Despesas Correntes
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "2.1" })) > 0
+	_n21 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Pessoal e Encargos Sociais
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "2.1.1" })) > 0
+	_n211 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Juros e Encargos da Divida
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "2.1.2" })) > 0
+	_n212 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Outras Despesas Correntes
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "2.1.3" })) > 0
+	_n213 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Despesas de Capital
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "2.2" })) > 0
+	_n22 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Investimentos
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "2.2.1" })) > 0
+	_n221 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Inversoes Financeiras
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "2.2.2" })) > 0
+	_n222 := aProcessa[_nPos][2][1]
+ENDIF
+
+// Amortizacao da Divida
+IF (_nPos := Ascan(aProcessa,{|x| Alltrim(x[1]) == "2.2.3" })) > 0
+	_n223 := aProcessa[_nPos][2][1]
+ENDIF
+
+Return()

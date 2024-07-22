@@ -1,0 +1,120 @@
+#Include "TOTVS.ch"
+#Include "TbiConn.ch"
+
+/*/{Protheus.doc} SF34S01X
+    @Description Realiza a integração e atualização de dados
+                 contábeis com o CorporeRM.
+    @Type User Function
+    @Author Pedro Storino
+    @Since 29/05/2020
+    @Version 1.0
+    @history 18/09/2020, Franklin de Brito de Oliveira, correção para recuperar os dado do DBAccess diretamente do appserver.ini
+    /*/
+User Function SF34S01X(_aParam)
+	Local nActConn  := AdvConnection()
+	Local cAliasRM  := GetNextAlias()
+	Local cAliasP12 := GetNextAlias()
+	Local cRMSql    := ""
+	Local nP12Conn  := -1
+	Local nRMConn   := -1
+	Local cDBServ	:= GetSrvProfString("DBServer", "Localhost")
+	Local nDBPort	:= Val(GetSrvProfString("DbPort", "7890"))
+	
+	Local _cEmp     := "01"
+	Local _cFil     := "01"
+	
+	If(ValType(_aParam) == "A")
+		_cEmp := _aParam[01]
+		_cFil := _aParam[02]
+	EndIf
+	
+	PREPARE ENVIRONMENT EMPRESA _cEmp FILIAL _cFil
+	
+	If dbTCLink("MSSQL/RM", cDBServ, nDBPort, @nP12Conn, @nRMConn)
+		TCSetConn(nP12Conn)
+		
+		BeginSql Alias cAliasP12
+	        %NoParser%
+	        SELECT CTA_FILIAL,
+	               CTA_CUSTO ,
+	               CTA_ITEM  ,
+	               CTA_DESC  ,
+	               CTT_BLOQ  ,
+	               CTD_BLOQ  ,
+	               CTD_DESC01,
+	               CASE
+	                   WHEN CTA.D_E_L_E_T_ = ' ' THEN ' '
+	                   ELSE '*'
+	               END AS CTAD
+	        FROM %Table:CTA% CTA
+	        LEFT JOIN %Table:CTT% CTT ON
+	            CTT_FILIAL = CTA_FILIAL AND
+	            CTT_CUSTO  = CTA_CUSTO  AND
+	            CTT_CLASSE = '2'        AND
+	            CTT.%NotDel%
+	        LEFT JOIN %Table:CTD% CTD ON
+	            CTD_FILIAL = CTA_FILIAL AND
+	            CTD_ITEM   = CTA_ITEM   AND
+	            CTD_CLASSE = '2'        AND
+	            CTD.%NotDel%
+	        GROUP BY CTA_FILIAL, CTA_CUSTO, CTA_ITEM , CTA_DESC , CTT_BLOQ , CTD_BLOQ , CTD_DESC01, CTA.D_E_L_E_T_
+	        ORDER BY CTAD DESC
+	    EndSql
+	    COUNT To nRecCount
+       (cAliasP12)->(dbGoTop())
+	    
+	    While !(cAliasP12)->(EoF())
+	    	TCSetConn(nRMConn)
+	    	
+	    	cRMSql := "SELECT * FROM ZMD_ITEMCCUSTOS "
+	    	cRMSql += "WHERE CODCOLIGADA = '"+SubStr((cAliasP12)->CTA_FILIAL,2,1)+"' AND "
+	    	cRMSql += "CODCCUSTO = '"+(cAliasP12)->CTA_CUSTO+"' AND "
+	    	cRMSql += "CODITEMCONTABIL = '"+(cAliasP12)->CTA_ITEM+"' "
+	    	
+	    	DBUseArea(.T., "TOPCONN", TCGenQry(NIL,NIL,cRMSql), (cAliasRM), .F., .T.)
+	    	
+	    	If (cAliasRM)->(EoF())
+	    		cRMSql := "INSERT INTO ZMD_ITEMCCUSTOS (CODCOLIGADA, CODCCUSTO, CODITEMCONTABIL, DESCRICAOITEM, STATUS, RECCREATEDBY, RECCREATEDON) "
+	    		cRMSql += "VALUES ('"+SubStr(AllTrim((cAliasP12)->CTA_FILIAL),2,1)+"','"+AllTrim((cAliasP12)->CTA_CUSTO)+"','"+AllTrim((cAliasP12)->CTA_ITEM)+"','"+AllTrim((cAliasP12)->CTD_DESC01)+"','"+IIF(AllTrim((cAliasP12)->CTD_BLOQ + (cAliasP12)->CTT_BLOQ) = '22' .And. (cAliasP12)->CTAD = ' ', 'Ativo', 'Bloqueado')+"','mestre',"+"CURRENT_TIMESTAMP) "
+	    	Else
+	    		cRMSql := "UPDATE ZMD_ITEMCCUSTOS "
+	    		cRMSql += "SET CODCOLIGADA = '"+SubStr(AllTrim((cAliasP12)->CTA_FILIAL),2,1)+"', CODCCUSTO   = '"+AllTrim((cAliasP12)->CTA_CUSTO)+"', CODITEMCONTABIL = '"+AllTrim((cAliasP12)->CTA_ITEM)+"', DESCRICAOITEM = '"+AllTrim((cAliasP12)->CTD_DESC01)+"', STATUS = '"+IIF(AllTrim((cAliasP12)->CTD_BLOQ + (cAliasP12)->CTT_BLOQ) = '22' .And. (cAliasP12)->CTAD = ' ', 'Ativo', 'Bloqueado')+"', RECMODIFIEDBY = 'mestre', RECMODIFIEDON = CURRENT_TIMESTAMP "
+	    		cRMSql += "WHERE CODCOLIGADA = '"+SubStr((cAliasP12)->CTA_FILIAL,2,1)+"' AND "
+	    		cRMSql += "CODCCUSTO = '"+(cAliasP12)->CTA_CUSTO+"' AND "
+	    		cRMSql += "CODITEMCONTABIL = '"+(cAliasP12)->CTA_ITEM+"' "
+	    	EndIf
+	    	
+	    	TCSqlExec(cRMSql)
+	    	
+	    	TCSetConn(nP12Conn)
+	       (cAliasP12)->(dbSkip())
+	        DBCloseArea()
+	    EndDo
+    EndIf
+    
+    RESET ENVIRONMENT
+Return(Nil)
+
+/*/{Protheus.doc} dbTCLink
+    @Description Realiza um Link com o Alias específicado
+                 nos parâmetros.
+    @Type Static Function
+    @Author caiocrol
+    @Since 05/10/2015
+    @Version 1.0
+    /*/
+Static Function dbTCLink(_cDBAlias , _cServer , _nPort, nP12Conn, nRMConn)
+	Local lRet     := .F.
+	Local nP12Conn := AdvConnection()
+	Local nRMConn  := -1;
+
+	nRMConn := TCLink(AllTrim(_cDBAlias), AllTrim(_cServer) ,_nPort)
+
+	If !TCSetConn(nRMConn)
+		qqOut("Sem Conexao com a base de dados, Erro: " + cValToChar(nRMConn))
+		Return(lRet)
+	Else
+		qqOut("Conexão efetuada com sucesso! ID: " + cValToChar(nRMConn))
+		lRet := .T.
+	EndIf
+Return(lRet)

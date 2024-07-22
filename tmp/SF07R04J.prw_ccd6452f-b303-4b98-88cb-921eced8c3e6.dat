@@ -1,0 +1,319 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} SF07R04J
+Função responsável pela geração do Relatório de estrutura de rateio
+
+Fonte baseado no DTGPER03 (Devido ao relatorio nao emitir para excel, foi necessario a 
+criacao deste).
+
+@author 	Jose Leite de Barros Neto
+@since 		31/03/2015
+@version 	1.0
+@return 	Nil, Nulo
+/*/
+User Function SF07R04J()
+	
+	Local oReport
+
+	Private cPerg := "SF07R04J"
+	
+	If TRepInUse()
+	
+		fCriaSx1()
+	
+		If Pergunte( cPerg, .T. )
+			oReport:= ReportDef(cPerg)
+			oReport:SetLandScape(.T.)
+			oReport:lDisableOrientation := .T.
+			oReport:GetOrientation(1)
+			oReport:PrintDialog()
+		EndIf
+		
+	EndIf
+
+Return( Nil )
+
+/** {Protheus.doc} ReportDef
+Funcao que define as colunas
+
+@author: 	Jose Leite de Barros Neto
+@since: 	04/11/2014
+@Uso: 		SFIEMT
+*/
+Static Function ReportDef(cPerg)
+	
+	Local oReport
+	Local oSection1
+	Local cDtBas := "DATA BASE: " + Upper( MesExtenso( MV_PAR01 ) ) + " / " + StrZero( Year( MV_PAR01 ), 4 )
+	Local cTitle := "Estrutura de Rateio de Funcionários - "+ cDtBas
+	Local aOrdem := {}
+	
+	aOrdem := { 'Filial + Mat + CC + Item',;
+				 'Mat + MesAno + Item'}
+	
+	oReport := TReport():New(cPerg,cTitle,cPerg,{|oReport| PrintReport(oReport)},cTitle)
+	
+	//Sessao 1
+	oSection1 := TRSection():New(oReport, OemToAnsi(""), {"SRA"}, aOrdem)
+	
+	oFilial:= TRCell():New(oSection1, "_cFilial","TSRA", "Filial")
+	oFilial:SetSize(12)
+	
+	oMat:= TRCell():New(oSection1, "_cMat","TSRA", "Mat")
+	oMat:SetSize(12)
+	
+	oNome:= TRCell():New(oSection1, "_cNome","TSRA", "Nome")
+	oNome:SetSize(48)
+	
+	oCustoRA:= TRCell():New(oSection1, "_cCustoRA","TSRA", "Lot. CC")
+	oCustoRA:SetSize(25)
+	
+	oDescrRA:= TRCell():New(oSection1, "_cDescrRA","TSRA", "Desc. Lot")
+	oDescrRA:SetSize(48)
+	
+	oItemCRA:= TRCell():New(oSection1, "_cItemCRa","TSRA", "Lot. Itm. C.")
+	oItemCRA:SetSize(30)
+	
+	oDescItRa:= TRCell():New(oSection1, "_cDescItRA","TSRA", "Lot. Desc. Itm.")
+	oDescItRa:SetSize(48)
+	
+	oCusto:= TRCell():New(oSection1, "_cCusto","TSRA", "C. Custo")
+	oCusto:SetSize(25)
+	
+	oDescr:= TRCell():New(oSection1, "_cDescr","TSRA", "Descrição")
+	oDescr:SetSize(48)
+	
+	oItemC:= TRCell():New(oSection1, "_cItemC","TSRA", "Item Contábil")
+	oItemC:SetSize(30)
+	
+	oDescIt:= TRCell():New(oSection1, "_cDescIt","TSRA", "Descrição")
+	oDescIt:SetSize(48)
+	
+	oHistM:= TRCell():New(oSection1, "_cHistM","TSRA", "Hst/Men")
+	oHistM:SetSize(8)
+	
+	oHrMes:= TRCell():New(oSection1, "_cHrMes","TSRA", "Hrs. M")
+	oHrMes:SetSize(8)
+	
+	oHrTrb:= TRCell():New(oSection1, "_cHrTrb","TSRA", "Hrs. T")
+	oHrTrb:SetSize(8)
+	
+	oPerc:= TRCell():New(oSection1, "_cPerc","TSRA", "Perc")
+	oPerc:SetSize(8)
+	
+Return( oReport )
+
+/** {Protheus.doc} PrintReport
+Funcao que gera o relatorio
+
+@author: 	Jose Leite de Barros Neto
+@since: 	04/11/2014
+@Uso: 		SFIEMT
+*/
+Static Function PrintReport(oReport)
+	
+	Local oSection1	:= oReport:Section(1)
+	Local nSizeCTD 	:= 4
+	Local nSizeCTT 	:= 4
+	Local cPeriodo		:= StrZero( Year( MV_PAR01 ), 4 ) + StrZero( Month( MV_PAR01 ), 2 )
+	Local _cCancel		:= "*** Cancelado pelo Usuário ***"
+	Local _cQuery		:= ""
+	Local _cFilial		:= ""
+	Local _cMat		:= ""
+	Local _cNome		:= ""
+	Local _cCusto		:= ""
+	Local _cDescr		:= ""
+	Local _cItemC		:= ""
+	Local _cDescIt		:= ""
+	Local _cHistM		:= ""
+	Local _cHrMes		:= ""
+	Local _cHrTrb		:= ""
+	Local _cPerc		:= ""
+	Local _cCustoRA	:= ""
+	Local _cDescrRA	:= ""
+	Local _cItemCRa	:= ""
+	Local _cDescItRA	:= ""
+	Local _nOrdem		:= oSection1:GetOrder()
+	
+	If Select('TSRA') > 0
+		DbSelectarea('TSRA')
+		TSRA->( DbCloseArea() )
+	Endif
+	
+	cQuery := " SELECT ZD6_FILIAL, SRA.RA_FILIAL, ZD6_MESANO PER,ZD6_MAT,SRA.RA_NOME,ZD6_CC,CTT.CTT_DESC01,ZD6_ITEM,ctd.ctd_desc01,ZD6_HRMES,ZD6_HRTRAB,ZD6_PERCEN,"
+	cQuery += CRLF + " SRA.RA_CC, SRA.RA_ITEM "
+	cQuery += CRLF + "  From " + RetSqlName("ZD6") + " ZD6 "
+	cQuery += CRLF + "  Left Join " + RetSqlName("SRA") + " SRA On SRA.D_E_L_E_T_ = ' ' And SubStr( SRA.RA_FILIAL, 1, "  + Str( nSizeCTT, 2 ) + " ) = SubStr( ZD6.ZD6_FILIMP, 1, " + Str( nSizeCTT, 2 ) + ") And SRA.RA_MAT = ZD6.ZD6_MAT"
+	cQuery += CRLF + "  Left Join " + RetSqlName("CTD") + " CTD On CTD.D_E_L_E_T_ = ' ' And SubStr( CTD.CTD_FILIAL, 1, " + Str( nSizeCTD, 2 ) + " ) = SubStr( SRA.RA_FILIAL, 1, " + Str( nSizeCTD, 2 ) + " ) And CTD.CTD_ITEM = ZD6.ZD6_ITEM"
+	cQuery += CRLF + "  Left Join " + RetSqlName("CTT") + " CTT On CTT.D_E_L_E_T_ = ' ' And SubStr( CTT.CTT_FILIAL, 1, " + Str( nSizeCTT, 2 ) + " ) = SubStr( SRA.RA_FILIAL, 1, " + Str( nSizeCTT, 2 ) + " ) And CTT.CTT_CUSTO = ZD6.ZD6_CC"
+	
+	cQuery += CRLF + " Where ZD6.D_E_L_E_T_ = ' '"   
+	
+	If MV_PAR04 == 1 // 1=Mensal / 2=Historial                    
+		cQuery += CRLF + "   And ZD6.ZD6_MESANO = '" + cPeriodo + "'"
+	EndIf
+	
+	cQuery += CRLF + "   And ZD6.ZD6_MAT    BETWEEN '" + MV_PAR02 + "' And '" + MV_PAR03 + "'"    
+	
+	/* Jose Leite - CSI - 11-06-15
+	
+		Quando o funcionario eh transferido de uma unidade para outra, nao estava sendo considerado a ultima estrutura de rateio,
+		obedecendo a filial que o funcionario esta vinculada.
+		
+		Para isso, foi necessario comentar o trecho abaixo e ajustar-lo para no where ZD6_FILIAL || ZD6_MAT = SRA.RA_FILIAL || SRA.RA_MAT
+		
+		cQuery += CRLF + " 	AND ZD6_MAT||ZD6_MESANO IN (SELECT ZD6_MAT||MAX(ZD6_MESANO) FROM "+RetSqlName("ZD6")+" WHERE ZD6_FILIAL BETWEEN '" + MV_PAR06 + "' And '" + MV_PAR07 + "' AND D_E_L_E_T_ = ' ' GROUP BY ZD6_MAT) "
+	
+	*/
+	//Inicio
+	cQuery += CRLF + " 	AND ZD6_MAT||ZD6_MESANO IN (SELECT ZD6_MAT||MAX(ZD6_MESANO) FROM "+RetSqlName("ZD6")+" WHERE ZD6_FILIAL || ZD6_MAT = SRA.RA_FILIAL || SRA.RA_MAT  AND D_E_L_E_T_ = ' ' GROUP BY ZD6_MAT) "
+	//Fim
+	
+	If MV_PAR05 == 2 //Considera demitidos
+		cQuery += CRLF + "     AND SRA.RA_SITFOLH <> 'D' "
+	Endif
+	
+	cQuery += CRLF + " And ZD6.ZD6_FILIAL BETWEEN '" + MV_PAR06 + "' And '" + MV_PAR07 + "'" 
+	
+	cQuery += CRLF + " And ZD6.ZD6_CC BETWEEN '" + MV_PAR08 + "' And '" + MV_PAR09 + "'"
+	
+	cQuery += CRLF + " And ZD6.ZD6_ITEM BETWEEN '" + MV_PAR10 + "' And '" + MV_PAR11 + "'"
+	
+	cQuery += CRLF + "     AND SRA.RA_XTPRAT <> '3' " //Excluir Funcionarios da GC
+	
+	If _nOrdem == 1
+		cQuery += CRLF + " ORDER BY ZD6.ZD6_FILIAL, ZD6.ZD6_MAT, ZD6.ZD6_CC, ZD6.ZD6_ITEM"
+	ElseIf _nOrdem == 2
+		cQuery += CRLF + " ORDER BY ZD6.ZD6_MAT, ZD6.ZD6_MESANO, ZD6.ZD6_ITEM"
+	EndIf
+	
+	cQuery := ChangeQuery( cQuery )
+	
+	dbUseArea( .T., "TOPCONN", TCGenQry(,,cQuery), 'TSRA', .T., .T. )
+	
+	DbSelectArea('TSRA')
+	TSRA->( DbGotop() )
+	
+	oReport:SetMeter( RecCount() )
+	oSection1:Init()
+	
+	While .Not. TSRA->( EOF() )
+		
+		If oReport:Cancel()
+			oReport:SkipLine()
+			oReport:PrintText(_cCancel)
+			Exit
+		EndIf
+		
+		_cFilial	:= TSRA->RA_FILIAL
+		_cMat		:= TSRA->ZD6_MAT
+		_cNome		:= SUBSTR(TSRA->RA_NOME,1,20)
+		_cCusto		:= SUBSTR(AllTrim(TSRA->ZD6_CC),1,11)
+		_cDescr		:= SUBSTR(TSRA->CTT_DESC01,1,32)
+		_cItemC		:= TSRA->ZD6_ITEM
+		_cDescIt	:= SUBSTR(TSRA->CTD_DESC01,1,32)
+		_cHistM		:= IIF(TSRA->PER == cPeriodo,"M","H")
+		_cHrMes		:= Transform( TSRA->ZD6_HRMES   , "@E 999.99" )
+		_cHrTrb		:= Transform( TSRA->ZD6_HRTRAB  , "@E 999.99" )
+		_cPerc		:= Transform( TSRA->ZD6_PERCEN  , "@E 999.99" ) + "%"
+		_cCustoRA	:= AllTrim(TSRA->RA_CC)  
+	 	_cDescrRA	:= AllTrim(Posicione("CTT",1,xFilial('CTT')+TSRA->RA_CC,"CTT_DESC01"))
+	 	_cItemCRa	:= AllTrim(TSRA->RA_ITEM)
+	 	_cDescItRA	:= AllTrim(Posicione("CTD",1,xFilial('CTD')+TSRA->RA_ITEM,"CTD_DESC01"))
+		 
+		oSection1:Cell("_cFilial"):SetValue(_cFilial)
+		oSection1:Cell("_cMat"):SetValue(_cMat)
+		oSection1:Cell("_cNome"):SetValue(_cNome)
+		oSection1:Cell("_cCusto"):SetValue(_cCusto)
+		oSection1:Cell("_cDescr"):SetValue(_cDescr)
+		oSection1:Cell("_cItemC"):SetValue(_cItemC)
+		oSection1:Cell("_cDescIt"):SetValue(_cDescIt)
+		oSection1:Cell("_cHistM"):SetValue(_cHistM)
+		oSection1:Cell("_cHrMes"):SetValue(_cHrMes)
+		oSection1:Cell("_cHrTrb"):SetValue(_cHrTrb)
+		oSection1:Cell("_cPerc"):SetValue(_cPerc)
+		oSection1:Cell("_cCustoRA"):SetValue(_cCustoRA)
+		oSection1:Cell("_cDescrRA"):SetValue(_cDescrRA)
+		oSection1:Cell("_cItemCRa"):SetValue(_cItemCRa)
+		oSection1:Cell("_cDescItRA"):SetValue(_cDescItRA)
+		
+		oSection1:PrintLine()
+		oReport:IncMeter()
+		
+		TSRA->( DbSkip() )
+	End
+	
+	oSection1:Finish()
+	oReport:EndPage()
+	
+	TSRA->( dbCloseArea() )
+	
+Return( Nil )
+
+/** {Protheus.doc} fCriaSx1
+Funcao para criacao das perguntas (DTGPER03)
+
+@param: 	<Nil>
+@author 	Auremar Duarte
+@since 	    21/08/2014
+@Uso: 		SFIEMT
+*/
+Static Function fCriaSx1()
+
+	/*
+		MV_PAR01  Database		   	?   
+		MV_PAR02  Funcionario de		?  
+		MV_PAR03  Funcionario ate	?  
+		MV_PAR04  Estrutura     		?  1=Mensal / 2=Historial
+		MV_PAR05  Cons. Demitidos   	?
+		MV_PAR06  Filial De
+		MV_PAR07  Filial Ate
+		MV_PAR08  Centro de Custo De
+		MV_PAR09  Centro de Custo Ate
+		MV_PAR10  Item Contabil De
+		MV_PAR11  Item Contabil Ate		          
+	*/
+
+	u_SFPUTSX1( cPerg, "01","Database             "	  ,"","","mv_ch1","D",8                    ,0,0,"G","",""			,"","","mv_par01","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "02","Funcionario De       "	  ,"","","mv_ch2","C",TamSX3("RA_MAT")[1]	 ,0,0,"G","","SRA"		,"","","mv_par02","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "03","Funcionario Ate      "	  ,"","","mv_ch3","C",TamSX3("RA_MAT")[1]	 ,0,0,"G","","SRA"		,"","","mv_par03","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "04","Estrutura            "	  ,"","","mv_ch4","N",1						 ,0,0,"C","",""			,"","","mv_par04","Mensal","","","","Historial","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "05","Considera Demitidos? "	  ,"","","mv_ch5","N",1						 ,0,0,"C","",""			,"","","mv_par05","Sim"   ,"","","","Não","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "06","Filial De       	   "	  ,"","","mv_ch6","C",TamSX3("RA_FILIAL")[1],0,0,"G","U_SF07V04J()"	,"SM0"	,"","","mv_par06","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "07","Filial Ate       	   "	  ,"","","mv_ch7","C",TamSX3("RA_FILIAL")[1],0,0,"G","U_SF07V04J()"	,"SM0"		,"","","mv_par07","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "08","Centro de Custo De	   "	  ,"","","mv_ch8","C",TamSX3("CTT_CUSTO")[1],0,0,"G","","CTT"		,"","","mv_par08","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "09","Centro de Custo Ate  "	  ,"","","mv_ch9","C",TamSX3("CTT_CUSTO")[1],0,0,"G","","CTT"		,"","","mv_par09","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "10","Item Contabil De  	   "	  ,"","","mv_chA","C",TamSX3("CTD_ITEM")[1] ,0,0,"G","","CTD"		,"","","mv_par10","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "11","Item Contabil Ate 	   "	  ,"","","mv_chB","C",TamSX3("CTD_ITEM")[1] ,0,0,"G","","CTD"		,"","","mv_par11","","","","","","","","","","","","","","","","",{},{},{})
+	
+Return( Nil )
+
+/** {Protheus.doc} SF07V04J
+Funcao para validar as filiais
+
+@param: 	<Nil>
+@author 	Jose Leite de Barros Neto
+@since 	   	10/04/2015
+@Uso: 		SFIEMT
+*/
+User Function SF07V04J()
+
+	Local _aAreaSM0 := SM0->(GetArea())
+	Local _lReturn	  := .t.
+	Local _cCodFil	  := &(ReadVar())  						//-- Captura o valor do GET CORRENTE 
+	
+	DbSelectArea("SM0")  										//-- Tabela de Empresas
+	SM0->(DbSetOrder(1))
+	If (SM0->(DbSeek(cEmpAnt+_cCodFil)))  					//-- posiciona o ponteiro da tabela EMPRESA (SigaMat.emp) na empesa ATUAL
+		If (Substr(cFilAnt,1,4) != Substr(_cCodFil,1,4))
+			Aviso(FunName()+"/"+ProcName(),"Codigo da Filial informado é Invalido!",{"OK"})
+			_lReturn	:= .f.
+		Endif 
+	Else
+		Aviso(FunName()+"/"+ProcName(),"Codigo da Filial informado é Invalido!",{"OK"})
+		_lReturn	:= .f.
+	EndIf
+	 
+	RestArea(_aAreaSM0)
+	
+Return _lReturn

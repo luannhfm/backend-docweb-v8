@@ -1,0 +1,110 @@
+#INCLUDE 'RWMAKE.CH'
+#INCLUDE 'PROTHEUS.CH'
+
+/*/{Protheus.doc} SF0201J
+	
+@author 	José Leite de Barros Neto
+@since 		29/04/2014
+@version 	1.0		
+
+@return Nil
+
+@description
+Fonte baseado no BFFI001J.
+Utilizado para realizar o calculo de impostos variáveis.
+Chamado ao informar a TES na Nota de Entrada   
+
+@example
+
+Impostos variaveis:
+INSS Patronal
+
+/*/
+User Function SF0201J(_nType)
+
+	Local nRet 		:= 0
+	Local cCalculo	:= PARAMIXB[1]
+	Local nItem 	:= PARAMIXB[2]
+	Local _cType	:= PARAMIXB[3][1]
+
+	Local nVlrBas	:=	0.0	 //Variavel para Calculo dos Impostos que usam Base de Calculo Simples
+	Local nAlq		:=	0.0	 //Variavel para Calculo dos Impostos - aliquota
+
+	Local cProduto	:= ""
+	Local aRegSA2	:= {,}
+
+	Do Case
+	
+	Case _cType = 'INS'	//INSS Patronal
+
+		//Posiciona no Produto
+		cProduto := MaFisRet(nItem,'IT_PRODUTO')
+		If SB1->B1_COD <> cProduto
+			SB1->(DbSetOrder(1))
+			SB1->(DbSeek(xFilial("SB1")+cProduto))
+		EndIf
+
+		If 	(MaFisRet(,'NF_TIPONF') = 'N' .AND. MaFisRet(,'NF_OPERNF') = 'E') //SE A NOTA FOR ENTRADA - COMPRA
+		
+		
+			If (MaFisRet(,'NF_CLIFOR') = 'F') //verifica se fornecedor
+			
+				aRegSA2[1] := MaFisRet(,'NF_CODCLIFOR')	 //Codigo do Cliente/Fornecedor
+				aRegSA2[2] := MaFisRet(,'NF_LOJA')		    //Loja do Cliente/Fornecedor
+			
+				//Posiciona no Fornecedor
+				If SA2->(A2_COD+A2_LOJA) <> aRegSA2[1]+aRegSA2[2]
+					SA2->(DbSetOrder(1))
+					SA2->(DbSeek( xFilial("SA2")+aRegSA2[1]+aRegSA2[2] ))
+				EndIf
+				
+				/* 	Jose Leite - 20/05/2015
+	   	
+					Solicitado por: Jorge Fernandez - CSI
+					Observacao: Ajuste na regra da geracao do titulo
+					
+					//Antes
+					If SB1->( B1_INSS ) == "S" .And. SA2->( A2_TIPO ) == "F" .And. SA2->( A2_TPESSOA ) == "PF" .And. SA2->( A2_RECINSS ) == "S"
+				*/
+				//Verifica se o produto e o fornecedor entra na regra do calculo de INSS
+				//Inicio
+				If SB1->( B1_INSS ) == "S" .And. ( SA2->( A2_TIPO ) == "F" .Or. ( SA2->( A2_TIPO ) == "J" .And. SA2->( A2_TPJ ) == "3") ) .And. SA2->( A2_TPESSOA ) == "PF" .And. SA2->( A2_RECINSS ) == "S"
+					nAlq	:= GetNewPar('MV_XALIQIN',20)
+					nVlrBas := MaFisRet(nItem,"IT_TOTAL")
+				Else
+					Return( nRet )
+				EndIf
+				//Fim
+
+			EndIf
+		
+		EndIf
+			
+	EndCase
+
+	Do Case
+
+	Case cCalculo == "B"	//Retorna o valor da base
+		
+		Do Case
+		
+		Case _cType = 'INS'
+			nRet := nVlrBas
+							
+		EndCase
+
+	Case cCalculo == "A"	//Retorna o valor da Aliquota
+		nRet := nAlq
+
+	Case cCalculo == "V"	//Retorna o valor do Tributo
+		
+		Do Case
+		
+		Case _cType = 'INS'
+			nRet := (nVlrBas * nAlq) / 100
+				
+		EndCase
+		
+	EndCase
+
+Return( nRet )

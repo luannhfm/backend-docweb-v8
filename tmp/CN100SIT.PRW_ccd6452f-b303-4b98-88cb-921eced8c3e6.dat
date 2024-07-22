@@ -1,0 +1,611 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+
+#DEFINE DEF_SCANC '01' //-- Cancelado
+#DEFINE DEF_SELAB '02' //-- Em Elaboração
+#DEFINE DEF_SEMIT '03' //-- Emitido
+#DEFINE DEF_SAPRO '04' //-- Em Aprovação
+#DEFINE DEF_SVIGE '05' //-- Vigente
+#DEFINE DEF_SPARA '06' //-- Paralisado
+#DEFINE DEF_SSPAR '07' //-- Sol Fina.
+#DEFINE DEF_SFINA '08' //-- Finalizado
+#DEFINE DEF_SREVS '09' //-- Revisão  
+#DEFINE DEF_SREVD '10' //-- Revisado
+
+/*
+{Protheus.doc} <CN100SIT>
+	Ponto de Entrada: 
+	CN100SIT - Situações do contrato. E executado após a alteração da situação
+	do contrato, quando é definido que o contrato passará de uma situação para 
+	outra. Sua execução ocorre após o processamento interno do sistema.
+
+	Localização: 
+	CN100Situac()-Responsável pelo controle de situações do contrato.
+
+	Parâmetros:
+	   PARAMIXB[1] (c) - Contém informações sobre a situação atual do contrato.				
+	   PARAMIXB[2] (c) - Contém informações sobre a nova situação do contrato.				
+@type function
+@author DESCONHECIDO (Microsiga)
+@since 22/11/2012
+@history 05/05/2015, Antonio Dantas, Implementamos melhorias na descrição e documentação do Ponto 
+	de Entrada, implementamos tratamento a rotinas ja existentes
+@history 05/05/2015, Antonio Dantas, Adaptação das rotinas descritas indevidamento no ponto de 
+	entrada. Implementamos Chamada a Função [fMCtrSC8] para empacotamento da rotinas ja existentes. 
+	OBS: Não existe declaração do Autor, modificamos a sistematica de construção como ajuste na 
+	declaração das variaveis. rotina. PRESERVAMOS FORMATO, LAYOUT E COMENTARIOS ORIGINAIS
+@history 05/05/2015, Antonio Dantas, Implementamos chamada a função [fMCtrADY()] descrita neste 
+	mesmo fonte abaixo: Modifica o STATUS da Proposta Aprovada na Oportunidade de Venda Vinculada 
+	ao Contrato, Grava em campo Proprio na [ADY - Proposta de Venda] e na [AD1 - Oportunidade de 
+	Venda] o Numero do Contrato que foi Gerado. Tratamento efetuado somente a contrato de venda 
+	com VINCULO a [AD1 - Oportunidades de Venda] e [ADY - Proposta de Venda Aprovada]
+@history 05/05/2015, Antonio Dantas, Implementamos chamada a função [fMCtrADY()] para função 
+	[fincPA9()] descrita no fonte [SS6999X.PRW]. Responsavel por GRAVAR o COMPARTILHAMENTO DE 
+	CONTRATO DE VENDA para contratos provindos da relacao CRM x GCT com OPORTUNIDADE/PROPOSTA 
+	com MULTIPLAS FILIAIS
+@history 07/07/2016, Franklin de Brito de Oliviera, Adicionado cancelamento de contrato do SESI 
+	para o tipo "distrato", quando o contrato já se encontra com status vigente
+@history 01/03/2017, Franklin de Brito de Oliveira, O distrato passa a ser para os contratos de 
+	venda vigente para todas as filiais, não apenas para o SESI
+*/
+User Function CN100SIT()
+Local _aArea 	:= GetArea()
+Local _cOldSit	:= ParamIXB[1]			//-- Situação ANTERIOR do Contrato
+Local _cNewSit	:= ParamIXB[2]			//-- Nova Situação do Contrato 
+Local _cMsg 	:= '' 
+Local _cCtrDoc	:= SuperGetMv("MV_XTPCTDC",,"")	// Contrato de Docente
+Local _cCtrSE1	:= SuperGetMv("MV_XCTRSE1",,"")
+
+/*/ author: j2a.caiolima @data: 04/11/2019 - integração sesi viva mais smais /*/
+/*
+If CN9->CN9_ESPCTR == "2" .AND. _cNewSit == "05" // alterando para vigente
+	U_SF69A02X()
+EndIf
+*/
+//+------------------------------------------------------------------+
+//| Implementa tratamento da MODIFICAÇÃO do Status DE: [_cOldSit]    |
+//+------------------------------------------------------------------+
+do Case
+	Case _cOldSit == DEF_SCANC		//-- 01-Cancelado
+		/* Chamada as Rotinas de Tratamento */
+	Case _cOldSit == DEF_SELAB		//-- 02-Em Elaboração
+		/* Chamada as Rotinas de Tratamento */
+	Case _cOldSit == DEF_SEMIT 		//-- 03-Emitido
+		/* Chamada as Rotinas de Tratamento */
+	Case _cOldSit == DEF_SAPRO 		//-- 04-Em Aprovação
+		/* Chamada as Rotinas de Tratamento */
+	Case _cOldSit == DEF_SVIGE 		//-- 05-Vigente
+		/* Chamada as Rotinas de Tratamento */
+	Case _cOldSit == DEF_SPARA 		//-- 06-Paralisado
+		/* Chamada as Rotinas de Tratamento */
+	Case _cOldSit == DEF_SSPAR 		//-- 07-Sol Fina.
+		/* Chamada as Rotinas de Tratamento */
+	Case _cOldSit == DEF_SFINA 		//-- 08-Finalizado
+		/* Chamada as Rotinas de Tratamento */
+	Case _cOldSit == DEF_SREVS 		//-- 09-Revisão  
+		/* Chamada as Rotinas de Tratamento */
+	Case _cOldSit == DEF_SREVD 		//-- 10-Revisado
+Endcase
+
+//+------------------------------------------------------------------+
+//| Implementa tratamento da MODIFICAÇÃO do Status PARA: [_cNewSit]  |
+//+------------------------------------------------------------------+
+do Case
+	Case _cNewSit == DEF_SCANC		//-- 01-Cancelado
+		
+		//Contrato de Venda
+		If .Not. Empty(AllTrim(CN9->CN9_XOPORT))
+			If _cOldSit == DEF_SEMIT
+				fMCtrAD1()
+			End
+			//É um distrato?
+			//If _cOldSit == DEF_SVIGE .And. (Substr(cFilAnt, 1, 4) == "02MT")
+			If _cOldSit == DEF_SVIGE 
+				fMCtrCN9()
+			EndIf
+			fExcZJA() //Exclui dados da pesquisa de satisfação - ZJA.
+		ElseIf .Not. Empty(CN9->CN9_XCTRRM)
+			_cMsg := 'CONTRATO CANCELADO NO PROTHEUS'
+			U_fGrvStRM( Val(CN9->CN9_XNSQRM), CN9->CN9_XCOLRM, CN9->CN9_XRARM, CN9->CN9_XCTRRM, CN9->CN9_XIDPRM, .T., _cMsg, 5) //Cancelamento de Contrato
+		Else
+			fMCtrSC8(_cOldSit,_cNewSit)			//-- Rotina Descrita ABAIXO
+		EndIf
+
+	//=============================================================================================================
+	//Autor : Daniel Castro - daniel.castro@totvs.com.br
+	//Data : 01/10/2020
+		If  Alltrim(_cCtrDoc) == Alltrim(CN9->CN9_TPCTO)
+			Processa( {|| U_SF69R04X(.F.,.T.) }, "Aguarde...", "Imprimindo Distrato...",.F.) //Imprime Distrato de Docente
+		EndIf
+	//=============================================================================================================
+
+		//=============================================================================================================
+		//Autor : Daniel Castro - daniel.castro@totvs.com.br
+		//Data : 15/11/2020
+		//Baixa dos Títulos do Contrato de Faturamento
+		If Alltrim(CN9->CN9_TPCTO) == _cCtrSE1
+			Processa( {|| U_SF69A11X() }, "Aguarde...", "Cancelando Títulos de Faturamento...",.F.) //Cancelamento de títulos de Contrato Customizado
+		EndIf
+		//=============================================================================================================
+
+	Case _cNewSit == DEF_SELAB		//-- 02-Em Elaboração
+		/* Chamada as Rotinas de Tratamento */
+	Case _cNewSit == DEF_SEMIT 		//-- 03-Emitido
+
+		//=============================================================================================================
+		//Autor : Daniel Castro - daniel.castro@totvs.com.br
+		//Impressão Contratos de Docente
+		If  Alltrim(_cCtrDoc) == Alltrim(CN9->CN9_TPCTO)
+			Processa( {|| U_SF69R04X(.T.,.F.) }, "Aguarde...", "Imprimindo Contrato...",.F.) // Contrato Empreendedor Individual Sesi/Senai
+		EndIf
+		//=============================================================================================================
+
+		/* Chamada as Rotinas de Tratamento */
+	Case _cNewSit == DEF_SAPRO 		//-- 04-Em Aprovação
+		/* Chamada as Rotinas de Tratamento */
+	Case _cNewSit == DEF_SVIGE 		//-- 05-Vigente
+		
+ 		//Contrato de Venda
+		If .Not. Empty(AllTrim(CN9->CN9_XOPORT))
+			fMCtrADY(_cOldSit) //-- Rotina Descrita ABAIXO
+			fAtSGTAc()	//Integração com SGT - Marca atendimento(s) como aceito.
+			fIncZJA()	//Inclui dados da pesquisa de satisfação - ZJA.
+		EndIf  
+
+		//=============================================================================================================
+		//Autor : Daniel Castro - daniel.castro@totvs.com.br
+		//Data : 15/11/2020
+		//Criação dos Títulos do Contrato de Faturamento
+		If Alltrim(CN9->CN9_TPCTO) == _cCtrSE1
+			Processa( {|| u_SF69A05X() }, "Aguarde...", "Atualizando títulos de Faturamento...",.F.) // Atualização de títulos PR
+		EndIf
+		//=============================================================================================================
+
+	Case _cNewSit == DEF_SPARA 		//-- 06-Paralisado
+		/* Chamada as Rotinas de Tratamento */
+	Case _cNewSit == DEF_SSPAR 		//-- 07-Sol Fina.
+		/* Chamada as Rotinas de Tratamento */
+	Case _cNewSit == DEF_SFINA 		//-- 08-Finalizado
+		If .Not. Empty(AllTrim(CN9->CN9_XOPORT))
+			fAtSGTCo()	////Integração com SGT - Marca atendimento(s) como concluido.
+		EndIf
+	Case _cNewSit == DEF_SREVS 		//-- 09-Revisão  
+		/* Chamada as Rotinas de Tratamento */
+	Case _cNewSit == DEF_SREVD 		//-- 10-Revisado
+		/* Chamada as Rotinas de Tratamento */
+Endcase
+RestArea(_aArea)
+Return NIL 
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} fMCtrSC8
+Modifica a SITUAÇÃO da COTAÇÃO DE COMPRA quando do CANCELAMENTO do Contrato de compra
+@type function
+@author Antonio Dantas
+@since 02/04/2015
+@history 05/05/2014, Antonio Dantas, Adaptação das rotinas descritas indevidamento no ponto de 
+	entrada. OBS: Não existe declaração do Autor, modificamos a sistematica de construção como 
+	ajuste na declaração das variaveis. rotina. PRESERVAMOS FORMATO, LAYOUT E COMENTARIOS 
+	ORIGINAIS.
+@param _cOldSit, character, Situação ANTERIOR do contrato
+@param _cNewSit, character, Sitauçaõ ATUAL do contrato (Para compatibilizar com a rotina ja 
+	existente). 
+*/
+Static Function fMCtrSC8(_cOldSit,_cNewSit)
+Local _cLanctoCT	:= Alltrim(GetNewPar("SI_PCOCTSC","900051"))
+Local _cQuery		:= ''     
+Local _cFilSC8	:= FwxFilial("SC8")        
+Local _lPrjCni	:= FindFunction("ValidaCNI") .And. ValidaCNI()
+Local _cContr		:= ""
+Local _cCota		:= ""
+//--
+IF _cNewSit == DEF_SCANC 
+	If PcoExistLc(_cLanctoCT,"02","1")
+		_cAreaCNB := CNB->(GetArea())
+	
+		CNB->(dbSetOrder(1))
+		IF CNB->(dbSeek(XFilial("CNB")+CN9->(CN9_NUMERO+CN9_REVISA)))
+			PcoIniLan(_cLanctoCT)
+			While CNB->(!Eof()) .and. CNB->(CNB_FILIAL+CNB_CONTRA+CNB_REVISA) == FwxFilial("CNB")+CN9->(CN9_NUMERO+CN9_REVISA)
+				PcoDetLan(_cLanctoCT,'02','MATA110')
+				CNB->(dbSkip())
+			Enddo
+			PcoFinLan(_cLanctoCT)
+		
+		ENDIF
+	
+		RestArea(_cAreaCNB)
+	Endif
+	
+	//Adicionado tratamento para voltar os Status da Cotação
+	//Retirado do PE CN100GRC devido estar localizado no lugar errado
+	//O PE não é chamado na alteração de Status e sim na gravação
+	If _lPrjCni
+		//Atualiza Cotacao - volta status para analise
+		DbSelectArea("CN9")
+		_cCota:= CN9->CN9_XCOT
+		_cContr:= CN9->CN9_NUMERO 
+						
+		dbSelectArea("SC8")
+		cArqTrb	:= CriaTrab( nil, .F. )  
+		_cQuery := "SELECT R_E_C_N_O_ as RECNO "
+		_cQuery += "  FROM "+RetSQLName("SC8")+" SC8 "
+		_cQuery += " WHERE SC8.C8_FILIAL = '"+_cFilSC8+"' "
+		_cQuery += "   AND SC8.C8_NUM = '"+_cCota+"' "
+		_cQuery += "   AND SC8.C8_XGCT = '"+_cContr+"' "		
+		_cQuery += "   AND SC8.D_E_L_E_T_ = ' ' "
+
+		_cQuery := ChangeQuery( _cQuery )
+		dbUseArea( .T., "TopConn", TCGenQry(,,_cQuery), cArqTrb, .T., .T. )
+		While !(cArqTrb)->(Eof())	
+			SC8->(dbGoTo((cArqTrb)->RECNO))
+			Reclock("SC8",.F.)  
+				SC8->C8_XGCT := ''
+				SC8->C8_NUMPED := ''
+				SC8->C8_ITEMPED := ''
+			SC8->(MsUnlock())
+			(cArqTrb)->(dbSkip())
+		EndDo
+
+		(cArqTrb)->( dbCloseArea() )      
+	EndIf
+ENDIF
+Return Nil 
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} fMCtrADY
+Rotina que modifica o STATUS da Proposta Aprovada na Oportunidade de Venda Vinculada ao Contrato, 
+Grava em campo Proprio na [ADY - Proposta de Venda] e na [AD1 - Oportunidade de Venda] o Numero do
+Contrato que foi Gerado.
+Tratamento efetuado somente a contrato de venda com VINCULO a [AD1 - Oportunidades de Venda] e 
+[ADY - Proposta de Venda Aprovada].
+@author Antonio Dantas
+@since 02/04/2015
+@param _cOldSit, character, Situação ANTERIOR do contrato
+*/
+Static Function fMCtrADY(_cOldSit)			//-- Rotina Descrita ABAIXO
+Local _aSaveArea		:= GetArea()
+Local _aProposta 		:= {} 
+//+------------------------------------------------------------------+
+//| Verifica se o CONTRATO foi vinculado a uma Oportunidade/Proposta |
+//| de Venda (Integração CRM).                                       | 
+//+------------------------------------------------------------------+
+If !Empty(Alltrim(CN9->CN9_XOPORT))
+	_aProposta := u_fGetProC(CN9->CN9_XOPORT,CN9->CN9_XREVOP)
+	//+------------------------------------------------------------------+
+	//| * Modifica o [STATUS] PROPOSTA APROVADA para [B-Fechada]         |
+	//| * Grava o [ADY_XCONTR - Codigo do CONTRATO] na PROPOSTA          |
+	//| * Grava a [ADY_XREVCT - Revisao do Contrato] na PROPOSTA         |
+	//+------------------------------------------------------------------+
+	dbSelectArea("ADY")
+	ADY->(dbSetOrder(1))
+	If (ADY->(dbSeek(FwxFilial("ADY")+_aProposta[1])))
+		ADY->(RecLock("ADY",.f.))
+		Replace ADY->ADY_STATUS With "B"					//-- Proposta Fechada  
+		Replace ADY->ADY_XCONTR With CN9->CN9_NUMERO		//-- Codigo do Contrato  
+		Replace ADY->ADY_XREVCT With CN9->CN9_REVISA		//-- Revisão do Contrato  
+		ADY->(MsUnLock())
+		ADY->(dbCommit()) 
+	Endif 
+	//+------------------------------------------------------------------+
+	//| * Grava o [ADY_XCONTR - Codigo do CONTRATO] na Oportun de Venda  |
+	//| * Grava a [ADY_XREVCT - Revisao do Contrato] na Oportun de Venda |
+	//+------------------------------------------------------------------+
+	dbSelectArea("AD1")
+	AD1->(dbSetOrder(1))
+	If (AD1->(dbSeek(FwxFilial("AD1")+CN9->CN9_XOPORT+CN9->CN9_XREVOP)))
+		AD1->(RecLock("AD1",.f.))
+		Replace AD1->AD1_XCONTR With CN9->CN9_NUMERO		//-- Codigo do Contrato  
+		Replace AD1->AD1_XREVCT With CN9->CN9_REVISA		//-- Revisão do Contrato  
+		AD1->(MsUnLock())
+		AD1->(dbCommit()) 
+	Endif 
+   	//+------------------------------------------------------------------+
+	//| Antonio Dantas                                       28/08/2015  |
+	//| Implementa chamada a funcao [fincPA9()], descrita no fonte       |
+	//| [SS6999X.PRW]. Responsavel por GRAVAR o COMPARTILHAMENTO DE      |
+	//| CONTRATO DE VENDA para contratos provindos da relacao CRM x GCT  |
+	//| com OPORTUNIDADE/PROPOSTA com MULTIPLAS FILIAIS.                 |
+	//+------------------------------------------------------------------+
+   	u_fGerPA9()
+	//+------------------------------------------------------------------+
+	//| Envia mensagem [E-mail] para o responsaveis do CRM informados no |
+	//| Parametro [MV_XMAILCT], rotina descrita em programa de mesmo nome| 
+	//+------------------------------------------------------------------+
+	u_SS7320X()
+Endif
+RestArea(_aSaveArea)
+Return NIL 
+
+/*
+{Protheus.doc} fMCtrAD1
+Rotina que modifica o STATUS da Oportunidade de Venda
+@author Jose Leite de Barros Neto
+@since 27/08/2015
+*/
+Static Function fMCtrAD1
+	
+	Local _aArea 		:= GetArea()
+	Local _aProposta	:= {}
+	
+	Begin Transaction
+		
+		_aProposta := u_fGetProC(CN9->CN9_XOPORT,CN9->CN9_XREVOP)
+		
+		//+-------------------------------------------------------------------------+
+		//| * Modifica o [STATUS] PROPOSTA APROVADA para [Y-Cancelada apos aprov.]  |
+		//+-------------------------------------------------------------------------+
+		DbSelectArea("ADY")
+		ADY->(dbSetOrder(1))
+		If ADY->(DbSeek(FwxFilial("ADY")+ _aProposta[1]))
+			If ADY->(RecLock("ADY",.f.))
+				Replace ADY->ADY_STATUS With "Y"					//-- Cancelada apos aprovacao 
+				Replace ADY->ADY_XCONTR With CN9->CN9_NUMERO		//-- Codigo do Contrato  
+				Replace ADY->ADY_XREVCT With CN9->CN9_REVISA		//-- Revisão do Contrato   
+				ADY->(MsUnLock())
+				ADY->(dbCommit())
+			EndIf 
+		Endif 
+		
+		//+------------------------------------------------------------------------+
+		//| * Modifica o [STATUS] PROPOSTA APROVADA para [5-Cancelada Apos Aceite] |
+		//+------------------------------------------------------------------------+
+		DbSelectArea("AD1")
+		AD1->(dbSetOrder(1))
+		If (AD1->(dbSeek(FwxFilial("AD1")+CN9->CN9_XOPORT+CN9->CN9_XREVOP)))
+			If AD1->(RecLock("AD1",.f.))
+				Replace AD1->AD1_STATUS With 'D'						//-- Cancelada Apos Aceite   
+				Replace AD1->AD1_XCONTR With CN9->CN9_NUMERO		//-- Codigo do Contrato  
+				Replace AD1->AD1_XREVCT With CN9->CN9_REVISA		//-- Revisão do Contrato  
+				AD1->(MsUnLock())
+				AD1->(dbCommit())
+			EndIf 
+		Endif 
+		
+	End Transaction
+	
+	RestArea(_aArea)
+Return
+
+/*/{Protheus.doc} fMCtrCN9
+Função para modificar o campo CN9_XISDIS, indicando se o motivo cancelamento é um distrato. Apenas 
+para o SESI.
+@type function
+@author Franklin de Brito de Oliveira
+@since 07/07/2016
+/*/
+Static Function fMCtrCN9()
+
+Local _aArea	:= GetArea()
+
+	If (Aviso("CNTA100/Distrato", "O motivo do cancelamento é um distrato?",{"Sim", "Não"}) == 1)
+		Begin Transaction
+			If CN9->(RecLock("CN9", .F.))
+				Replace CN9->CN9_XISDIS With "1"
+			EndIf
+			fDisPrp(CN9->CN9_FILIAL, CN9->CN9_NUMERO, CN9->CN9_REVISA)
+		End Transaction
+	Else
+		Begin Transaction
+			If CN9->(RecLock("CN9", .F.))
+				Replace CN9->CN9_XISDIS With "2"
+			EndIf
+		End Transaction
+	EndIf
+	
+RestArea(_aArea)
+Return (Nil)
+
+Static Function fDisPrp(_pFil, _pNum, _pRev)
+Local _cQry := ""
+
+_cQry += " Select CN9.CN9_FILIAL,CN9.CN9_NUMERO,CN9.CN9_SITUAC,ADY.ADY_FILIAL,ADY.ADY_PROPOS " 
+_cQry += " From "+RetSqlName("CN9")+" CN9 INNER JOIN "
+_cQry += " "+RetSqlName("AD1")+" AD1 ON AD1.D_E_L_E_T_ = ' ' AND AD1.AD1_FILIAL = CN9.CN9_FILIAL AND AD1.AD1_STATUS IN ('E') AND "
+_cQry += "						 AD1_NROPOR = CN9.CN9_XOPORT AND AD1.AD1_REVISA = CN9.CN9_XREVOP INNER JOIN "
+_cQry += " "+RetSqlName("ADY")+" ADY ON ADY.D_E_L_E_T_ = ' ' AND ADY.ADY_FILIAL = AD1.AD1_FILIAL AND ADY.ADY_STATUS = 'B' AND "
+_cQry += "						 ADY.ADY_OPORTU = AD1.AD1_NROPOR AND ADY.ADY_REVISA = AD1.AD1_REVISA "
+_cQry += " Where "
+_cQry += " CN9.D_E_L_E_T_ = ' ' AND "
+_cQry += " CN9.CN9_FILIAL = '"+_pFil+"' AND "
+_cQry += " CN9.CN9_NUMERO = '"+_pNum+"' AND "
+_cQry += " CN9.CN9_REVISA = '"+_pRev+"' "
+
+dbUseArea(.T.,"TOPCONN",TcGenQry( ,, _cQry ),"QRYTRB",.F.,.T.)
+MemoWrite("C:\TEMP\"+FunName()+"_"+ProcName()+".txt" , _cQry)
+
+While QRYTRB->(!Eof())
+	If .T.		
+		DBSelectArea("ADY")
+		DBSetOrder(1)
+		If ADY->(DBSeek(QRYTRB->ADY_FILIAL+QRYTRB->ADY_PROPOS))
+			RecLock("ADY", .F.)
+			ADY->ADY_STATUS := 'Z'
+			ADY->(MsUnLock())
+		EndIf	
+		QRYTRB->(DBSkip())
+	EndIf 
+EndDo
+
+If Select('QRYTRB') > 0
+	DbSelectArea('QRYTRB')
+	QRYTRB->( dbCloseArea() )
+EndIf
+
+Return
+
+/*/{Protheus.doc} fAtSGTAc
+Função para marcar atendimento como aceito no SGT.
+@author Franklin Oliveira
+@since 11/03/2020
+@type function
+@history 10/03/2021, Franklin de Brito de Oliveira, Alterado filtro para considerar produtos da 
+filial 03=SENAI e 06=TODAS.
+/*/
+Static Function fAtSGTAc()
+Local cAliasTmp	:= ""	
+	If CN9->CN9_FILIAL == "03MT0018"
+		cAliasTmp := GetNextAlias()
+		BeginSql Alias cAliasTmp
+			SELECT
+			    CNB.R_E_C_N_O_ as CNBRECNO
+			FROM %Table:CNB% CNB
+			INNER JOIN %Table:SB1% SB1 ON
+				SB1.%NotDel%
+				AND SB1.B1_FILIAL = %xFilial:SB1%
+				AND SB1.B1_COD = CNB.CNB_PRODUT
+			WHERE
+				CNB.%NotDel%
+				AND CNB.CNB_FILIAL = %Exp:CN9->CN9_FILIAL%
+				AND CNB.CNB_CONTRA = %Exp:CN9->CN9_NUMERO%
+				AND CNB.CNB_REVISA = %Exp:CN9->CN9_REVISA%
+				AND SB1.B1_XPRDVEN = 'S'
+			    AND SB1.B1_TIPO = 'ST'
+			    AND SB1.B1_XPRDFIL IN ('03','06')		//01=FIEMT;02=SESI;03=SENAI;04=IEL;05=COND;06=TODAS
+		EndSql
+		(cAliasTmp)->( DbGoTop() )
+		If !(cAliasTmp)->( EoF() )
+			DbSelectArea("CNB")
+			While !(cAliasTmp)->( EoF() )
+				CNB->( DbGoTo((cAliasTmp)->(CNBRECNO)) )
+				RecLock("CNB", .F.)
+					Replace CNB->CNB_XACSGT With "1"
+					Replace CNB->CNB_XSGTAC With .F.
+				CNB->( MsUnlock() )
+				(cAliasTmp)->( DbSkip() )
+			EndDo
+		EndIf
+		(cAliasTmp)->( DbCloseArea() )
+		CNB->( DbCloseArea() )
+	EndIf
+Return Nil
+
+/*/{Protheus.doc} fAtSGTCo
+Função para marcar atendimento como concluido no SGT.
+@author Franklin Oliveira
+@since 12/03/2020
+@type function
+@history 10/03/2021, Franklin de Brito de Oliveira, Alterado filtro para considerar produtos da 
+filial 03=SENAI e 06=TODAS.
+/*/
+Static Function fAtSGTCo()
+Local cAliasTmp	:= ""	
+	If CN9->CN9_FILIAL == "03MT0018"
+		cAliasTmp := GetNextAlias()
+		BeginSql Alias cAliasTmp
+			SELECT
+			    CNB.R_E_C_N_O_ as CNBRECNO
+			FROM %Table:CNB% CNB
+			INNER JOIN %Table:SB1% SB1 ON
+				SB1.%NotDel%
+				AND SB1.B1_FILIAL = %xFilial:SB1%
+				AND SB1.B1_COD = CNB.CNB_PRODUT
+			WHERE
+				CNB.%NotDel%
+				AND CNB.CNB_FILIAL = %Exp:CN9->CN9_FILIAL%
+				AND CNB.CNB_CONTRA = %Exp:CN9->CN9_NUMERO%
+				AND CNB.CNB_REVISA = %Exp:CN9->CN9_REVISA%
+				AND SB1.B1_XPRDVEN = 'S'
+			    AND SB1.B1_TIPO = 'ST'
+			    AND SB1.B1_XPRDFIL IN ('03','06')		//01=FIEMT;02=SESI;03=SENAI;04=IEL;05=COND;06=TODAS
+		EndSql
+		(cAliasTmp)->( DbGoTop() )
+		If !(cAliasTmp)->( EoF() )
+			DbSelectArea("CNB")
+			While !(cAliasTmp)->( EoF() )
+				CNB->( DbGoTo((cAliasTmp)->(CNBRECNO)) )
+				RecLock("CNB", .F.)
+					Replace CNB->CNB_XCOSGT With "1"
+					Replace CNB->CNB_XSGTCO With .F.
+				CNB->( MsUnlock() )
+				(cAliasTmp)->( DbSkip() )
+			EndDo
+		EndIf
+		(cAliasTmp)->( DbCloseArea() )
+		CNB->( DbCloseArea() )
+	EndIf
+Return Nil
+
+/*/{Protheus.doc} fIncZJA
+Inclui dados da pesquisa de satisfação (tabela ZJA) Quando o contrato é vigenciado.
+@author Franklin de Brito de Oliveira
+@since 05/08/2020
+@type function
+/*/
+Static Function fIncZJA()
+Local cTpPessoa := ""
+	cTpPessoa := Posicione( "SA1", 1, xFilial("SA1") + CN9->CN9_CLIENT + CN9->CN9_LOJACL, "A1_PESSOA" )
+	If cTpPessoa $ GetNewPar("MV_XTPPSSQ","J")
+		BeginSQL Alias "aAlsZJA"
+			SELECT
+				AD1.AD1_FILIAL	AS FILIAL,
+				AD1.AD1_NROPOR	AS NROPOR,
+				AD1.AD1_VEND	AS VENDED,
+				AD9.AD9_CODCON  AS CONTAT,
+				ADJ.ADJ_PROD	AS SERVIC
+			FROM %Table:AD1% AD1
+			INNER JOIN %Table:AD9% AD9
+				ON AD9.AD9_FILIAL = AD1.AD1_FILIAL
+				AND AD9.AD9_NROPOR = AD1.AD1_NROPOR
+				AND AD9.%NotDel%
+			INNER JOIN %Table:ADJ% ADJ
+				ON ADJ.ADJ_FILIAL = AD1.AD1_FILIAL
+				AND ADJ.ADJ_NROPOR = AD1.AD1_NROPOR
+				AND ADJ.%NotDel%
+			WHERE
+				AD1.AD1_FILIAL = %Exp:xFilial("AD1")%
+				AND AD1.AD1_NROPOR = %Exp:CN9->CN9_XOPORT%
+				AND AD1.%NotDel%
+		EndSQL
+		aAlsZJA->(dbGoTop())
+
+		DbSelectArea("ZJA")
+		ZJA->(DbSetOrder(2))
+		lTem := ZJA->(MsSeek( xFilial("ZJA") + CN9->CN9_XOPORT ))
+		RecLock("ZJA", (!lTem))
+			ZJA_FILIAL	:= xFilial("ZJA")
+			If !lTem
+				ZJA_CODPES	:= GetSxeNum("ZJA", "ZJA_CODPES"); ZJA->(ConfirmSX8())
+			EndIf
+			ZJA_CLIENT	:= CN9->CN9_CLIENT
+			ZJA_LOJA	:= CN9->CN9_LOJACL
+			ZJA_OPORTU	:= CN9->CN9_XOPORT
+			ZJA_SERVIC	:= aAlsZJA->SERVIC
+			ZJA_TIPO	:= CN9->CN9_TPCTO
+			ZJA_CONTRA	:= CN9->CN9_NUMERO
+			ZJA_CONTAT	:= aAlsZJA->CONTAT
+			ZJA_CONSUL	:= aAlsZJA->VENDED
+			ZJA_DTINIC	:= CN9->CN9_XDTINI
+			ZJA_DTFINA	:= CN9->CN9_XDTFIM
+			ZJA_DTLIBE	:= DaySum(CN9->CN9_XDTFIM, GetMv("MV_XDIAAVA"))
+		ZJA->(MsUnlock())
+
+		aAlsZJA->(dbCloseArea())
+		ZJA->(dbCloseArea())
+	EndIf
+Return Nil
+
+/*/{Protheus.doc} fExcZJA
+Exclui dados da pesquisa de satisfação (tabela ZJA) Quando o contrato é cancelado.
+@author Franklin de Brito de Oliveira
+@since 05/08/2020
+@type function
+/*/
+Static Function fExcZJA()
+Local cTpPessoa := ""
+	cTpPessoa := Posicione( "SA1", 1, xFilial("SA1") + CN9->CN9_CLIENT + CN9->CN9_LOJACL, "A1_PESSOA" )
+	If cTpPessoa $ GetNewPar("MV_XTPPSSQ","J")
+		DbSelectArea("ZJA")
+		ZJA->(DbSetOrder(2))
+		If ZJA->(MsSeek( xFilial("ZJA") + CN9->CN9_XOPORT ))
+			RecLock("ZJA", .F.)
+					ZJA->(dbDelete())
+				ZJA->(MsUnlock())
+		EndIf
+		ZJA->(dbCloseArea())
+	EndIf
+Return Nil

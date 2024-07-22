@@ -1,0 +1,212 @@
+#Include 'Protheus.ch'
+#include "TOTVS.ch"
+
+/*/{Protheus.doc} SFVUSERA
+@description Permissão acesso dada por um superior ou usuário com permissão.
+@type  Function
+@author Alan Teles de Oliveira
+@since 19/12/2018
+@version 11.8
+@param p_cParam, 	characters, parâmetro a ser verificado o acesso
+@param p_cDefParam,	characters, valor default caso parâmetro não tenha sido criado
+@param p_cTitulo, 	characters, título da janela de diálogo
+@param p_cTipo, 	characters, Identifica se será verificada a permissão do usuário ao acesso ou ao grupo a qual o usuário pertence. Deve ser informado U para Usuário e G para grupo
+@return lRet, logico, caso liberado o acesso retorna verdadeiro
+
+/*/
+User Function SFVUSERA(p_cParam, p_cDefParam, p_cTitulo, p_cTipo)
+	
+	Local aArea 	:= GetArea()		
+	Local cUser 	:= ""
+	Local nOpc  	:= 0
+	Local nX		:= 0
+	Local lRet  	:= .f.
+	Local aGrupos   := {}
+    
+    Private oGRPUSR     := SFGRPUSR():New()	
+	Private cGetSenha   := Space(20)
+	Private cGetUser    := Space(25)
+	
+	SetPrvt("oDlgUser", "oSay1", "oSay2", "oGetUser", "oGetSenha", "oBtnOK")
+	
+	Default p_cParam    := "SF_XXX"
+    Default p_cDefParam := '000000'
+	Default p_cTitulo   := "Liberação padrão."
+	Default p_cTipo     := 'U'
+	
+	If p_cTipo == 'U'
+
+		cUser := GetNewPar(p_cParam, p_cDefParam)
+		
+		If __cUserID $ cUser
+
+			lRet := .t.
+
+		EndIf
+		
+	ElseIf p_cTipo == 'G'
+		
+		aGrupos := StrTokArr(GetNewPar(p_cParam, p_cDefParam), '|')
+		
+		For nX := 1 to Len(aGrupos)
+			
+			If oGRPUSR:ValidGroup(aGrupos[nX])
+				lRet := .t.
+				Exit
+			EndIf
+			
+		Next 
+				
+	EndIf
+	
+    If .not. lRet
+        
+        oDlgUser    := MSDialog():New(092, 232, 375, 460, p_cTitulo,,, .F.,,,,,, .T.,,, .T.)
+        oTBitmap    := TBitmap():New(004, 025, 128, 128,, "\imagens\Bloq.png", .T., oDlgUser,,, .F., .F.,,, .F.,, .T.,, .F.)
+        
+        oTBitmap:lAutoSize := .T.
+             
+        oSay1       := TSay():New(083, 004, {|| "Usuário"}, oDlgUser,,, .F., .F., .F., .T., CLR_BLACK, CLR_WHITE, 032, 008)
+        oSay2       := TSay():New(106, 004, {|| "Senha"},   oDlgUser,,, .F., .F., .F., .T., CLR_BLACK, CLR_WHITE, 032, 008)
+        
+        oGetUser    := TGet():New(091, 004, {|u| If(PCount() > 0, cGetUser  := u, cGetUser)},   oDlgUser, 108, 008, '', {|| If(RetUsr(), (oGetUser:Refresh(), SysRefresh(), ProcessMessage()), Nil)},  CLR_BLACK ,CLR_WHITE,,,, .T., "",,, .F., .F.,, .F., .F., "", "cGetUser",,)        
+        oGetSenha   := TGet():New(113, 004, {|u| If(PCount() > 0, cGetSenha := u, cGetSenha)},  oDlgUser, 108, 008, '',,                                                                                        CLR_BLACK, CLR_WHITE,,,, .T., "",,, .F., .F.,, .F., .T., "", "cGetSenha",,)
+        
+        oBtnOK      := TButton():New(123, 030, "Confirmar", oDlgUser, {|| nOpc := 1, oDlgUser:End()}, 061, 017,,,, .T.,, "",,,, .F.)
+        
+        oDlgUser:Activate(,,, .T.)
+        
+        If nOpc = 1 
+            
+            cUser := GetNewPar(p_cParam, p_cDefParam)
+            
+            If .not. Empty(cGetUser)
+
+                PswOrder(2)
+
+                If PswSeek(AllTrim(cGetUser), .T.)
+
+                    If PswName(cGetSenha)
+
+                        aUsr := PswRet(1)
+
+                        If p_cTipo == 'U'
+
+                            lRet := AllTrim(aUsr[1][1]) $ cUser .and. .not. (aUsr[1][17] .or. (aUsr[1][6] != StoD('') .and. aUsr[1][6] <= dDataBase))
+
+                        ElseIf p_cTipo == 'G'
+
+                            lRet := RetGroup(AllTrim(aUsr[1][1]), cUser) .and. .not. (aUsr[1][17] .or. (aUsr[1][6] != StoD('') .and. aUsr[1][6] <= dDataBase))
+
+                        EndIf
+                    EndIf
+                EndIf
+            EndIf
+        EndIf
+        
+        If !lRet
+            Aviso('Inválido!', 'Senha invalida ou usuário não autorizado a efetuar esta liberação!', {'OK'})
+        EndIf
+    EndIf
+
+	RestArea(aArea)
+	
+Return lRet
+
+
+/*/{Protheus.doc} RetUSR
+@description Se informar o código do usuário altera para o nome do mesmo
+@type  Static Function
+@author Alan Teles de Oliveira
+@since 19/12/2018
+@version 11.8
+@return lRet, logico, verdadeiro caso usuário informado seja localizado
+
+/*/
+Static Function RetUSR()
+
+	Local lRet	:= .T.
+	
+	If SoNumero(cGetUser)
+
+		cGetUser := StrZero(Val(AllTrim(cGetUser)), 6)
+	
+    	PswOrder(1)
+
+		If lRet := PswSeek(cGetUser)
+
+			aUsr        := PswRet(1)
+			cGetUser    := aUsr[1][2]			
+
+		EndIf
+
+	EndIf
+
+Return lRet
+
+
+/*/{Protheus.doc} RetGroup
+@description Valida se usuário está contido no grupo informado no parâmetro.
+@type function
+@author Alan Teles de Oliveira
+@since 19/12/2018
+@version 1.0
+@param p_cUser, 		character, código do usuário informado.
+@param p_cParametro,	character, relação de grupos contidos no parâmetro.
+@return lRet, logico, caso usuário pertença a algum dos grupos informados no parâmetro retorna verdadeiro.
+
+
+/*/
+Static Function RetGroup(p_cUser, p_cParametro)
+	
+	Local lRet 		:= .F.
+	Local cGrupos	:= ''
+	Local nX		:= 0
+	Local aGrupos 	:= {}
+	
+	cGrpos := oGRPUSR:GetGroup(p_cUser)
+	
+	aGrupos := StrTokArr(cGrpos, '|')
+	
+	For nX := 1 to Len(aGrupos)
+		
+		If aGrupos[nX] $ p_cParametro
+			
+			lRet := .T.
+
+			Exit
+			
+		EndIf
+		
+	Next nX
+	
+Return lRet
+
+
+/*/{Protheus.doc} SoNumero
+@description verifica se existem apenas números no parâmetro informado
+@type  Static Function
+@author Alan Teles de Oliveira
+@since 19/12/2018
+@version 11.8
+@param p_cString, character, o conteúdo a ser verificado
+@return lRet, logico, verdadeiro se existir apenas números  
+/*/
+Static Function SoNumero(p_cString)
+
+    Local nI      	:= 0
+    Local lRet      := .T.
+
+    For nI := 1 to Len(AllTrim(p_cString))
+
+        If .not. Substr(p_cString, nI, 1) $ '0123456789'
+
+            lRet := .F.
+
+            Exit
+
+        EndIf
+
+    Next 
+
+Return lRet

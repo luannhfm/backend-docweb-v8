@@ -1,0 +1,196 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "TOTVS.CH"
+#INCLUDE "RESTFUL.CH"
+
+A00_FILIAL
+
+
+
+A04_MSBLQL
+/*/{Protheus.doc} WSRESTFUL MEDERI
+Webservice de Integração Mederi
+@author Rafael Domingues
+@since 17.03.2023 
+/*/\\
+
+	
+X3_CAMPO :A00_FILIAL
+
+	
+X3_CAMPO :A00_FILIAL
+
+A1H
+WSRESTFUL MEDERI DESCRIPTION 'Mederi - Webservice de integrações' FORMAT APPLICATION_JSON
+	WSDATA tipo 	As STRING
+	WSDATA datade 	As STRING
+	WSDATA dataat 	As STRING
+
+	WSMETHOD POST cliente;
+		DESCRIPTION "Inclusão Cliente";
+		PATH '/fat/cliente';
+		WSSYNTAX '/fat/cliente';
+		PRODUCES APPLICATION_JSON
+
+	WSMETHOD POST fornecedor;
+		DESCRIPTION "Inclusão Fornecedor";
+		PATH '/com/fornecedor';
+		WSSYNTAX '/com/fornecedor';
+		PRODUCES APPLICATION_JSON
+
+	WSMETHOD POST ccusto;
+		DESCRIPTION "Inclusão Centro de Custo";
+		PATH '/ctb/ccusto';
+		WSSYNTAX '/ctb/ccusto';
+		PRODUCES APPLICATION_JSON
+
+	WSMETHOD POST creceber;
+		DESCRIPTION "Inclusão Contas a Receber";
+		PATH '/fin/creceber';
+		WSSYNTAX '/fin/creceber';
+		PRODUCES APPLICATION_JSON
+
+	WSMETHOD POST cpagar;
+		DESCRIPTION "Inclusão Contas a Pagar";
+		PATH '/fin/cpagar';
+		WSSYNTAX '/fin/cpagar';
+		PRODUCES APPLICATION_JSON
+
+	WSMETHOD POST lancacontabil;
+		DESCRIPTION "Inclusão Lançamentos Contábeis";
+		PATH '/ctb/lancacontabil';
+		WSSYNTAX '/ctb/lancacontabil';
+		PRODUCES APPLICATION_JSON
+
+	WSMETHOD GET consult;
+		DESCRIPTION "Consulta Baixa Títulos a Pagar/Receber";
+		PATH '/fin';
+		WSSYNTAX '/fin';
+		PRODUCES APPLICATION_JSON
+
+	WSMETHOD POST itcontabil;
+		DESCRIPTION "Inclusão Itens Contábeis";
+		PATH '/ctb/itcontabil';
+		WSSYNTAX '/ctb/itcontabil';
+		PRODUCES APPLICATION_JSON
+END WSRESTFUL
+
+/*/{Protheus.doc} WSRESTFUL MEDERI
+Integração Clientes
+@author Rafael Domingues
+@since 17.03.2023
+/*/
+WSMETHOD POST cliente WSSERVICE MEDERI
+	Local oJson			:= NIL
+	Local oJsonRet		:= NIL
+	Local nY			:= 0
+	Local nX			:= 0
+	Local nErr			:= 0
+	Local cErr			:= ""
+	Local _cCodAux 		:= ""
+	Local _cLojAux		:= ""
+	Local cRet			:= ""
+	Local cJsRet		:= ""
+	Local _cTime		:= Time()
+	Local aSA1Auto  	:= {}
+	Local nPosFil		:= 0
+	Local nPosCod		:= 0
+	Local nPosLoj		:= 0
+
+	Private lMsErroAuto		:= .F.
+	Private lMsHelpAuto		:= .T.
+	Private lAutoErrNoFile 	:= .T.
+	Private aErro 			:= {}
+
+	cBody := ::GetContent()
+	::SetContentType("application/json")
+	oJson := JsonObject():new()
+	cRet := oJson:fromJson(FwNoAccent(cBody))
+
+	If ValType(cRet) <> "U"
+		SetRestFault(400,EncodeUTF8("Estrutura json invalida"),.T.)
+		Return lMsErroAuto
+	EndIf
+
+	DbSelectArea("SA1")
+
+	names1 := oJson:GetNames()
+	names2 := oJson[names1[1]][1]:GetNames()
+
+	cJsRet := '{"CLIENTES": [
+
+	For nX := 1 To Len(oJson[names1[1]])
+		For nY := 1 To Len(names2)
+			If AllTrim(names2[nY]) == "A1_COD"
+				_cCodAux := oJson[names1[1]][nX][names2[nY]]
+				aAdd(aSA1Auto,{names2[nY], _cCodAux ,Nil})
+			ElseIf AllTrim(names2[nY]) == "A1_LOJA"
+				_cLojAux := oJson[names1[1]][nX][names2[nY]]
+				aAdd(aSA1Auto,{names2[nY], _cLojAux ,Nil})
+			Else
+				aAdd(aSA1Auto,{names2[nY], oJson[names1[1]][nX][names2[nY]] ,Nil})
+			EndIf
+		Next nY
+
+		nPosFil := aScan(aSA1Auto,{|x| Alltrim(x[1]) == 'A1_FILIAL' })
+		nPosCod := aScan(aSA1Auto,{|x| Alltrim(x[1]) == 'A1_COD' })
+		nPosLoj := aScan(aSA1Auto,{|x| Alltrim(x[1]) == 'A1_LOJA' })
+
+		lMsErroAuto := .F.
+
+		SA1->(DbSetOrder(1))
+		If SA1->(DbSeek(PadR(AllTrim(aSA1Auto[nPosFil][2]),TamSx3("A1_FILIAL")[1]) + PadR(AllTrim(aSA1Auto[nPosCod][2]),TamSx3("A1_COD")[1]) + PadR(AllTrim(aSA1Auto[nPosLoj][2]),TamSx3("A1_LOJA")[1])))
+			MSExecAuto({|_x, _y| CRMA980(_x, _y)}, aSA1Auto, 4) // Altera
+		Else
+			MSExecAuto({|_x, _y| CRMA980(_x, _y)}, aSA1Auto, 3) // Inclusao
+		EndIf
+
+		//Se não deu certo a inclusão, mostra a mensagem de erro
+		If lMsErroAuto
+			aErro := GetAutoGrLog()
+
+			For nErr := 1 To Len(aErro)
+				If At("Invalido",aErro[nErr])
+					cErr := aErro[nErr]
+					Exit
+				EndIf
+			Next nErr
+
+			cJsRet += '{'
+			cJsRet += '"A1_COD": "'+AllTrim(_cCodAux)+'",'
+			cJsRet += '"A1_LOJA": "'+AllTrim(_cLojAux)+'",'
+			cJsRet += '"CODRET": "400",'
+			cJsRet += '"MSGRET": "'+EncodeUTF8(NoAcento(cErr), "cp1252")+'" '
+			cJsRet += '},'
+		Else
+			cJsRet += '{'
+			cJsRet += '"A1_COD": "'+AllTrim(_cCodAux)+'",'
+			cJsRet += '"A1_LOJA": "'+AllTrim(_cLojAux)+'",'
+			cJsRet += '"CODRET": "001",'
+			cJsRet += '"MSGRET": "SUCESSO" '
+			cJsRet += '},'
+		EndIf
+	Next nX
+
+	If Substr( cJsRet, Len(cJsRet), 1 ) == ","
+		cJsRet := Substr( cJsRet, 1, Len(cJsRet) - 1 )
+	EndIf
+	cJsRet += ']}'
+
+	//Gravar o log com o resultado
+	DbSelectArea("SZ0")
+	SZ0->(RecLock("SZ0",.T.))
+	SZ0->Z0_FILIAL 	:= xFilial("SZ0")
+	SZ0->Z0_DTINTEG := Date()
+	SZ0->Z0_HORAINT := _cTime
+	SZ0->Z0_TIPOINT := "1"
+	SZ0->Z0_JSONIN 	:= cBody
+	SZ0->Z0_JSONOUT := cJsRet
+	SZ0->(MsUnLock())
+
+	// Devolve o retorno para o Rest
+	::SetResponse(cJsRet)
+
+	FreeObj(oJsonRet)
+	FreeObj(oJson)
+Return .T.

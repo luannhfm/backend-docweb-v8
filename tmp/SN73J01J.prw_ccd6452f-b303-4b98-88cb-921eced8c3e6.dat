@@ -1,0 +1,736 @@
+#Include 'Protheus.ch'
+#Include 'Topconn.ch'
+#Include 'Tbiconn.ch'
+
+/*/{Protheus.doc} SN73J01J
+Funcao responsavel por realizar integracao de Produtos Sige / SGE X Protheus
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	20/10/2015
+@version 	1.0
+@return 	Nil, Nulo
+@history 23/07/2019, Franklin de Brito de Oliveira, Removido validação se o job está ativo. 
+/*/
+User Function SN73J01J( _aParams )
+	
+	Local _aArea	:= GetArea()
+	
+	Private _cAliasRM := ""
+
+	ConOut(" ")
+  	ConOut(Replicate("=",80))
+	ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ': Iniciando Integracao de Produtos SGE x Protheus')	
+	ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Empresa: "+ cEmpAnt)   
+	ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Filial: "+ cFilAnt)
+	
+	//Bloqueia a tabela de importacao
+  	AtuaZZA('N')
+  	
+  	_cAliasRM := AllTrim(GetNewPar("MV_XSGEABD", ""))
+  	
+	/* Realiza a importacao dos produtos SIGE */	
+	If Empty(_cAliasRM)
+		IMPSB1()
+	Else
+		IMPSB1SGE()
+	EndIf
+	
+	//Desbloqueia a tabela de importacao
+  	AtuaZZA('S')
+	
+	ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ': Finalizando Integracao de Produtos SGE x Protheus')
+	ConOut(Replicate("=",80))
+	ConOut(" ")
+			
+	RestArea( _aArea )
+	
+Return
+
+
+/** {Protheus.doc} IMPSB1
+Funcao que realiza a importacao do cliente
+
+@author: 	Jose Leite de Barros Neto
+@since: 	20/10/2015
+@Uso: 		SFIEMT
+*/
+Static Function IMPSB1()
+	
+	Local _cDbSql		:= SuperGetMV("MV_XDBSIGE")
+	Local _cSrvSql		:= SuperGetMV("MV_XSRVSIG") 
+	Local _nContador 	:= 0
+	Local _cQuery		:= ""
+	Local _cQuery2		:= ""
+	Local _cCodigo 		:= ""
+	Local _cXCodSige	:= ""
+	Local _cDesc			:= ""
+	Local _cTipo			:= GetNewPar('MV_XTPSIGE','ED')
+	Local _cUndM			:= GetNewPar('MV_XUMSIGE','VG')
+	Local _cContaC		:= ""
+	Local _cItemC		:= ""
+	Local _cGrupo		:= GetNewPar('MV_XGPSIGE','0053')
+	Local _cLocPad		:= "01"
+	Local _cGarant 		:= "2"
+	Local _cXPrdVen 	:= "S" 
+	Local _cXPrdFil 	:= "03"
+	Local _cXOrigem		:= "Importacao - "+ DtoC(dDataBase) +" - " + AllTrim(Time())
+	Local _cDirLog		:= GetNewPar( "MV_SLOCERR", "\xml\retorno\senai\log\")
+	Local _lExecuta 	:= .F.
+	Local _nSaveSx8		:= 0
+	
+	Private lMsErroAuto	:= .F.
+	Private nHndSql			:= 0
+	Private nHErp 			:= AdvConnection()
+	
+	//Conecta no Sige
+	nHndSql := TcLink(_cDbSql,_cSrvSql,7890)
+	ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Conectando ao Banco Sige")
+	
+	If nHndSql < 0
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Erro ("+ str(nHndSql,4) +") ao conectar com "+ _cDbSql +" em "+ _cSrvSql)
+	Endif
+	
+	If .Not. TCSetConn(nHndSql)
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Houve problema na troca de conexao para o Ambiente, contate o Administrador")
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Processo Finalizado")
+		Return
+	EndIf
+
+	ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": MSSQL Server conectado - Handler"+ str(nHndSql,4))
+	
+	If Select("TMP") > 0
+		DbSelectarea("TMP")
+		TMP->(DbCloseArea())
+	Endif
+		
+	_cQuery := " SELECT 	COD_SIGE AS B1_XPRDSIG,					"
+	_cQuery += " 			CH_CURSO AS B1_XCHSIGE,					"
+	_cQuery += "				COD_TIPO AS B1_TIPO,						"
+	_cQuery += "				COD_UNIDADE_MEDIDA AS B1_UM,			"
+	_cQuery += "				COD_GRUPO AS B1_GRUPO,					"
+	_cQuery += " 			TITULO_PRODUTO AS B1_DESC,				"
+	_cQuery += " 			COD_CONTA_CONTABIL AS B1_CONTA,			"
+	_cQuery += " 			COD_ITEM_CONTABIL AS B1_ITEMCC,			"
+	_cQuery += " 			COD_AREA_ATUACAO AS B1_XAREA,			"
+	_cQuery += " 			DESC_AREA_ATUACAO AS B1_XAREADS,		"
+	_cQuery += " 			CONVERT(varchar(8000),PRE_REQUISITO) AS B1_XPREREQ,			"
+	_cQuery += " 			STATUS AS B1_XBLSIGE,						"
+	_cQuery += " 			CONVERT(varchar(8000), UNIDADES_CURRICULARES) AS B1_XSIGUNC	, "
+	_cQuery += "				IMP_PROTHEUS AS IMPPROT,													" 
+	_cQuery += "				IMP_PROTHEUS_DATA AS IMPPROTDT											" 
+	_cQuery += " FROM  [dbo].[VISAO_CURSOS_CRM]										"
+	_cQuery += " WHERE	(IMP_PROTHEUS = 'N' and STATUS = 1)						" 
+	_cQuery += " 		OR IMP_PROTHEUS = 'A'											"
+	_cQuery += " ORDER BY COD_SIGE														"
+	
+	TCQUERY _cQuery NEW ALIAS "TMP"
+	
+	If (TCSQLExec(_cQuery) < 0)
+		TMP->(DbCloseArea())
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": TCSQLError() " + TCSQLError())
+    	Return
+	EndIf
+	
+	If .Not. TMP->( Eof() )
+		
+		DbSelectArea('TMP')
+		TMP->( DbGoTop() )
+		
+		While .Not. TMP->( EOF() )
+			
+			//B1_COD
+			_cCodigo := ""
+			
+			//B1_XCHSIGE
+			_nCrgHora := TMP->B1_XCHSIGE
+			
+			//B1_XPRDSIG
+			_cXCodSige := AllTrim(cValToChar(TMP->B1_XPRDSIG))
+			
+			//B1_DESC
+			_cDesc := Upper(FwNoAccent(AllTrim(TMP->B1_DESC)))
+			
+			//B1_TIPO
+			_cTipo := AllTrim(TMP->B1_TIPO)
+			
+			//B1_UM
+			_cUndM := AllTrim(TMP->B1_UM)
+			
+			//B1_GRUPO
+			_cGrupo := AllTrim(TMP->B1_GRUPO)
+			
+			//B1_CONTA
+			_cContaC := AllTrim(TMP->B1_CONTA)
+			
+			//B1_ITEMCC
+			_cItemC := AllTrim(TMP->B1_ITEMCC)
+			
+			//B1_XAREA
+			_cArea := cValToChar(TMP->B1_XAREA)
+			
+			//B1_XAREADS
+			_cAreaDsc := FwNoAccent(AllTrim(TMP->B1_XAREADS))
+			
+			//B1_XPREREQ
+			_cPreReq := FwNoAccent(AllTrim(TMP->B1_XPREREQ))
+			
+			//B1_XBLSIGE
+			_cStSige := cValToChar(TMP->B1_XBLSIGE)
+			
+			//B1_XSIGUNC
+			_cUnCurr := FwNoAccent(AllTrim(TMP->B1_XSIGUNC))
+			
+			//ImpProt
+			_cImpProt := TMP->IMPPROT
+			
+			TCSetConn(nHErp)
+			
+			If Select("TRA") > 0
+				DbSelectarea("TRA")
+				TRA->(DbCloseArea())
+			EndIf
+			
+			_cQuery2 := " SELECT B1_COD, B1_DESC, B1_XPRDSIG"
+			_cQuery2 += "  FROM "+ RETSQLNAME("SB1")
+			_cQuery2 += " WHERE	B1_XPRDSIG 		= '"+ _cXCodSige +"'	"
+			_cQuery2 += "      	AND D_E_L_E_T_ <> '*'						"
+			
+			TCQUERY _cQuery2 NEW ALIAS "TRA"
+			
+			_lExecuta := .F.
+			
+			If .Not. EMPTY(TRA->(B1_XPRDSIG))
+				If _cImpProt == 'A'
+					_nOpc := 4
+					_cCodigo := TRA->(B1_COD)
+					_lExecuta := .T.
+				EndIf
+			Else
+				If _cStSige == '1' .And. _cImpProt == 'N'
+					_nSaveSx8	:= GetSx8Len()
+					_nOpc		:= 3
+					//_cCodigo	:= GetSX8Num("SB1","B1_COD") //GetNumSB1()
+					_lExecuta	:= .T.
+				EndIf
+			EndIf
+			
+			If _lExecuta
+			
+				_aProduto := {}
+				
+				If _nOpc == 4
+					aAdd( _aProduto ,{"B1_COD"   	,_cCodigo		,Nil}) // Codigo
+					aAdd( _aProduto ,{"B1_MSBLQL"	,'1'			,Nil}) // Bloqueio de Tela
+					aAdd( _aProduto ,{"B1_XATIVO"	,_cStSige		,Nil}) // Informa Produto Ativo SIGE
+					aAdd( _aProduto ,{"B1_XBLSIGE"	,_cStSige		,Nil}) // Informa Produto Ativo SIGE
+				Else
+					//aAdd( _aProduto ,{"B1_COD"   	,_cCodigo		,Nil}) // Codigo
+					aAdd( _aProduto ,{"B1_DESC"  	,_cDesc		,Nil}) // Descricao
+					aAdd( _aProduto ,{"B1_TIPO"  	,_cTipo		,Nil}) // Tipo
+					aAdd( _aProduto ,{"B1_UM"  		,_cUndM		,Nil}) // Unidade de Medida
+					aAdd( _aProduto ,{"B1_SEGUM"	,'UN'			,Nil}) // Unidade de Medida
+					aAdd( _aProduto ,{"B1_CONTA" 	,_cContaC		,Nil}) // Conta Contabil
+					aAdd( _aProduto ,{"B1_ITEMCC"	,_cItemC		,Nil}) // Item Contabil
+					aAdd( _aProduto ,{"B1_GRUPO" 	,_cGrupo		,Nil}) // Grupo de Produtos
+					aAdd( _aProduto ,{"B1_LOCPAD" 	,_cLocPad		,Nil}) // Local Padrao
+					aAdd( _aProduto ,{"B1_GARANT"  	,_cGarant		,Nil}) // Garantia
+					aAdd( _aProduto ,{"B1_MSBLQL"  	,'1'			,Nil}) // Bloqueio de Tela
+					aAdd( _aProduto ,{"B1_XATIVO"	,_cStSige		,Nil}) // Informa Produto Ativo SIGE
+					aAdd( _aProduto ,{"B1_XBLSIGE"	,_cStSige		,Nil}) // Informa Produto Ativo SIGE
+					aAdd( _aProduto ,{"B1_XPRDVEN" 	,_cXPrdVen	,Nil}) // Produto de Venda?
+					aAdd( _aProduto ,{"B1_XPRDFIL" 	,_cXPrdFil	,Nil}) // Produto vinculado a empresa
+					aAdd( _aProduto ,{"B1_XORIGEM" 	,_cXOrigem	,Nil}) // Origem da Informacao
+					aAdd( _aProduto ,{"B1_XXDESCR" 	,_cDesc		,Nil}) // Descricao complementar
+					aAdd( _aProduto ,{"B1_XPRDSIG" 	,_cXCodSige	,Nil}) // ID SIGE
+					aAdd( _aProduto ,{"B1_XCHSIGE" 	,_nCrgHora	,Nil}) // Carga Horaria
+					aAdd( _aProduto ,{"B1_XAREA" 	,_cArea		,Nil}) // Area de Atuacao
+					aAdd( _aProduto ,{"B1_XAREADS" 	,_cAreaDsc	,Nil}) // Descricao da Area de Atuacao
+					aAdd( _aProduto ,{"B1_XPREREQ" 	,_cPreReq		,Nil}) // Pre requisito do Curso
+					aAdd( _aProduto ,{"B1_XBLSIGE" 	,_cStSige		,Nil}) // Status Sige
+					aAdd( _aProduto ,{"B1_XSIGUNC" 	,_cUnCurr		,Nil}) // Unidade Curricular
+				EndIf
+				
+				lMsErroAuto := .F.
+				
+				DbSelectArea("SB1")
+				SB1->(DbSetOrder(1))
+				SB1->(DbGoTop())
+				
+				Begin Transaction
+		
+					MSExecAuto({|x,y| Mata010(x,y)},_aProduto,_nOpc) //3- Inclusão, 4- Alteração, 5- Exclusão
+					
+					If lMsErroAuto
+						MostraErro(_cDirLog, "Produto_"+_cCodigo+".LOG")
+						While GetSX8Len() > _nSaveSx8
+							RollBackSX8()
+						EndDo
+						DisarmTransaction()
+					Else
+						ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": O Produto Sige "+ _cXCodSige +" - Produto Protheus "+ _cCodigo +" incluido com sucesso.")
+						While GetSX8Len() > _nSaveSx8
+			        		ConfirmSX8()
+				    	EndDo
+						DbSelectArea("SB5")
+						SB5->( DbSetOrder(1) )//B5_FILIAL+B5_COD
+						If .Not. SB5->( DbSeek( xFilial("SB5") + _cCodigo) )
+							If RecLock("SB5", .T.)
+								SB5->B5_COD 	:= _cCodigo
+								SB5->B5_CEME	:= _cDesc
+							EndIf
+							SB5->(MsUnlock())
+						EndIf
+						
+						SB5->( DbCloseArea() )
+						
+						//Atualiza registro como importado no banco do Sige
+						AtuSige( _cXCodSige )
+						
+					EndIf
+				
+				End Transaction
+				
+				SB1->( DbCloseArea() )
+				_nContador++
+			Else
+				ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Skip()")
+			EndIf
+			
+			TMP->(DbSkip())
+		End
+	Else
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Nao existem produtos a serem Integrados!")
+	EndIf
+	
+	TMP->(DbCloseArea())
+	
+	TcUnLink(nHndSql)
+
+Return
+
+
+/** {Protheus.doc} AtuSige
+Funcao que realiza atualizacao do produto na base do SIGE
+
+@param: 	p_cCodPrd, Codigo do Produto Sige
+@author: 	Jose Leite de Barros Neto
+@since: 	20/10/2015
+@Uso: 		SFIEMT
+*/
+Static Function AtuSige( p_cCodPrd )
+	
+	Local _cSttm := ''
+	Local _cDtHr := DtoC(dDataBase) +" - " + AllTrim(Time())
+	
+	TCSetConn(nHndSql)
+	
+	_cSttm := "	UPDATE [dbo].[SIG_CURSO]								"
+	_cSttm += "		SET 	IMP_PROTHEUS = 'S', 						"
+	_cSttm += "				IMP_PROTHEUS_DATA = GETDATE()" //'"+ _cDtHr  +"'	"
+	_cSttm += "	WHERE CURS_ID = "+ cValToChar(p_cCodPrd)
+	
+	If (TCSQLExec(_cSttm) < 0)
+   		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": TCSQLError() " + TCSQLError())
+	Else
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": SIGE -> Produto: " + p_cCodPrd + " importado = " + DtoC(dDataBase) +" - " + AllTrim(Time()))
+	EndIf
+	
+Return( Nil )
+
+
+/** {Protheus.doc} IMPSB1SGE
+Funcao para importar / atualizar os produtos do SGE no Protheus
+
+@param: 	<Nil>
+@author 	Jose Leite de Barros Neto
+@since 	10/11/2016
+@Uso: 		SFIEMT
+*/
+/*
+	Franklin B. Oliveira	23/03/2018
+	Removido vinculos com o campo VISAO_CURSOS_CRM.COD_SIGE x SB1.B1_XPRDSIG
+*/
+Static Function IMPSB1SGE()
+	
+	Local _nContador 	:= 0
+	Local _cQuery		:= ""
+	Local _cQuery2		:= ""
+	Local _cCodigo 		:= ""
+	Local _cXPrdSge		:= ""
+	Local _cXCodSige	:= ""
+	Local _cDesc			:= ""
+	Local _cTipo			:= GetNewPar('MV_XTPSIGE','ED')
+	Local _cUndM			:= GetNewPar('MV_XUMSIGE','VG')
+	Local _cContaC		:= ""
+	Local _cItemC		:= ""
+	Local _cGrupo		:= GetNewPar('MV_XGPSIGE','0053')
+	Local _cLocPad		:= "01"
+	Local _cGarant 		:= "2"
+	Local _cXPrdVen 	:= "S" 
+	Local _cXPrdFil 	:= "03"
+	Local _cXColSge 	:= "3"
+	Local _cXOrigem		:= "Importacao - "+ DtoC(dDataBase) +" - " + AllTrim(Time())
+	Local _cDirLog		:= GetNewPar( "MV_SLOCERR", "\xml\retorno\senai\log\")
+	Local _lExecuta 	:= .F.
+	Local _nSaveSx8		:= 0
+	
+	Private lMsErroAuto	:= .F.
+	
+	If Select("TMP") > 0
+		DbSelectarea("TMP")
+		TMP->(DbCloseArea())
+	Endif
+		
+	_cQuery := " SELECT 	CODIGO_CURSO AS B1_XPRDSGE, "+ CRLF
+	//_cQuery += "         	COD_SIGE AS B1_XPRDSIG, "+ CRLF
+	_cQuery += " 			CH_CURSO AS B1_XCHSIGE, "+ CRLF
+	_cQuery += "				COD_TIPO AS B1_TIPO, "+ CRLF
+	_cQuery += "				COD_UNIDADE_MEDIDA AS B1_UM, "+ CRLF
+	_cQuery += "				COD_GRUPO AS B1_GRUPO, "+ CRLF
+	_cQuery += " 			TITULO_PRODUTO AS B1_DESC, "+ CRLF
+	_cQuery += " 			COD_CONTA_CONTABIL AS B1_CONTA, "+ CRLF
+	_cQuery += " 			CODITEM_CONTABIL AS B1_ITEMCC, "+ CRLF
+	_cQuery += " 			COD_AREA_ATUACAO AS B1_XAREA, "+ CRLF
+	_cQuery += " 			DESC_AREA_ATUACAO AS B1_XAREADS, "+ CRLF
+	_cQuery += " 			PRE_REQUISITO AS B1_XPREREQ, "+ CRLF
+	_cQuery += " 			STATUS AS B1_XBLSIGE, "+ CRLF
+	_cQuery += " 			UNIDADES_CURRICULARES AS B1_XSIGUNC, "+ CRLF
+	_cQuery += "				IMP_PROTHEUS AS IMPPROT, "+ CRLF 
+	_cQuery += "				IMP_PROTHEUS_DATA AS IMPPROTDT "+ CRLF 
+	_cQuery += " FROM  RM.VISAO_CURSOS_CRM"+ _cAliasRM
+	_cQuery += " WHERE	(IMP_PROTHEUS = 'N' AND STATUS = 1) "+ CRLF 
+	_cQuery += " 		OR (IMP_PROTHEUS = 'A') "+ CRLF
+	_cQuery += " ORDER BY COD_SIGE "+ CRLF
+	
+	TCQUERY _cQuery NEW ALIAS "TMP"
+	
+	If .Not. TMP->( Eof() )
+		
+		DbSelectArea('TMP')
+		TMP->( DbGoTop() )
+		
+		While .Not. TMP->( EOF() )
+			
+			//B1_COD
+			_cCodigo := ""
+			
+			//B1_XCHSIGE
+			_nCrgHora := TMP->B1_XCHSIGE
+			
+			//B1_XPRDSGE
+			_cXPrdSge := AllTrim(TMP->B1_XPRDSGE)
+			
+			//B1_XPRDSIG
+			//_cXCodSige := AllTrim(cValToChar(TMP->B1_XPRDSIG))
+			
+			//B1_DESC
+			_cDesc := Upper(FwNoAccent(AllTrim(TMP->B1_DESC)))
+			
+			//B1_TIPO
+			_cTipo := AllTrim(TMP->B1_TIPO)
+			
+			//B1_UM
+			_cUndM := AllTrim(TMP->B1_UM)
+			
+			//B1_GRUPO
+			_cGrupo := AllTrim(TMP->B1_GRUPO)
+			
+			//B1_CONTA
+			_cContaC := AllTrim(TMP->B1_CONTA)
+			
+			//B1_ITEMCC
+			_cItemC := AllTrim(TMP->B1_ITEMCC)
+			
+			//B1_XAREA
+			_cArea := cValToChar(TMP->B1_XAREA)
+			
+			//B1_XAREADS
+			_cAreaDsc := FwNoAccent(AllTrim(TMP->B1_XAREADS))
+			
+			//B1_XPREREQ
+			_cPreReq := FwNoAccent(AllTrim(TMP->B1_XPREREQ))
+			
+			//B1_XBLSIGE
+			_cStSige := cValToChar(TMP->B1_XBLSIGE)
+			
+			//B1_XSIGUNC
+			_cUnCurr := FwNoAccent(AllTrim(TMP->B1_XSIGUNC))
+			
+			//B1_XPRCMAX
+			_nPrcMax := 40
+			
+			//ImpProt
+			_cImpProt := TMP->IMPPROT
+			
+			If Select("TRA") > 0
+				DbSelectarea("TRA")
+				TRA->(DbCloseArea())
+			EndIf
+			
+			_cQuery2 := " SELECT B1_COD, B1_DESC, B1_XPRDSIG, B1_XPRDSGE "
+			_cQuery2 += "  FROM "+ RETSQLNAME("SB1")
+			/*_cQuery2 += " WHERE	(B1_XPRDSIG = '"+ _cXCodSige +"'		"
+			_cQuery2 += "      	OR B1_XPRDSGE = '"+ _cXPrdSge +"')	"
+			*/ 
+			_cQuery2 += " WHERE	B1_XPRDSGE = '"+ _cXPrdSge +"'		"
+			_cQuery2 += "      	AND D_E_L_E_T_ <> '*'					"
+			
+			TCQUERY _cQuery2 NEW ALIAS "TRA"
+			
+			_lExecuta := .F.
+			
+			//If .Not. EMPTY(TRA->(B1_XPRDSIG)) .OR. .Not. EMPTY(TRA->(B1_XPRDSGE))
+			If .Not. EMPTY(TRA->(B1_XPRDSGE))
+				_cCodigo := TRA->B1_COD
+				_nOpc := 4
+				_lExecuta := .T.
+			Else
+				_nSaveSx8	:= GetSx8Len()
+				_nOpc		:= 3
+				_lExecuta	:= .T.
+			EndIf
+			
+			TRA->(DbCloseArea())
+			
+			If _lExecuta
+			
+				_aProduto := {}
+				
+				If _nOpc == 4
+					aAdd( _aProduto ,{"B1_COD"   	,_cCodigo			,Nil}) // Codigo
+				EndIf
+				
+				aAdd( _aProduto ,{"B1_DESC"  	,_cDesc			,Nil}) // Descricao
+				aAdd( _aProduto ,{"B1_TIPO"  	,_cTipo			,Nil}) // Tipo
+				aAdd( _aProduto ,{"B1_UM"  		,_cUndM			,Nil}) // Unidade de Medida
+				aAdd( _aProduto ,{"B1_SEGUM"	,'UN'				,Nil}) // Segunda Unidade de Medida
+				aAdd( _aProduto ,{"B1_CONTA" 	,_cContaC			,Nil}) // Conta Contabil
+				aAdd( _aProduto ,{"B1_ITEMCC"	,_cItemC			,Nil}) // Item Contabil
+				aAdd( _aProduto ,{"B1_GRUPO" 	,_cGrupo			,Nil}) // Grupo de Produtos
+				aAdd( _aProduto ,{"B1_LOCPAD" 	,_cLocPad			,Nil}) // Local Padrao
+				aAdd( _aProduto ,{"B1_GARANT"  	,_cGarant			,Nil}) // Garantia
+				aAdd( _aProduto ,{"B1_MSBLQL"  	,_cStSige			,Nil}) // Bloqueio de Tela
+				aAdd( _aProduto ,{"B1_XATIVO"	,_cStSige			,Nil}) // Informa Produto Ativo SIGE
+				aAdd( _aProduto ,{"B1_XBLSIGE"	,_cStSige			,Nil}) // Informa Produto Ativo SIGE
+				aAdd( _aProduto ,{"B1_XPRDVEN" 	,_cXPrdVen		,Nil}) // Produto de Venda?
+				aAdd( _aProduto ,{"B1_XPRDFIL" 	,_cXPrdFil		,Nil}) // Produto vinculado a empresa
+				aAdd( _aProduto ,{"B1_XCOLSGE" ,_cXColSge		,Nil}) // Coligada SGE
+				aAdd( _aProduto ,{"B1_XORIGEM" 	,_cXOrigem		,Nil}) // Origem da Informacao
+				aAdd( _aProduto ,{"B1_XXDESCR" 	,_cDesc			,Nil}) // Descricao complementar
+				//aAdd( _aProduto ,{"B1_XPRDSIG" 	,_cXCodSige		,Nil}) // ID SIGE
+				aAdd( _aProduto ,{"B1_XPRDSGE" 	,_cXPrdSge		,Nil}) // ID SGE
+				aAdd( _aProduto ,{"B1_XCHSIGE" 	,_nCrgHora		,Nil}) // Carga Horaria
+				aAdd( _aProduto ,{"B1_XAREA" 	,_cArea			,Nil}) // Area de Atuacao
+				aAdd( _aProduto ,{"B1_XAREADS" 	,_cAreaDsc		,Nil}) // Descricao da Area de Atuacao
+				aAdd( _aProduto ,{"B1_XPREREQ" 	,_cPreReq			,Nil}) // Pre requisito do Curso
+				aAdd( _aProduto ,{"B1_XSIGUNC" 	,_cUnCurr			,Nil}) // Unidade Curricular
+				aAdd( _aProduto ,{"B1_XPRCMAX" 	,_nPrcMax			,Nil}) // Percentual maximo de desconto
+				
+				DbSelectArea("SB1")
+				SB1->(DbSetOrder(1))
+				SB1->(DbGoTop())
+				
+				lMsErroAuto := .F.
+				
+				Begin Transaction
+		
+					MSExecAuto({|x,y| Mata010(x,y)},_aProduto,_nOpc) //3- Inclusão, 4- Alteração, 5- Exclusão
+					
+					If lMsErroAuto
+						MostraErro(_cDirLog, "Produto_"+_cCodigo+".LOG")
+						While GetSX8Len() > _nSaveSx8
+							RollBackSX8()
+						EndDo
+						DisarmTransaction()
+					Else
+						While GetSX8Len() > _nSaveSx8
+			        		ConfirmSX8()
+				    	EndDo
+						//Atualiza registro como importado no banco do SGE
+						AtuSge(_cXCodSige, _cXPrdSge)
+					EndIf
+				
+				End Transaction
+				
+				/* Jose Leite - CSI - 29/03/2017
+					Gravar o complemento do produto(SB5) se nao tiver erro na inclusao
+					do produto (SB1)
+				*/
+				If .Not. lMsErroAuto
+					
+					If Select("TRA") > 0
+						DbSelectarea("TRA")
+						TRA->(DbCloseArea())
+					EndIf
+					
+					_cQuery2 := " SELECT B1_COD, B1_XPRDSGE "
+					_cQuery2 += "  FROM "+ RETSQLNAME("SB1")
+					_cQuery2 += " WHERE B1_XPRDSGE = '"+ _cXPrdSge +"' " 
+					_cQuery2 += "      	AND D_E_L_E_T_ <> '*'			 "
+					
+					TCQUERY _cQuery2 NEW ALIAS "TRA"
+					
+					_cCodigo := TRA->B1_COD
+					
+					TRA->(DbCloseArea())
+					
+					If _nOpc == 3
+						ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": O Produto Sge "+ _cXPrdSge +" - Produto Protheus "+ _cCodigo +" incluido com sucesso.")
+					ElseIf _nOpc == 4
+						ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": O Produto Sge "+ _cXPrdSge +" - Produto Protheus "+ _cCodigo +" alterado com sucesso.")
+					Else
+						ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": O Produto Sge "+ _cXPrdSge +" - Produto Protheus "+ _cCodigo +" status nao tratado.")
+					EndIf
+					
+					DbSelectArea("SB5")
+					SB5->( DbSetOrder(1) )//B5_FILIAL+B5_COD
+					If .Not. SB5->( DbSeek( xFilial("SB5") + _cCodigo) )
+						If RecLock("SB5", .T.)
+							SB5->B5_COD 	:= _cCodigo
+							SB5->B5_CEME	:= _cDesc
+						EndIf
+						SB5->(MsUnlock())
+					EndIf
+					
+					SB5->( DbCloseArea() )
+				EndIf
+				
+				_nContador++
+				SB1->(DbCloseArea())
+			Else
+				ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Skip()")
+			EndIf
+			
+			TMP->(DbSkip())
+		End
+	Else
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Nao existem produtos a serem Integrados!")
+	EndIf
+	
+	TMP->(DbCloseArea())
+	
+Return
+
+
+/** {Protheus.doc} AtuSge
+Funcao que realiza atualizacao do produto na base do SGE
+
+@param: 	p_cCodPrd, Codigo do Produto Sige
+@param: 	p_cCodSge, Codigo do Produto SGE
+@author: 	Jose Leite de Barros Neto
+@since: 	10/11/2016
+@Uso: 		SFIEMT
+*/
+Static Function AtuSge( p_cCodPrd, p_cCodSge )
+	
+	Local _cSttm := ''
+	
+	_cSttm := "	UPDATE RM.SCURSO_PROTHEUS" + _cAliasRM
+	_cSttm += "		SET 	IMP_PROTHEUS = 'S', 				  "
+	_cSttm += "				IMP_PROTHEUS_DATA = SYSTIMESTAMP "
+	_cSttm += "	WHERE CODCOLIGADA = 3 " 
+	_cSttm += "	AND CODCURSO = '"+ p_cCodSge +"' "
+	_cSttm += "	OR CODSIGE = '"+ p_cCodPrd +"' "
+	
+	If (TCSQLExec(_cSttm) < 0)
+   		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": TCSQLError() " + TCSQLError())
+	Else
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": SGE -> Produto: " + p_cCodSge + " importado = " + DtoC(dDataBase) +" - " + AllTrim(Time()))
+	EndIf
+	
+Return( Nil )
+
+/*/{Protheus.doc} JobAtivo
+Função que verifica se o job está ativo.
+
+@author 	Jose Leite de Barros Neto
+@since 	15/09/2015
+@version 	1.0
+
+@return lRet, Logico
+
+/*/
+Static function JobAtivo()
+  
+	Local cQuery := ''
+	Local lRet := .F.
+  
+	If Select('TMP') > 0
+		TMP->(DbCloseArea())
+	EndIf
+ 
+	cQuery := " SELECT ZZA_STATUS "
+	cQuery += " FROM "+RetSqlName("ZZA")
+	cQuery += " WHERE D_E_L_E_T_ != '*' "
+	cQuery += " AND   ZZA_TIPO    = '6' "
+ 
+	TcQuery cQuery New Alias 'TMP'
+ 
+	If TMP->ZZA_STATUS == 'S'
+		lRet := .T. 
+	EndIf
+	
+	TMP->(DbCloseArea())
+
+Return( lRet )
+
+/*/{Protheus.doc} AtuaZZA
+Função responsável por bloquear/desbloquear a tabela de importacao
+
+@author 	Jose Leite de Barros Neto
+@since 	19/08/2015
+@version 	1.0
+
+@return Nil
+/*/
+Static Function AtuaZZA(p_cBloq)
+	
+	Local cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ":" 
+	
+	cMsg += If(p_cBloq == 'N','Bloqueando ZZA.', 'Liberando ZZA.')
+	
+	Begin Transaction
+		
+		DbSelectArea("ZZA")
+		ZZA->( DbSetOrder(1) )
+		If ZZA->( DbSeek(xFilial("ZZA") + p_cBloq + "6") )
+	   		If RecLock("ZZA",.F.)
+				ZZA->ZZA_STATUS := IIF( p_cBloq == 'N','S','N')
+				ZZA->ZZA_DATA   := dDataBase
+				ZZA->ZZA_HORA   := Time()
+				ZZA->( MsUnlock() )
+		   EndIf
+		EndIf
+		
+		ZZA->( DbCloseArea() )
+		
+	End Transaction
+	
+	ConOut(cMsg)
+	
+Return( Nil )
+
+/*/{Protheus.doc} Scheddef
+@description No novo Schedule existe uma forma para a definição 
+	dos Perguntes para o botão Parâmetros, além do cadastro das funções no SXD.
+@author Franklin de Brito de Oliveira
+@since 23/07/2019
+@return aReturn[1] - Tipo: "P" - para Processo, "R" -  para Relatórios
+@return aReturn[2] - Nome do Pergunte
+@return aReturn[3] - Alias  (para Relatório)
+@return aReturn[4] - Array de ordem  (para Relatório)
+@return aReturn[5] - Título (para Relatório)
+@type static function
+@see http://tdn.totvs.com/pages/releaseview.action?pageId=36800166
+/*/
+Static Function Scheddef()
+Local aParam
+Local aOrd     := {}
+
+aParam := { "P",;		//Tipo R para relatorio P para processo   
+	"ParamDef",;		// Pergunte do relatorio, caso nao use passar ParamDef            
+	"",;				// Alias            
+	aOrd,;				//Array de ordens   
+	""}    
+
+Return aParam

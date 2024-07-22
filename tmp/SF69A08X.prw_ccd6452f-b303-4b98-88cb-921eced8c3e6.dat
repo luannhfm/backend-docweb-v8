@@ -1,0 +1,625 @@
+#INCLUDE "TOTVS.CH"
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "PARMTYPE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#include "totvs.ch"
+#include "xmlcsvcs.ch"
+ 
+Static bSx3Spc   := {|cCpo| Space(GetSx3Cache(cCpo,"X3_TAMANHO")) }                        
+Static bSx3Tam   := {|cCpo| GetSx3Cache(cCpo,"X3_TAMANHO") }                               
+Static bSx3Rel   := {|cCpo| GetSx3Cache(cCpo,"X3_RELACAO" ) }                               
+Static bSx3Desc  := {|cCpo| GetSx3Cache(cCpo,"X3_TITULO" ) }                               
+Static bSx3Tipo  := {|cCpo| GetSx3Cache(cCpo,"X3_TIPO"   ) }                               
+Static bSx3Dec   := {|cCpo| GetSx3Cache(cCpo,"X3_DECIMAL") }                               
+Static bSx3Pic   := {|cCpo| GetSx3Cache(cCpo,"X3_PICTURE") }                               
+Static bSx3Box   := {|cCpo| GetSx3Cache(cCpo,"X3_CBOX"   ) }                               
+
+/*
+	Class    : SMAIS
+	Autor    : Carlos Ryve Gandini
+	Data/Time: 15/04/20 às 08:27:06
+	Descricao: Classe responsavel pela integracao dos dados do SMAIS
+	Sintaxe  : <Vide Parametros Formais>
+*/
+CLASS FIEM_SMAIS From LongClassName
+  
+  DATA cCert  
+  DATA cKey   
+  DATA cPsw   
+  
+  DATA cUrl   
+  DATA cGetPar
+
+	DATA oSMAIS
+	DATA lIntegra
+	
+	METHOD New(cCert,cKey,cPsw,cUrl,cGetPar)    
+	METHOD Init()                  
+	METHOD PassCert()
+	METHOD SM_Param()
+	METHOD SM_Param2() 
+	METHOD SM_ExportaDados()
+	METHOD SM_ExpD_Read_Ret()
+	METHOD SM_ExpD_Save_Ret()
+	METHOD SM_GetExpD()
+	METHOD SM_GetEmpresa()
+	
+ENDCLASS
+
+/*
+	Method   : New()
+	Autor    : Carlos Ryve Gandini
+	Data/Time: 15/04/20 às 08:31:55
+	Descricao: Method Constructor da classe
+	Sintaxe  : <Vide Parametros Formais>
+*/
+Method New(cCert,cKey,cPsw,cUrl,cGetPar) Class FIEM_SMAIS
+
+	Local cSocEmpr := GetMv("MV_XSMEMPR",.F.,"")
+	Local cSocCodi := GetMv("MV_XSMCODI",.F.,"")
+	Local cSocChv  := GetMv("MV_XSMCHV",.F.,"")
+	Local cSocTpRet := GetMv("MV_XSMTRET",.F.,"json")
+
+  PARAMTYPE 0 VAR cCert AS CHARACTER OPTIONAL DEFAULT GetMv("MV_XSMAISC",.F.,"")
+  PARAMTYPE 1 VAR cKey AS CHARACTER OPTIONAL DEFAULT GetMv("MV_XSMAISK",.F.,"")
+  PARAMTYPE 2 VAR cPsw AS CHARACTER OPTIONAL DEFAULT GetMv("MV_XSMAISP",.F.,"")
+  PARAMTYPE 3 VAR cUrl AS CHARACTER OPTIONAL DEFAULT "https://ws1.soc.com.br/WebSoc/exportadados"
+  PARAMTYPE 4 VAR cGetPar AS CHARACTER OPTIONAL DEFAULT '{"empresa":"'+cSocEmpr+'","codigo":"'+cSocCodi+'","chave":"'+cSocChv+'","tipoSaida":"'+cSocTpRet+'","datainicio":"XDATAINI","datafim":"XDATAFIM"}'
+
+  ::cCert   := cCert   
+  ::cKey    := cKey    
+  ::cPsw    := cPsw    
+  
+  ::cUrl    := cUrl    
+  ::cGetPar := cGetPar 
+
+	::oSMAIS    := Nil
+	::lIntegra := .T.
+
+Return self
+
+/*
+	Method   : Init
+	Autor    : Carlos Ryve Gandini
+	Data/Time: 15/04/20 às 08:45:56
+	Descricao: Method reponsponsavel pela instancia do WS do SMAIS 
+	Sintaxe  : <Vide Parametros Formais>
+*/
+Method Init() Class FIEM_SMAIS
+
+    // Criando o objeto Web Service
+    ::oSMais := WSExportaDadosWsService():New()
+
+		::oSMais:_URL         := ::cUrl
+		::oSMais:_CERT        := ::cCert
+		::oSMais:_PRIVKEY     := ::cKey
+		::oSMais:_PASSPHRASE  := ::cPsw       
+		
+		::oSMais:_HEADOUT     := {}
+	  aAdd( ::oSMais:_HEADOUT , 'Content-Type: application/json'                                              )
+		aAdd( ::oSMais:_HEADOUT , 'User-Agent: Mozilla/4.0 (compatible; Protheus ' + GetBuild() + ')' )
+
+    ::oSMais:Init()
+
+Return
+
+
+/*
+	Method   : SM_INTEGRACAO
+	Autor    : Carlos Ryve Gandini
+	Data/Time: 15/04/20 às 08:41:26
+	Descricao: Responsavel pela instacia do WS do SMAIS e Integracao verificando se existe dados
+	Sintaxe  : <Vide Parametros Formais>
+*/
+Method SM_ExportaDados() Class FIEM_SMAIS
+	Local lReturn := .T.
+	Local	cErroSoc := "Não encontrado exporta dados codigo/Empresa"
+	
+	  ::oSMais:oWSexportaDadosWsVo:cparametros          := ::cGetPar
+	  ::oSMais:oWSexportaDadosWsVo:carquivo             := "cid:861467226026"
+	  ::oSMais:oWSexportaDadosWsVo:ccampoLivre1         := ""
+	  ::oSMais:oWSexportaDadosWsVo:ccampoLivre2         := ""
+	  ::oSMais:oWSexportaDadosWsVo:ccampoLivre3         := ""
+	  ::oSMais:oWSexportaDadosWsVo:ccampoLivre4         := ""
+	  ::oSMais:oWSexportaDadosWsVo:ccampoLivre5         := ""
+	  ::oSMais:oWSexportaDadosWsVo:lerro                := .F.
+	  ::oSMais:oWSexportaDadosWsVo:cmensagemErro        := ""
+	  ::oSMais:oWSexportaDadosWsVo:cretorno             := ""
+	  ::oSMais:oWSexportaDadosWsVo:ctipoArquivoRetorno  := "json"
+
+	  ::oSMais:oWSarg0:cparametros          := ""
+	  ::oSMais:oWSarg0:carquivo             := ""
+	  ::oSMais:oWSarg0:ccampoLivre1         := ""
+	  ::oSMais:oWSarg0:ccampoLivre2         := ""
+	  ::oSMais:oWSarg0:ccampoLivre3         := ""
+	  ::oSMais:oWSarg0:ccampoLivre4         := ""
+	  ::oSMais:oWSarg0:ccampoLivre5         := ""
+	  ::oSMais:oWSarg0:lerro                := .F.
+	  ::oSMais:oWSarg0:cmensagemErro        := ""
+	  ::oSMais:oWSarg0:cretorno             := ""
+	  ::oSMais:oWSarg0:ctipoArquivoRetorno  := ""
+   	
+   	::oSMais:oWSexportaDadosWsVo:SOAPSEND()
+
+    ::oSMais:exportaDadosWs( ::oSMais:oWSexportaDadosWsVo, ::oSMais:oWSarg0 )
+
+		If Empty( ::oSMais:oWSexportaDadosWsVo:cretorno ) 
+
+			::oSMais:oWSexportaDadosWsVo:cretorno := ::SM_GetExpD(::oSMais:_CERT,;
+			                                                   ::oSMais:_PRIVKEY,;
+			                                                   ::oSMais:_PASSPHRASE,;
+			                                                   ::oSMais:_URL,;
+			                                                   ::oSMais:_HEADOUT,;
+			                                                   ::cGetPar)[2]
+			                                                   
+		EndIf
+		
+		::lIntegra := ::oSMais:oWSexportaDadosWsVo:cretorno <> cErroSoc
+				
+		If ::lIntegra .And. !Empty( ::oSMais:oWSexportaDadosWsVo:cretorno ) 
+		
+			lReturn := ::SM_ExpD_Read_Ret( ::oSMais:oWSexportaDadosWsVo:cretorno )
+			
+		EndIf
+		
+Return self:lIntegra
+
+/*
+	Method   : SM_ExpD_Read_Ret
+	Autor    : Carlos Ryve Gandini
+	Data/Time: 15/04/20 às 11:01:46
+	Descricao: Metho responsavel pela leitura do retorno do Exporta Dados
+	Sintaxe  : <Vide Parametros Formais>
+*/
+Method SM_ExpD_Read_Ret( cDadJSON, oArq ) Class FIEM_SMAIS
+
+	Local cProd  := ""
+	Local nA := 0
+  Local oArq := Nil
+	Local lInverte := .T.
+	Local aTmpProd := {}
+	Local cFilIntegra := ""
+
+	PARAMTYPE 0 VAR cDadJSON AS CHARACTER
+	
+    ConOut("Inicio ImpJSON: "+Time())
+     
+    //Deserializando o JSON
+    If (FWJsonDeserialize(cDadJSON, @oArq))
+         
+			If ::lIntegra    
+			
+				DbSelectArea("ZG7")
+
+				For nA := 1 To Len( oArq )
+					
+					cFilIntegra := ::SM_GetEmpresa( GetMv("MV_XSMEMPR",.F.,"") )
+					
+					If Empty( cFilIntegra )
+						
+						Aviso("Atenção","Houve um erro na integração...Empresa não encontrada no cadastro.",{"Sair"},2,,,"FWSKIN_ERROR_ICO")
+						Return .F.
+						
+					Else
+					
+						//Chave para verificar dados e nao haver duplicacao na Integracao
+						cChave := cFilIntegra+PadR( oArq[nA]:CODIGO_EMPRESA    , Eval( bSx3Tam , "ZG7_CODEMP" ) ) + ;
+						                      PadR( oArq[nA]:CODIGO_UNIDADE    , Eval( bSx3Tam , "ZG7_CODUNI" ) ) + ;
+						                      PadR( oArq[nA]:CODIGO_FUNCIONARIO, Eval( bSx3Tam , "ZG7_CODFUN" ) ) + ;
+						                      PadR( oArq[nA]:CODIGO_EXAME      , Eval( bSx3Tam , "ZG7_CODEXA" ) ) + ;
+						                      PadR( DTOS(CTOD( oArq[nA]:DATA_RESULTADO )), Eval( bSx3Tam , "ZG7_DTRESU") )+;
+						                      STR( Val( oArq[nA]:VALOR_PAGAR ) )
+						
+						If !ZG7->( MsSeek( cChave ) )
+							
+							/*
+								Autor       : Carlos Ryve Gandini
+								Data/Time   : 15/04/20 às 11:24:15
+								Detalhe     : Realiza a gravacao dos novos dados exportaDadosWs
+							*/
+      				::SM_ExpD_Save_Ret( oArq[nA] , /*cProd*/, cFilIntegra )
+      				
+      			EndIf
+      		
+      		EndIf
+      			
+      	Next nA
+      
+      EndIf
+         
+    Else
+    		
+        ConOut('Erro', 'JSON nao deserializado!')
+        Return .F.
+
+    EndIf
+     
+    ConOut("Termino ImpJSON: "+Time())       
+    
+Return oArq                                                 
+           
+/*
+	Method   : SM_ExpD_Save_Ret
+	Autor    : Carlos Ryve Gandini
+	Data/Time: 15/04/20 às 11:12:46
+	Descricao: Method responsavel pela gravacao do retorno lido pelo ExportaDados
+	Sintaxe  : <Vide Parametros Formais>
+*/
+Method SM_ExpD_Save_Ret( oDados, cProd, cFilIntegra ) Class FIEM_SMAIS
+  
+  Local lReturn := .T.
+  
+  PARAMTYPE 1 VAR cProd AS CHARACTER OPTIONAL DEFAULT ""
+  PARAMTYPE 2 VAR cFilIntegra AS CHARACTER
+  
+	  RecLock("ZG7", .T. )
+	    
+	    ZG7->ZG7_FILIAL :=  cFilIntegra
+	  	ZG7->ZG7_CODEMP :=  oDados:CODIGO_EMPRESA    
+	  	ZG7->ZG7_DESCEM :=  oDados:EMPRESA           
+	  	ZG7->ZG7_CODUNI :=  oDados:CODIGO_UNIDADE    
+	  	ZG7->ZG7_DESCUN :=  oDados:UNIDADE           
+	  	ZG7->ZG7_CODFUN :=  oDados:CODIGO_FUNCIONARIO
+	  	ZG7->ZG7_NOMFUN :=  oDados:FUNCIONARIO       
+	  	ZG7->ZG7_TPEXAM :=  oDados:TIPOEXAME         
+	  	ZG7->ZG7_DTFICH :=  CTOD(oDados:DATA_FICHA)        
+	  	ZG7->ZG7_CODEXA :=  oDados:CODIGO_EXAME 
+	  	ZG7->ZG7_PRDTOT :=  cProd
+	  	ZG7->ZG7_DESCEX :=  oDados:EXAME             
+	  	ZG7->ZG7_DTRESU :=  CTOD(oDados:DATA_RESULTADO)    
+	  	ZG7->ZG7_CODPRE :=  oDados:CODIGO_PRESTADOR  
+	  	ZG7->ZG7_DESCPR :=  oDados:PRESTADOR         
+	  	ZG7->ZG7_VLPAGA :=  Val(oDados:VALOR_PAGAR)       
+	  	ZG7->ZG7_VLCOBR :=  Val(oDados:VALOR_COBRAR)      
+	  	ZG7->ZG7_DTCONT :=  CTOD(oDados:DATA_CONTAGEM)
+	  	ZG7->ZG7_ORIGEV :=  oDados:ORIGEM_VALOR      
+	  
+	  MsUnlock()
+
+Return lReturn
+
+
+/*
+	Method   : Param
+	Autor    : Carlos Ryve Gandini
+	Data/Time: 07/05/20 às 22:33:18
+	Descricao: Responsavel pela carga dos Parametros
+	Sintaxe  : <Vide Parametros Formais>
+*/
+Method SM_Param() Class FIEM_SMAIS
+
+Local aRet      := {}    
+Local aReturn   := { cValToChar(Year(dDataBase)),{"",dDataBase,dDataBase} }
+Local aParamBox := {}
+Local aCombo    := { "Janeiro"  ,;
+                     "Fevereiro",;
+                     "Março"    ,;
+                     "Abril"    ,;
+                     "Maio"     ,;
+                     "Junho"    ,;
+                     "Julho"    ,;
+                     "Agosto"   ,;
+                     "Setembro" ,;
+                     "Outubro"  ,;
+                     "Novembro" ,;
+                     "Dezembro" }
+                 
+Local aMesPar := { { "Janeiro"  , CtoD("01/01/"+cValToChar(Year(Date()))) , CtoD("31/01/"+cValToChar(Year(Date()))) },;
+                   { "Fevereiro", CtoD("01/02/"+cValToChar(Year(Date()))) , CtoD("29/02/"+cValToChar(Year(Date()))) },;
+                   { "Março"    , CtoD("01/03/"+cValToChar(Year(Date()))) , CtoD("31/03/"+cValToChar(Year(Date()))) },;
+                   { "Abril"    , CtoD("01/04/"+cValToChar(Year(Date()))) , CtoD("30/04/"+cValToChar(Year(Date()))) },;
+                   { "Maio"     , CtoD("01/05/"+cValToChar(Year(Date()))) , CtoD("31/05/"+cValToChar(Year(Date()))) },;
+                   { "Junho"    , CtoD("01/06/"+cValToChar(Year(Date()))) , CtoD("30/06/"+cValToChar(Year(Date()))) },;
+                   { "Julho"    , CtoD("01/07/"+cValToChar(Year(Date()))) , CtoD("31/07/"+cValToChar(Year(Date()))) },;
+                   { "Agosto"   , CtoD("01/08/"+cValToChar(Year(Date()))) , CtoD("31/08/"+cValToChar(Year(Date()))) },;
+                   { "Setembro" , CtoD("01/09/"+cValToChar(Year(Date()))) , CtoD("30/09/"+cValToChar(Year(Date()))) },;
+                   { "Outubro"  , CtoD("01/10/"+cValToChar(Year(Date()))) , CtoD("31/10/"+cValToChar(Year(Date()))) },;
+                   { "Novembro" , CtoD("01/11/"+cValToChar(Year(Date()))) , CtoD("30/11/"+cValToChar(Year(Date()))) },;
+                   { "Dezembro" , CtoD("01/12/"+cValToChar(Year(Date()))) , CtoD("31/12/"+cValToChar(Year(Date()))) }}
+
+Local nA      := 0
+
+Private cCadastro := "Integraçao SMAIS"
+
+// --------------------------------------------------------------
+// Abaixo está a montagem do vetor que será passado para a função
+// --------------------------------------------------------------
+
+//aAdd(aParamBox,{1,"Produto",Space(15),"","","SB1","",0,.F.}) // Tipo caractere
+
+//aAdd(aParamBox,{1,"Valor",0,"@E 9,999.99","mv_par02>0","","",20,.F.}) // Tipo numérico
+
+aAdd(aParamBox,{1,"Ano"  ,Year(dDataBase),"@E 9999","","","",4,.T.}) // Tipo data
+// Tipo 1 -> MsGet()
+//           [2]-Descricao
+//           [3]-String contendo o inicializador do campo
+//           [4]-String contendo a Picture do campo
+//           [5]-String contendo a validacao
+//           [6]-Consulta F3
+//           [7]-String contendo a validacao When
+//           [8]-Tamanho do MsGet
+//           [9]-Flag .T./.F. Parametro Obrigatorio ?
+
+aAdd(aParamBox,{2,"Informe o mês",1,aCombo,50,"",.F.})
+// Tipo 2 -> Combo
+//           [2]-Descricao
+//           [3]-Numerico contendo a opcao inicial do combo
+//           [4]-Array contendo as opcoes do Combo
+//           [5]-Tamanho do Combo
+//           [6]-Validacao
+//           [7]-Flag .T./.F. Parametro Obrigatorio ?
+// Cuidado, há um problema nesta opção quando selecionado a 1ª opção.
+
+aAdd(aParamBox,{3,"Contrato Base Estadual",1,{"Não","Sim"},50,"",.F.})
+
+If IsInCallStack("U_SF69A07X")
+  aAdd(aParamBox,{3,"Alteração",1,{"Não","Sim"},50,"",.F.})
+EndIf
+  // Tipo 3 -> Radio
+  //           [2]-Descricao
+  //           [3]-Numerico contendo a opcao inicial do Radio
+  //           [4]-Array contendo as opcoes do Radio
+  //           [5]-Tamanho do Radio
+  //           [6]-Validacao
+  //           [7]-Flag .T./.F. Parametro Obrigatorio ?
+//  
+//  aAdd(aParamBox,{4,"Marca todos ?",.F.,"Marque todos se necessário for.",90,"",.F.})
+//  // Tipo 4 -> Say + CheckBox
+//  //           [2]-Descricao
+//  //           [3]-Indicador Logico contendo o inicial do Check
+//  //           [4]-Texto do CheckBox
+//  //           [5]-Tamanho do Radio
+//  //           [6]-Validacao
+//  //           [7]-Flag .T./.F. Parametro Obrigatorio ?
+//  
+//  aAdd(aParamBox,{5,"Marca todos ?",.F.,50,"",.F.})
+//  // Tipo 5 -> Somente CheckBox
+//  //           [2]-Descricao
+//  //           [3]-Indicador Logico contendo o inicial do Check
+//  //           [4]-Tamanho do Radio
+//  //           [5]-Validacao
+//  //           [6]-Flag .T./.F. Parametro Obrigatorio ?
+//  
+//  aAdd(aParamBox,{6,"Buscar arquivo",Space(50),"","","",50,.F.,"Todos os arquivos (*.*) |*.*"})
+//  // Tipo 6 -> File
+//  //           [2]-Descricao
+//  //           [3]-String contendo o inicializador do campo
+//  //           [4]-String contendo a Picture do campo
+//  //           [5]-String contendo a validacao
+//  //           [6]-String contendo a validacao When
+//  //           [7]-Tamanho do MsGet
+//  //           [8]-Flag .T./.F. Parametro Obrigatorio ?
+//  //           [9]-Texto contendo os tipos de arquivo, exemplo: "Arquivos .CSV |*.CSV"
+//  //           [10]-Diretorio inicial do cGetFile
+//  //           [11]-Número relativo a visualização, podendo ser por diretório ou por arquivo (0,1,2,4,8,16,32,64,128)
+//  
+//  aAdd(aParamBox,{7,"Monte o filtro","SX5","X5_FILIAL==xFilial('SX5')"})
+//  // Tipo 7 -> Montagem de expressao de filtro
+//  //           [2]-Descricao
+//  //           [3]-Alias da tabela
+//  //           [4]-Filtro inicial
+//  
+//  aAdd(aParamBox,{8,"Digite a senha",Space(15),"","","","",80,.F.})
+//  // Tipo 8 -> MsGet Password
+//  //           [2]-Descricao
+//  //           [3]-String contendo o inicializador do campo
+//  //           [4]-String contendo a Picture do campo
+//  //           [5]-String contendo a validacao
+//  //           [6]-Consulta F3
+//  //           [7]-String contendo a validacao When
+//  //           [8]-Tamanho do MsGet
+//  //           [9]-Flag .T./.F. Parametro Obrigatorio ?
+//  
+//  aAdd(aParamBox,{9,"Texto aleatório, apenas demonstrativo.",150,7,.T.})
+//  // Tipo 9 -> Somente uma mensagem, formato de um título
+//  //           [2]-Texto descritivo
+//  //           [3]-Largura do texto
+//  //           [4]-Altura do texto
+//  //           [5]-Valor lógico sendo: .T. => fonte tipo VERDANA e .F. => fonte tipo ARIAL
+//  
+//  aAdd(aParamBox,{10,"Cliente",Space(6),"SA1",40,"C",6,".T."})
+//  // Tipo 10 -> Range de busca
+//  //            [2] = Título
+//  //            [3] = Inicializador padrão
+//  //            [4] = Consulta F3
+//  //            [5] = Tamanho do GET
+//  //            [6] = Tipo do dado, somente (C=caractere e D=data)
+//  //            [7] = Tamanho do espaço
+//  //            [8] = Condição When
+//  
+//  aAdd(aParamBox,{11,"Informe o motivo","",".T.",".T.",.T.})
+//  // Tipo 11 -> MultiGet (Memo)
+//  //            [2] = Descrição
+//  //            [3] = Inicializador padrão
+//  //            [4] = Validação
+//  //            [5] = When
+//  //            [6] = Campo com preenchimento obrigatório .T.=Sim .F.=Não (incluir a validação na função ParamOk)
+
+// Parametros da função Parambox()
+// -------------------------------
+// 1 - < aParametros > - Vetor com as configurações
+// 2 - < cTitle >      - Título da janela
+// 3 - < aRet >        - Vetor passador por referencia que contém o retorno dos parâmetros
+// 4 - < bOk >         - Code block para validar o botão Ok
+// 5 - < aButtons >    - Vetor com mais botões além dos botões de Ok e Cancel
+// 6 - < lCentered >   - Centralizar a janela
+// 7 - < nPosX >       - Se não centralizar janela coordenada X para início
+// 8 - < nPosY >       - Se não centralizar janela coordenada Y para início
+// 9 - < oDlgWizard >  - Utiliza o objeto da janela ativa
+//10 - < cLoad >       - Nome do perfil se caso for carregar
+//11 - < lCanSave >    - Salvar os dados informados nos parâmetros por perfil
+//12 - < lUserSave >   - Configuração por usuário
+
+// Caso alguns parâmetros para a função não seja passada será considerado DEFAULT as seguintes abaixo:
+// DEFAULT bOk   := {|| (.T.)}
+// DEFAULT aButtons := {}
+// DEFAULT lCentered := .T.
+// DEFAULT nPosX  := 0
+// DEFAULT nPosY  := 0
+// DEFAULT cLoad     := ProcName(1)
+// DEFAULT lCanSave := .T.
+// DEFAULT lUserSave := .F.
+
+If ParamBox(aParamBox,"Parâmetros Integração SMAIS",@aRet, , , , , , , , .F., .F.)         
+	
+	If ValType(aRet[2]) =="N"
+		aRet[2] := aParamBox[2][4][aRet[2]]
+	EndIf	
+	
+	 nPos := aScan( aMesPar, { |x| x[1] == aRet[2] } )
+	 
+	 If nPos > 0
+		
+		 aRet[2] := aClone( aMesPar[nPos] )	
+	   aReturn := aClone( aRet ) //aMesPar[nPos]
+
+	 Endif
+Else
+	
+	aReturn := {}
+		 
+Endif
+
+
+Return aReturn
+
+/*
+	Method   : Param
+	Autor    : Carlos Ryve Gandini
+	Data/Time: 07/05/20 às 22:33:18
+	Descricao: Responsavel pela carga dos Parametros
+	Sintaxe  : <Vide Parametros Formais>
+*/
+Method SM_Param2() Class FIEM_SMAIS
+
+Local aPergs   := {}
+Local dDataDe  := FirstDate(Date())
+Local dDataAt  := LastDate(Date())
+
+	aAdd(aPergs, {1, "Data De",  dDataDe,  "", ".T.", "", ".T.", 80,  .F.})
+	aAdd(aPergs, {1, "Data Até", dDataAt,  "", ".T.", "", ".T.", 80,  .T.})
+
+	If ParamBox(aPergs, "Informe os parâmetros")
+		Alert(MV_PAR01)
+		Alert(MV_PAR02)
+	EndIf
+
+Return
+
+/*
+	Method   : PassCert
+	Autor    : Carlos Ryve Gandini
+	Data/Time: 26/05/20 às 11:15:35
+	Descricao: Responsavel por obter a senha do certificado
+	Sintaxe  : <Vide https://tdn.totvs.com/display/tec/AESEncrypt>
+*/
+Method PassCert(cCipherUsed, cPlainUsed, cPassUsed , cKeyUsed, cIVUsed) Class FIEM_SMAIS
+  Local nCipherID   := 0  // AES-128 CBC
+  Local cKeyUsed2   := ""
+  Local cIVUsed2    := ""
+  Local cCipherText := ""
+  Local aResEnc     := {}
+  Local aResDec     := {}
+ 
+ 	PARAMTYPE 0 VAR cCipherUsed AS CHARACTER OPTIONAL DEFAULT "2" //AES-256 CBC
+ 	PARAMTYPE 1 VAR cPlainUsed AS CHARACTER
+ 	PARAMTYPE 2 VAR cPassUsed AS CHARACTER OPTIONAL DEFAULT ""
+ 	PARAMTYPE 2 VAR cKeyUsed AS CHARACTER OPTIONAL DEFAULT ""
+ 	PARAMTYPE 2 VAR cIVUsed AS CHARACTER OPTIONAL DEFAULT ""
+ 	 	 	
+  aResEnc := AESEncrypt( cCipherUsed,cPlainUsed , cPassUsed , cKeyUsed, cIVUsed )
+             
+  VarInfo( "AESEncrypt", aResEnc )
+ 
+  // AESEncrypt -> ARRAY (    4) [...]
+  //      AESEncrypt[1] -> N (   15) [         0.0000]
+  //      AESEncrypt[2] -> C (   32) [<Texto de saída da encriptação>]
+  //      AESEncrypt[3] -> C (   16) [<Key usada na encriptação, gerada previamente>]
+  //      AESEncrypt[4] -> C (   16) [<IV usado na encriptação, gerado previamente>]
+ 
+  cCipherText := aResEnc[2]
+  cKeyUsed    := aResEnc[3]
+  cIVUsed     := aResEnc[4]
+ 
+  aResDec := AESDecrypt( nCipherID, cCipherText, cKeyUsed, cIVUsed )
+   
+  VarInfo( "AESDecrypt", aResDec )
+ 
+  // AESDecrypt -> ARRAY (    2) [...]
+  //      AESDecrypt[1] -> N (   15) [         0.0000]
+  //      AESDecrypt[2] -> C (   16) [<Texto de saída da decriptação, idêntico ao texto de entrada>]
+ 
+Return
+
+/*
+	Method   : SM_GetExpD
+	Autor    : Carlos Ryve Gandini
+	Data/Time: 22/06/20 às 21:17:24
+	Descricao: Faz a leitura dos dados usando SSL
+	Sintaxe  : <Vide Parametros Formais>
+*/
+Method SM_GetExpD(cCert, cKey, cPsw, cURL,aHeadOut,cParm) Class FIEM_SMAIS
+//Local cURL := "https://homologacao.nfe.fazenda.sp.gov.br:443/nfeWEB/services/NfeStatusServico.asmx"
+Local nTimeOut := 120
+//Local aHeadOut := {}
+Local cHeadRet := ""
+Local cGetRet := ""
+Local aHeadOut := {}
+Local cHeadRet := ""
+Local cPostRet := ""
+Local oObjJSon := Nil
+
+	cParm := "?parametro=" + cParm
+	
+	If Empty( aHeadOut )
+		aAdd( aHeadOut , 'Content-Type: application/json'                                              )
+		AAdd( aHeadOut , 'User-Agent: Mozilla/4.0 (compatible; Protheus ' + GetBuild() + ')' )
+	EndIf
+	
+            //HTTPSGet( < cURL >         , < cCertificate >, < cPrivKey >, < cPassword >, [ cGETParms ], [ nTimeOut ], [ aHeadStr ], [ @cHeaderRet ], [ lClient ] )
+	cPostRet := HTTPSGet( cURL+cParm       , cCert           , cKey        , cPsw         , ""           , nTimeOut    , aHeadOut    , @cHeadRet )
+
+	If HTTPGetStatus() <> 200 //200 = OK, diferente de 200 = erro
+		If !IsBlind()
+			MsgStop("Falha na conexão . Verifique os dados Token/Url." + " Status: "+Alltrim(Str(HTTPGetStatus())),"Atenção !") //"Falha na conexão E-commerce CiaShop. Verifique cadastro de Identificação de Loja (SLJ) dados Token/Url."
+		Else
+			Lj900XLg("Atenção !" + " Status: "+Alltrim(Str(HTTPGetStatus())),"Atenção !","Atenção !")
+		EndIf
+	Else
+		If !FWJsonDeserialize(cPostRet,@oObjJSon)
+			If !IsBlind()
+				MsgAlert("Falha no processamento do JSon."+" Status: "+cPostRet)
+			Else
+				Lj900XLg("Falha no processamento do JSon."+" Status: "+cPostRet)   //"Falha no processamento do JSon."
+			EndIf
+		EndIf	
+	EndIf		
+   
+Return {oObjJSon,cPostRet}
+
+/*
+	Method   : SM_GetEmpresa
+	Autor    : Carlos Ryve Gandini
+	Data/Time: 22/06/20 às 21:06:53
+	Descricao: Retorna a a filial vinculada ao codigo S+
+	Sintaxe  : <Vide Parametros Formais>
+*/
+Method SM_GetEmpresa( cEmpSOC ) Class FIEM_SMAIS
+  Local aSoc := {}
+  Local nPSoc := 0
+  Local cRetFil := ""
+  
+  aAdd( aSoc , { "521194" , "SESI SERVICO SOCIAL DA INDUSTRIA - SST CUIABA"  , GetMv( "MV_X551194", .F. , "02MT0011" ) } )
+  aAdd( aSoc , { "521249" , "SESI CACERES"                                   , GetMv( "MV_X521249", .F. , "02MT0008" ) } )
+  aAdd( aSoc , { "521273" , "SESI SERVICO SOCIAL DA INDUSTRIA (JUINA) - BASE", GetMv( "MV_X521273", .F. , "02MT0014" ) } )
+  aAdd( aSoc , { "521286" , "SESI PARK"                                      , GetMv( "MV_X521286", .F. , "02MT0012" ) } )
+  aAdd( aSoc , { "521292" , "SESI RONDONOPOLIS - SERVICO SOCIAL DA INDUSTRIA", GetMv( "MV_X521292", .F. , "02MT0015" ) } )
+  aAdd( aSoc , { "521301" , "SESI SINOP"                                     , GetMv( "MV_X521301", .F. , "02MT0006" ) } )
+
+	If (nPSoc := aScan( aSoc, {|o| o[1] == rTrim(cEmpSOC) } )) > 0
+	
+		cRetFil := aSoc[nPSoc][3]
+	
+	EndIf
+	
+Return cRetFil

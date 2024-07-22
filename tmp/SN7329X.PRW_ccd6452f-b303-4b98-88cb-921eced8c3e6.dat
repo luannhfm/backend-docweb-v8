@@ -1,0 +1,1641 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#DEFINE oleWdFormatDocument "0"
+#DEFINE oleWdFormatHTML     "102"
+#DEFINE oleWdFormatPDF      "17"
+#Define ADY_ENTIDADE_CLIENTE "1"
+#Define ADY_ENTIDADE_PROSPECT "2"
+
+/*
+{Protheus.doc} <SN7329X>
+Funcao para Gerar no WORD da Proposta de Venda; Rotina de Integração 
+PROTHEUS x WORD gera a partir de TEMPLATE Proposta de Venda do SENAI. 
+@type function
+@author Jonas Nascimento 
+@since 29/10/2015
+*/                                                                       
+User Function SN7329X()
+	local _aArea := GetArea()
+	
+	FWMsgRun(,{|| fImp7329()},"Gerando o doc. WORD da Proposta de Venda.", "Aguarde")
+
+	RestArea(_aArea)
+
+Return Nil
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fImp7329>
+Função  fImp7329
+@type function
+@author Jonas Nascimento 
+@since 29/10/2015
+@history 11/12/2015, Franklin B Oliveira,
+		#001->Adicionado Doc_Variables para a impressão dos dados do Responsável pela proposta (Vendedor)
+		Variáveis criadas:
+			->_cRespProp - Nome do responsável (A3_NOME)
+			->_cTelRespProp - Telefone do responsável (A3_DDDTEL + A3_TEL)
+		
+@history 16/12/2015, Franklin B Oliveira, #002->Removido o preenchimento da DocVariable "Doc_cNomeAutoriza".
+@history 27/02/2020, Franklin Oliveira, Mudança no arquivo de modelo para produtos EP
+*/
+Static Function fImp7329()
+
+	Local   _nCtaA 	   := 0
+	Local   cAlADZ     := GetNextAlias()
+	local cTipoProd := ""
+	Private _cPathDOT  := SuperGetMv("MV_XCRMDOT",,"")
+	Private _cPathDOC  := SuperGetMv("MV_XCRMDOC",,"")
+	Private _cPathREP  := SuperGetMv("MV_XCRMREP",,"")
+	Private _cArqDOT   := ""
+	
+	Private _aParamVLD 	:= {{"_cPathDOT" ,"MV_XCRMDOT - Repositorio DOT docs de Integracao WORD (CRM)"                   },;
+		                    {"_cPathDOC" ,"MV_XCRMDOC - Repositorio DOC docs de Integracao WORD (CRM)" 		             },;
+		                    {"_cPathREP" ,"MV_XCRMREP - Repositorio LOCAL p/emissao dos documentos (CRM)"            	 } }
+		                        
+	Private _hWord		:= OLE_CreateLink()					// Cria a conecção com Word
+	
+	_nCtaA := 0
+	
+	For _nCtaA := 1 To Len(_aParamVLD)
+		_cValorVar	:= &(_aParamVLD[_nCtaA,1])
+		If _cValorVar == ""
+			Aviso(FunName()+"/"+ProcName(),"Integração não pode ser realizada pois o parametro ["+_aParamVLD[_nCtaA,2]+"] não esta preenchido",{"OK"})
+			Return Nil
+		Endif
+	Next _nCtaA
+	
+	BeginSql Alias cAlADZ
+	
+		SELECT ADZ_PRODUT
+		FROM   %Table:ADZ%
+		WHERE  ADZ_FILIAL = %Exp:xFilial("ADZ")%
+		AND    ADZ_PROPOS = %Exp:ADY->ADY_PROPOS% 
+		AND    ADZ_REVISA = %Exp:ADY->ADY_PREVIS%
+	
+	EndSql
+	
+	While !(cAlADZ)->(Eof())
+		cTipoProd := AllTrim(Posicione("SB1", 1, xFilial("SB1")+(cAlADZ)->ADZ_PRODUT, "B1_TIPO")) 
+		_cArqDOT := fGetArMo(cTipoProd)
+	
+		Do Case
+		Case cTipoProd=="ED"
+			GeraPropEP()
+			Exit
+		Case cTipoProd=="ST"
+			GeraPropST()
+			Exit
+		Otherwise
+			GeraProp()
+			Exit
+		EndCase
+		(cAlADZ)->(Dbskip())
+	EndDo
+	
+	(cAlADZ)->(DbCloseArea())
+	
+Return Nil
+
+/*/{Protheus.doc} fGetArMo
+Função para recuperar o nome do arquivo de modelo.
+@type Function
+@author Franklin de Brito de Oliveira
+@since 26/07/2021
+@param cTipoProd, character, tipo do produto na proposta.
+@return character, nome do arquivo de modelo.
+/*/
+Static Function fGetArMo(cTipoProd)
+	local cArqMode := ""
+
+	Do Case
+	Case cTipoProd=="ED"
+		cArqMode := SuperGetMv("MV_XPROEP", , "SPN-FF-037-Proposta_Comercial_Educaçao_Profissional.dot")
+	Case cTipoProd=="ST"
+		cArqMode := SuperGetMv("MV_XPROSTI", , "STI_FF_064_Proposta_Tecnica_Comercial_STI.dot")
+	Otherwise
+		cArqMode := SuperGetMv("MV_XCRMPRO", , "SPN-FF-044-_Proposta_Comercial.dot")
+	EndCase
+
+Return cArqMode
+
+/*/{Protheus.doc} GeraProp
+Função GeraProp
+@type function
+@author j2a.luizjunior
+@since 23/11/2017
+@version 1.0
+@history 25/07/2019, Franklin de Brito de Oliveira, Ajuste na consulta "visao_cursos_crm" para impressão da unidade curricular e pré-requisito.
+/*/
+Static function GeraProp 
+
+	Local _cProposta	:= Alltrim(ADY->ADY_PROPOS)+"-"+Alltrim(ADY->ADY_PREVIS)  // Numero da proposta comercial + Revisão
+	Local _cDtEmissao	:= Dtoc(ADY->ADY_DATA)				                      // Data de emissao
+	Local _cNessCli		:= AllTrim(ADY->ADY_XNECES)
+	Local _cObjAten		:= AllTrim(ADY->ADY_XOBJET)
+	Local _cAliasRM		:= GetNewPar("MV_XSGEABD", "")
+	
+	//Dados da Filial da Proposta	[SENAI] 
+	Local _cFilRazSo	:= ""	//Razão Social
+	Local _cFilNomeF	:= ""   //Nome fantasia
+	Local _cFilCNPJ		:= ""   //CPF/CNPJ	
+	Local _cFilInscE	:= ""   //Inscrição Estadual
+	Local _cFilEnder	:= ""   //Endereço
+	Local _cFilBair		:= ""   //Bairro
+	Local _cFilMunic	:= ""   //Municipio
+	Local _cFilUF		:= ""   //UF
+	Local _cFilCEP		:= ""   //CEP
+	Local _cFilFAX		:= ""   //FAX
+		
+	//Dados do representante [SENAI]	
+	Local _cNomeCont	:= ""
+	Local _cRespProp	:= ""
+	Local _cCargoCont	:= ""
+	Local _cTelRespProp := ""
+	Local _cTelCont		:= ""
+	Local _cEmailCont	:= ""
+	Local _cSiteCont	:= ""
+		
+	Local _nTotProsp	:= 0								// Total da proposta comercial
+	Local _nLinha		:= 0                         		// Usado no laco do WHILE
+
+	Local _cNomeCtt		:= ""
+	Local _cCargoCtt	:= ""
+	Local _cFoneCtt		:= ""
+	Local _cEMailCtt	:= ""
+	Local _cSiteCtt		:= ""
+
+	Local _cDescrProd	:= ""
+	Local _cAceiteS		:= ""
+	Local _cAceiteN		:= ""
+	Local _cReprEmp		:= ""
+	Local _cTelReprEmp	:= ""
+	Local _cArqNome		:= "SENAI"+Alltrim(_cProposta)+DTOS(dDataBase)+StrTran(Time(),":","")
+	Local _cDescCdPg	:= ""
+	
+	//Responsabilidades
+	Local _cRAlim       := ""
+  	Local _cRApos       := ""
+  	Local _cRCert       := ""
+  	Local _cRDHOS       := ""
+  	Local _cRDVPH       := ""
+  	Local _cRestF       := ""
+  	Local _cROutr       := ""
+  	Local _cRRavi       := ""
+  	
+  	//Und Curriculares / Pre Requisitos
+  	Local _cProSGE      := ""
+	Local _cTurma       := ""
+	Local _nModul       := 0
+	Local _cUndCur      := ""
+	Local _cPreReq      := ""
+
+	//+---------------------------------------------------------------------+
+	//| Verifica se o arquivo existe. Se existir APAGA                      |
+	//+---------------------------------------------------------------------+
+	If File(_cPathREP+_cArqDOT)
+		FErase(_cPathREP+_cArqDOT)
+	Endif
+
+	//+---------------------------------------------------------------------+
+	//| Copia o TEMPLATE "DOT" para repositorio LOCAL                       |
+	//+---------------------------------------------------------------------+
+	If !CpyS2T(_cPathDOT+_cArqDOT,_cPathREP,.T.)
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel copiar TEMPLATE para gerar a integração!",{"OK"})
+		Return Nil
+	EndIf
+
+	//+---------------------------------------------------------------------+
+	//| Abre o NOVO documento do WORD para preencher a Variaveis            |
+	//+---------------------------------------------------------------------+
+	OLE_NewFile(_hWord,_cPathREP+_cArqDOT)
+
+	//+---------------------------------------------------------------------+
+	//| Dados da Filial da Proposta	[SENAI]					                |
+	//+---------------------------------------------------------------------+
+	DbSelectArea("SM0")
+	SM0->(DbSetOrder(1))
+	
+	If (SM0->(DbSeek(cEmpAnt+cFilAnt)))
+		_cFilRazSo	:= AllTrim(M0_NOMECOM)
+		_cFilNomeF	:= AllTrim(M0_NOMECOM)
+		_cFilCNPJ	:= Transform(AllTrim(M0_CGC),Iif(Len(AllTrim(M0_CGC))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+		_cFilInscE	:= AllTrim(M0_INSC)
+		_cFilEnder	:= AllTrim(M0_ENDENT)
+		_cFilBair	:= AllTrim(M0_BAIRENT)
+		_cFilMunic	:= AllTrim(M0_CIDENT)
+		_cFilUF		:= SM0->M0_ESTENT
+		_cFilCEP	:= AllTrim(M0_CEPENT)
+		_cFilFAX	:= AllTrim(M0_FAX)
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Dados do representante [SENAI]										|
+	//+---------------------------------------------------------------------+	
+	DbSelectArea("SA3")
+	SA3->(DbSetOrder(1))
+	If (SA3->(DbSeek( FwxFilial("SA3") + ADY->ADY_VEND)))
+		_cNomeCont	:= Alltrim( SA3->A3_NOME )
+		_cCargoCont	:= Posicione( "SUM", 1, FwxFilial("SUM") + SA3->A3_CARGO, "UM_DESC" )
+		_cTelCont	:= Transform( SA3->A3_DDDTEL + SA3->A3_TEL, "@R (999)9999-9999" )
+		_cEmailCont	:= AllTrim( SA3->A3_EMAIL )
+		_cSiteCont	:= AllTrim( SA3->A3_HPAGE )
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Dados do Cliente							                        |
+	//+---------------------------------------------------------------------+
+	fPutDocsCliente(ADY->ADY_ENTIDA)
+
+	//+--------------------------------------------------------------------+
+	//| Dados da Proposta                                                  |
+	//+--------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_cNrPoposta"			, _cProposta	)
+	OLE_SetDocumentVar(_hWord,"Doc_cDtValidadeProposta"	, _cDtEmissao	)
+	OLE_SetDocumentVar(_hWord,"Doc_Necessidade_Cliente"	, _cNessCli		)
+	OLE_SetDocumentVar(_hWord,"Doc_Objetivo_Proposta"	, _cObjAten		)
+
+	//+-------------------------------------------------------------------+
+	//| Dados da Filial da Proposta	[SENAI]							      |
+	//+-------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_FilRazaoSocial"		 , _cFilRazSo	)
+	OLE_SetDocumentVar(_hWord,"Doc_FilNomeFantasia"		 , _cFilNomeF	)
+	OLE_SetDocumentVar(_hWord,"Doc_FilCPFCNPJ"			 , _cFilCNPJ	)
+	OLE_SetDocumentVar(_hWord,"Doc_FilInscricaoEstadual" , _cFilInscE	)
+	OLE_SetDocumentVar(_hWord,"Doc_FilEndereco"			 , _cFilEnder	)
+	OLE_SetDocumentVar(_hWord,"Doc_FilBairro"			 , _cFilBair	)
+	OLE_SetDocumentVar(_hWord,"Doc_FilMunicipio"		 , _cFilMunic	)
+	OLE_SetDocumentVar(_hWord,"Doc_FilUF"				 , _cFilUF		)
+	OLE_SetDocumentVar(_hWord,"Doc_FilCEP"				 , _cFilCEP	    )
+	OLE_SetDocumentVar(_hWord,"Doc_FilFAX"				 , _cFilFAX	    )
+
+	//+---------------------------------------------------------------------+
+	//| Dados do representante [SENAI]										|
+	//+---------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_Senai_NomeCont"		, _cNomeCont	)
+	OLE_SetDocumentVar(_hWord,"Doc_Senai_CargoCont"  	, _cCargoCont	)
+	OLE_SetDocumentVar(_hWord,"Doc_Senai_TelCont"		, _cTelCont		)
+	OLE_SetDocumentVar(_hWord,"Doc_Senai_EmailCont"	    , _cEmailCont	)
+	OLE_SetDocumentVar(_hWord,"Doc_Senai_SiteCont"		, _cSiteCont	)
+
+	//+---------------------------------------------------------------------+
+	//| Localiza os Contatos                                                |
+	//+---------------------------------------------------------------------+
+	DbSelectArea("AD9")
+	AD9->(DbSetOrder(1))				// AD9_FILIAL+AD9_NROPOR+AD9_REVISA+AD9_CODCON
+	If (AD9->(DbSeek(FwxFilial("AD9")+ADY->ADY_OPORTU+ADY->ADY_REVISA)))
+		DbSelectArea("SU5")
+		SU5->(DbSetOrder(1))				//  U5_FILIAL+U5_CODCONT+U5_IDEXC
+		If (SU5->(DbSeek(FwxFilial("SU5")+AD9->AD9_CODCON)))
+			_cNomeCtt	:= SU5->U5_CONTAT
+			_cCargoCtt	:= AllTrim(Posicione("SUM",1,FwxFilial("SUM")+SU5->U5_FUNCAO,"UM_DESC"))
+			_cFoneCtt	:= SU5->U5_FONE
+			_cEMailCtt	:= Alltrim(SU5->U5_EMAIL)
+			_cSiteCtt	:= Alltrim(SU5->U5_URL)
+		EndIf
+	EndIf
+	
+	DbSelectArea("ADZ")
+	ADZ->(DbSetOrder(3))
+	ADZ->(DbGoTop())
+	ADZ->(DbSeek(FwxFilial("ADZ")+ADY->ADY_PROPOS+ADY->ADY_PREVIS+Strzero(1,TamSX3("ADZ_FOLDER")[1])))
+	_cDescCdPg := Posicione("SE4",1,FwxFilial("SE4")+ADZ->ADZ_CONDPG,"E4_DESCRI")
+	
+	//+---------------------------------------------------------------------+
+	// Dados do Contato                                                     |
+	//+---------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_cNomeContato"		, _cNomeCtt	)
+	OLE_SetDocumentVar(_hWord,"Doc_cCargo"				, _cCargoCtt)
+	OLE_SetDocumentVar(_hWord,"Doc_cFoneContato"		, _cFoneCtt)
+	OLE_SetDocumentVar(_hWord,"Doc_cEMailContato"		, _cEMailCtt)
+	OLE_SetDocumentVar(_hWord,"Doc_cSiteContato"		, _cSiteCtt	)
+
+	Do While ADZ->(!Eof()) .And. FwxFilial("ADZ") == ADZ->ADZ_FILIAL .and. Alltrim(ADZ->ADZ_PROPOS)+"-"+Alltrim(ADZ->ADZ_REVISA) == _cProposta .and. ADZ->ADZ_FOLDER == Strzero(1,TamSX3("ADZ_FOLDER")[1])
+		_nLinha++
+		//+---------------------------------------------------------------------+
+		//|   Produtos/Serviços                                                 |
+		//+---------------------------------------------------------------------+
+		// Insere o campo Descricao do Produto
+		_cDescrProd	:= Alltrim(Posicione("SB1",1,FwxFilial("SB1")+ADZ->ADZ_PRODUT,"B1_DESC"))
+		OLE_SetDocumentVar(_hWord,"Prd_descr"+Alltrim(str(_nLinha))		,_cDescrProd		)
+
+		//Insere Carga Horária 
+		OLE_SetDocumentVar(_hWord,"Prd_CargaHoraria"+Alltrim(str(_nLinha)) 	,cValToChar(Posicione("SB1",1,FwxFilial("SB1")+ADZ->ADZ_PRODUT,"B1_XCHSIGE")) )
+		//Insere Percentual de Desconto
+		OLE_SetDocumentVar(_hWord,"Prd_pdesc"+Alltrim(str(_nLinha))     ,Alltrim(Transform(ADZ->ADZ_DESCON	,"@E 999,999,999.99"))	)
+		//Insere Valor de Desconto	
+		OLE_SetDocumentVar(_hWord,"Prd_vdesc"+Alltrim(str(_nLinha)) 	,Alltrim(Transform(ADZ->ADZ_VALDES	,"@E 999,999,999.99"))	)
+		// Insere o campo Quantidade do Produto
+		OLE_SetDocumentVar(_hWord,"Prd_Qtde"+Alltrim(str(_nLinha)) 		,Alltrim(Transform(ADZ->ADZ_QTDVEN	,"@E 999,999,999.99"))	)
+		// Insere o campo Valor Unitário
+		OLE_SetDocumentVar(_hWord,"Prd_VlrUni"+Alltrim(str(_nLinha))  	,Alltrim(Transform(ADZ->ADZ_PRCVEN	,"@E 999,999,999.99"))	)
+		// Insere o campo Total
+
+		_lGratis := IIF(AllTrim(Posicione("SF4",1,xFilial("SF4")+ADZ->ADZ_TES,"F4_DUPLIC")) == 'S',.F.,.T.)
+		If _lGratis
+			OLE_SetDocumentVar(_hWord,"Prd_vtot"+Alltrim(str(_nLinha)) 		,Alltrim(Transform(0, "@E 999,999,999.99"))	)
+		Else
+			OLE_SetDocumentVar(_hWord,"Prd_vtot"+Alltrim(str(_nLinha)) 		,Alltrim(Transform(ADZ->ADZ_TOTAL , "@E 999,999,999.99"))	)
+		EndIf
+	
+		//+---------------------------------------------------------------------+
+		//|   Descrição dos Produtos/Serviços                                   |
+		//+---------------------------------------------------------------------+
+		_cProSGE := Alltrim(Posicione("SB1",1,FwxFilial("SB1")+ADZ->ADZ_PRODUT,"B1_XPRDSGE"))
+		_cTurma  := AllTrim(ADZ->ADZ_XTURMA)
+		_nModul  := Val(AllTrim(ADZ->ADZ_XMODUL))
+		_cUndCur := ""
+		_cPreReq := ""
+		
+		If .Not. Empty(_cProSGE)
+			If Select("TRA") > 0
+				DbSelectArea("TRA")
+				TRA->(DbCloseArea())
+			EndIf
+			
+			_cQuery := " SELECT CODIGO_CURSO, MODULO, UNIDADES_CURRICULARES, PRE_REQUISITO "+ CRLF
+			_cQuery += " FROM RM.VISAO_CURSOS_CRM"+ _cAliasRM + CRLF
+			_cQuery += " WHERE CODIGO_CURSO = '"+ _cProSGE +"' "
+			
+			TCQUERY _cQuery NEW ALIAS "TRA"	
+			
+			DbSelectArea('TRA')
+			TRA->(DbGoTop())
+			
+			_cUndCur	:= Upper(Alltrim(FwNoAccent(TRA->UNIDADES_CURRICULARES)))
+			_cPreReq	:= Upper(Alltrim(FwNoAccent(TRA->PRE_REQUISITO)))
+			
+			TRA->(DbCloseArea())
+		EndIf
+		
+		OLE_SetDocumentVar(_hWord,"Srv_UndCurricular"+ Alltrim(str(_nLinha))	, _cUndCur )	
+		OLE_SetDocumentVar(_hWord,"Srv_ReqAcesso"+ Alltrim(str(_nLinha))		, _cPreReq )
+		
+		If .Not. _lGratis
+			_nTotProsp += ADZ->ADZ_TOTAL
+		EndIf
+		
+		ADZ->(dbSkip())
+	Enddo
+
+	//+---------------------------------------------------------------------+
+	//|   Implementa o Contator de Itens da Macro                           | 
+	//+---------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"prt_nritens",	_nLinha)
+
+	//+---------------------------------------------------------------------+
+	//|   Efetua CARGA das Macros                                           | 
+	//+---------------------------------------------------------------------+
+	If _nLinha > 0
+		OLE_ExecuteMacro(_hWord,"tabitens")
+		OLE_ExecuteMacro(_hWord,"TabServicos")
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Periodo de Realizacao                                               | 
+	//+---------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_cPerReal" , AllTrim(ADY->ADY_XCRONO))
+	
+	//+---------------------------------------------------------------------+
+	//|   Condições Gerais                                                  | 
+	//+---------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_nValorProp"		, Transform( _nTotProsp	,"@E 999,999,999.99"))	
+	OLE_SetDocumentVar(_hWord,"Doc_cVlrExtenso"		, Extenso(_nTotProsp,.F.,1))
+	_nTotProsp := 0
+	
+	//+---------------------------------------------------------------------+
+	//|Responsabilidades                                                    |
+	//+---------------------------------------------------------------------+
+	_cRAlim := ADY->ADY_XRALIM
+  	_cRApos := ADY->ADY_XRAPOS
+  	_cRCert := ADY->ADY_XRCERT
+  	_cRDHOS := ADY->ADY_XRDHOS
+  	_cRDVPH := ADY->ADY_XRDVPH
+  	_cRestF := ADY->ADY_XRESTF
+  	_cROutr := ADY->ADY_XROUTR
+  	_cRRavi := ADY->ADY_XRRAVI
+  	
+  	//Alimentacao
+  	If _cRAlim == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtSenai"	, "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtClient"	, "( )"	)
+  	ElseIf _cRAlim == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtSenai"	, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtClient"	, "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtSenai"	, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtClient"	, "( )"	)
+  	EndIf
+  	
+  	//Apostilas
+  	If _cRApos == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cApostSenai"		, "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cApostClient"	, "( )"	)
+  	ElseIf _cRApos == 'C'
+  	  	OLE_SetDocumentVar(_hWord,"Doc_cApostSenai"		, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cApostClient"	, "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cApostSenai"		, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cApostClient"	, "( )"	)
+  	EndIf
+  	
+  	//Certificados
+  	If _cRCert == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertSenai"	    , "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertClient"	    , "( )"	)
+  	ElseIf _cRCert == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertSenai"	    , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertClient"	    , "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertSenai"	    , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertClient"	    , "( )"	)
+  	EndIf
+  	
+  	//Depesas com Hospedagem
+  	If _cRDHOS == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHSenai"		, "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHClient"	, "( )"	)
+  	ElseIf _cRDHOS == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHClient"	, "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHSenai"		, "( )"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHSenai"		, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHClient"	, "( )"	)
+  	EndIf
+  	
+  	//Despesas com Viagem, passagem e Hospedagem
+  	If _cRDVPH == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHSenai"	, "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHClient"	, "( )"	)
+  	ElseIf _cRDVPH == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHSenai"	, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHClient"	, "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHSenai"	, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHClient"	, "( )"	)
+  	EndIf
+  	
+  	//Estrutura Fisica
+  	If _cRestF == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFSenai"	   , "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFClient"	   , "( )"	)
+  	ElseIf _cRestF == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFSenai"	   , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFClient"	   , "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFSenai"	   , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFClient"	   , "( )"	)
+  	EndIf
+  	
+  	//Outros
+  	If _cROutr == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosSenai"	, "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosClient"	, "( )"	)
+  	ElseIf _cROutr == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosSenai"	, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosClient"	, "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosSenai"	, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosClient"	, "( )"	)
+  	EndIf
+  	
+  	//Recursos Audio Visuais
+  	If _cRRavi == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cRecAVSenai"		, "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cRecAVClient"	, "( )"	)
+  	ElseIf _cRRavi == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cRecAVSenai"		, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cRecAVClient"	, "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cRecAVSenai"		, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cRecAVClient"	, "( )"	)
+  	EndIf
+  	
+  	//Sobre a Condicao de Pagamento
+  	OLE_SetDocumentVar(_hWord,"Doc_cCondPgto"			, _cDescCdPg	)
+	
+	//+---------------------------------------------------------------------+
+	//|   Aceite                                                            |
+	//+---------------------------------------------------------------------+
+	_cAceiteS	:= "[ ]"
+	_cAceiteN	:= "[ ]"
+	
+	OLE_SetDocumentVar(_hWord,"Doc_AceiteSIM", _cAceiteS	)
+	OLE_SetDocumentVar(_hWord,"Doc_AceiteNAO", _cAceiteN	)
+	//+---------------------------------------------------------------------+
+	//|  Assinaturas                                                        |
+	//+---------------------------------------------------------------------+
+	dbSelectArea("SU5")
+	SU5->(dbSetOrder(1))
+	If (SU5->( dbSeek(FwxFilial("SU5") + ADY->ADY_XASSIN)) )
+		_cReprEmp 	:= Alltrim( SU5->U5_CONTAT )
+		_cTelReprEmp	:= Transform( SU5->U5_DDD + SU5->U5_FCOM1, "@R (999)9999-9999" )
+	EndIf
+
+	_cRespProp 		:= _cNomeCont
+	_cTelRespProp	:= _cTelCont
+	
+	OLE_SetDocumentVar(_hWord,"Doc_dDataAss"		, dtoc(AD1->AD1_DTASSI)	    )
+	OLE_SetDocumentVar(_hWord,"Doc_cNomeResp"		, _cReprEmp					)
+	OLE_SetDocumentVar(_hWord,"Doc_TelReprEmp"		, _cTelReprEmp				)
+	
+	OLE_SetDocumentVar(_hWord,"Doc_cNomeRespProp"	, _cRespProp				)
+	OLE_SetDocumentVar(_hWord,"Doc_cTelRespProp"	, _cTelRespProp				)
+	
+	//+---------------------------------------------------------------------+
+	//| Atualizando as variaveis do documento do Word                       |
+	//+---------------------------------------------------------------------+
+	OLE_UpdateFields(_hWord)
+	
+	//+---------------------------------------------------------------------+
+	//| Verifica se o arquivo a ser gerado ja existe no repositorio, se     | 
+	//| existir apaga                                                       |
+	//+---------------------------------------------------------------------+
+	If File(_cPathREP+_cArqNome)
+		FErase(_cPathREP+_cArqNome)
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Salva no repositorio LOCAL o arquivo gerado                         | 
+	//+---------------------------------------------------------------------+
+	OLE_SaveAsFile(_hWord, _cPathREP+_cArqNome+".pdf", '', '', .F., oleWdFormatPDF)
+	//OLE_SaveAsFile(_hWord, _cPathREP + _cArqNome +".pdf", '', '', .F., oleWdFormatPDF)
+
+	
+	//+---------------------------------------------------------------------+
+	//| Verifica se o arquivo existe no repositorio de AUDITORIA, se existir| 
+	//| apaga.                                                              |
+	//+---------------------------------------------------------------------+
+	If File(_cPathDOC+_cArqNome)
+		FErase(_cPathDOC+_cArqNome)
+	EndIf
+	//+---------------------------------------------------------------------+
+	//| Gera copia para AUDITORIA.                                          | 
+	//+---------------------------------------------------------------------+
+	CpyT2S(_cPathREP+_cArqNome+".*",_cPathDOC,.T.)
+	//+---------------------------------------------------------------------+
+	//| Fecha o TEMPLATE utilizado para Gerar o Arquivos de Remessa         |
+	//+---------------------------------------------------------------------+
+	OLE_CloseFile(_hWord)
+	//+---------------------------------------------------------------------+
+	//| Fecha o Link com Arquivo de Remessa "Impressao"                     |
+	//+---------------------------------------------------------------------+
+	OLE_CloseLink(_hWord)
+	//+---------------------------------------------------------------------+
+	//| Apaga na unidade LOCAL o TEMPLATE utilizado para gerar o documento. |
+	//+---------------------------------------------------------------------+
+	If File(_cPathREP+_cArqDOT)
+		FErase(_cPathREP+_cArqDOT)
+	EndIf
+
+	Aviso(FunName()+"/"+ProcName(),"Integração finalizada!"+CRLF+"Gerado documento WORD ["+_cArqNome+"]."+CRLF+"Disponivel em ["+_cPathREP+"].",{"OK"})
+
+Return Nil
+
+/*/{Protheus.doc} GeraPropST
+Gera proposta do Instituto Senai de Tecnologia
+@type  Function
+@author Franklin de Brito de Oliveira
+@since 26/07/2021
+	/*/
+Static Function GeraPropST()
+	
+	Local _cProposta	:= Alltrim(ADY->ADY_PROPOS)+"-"+Alltrim(ADY->ADY_PREVIS)  // Numero da proposta comercial + Revisão
+	Local dEmisPro := ADY->ADY_DATA		// Data de emissao
+	Local _cNessCli		:= AllTrim(ADY->ADY_XNECES)
+	Local _cObjAten		:= AllTrim(ADY->ADY_XOBJET)
+	
+	//Dados da Filial da Proposta	[SENAI] 
+	Local _cFilRazSo	:= ""	//Razão Social
+	Local _cFilNomeF	:= ""   //Nome fantasia
+	Local _cFilCNPJ		:= ""   //CPF/CNPJ	
+	Local _cFilInscE	:= ""   //Inscrição Estadual
+	Local _cFilEnder	:= ""   //Endereço
+	Local _cFilBair		:= ""   //Bairro
+	Local _cFilMunic	:= ""   //Municipio
+	Local _cFilUF		:= ""   //UF
+	Local _cFilCEP		:= ""   //CEP
+	Local _cFilFAX		:= ""   //FAX
+		
+	//Dados do representante [SENAI]	
+	Local _cNomeCont	:= ""
+	Local _cRespProp	:= ""
+	Local _cCargoCont	:= ""
+	Local _cTelRespProp := ""
+	Local _cTelCont		:= ""
+	Local _cEmailCont	:= ""
+	Local _cSiteCont	:= ""
+		
+	Local _nTotProsp	:= 0								// Total da proposta comercial
+	Local _nLinha		:= 0                         		// Usado no laco do WHILE
+
+	Local _cNomeCtt		:= ""
+	Local _cCargoCtt	:= ""
+	Local _cFoneCtt		:= ""
+	Local _cEMailCtt	:= ""
+	Local _cSiteCtt		:= ""
+
+	Local _cDescrProd	:= ""
+	Local _cAceiteS		:= ""
+	Local _cAceiteN		:= ""
+	Local _cReprEmp		:= ""
+	Local _cTelReprEmp	:= ""
+	Local _cArqNome		:= "SENAI"+Alltrim(_cProposta)+DTOS(dDataBase)+StrTran(Time(),":","")
+	Local _cDescCdPg	:= ""
+	
+	//Responsabilidades
+	/*
+	Local _cRAlim       := ""
+  	Local _cRApos       := ""
+  	Local _cRCert       := ""
+  	Local _cRDHOS       := ""
+  	Local _cRDVPH       := ""
+  	Local _cRestF       := ""
+  	Local _cROutr       := ""
+  	Local _cRRavi       := ""
+	*/
+
+	//+---------------------------------------------------------------------+
+	//| Verifica se o arquivo existe. Se existir APAGA                      |
+	//+---------------------------------------------------------------------+
+	If File(_cPathREP+_cArqDOT)
+		FErase(_cPathREP+_cArqDOT)
+	Endif
+
+	//+---------------------------------------------------------------------+
+	//| Copia o TEMPLATE "DOT" para repositorio LOCAL                       |
+	//+---------------------------------------------------------------------+
+	If !CpyS2T(_cPathDOT+_cArqDOT,_cPathREP,.T.)
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel copiar TEMPLATE para gerar a integração!",{"OK"})
+		Return Nil
+	EndIf
+
+	//+---------------------------------------------------------------------+
+	//| Abre o NOVO documento do WORD para preencher a Variaveis            |
+	//+---------------------------------------------------------------------+
+	OLE_NewFile(_hWord,_cPathREP+_cArqDOT)
+
+	//+---------------------------------------------------------------------+
+	//| Dados da Filial da Proposta	[SENAI]					                |
+	//+---------------------------------------------------------------------+
+	DbSelectArea("SM0")
+	SM0->(DbSetOrder(1))
+	
+	If (SM0->(DbSeek(cEmpAnt+cFilAnt)))
+		_cFilRazSo	:= AllTrim(M0_NOMECOM)
+		_cFilNomeF	:= AllTrim(M0_NOMECOM)
+		_cFilCNPJ	:= Transform(AllTrim(M0_CGC),Iif(Len(AllTrim(M0_CGC))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+		_cFilInscE	:= AllTrim(M0_INSC)
+		_cFilEnder	:= AllTrim(M0_ENDENT)
+		_cFilBair	:= AllTrim(M0_BAIRENT)
+		_cFilMunic	:= AllTrim(M0_CIDENT)
+		_cFilUF		:= SM0->M0_ESTENT
+		_cFilCEP	:= AllTrim(M0_CEPENT)
+		_cFilFAX	:= AllTrim(M0_FAX)
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Dados do representante [SENAI]										|
+	//+---------------------------------------------------------------------+	
+	DbSelectArea("SA3")
+	SA3->(DbSetOrder(1))
+	If (SA3->(DbSeek( FwxFilial("SA3") + ADY->ADY_VEND)))
+		_cNomeCont	:= Alltrim( SA3->A3_NOME )
+		_cCargoCont	:= Posicione( "SUM", 1, FwxFilial("SUM") + SA3->A3_CARGO, "UM_DESC" )
+		_cTelCont	:= Transform( SA3->A3_DDDTEL + SA3->A3_TEL, "@R (999)9999-9999" )
+		_cEmailCont	:= AllTrim( SA3->A3_EMAIL )
+		_cSiteCont	:= AllTrim( SA3->A3_HPAGE )
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Dados do Cliente							                        |
+	//+---------------------------------------------------------------------+
+	fPutDocsCliente(ADY->ADY_ENTIDA)
+
+	//+--------------------------------------------------------------------+
+	//| Dados da Proposta                                                  |
+	//+--------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord, "Doc_cNrPoposta", _cProposta)
+    OLE_SetDocumentVar(_hWord, "DtEmissao", dToC(dEmisPro))
+	OLE_SetDocumentVar(_hWord, "Doc_cDtValidadeProposta", dToC(dEmisPro+20))
+	OLE_SetDocumentVar(_hWord, "Doc_Necessidade_Cliente", _cNessCli)
+	OLE_SetDocumentVar(_hWord, "Doc_Objetivo_Proposta", _cObjAten)
+
+	//+-------------------------------------------------------------------+
+	//| Dados da Filial da Proposta	[SENAI]							      |
+	//+-------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_FilRazaoSocial"		 , _cFilRazSo	)
+	OLE_SetDocumentVar(_hWord,"Doc_FilNomeFantasia"		 , _cFilNomeF	)
+	OLE_SetDocumentVar(_hWord,"Doc_FilCPFCNPJ"			 , _cFilCNPJ	)
+	OLE_SetDocumentVar(_hWord,"Doc_FilInscricaoEstadual" , _cFilInscE	)
+	OLE_SetDocumentVar(_hWord,"Doc_FilEndereco"			 , _cFilEnder	)
+	OLE_SetDocumentVar(_hWord,"Doc_FilBairro"			 , _cFilBair	)
+	OLE_SetDocumentVar(_hWord,"Doc_FilMunicipio"		 , _cFilMunic	)
+	OLE_SetDocumentVar(_hWord,"Doc_FilUF"				 , _cFilUF		)
+	OLE_SetDocumentVar(_hWord,"Doc_FilCEP"				 , _cFilCEP	    )
+	OLE_SetDocumentVar(_hWord,"Doc_FilFAX"				 , _cFilFAX	    )
+
+	//+---------------------------------------------------------------------+
+	//| Dados do representante [SENAI]										|
+	//+---------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_Senai_NomeCont"		, _cNomeCont	)
+	OLE_SetDocumentVar(_hWord,"Doc_Senai_CargoCont"  	, _cCargoCont	)
+	OLE_SetDocumentVar(_hWord,"Doc_Senai_TelCont"		, _cTelCont		)
+	OLE_SetDocumentVar(_hWord,"Doc_Senai_EmailCont"	    , _cEmailCont	)
+	OLE_SetDocumentVar(_hWord,"Doc_Senai_SiteCont"		, _cSiteCont	)
+
+	//+---------------------------------------------------------------------+
+	//| Localiza os Contatos                                                |
+	//+---------------------------------------------------------------------+
+	DbSelectArea("AD9")
+	AD9->(DbSetOrder(1))				// AD9_FILIAL+AD9_NROPOR+AD9_REVISA+AD9_CODCON
+	If (AD9->(DbSeek(FwxFilial("AD9")+ADY->ADY_OPORTU+ADY->ADY_REVISA)))
+		DbSelectArea("SU5")
+		SU5->(DbSetOrder(1))				//  U5_FILIAL+U5_CODCONT+U5_IDEXC
+		If (SU5->(DbSeek(FwxFilial("SU5")+AD9->AD9_CODCON)))
+			_cNomeCtt	:= SU5->U5_CONTAT
+			_cCargoCtt	:= AllTrim(Posicione("SUM",1,FwxFilial("SUM")+SU5->U5_FUNCAO,"UM_DESC"))
+			_cFoneCtt	:= SU5->U5_FONE
+			_cEMailCtt	:= Alltrim(SU5->U5_EMAIL)
+			_cSiteCtt	:= Alltrim(SU5->U5_URL)
+		EndIf
+	EndIf
+	
+	DbSelectArea("ADZ")
+	ADZ->(DbSetOrder(3))
+	ADZ->(DbGoTop())
+	ADZ->(DbSeek(FwxFilial("ADZ")+ADY->ADY_PROPOS+ADY->ADY_PREVIS+Strzero(1,TamSX3("ADZ_FOLDER")[1])))
+	_cDescCdPg := Posicione("SE4",1,FwxFilial("SE4")+ADZ->ADZ_CONDPG,"E4_DESCRI")
+	
+	//+---------------------------------------------------------------------+
+	// Dados do Contato                                                     |
+	//+---------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_cNomeContato"		, _cNomeCtt	)
+	OLE_SetDocumentVar(_hWord,"Doc_cCargo"				, _cCargoCtt)
+	OLE_SetDocumentVar(_hWord,"Doc_cFoneContato"		, _cFoneCtt)
+	OLE_SetDocumentVar(_hWord,"Doc_cEMailContato"		, _cEMailCtt)
+	OLE_SetDocumentVar(_hWord,"Doc_cSiteContato"		, _cSiteCtt	)
+
+	Do While ADZ->(!Eof()) .And. FwxFilial("ADZ") == ADZ->ADZ_FILIAL .and. Alltrim(ADZ->ADZ_PROPOS)+"-"+Alltrim(ADZ->ADZ_REVISA) == _cProposta .and. ADZ->ADZ_FOLDER == Strzero(1,TamSX3("ADZ_FOLDER")[1])
+		_nLinha++
+		//+---------------------------------------------------------------------+
+		//|   Produtos/Serviços                                                 |
+		//+---------------------------------------------------------------------+
+		// Insere o campo Descricao do Produto
+		_cDescrProd	:= Alltrim(Posicione("SB1",1,FwxFilial("SB1")+ADZ->ADZ_PRODUT,"B1_DESC"))
+		OLE_SetDocumentVar(_hWord,"Prd_descr"+Alltrim(str(_nLinha))		,_cDescrProd		)
+
+		//Insere Percentual de Desconto
+		OLE_SetDocumentVar(_hWord,"Prd_pdesc"+Alltrim(str(_nLinha))     ,Alltrim(Transform(ADZ->ADZ_DESCON	,"@E 999,999,999.99"))	)
+		
+		//Insere Valor de Desconto	
+		OLE_SetDocumentVar(_hWord,"Prd_vdesc"+Alltrim(str(_nLinha)) 	,Alltrim(Transform(ADZ->ADZ_VALDES	,"@E 999,999,999.99"))	)
+		
+		// Insere o campo Quantidade do Produto
+		OLE_SetDocumentVar(_hWord,"Prd_Qtde"+Alltrim(str(_nLinha)) 		,Alltrim(Transform(ADZ->ADZ_QTDVEN	,"@E 999,999,999.99"))	)
+		
+		// Insere o campo Valor Unitário
+		OLE_SetDocumentVar(_hWord,"Prd_VlrUni"+Alltrim(str(_nLinha))  	,Alltrim(Transform(ADZ->ADZ_PRCVEN	,"@E 999,999,999.99"))	)
+		
+		// Insere o campo Total
+		If AllTrim(Posicione("SF4", 1, xFilial("SF4")+ADZ->ADZ_TES, "F4_DUPLIC"))=='S'
+			OLE_SetDocumentVar(_hWord, "Prd_vtot"+Alltrim(str(_nLinha)), Alltrim(Transform(ADZ->ADZ_TOTAL , "@E 999,999,999.99"))	)
+			_nTotProsp += ADZ->ADZ_TOTAL
+		Else
+			OLE_SetDocumentVar(_hWord, "Prd_vtot"+Alltrim(str(_nLinha)), Alltrim(Transform(0, "@E 999,999,999.99"))	)
+		EndIf
+		
+		ADZ->(dbSkip())
+	
+	Enddo
+
+	//+---------------------------------------------------------------------+
+	//|   Implementa o Contator de Itens da Macro                           | 
+	//+---------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"prt_nritens",	_nLinha)
+
+	//+---------------------------------------------------------------------+
+	//|   Efetua CARGA das Macros                                           | 
+	//+---------------------------------------------------------------------+
+	If _nLinha > 0
+		OLE_ExecuteMacro(_hWord,"tabitens")
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Cronograma				                                            | 
+	//+---------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord, "cCronograma", AllTrim(ADY->ADY_XCRONO))
+	
+	//+---------------------------------------------------------------------+
+	//|   Condições Gerais                                                  | 
+	//+---------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_nValorProp"		, Transform( _nTotProsp	,"@E 999,999,999.99"))	
+	OLE_SetDocumentVar(_hWord,"Doc_cVlrExtenso"		, Extenso(_nTotProsp,.F.,1))
+	_nTotProsp := 0
+	
+	//+---------------------------------------------------------------------+
+	//|Responsabilidades                                                    |
+	//+---------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord, "cResponsabilidades", AllTrim(ADY->ADY_XACRIT))
+	/*
+	_cRAlim := ADY->ADY_XRALIM
+  	_cRApos := ADY->ADY_XRAPOS
+  	_cRCert := ADY->ADY_XRCERT
+  	_cRDHOS := ADY->ADY_XRDHOS
+  	_cRDVPH := ADY->ADY_XRDVPH
+  	_cRestF := ADY->ADY_XRESTF
+  	_cROutr := ADY->ADY_XROUTR
+  	_cRRavi := ADY->ADY_XRRAVI
+  	
+  	
+	//Alimentacao
+  	If _cRAlim == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtSenai"	, "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtClient"	, "( )"	)
+  	ElseIf _cRAlim == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtSenai"	, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtClient"	, "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtSenai"	, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtClient"	, "( )"	)
+  	EndIf
+  	
+  	//Apostilas
+  	If _cRApos == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cApostSenai"		, "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cApostClient"	, "( )"	)
+  	ElseIf _cRApos == 'C'
+  	  	OLE_SetDocumentVar(_hWord,"Doc_cApostSenai"		, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cApostClient"	, "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cApostSenai"		, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cApostClient"	, "( )"	)
+  	EndIf
+  	
+  	//Certificados
+  	If _cRCert == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertSenai"	    , "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertClient"	    , "( )"	)
+  	ElseIf _cRCert == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertSenai"	    , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertClient"	    , "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertSenai"	    , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertClient"	    , "( )"	)
+  	EndIf
+  	
+  	//Depesas com Hospedagem
+  	If _cRDHOS == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHSenai"		, "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHClient"	, "( )"	)
+  	ElseIf _cRDHOS == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHClient"	, "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHSenai"		, "( )"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHSenai"		, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHClient"	, "( )"	)
+  	EndIf
+  	
+  	//Despesas com Viagem, passagem e Hospedagem
+  	If _cRDVPH == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHSenai"	, "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHClient"	, "( )"	)
+  	ElseIf _cRDVPH == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHSenai"	, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHClient"	, "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHSenai"	, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHClient"	, "( )"	)
+  	EndIf
+  	
+  	//Estrutura Fisica
+  	If _cRestF == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFSenai"	   , "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFClient"	   , "( )"	)
+  	ElseIf _cRestF == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFSenai"	   , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFClient"	   , "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFSenai"	   , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFClient"	   , "( )"	)
+  	EndIf
+  	
+  	//Outros
+  	If _cROutr == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosSenai"	, "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosClient"	, "( )"	)
+  	ElseIf _cROutr == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosSenai"	, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosClient"	, "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosSenai"	, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosClient"	, "( )"	)
+  	EndIf
+  	
+  	//Recursos Audio Visuais
+  	If _cRRavi == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cRecAVSenai"		, "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cRecAVClient"	, "( )"	)
+  	ElseIf _cRRavi == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cRecAVSenai"		, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cRecAVClient"	, "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cRecAVSenai"		, "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cRecAVClient"	, "( )"	)
+  	EndIf
+	*/
+  	
+  	//Sobre a Condicao de Pagamento
+  	OLE_SetDocumentVar(_hWord,"Doc_cCondPgto"			, _cDescCdPg	)
+	
+	//+---------------------------------------------------------------------+
+	//|   Aceite                                                            |
+	//+---------------------------------------------------------------------+
+	_cAceiteS	:= "[ ]"
+	_cAceiteN	:= "[ ]"
+	
+	OLE_SetDocumentVar(_hWord,"Doc_AceiteSIM", _cAceiteS	)
+	OLE_SetDocumentVar(_hWord,"Doc_AceiteNAO", _cAceiteN	)
+	
+	//+---------------------------------------------------------------------+
+	//|  Assinaturas                                                        |
+	//+---------------------------------------------------------------------+
+	dbSelectArea("SU5")
+	SU5->(dbSetOrder(1))
+	If (SU5->( dbSeek(FwxFilial("SU5") + ADY->ADY_XASSIN)) )
+		_cReprEmp 	:= Alltrim( SU5->U5_CONTAT )
+		_cTelReprEmp	:= Transform( SU5->U5_DDD + SU5->U5_FCOM1, "@R (999)9999-9999" )
+	EndIf
+
+	_cRespProp 		:= _cNomeCont
+	_cTelRespProp	:= _cTelCont
+	
+	OLE_SetDocumentVar(_hWord,"Doc_dDataAss"		, dtoc(AD1->AD1_DTASSI)	    )
+	OLE_SetDocumentVar(_hWord,"Doc_cNomeResp"		, _cReprEmp					)
+	OLE_SetDocumentVar(_hWord,"Doc_TelReprEmp"		, _cTelReprEmp				)
+	OLE_SetDocumentVar(_hWord,"Doc_cNomeRespProp"	, _cRespProp				)
+	OLE_SetDocumentVar(_hWord,"Doc_cTelRespProp"	, _cTelRespProp				)
+	
+	//+---------------------------------------------------------------------+
+	//| Atualizando as variaveis do documento do Word                       |
+	//+---------------------------------------------------------------------+
+	OLE_UpdateFields(_hWord)
+	
+	//+---------------------------------------------------------------------+
+	//| Verifica se o arquivo a ser gerado ja existe no repositorio, se     | 
+	//| existir apaga                                                       |
+	//+---------------------------------------------------------------------+
+	If File(_cPathREP+_cArqNome)
+		FErase(_cPathREP+_cArqNome)
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Salva no repositorio LOCAL o arquivo gerado                         | 
+	//+---------------------------------------------------------------------+
+	OLE_SaveAsFile(_hWord, _cPathREP+_cArqNome+".pdf", '', '', .F., oleWdFormatPDF)
+	
+	//+---------------------------------------------------------------------+
+	//| Verifica se o arquivo existe no repositorio de AUDITORIA, se existir| 
+	//| apaga.                                                              |
+	//+---------------------------------------------------------------------+
+	If File(_cPathDOC+_cArqNome)
+		FErase(_cPathDOC+_cArqNome)
+	EndIf
+
+	//+---------------------------------------------------------------------+
+	//| Gera copia para AUDITORIA.                                          | 
+	//+---------------------------------------------------------------------+
+	CpyT2S(_cPathREP+_cArqNome+".*",_cPathDOC,.T.)
+
+	//+---------------------------------------------------------------------+
+	//| Fecha o TEMPLATE utilizado para Gerar o Arquivos de Remessa         |
+	//+---------------------------------------------------------------------+
+	OLE_CloseFile(_hWord)
+
+	//+---------------------------------------------------------------------+
+	//| Fecha o Link com Arquivo de Remessa "Impressao"                     |
+	//+---------------------------------------------------------------------+
+	OLE_CloseLink(_hWord)
+
+	//+---------------------------------------------------------------------+
+	//| Apaga na unidade LOCAL o TEMPLATE utilizado para gerar o documento. |
+	//+---------------------------------------------------------------------+
+	If File(_cPathREP+_cArqDOT)
+		FErase(_cPathREP+_cArqDOT)
+	EndIf
+
+	Aviso(FunName()+"/"+ProcName(),"Integração finalizada!"+CRLF+"Gerado documento WORD ["+_cArqNome+"]."+CRLF+"Disponivel em ["+_cPathREP+"].",{"OK"})
+
+Return Nil
+
+/*/{Protheus.doc} GeraPropEP
+Function GeraPropEP
+@type function
+@author j2a.luizjunior
+@since 23/11/2017
+@history 25/07/2019, Franklin de Brito de Oliveira, Ajuste na consulta "visao_cursos_crm" para impressão da unidade curricular e pré-requisito.
+/*/
+Static Function GeraPropEP
+
+	Local _cProposta	:= Alltrim(ADY->ADY_PROPOS)+"-"+Alltrim(ADY->ADY_PREVIS)  // Numero da proposta comercial + Revisão
+	Local _cDtEmissao	:= Dtoc(ADY->ADY_DATA)				                      // Data de emissao
+	Local _cAliasRM		:= GetNewPar("MV_XSGEABD", "")
+	
+	//Dados da Filial da Proposta	[SENAI] 
+	Local _cFilRazSo	:= ""	//Razão Social
+	Local _cFilNomeF	:= ""   //Nome fantasia
+	Local _cFilCNPJ		:= ""   //CPF/CNPJ	
+	Local _cFilInscE	:= ""   //Inscrição Estadual
+	Local _cFilEnder	:= ""   //Endereço
+	Local _cFilBair		:= ""   //Bairro
+	Local _cFilMunic	:= ""   //Municipio
+	Local _cFilUF		:= ""   //UF
+	Local _cFilCEP		:= ""   //CEP
+	Local _cFilFAX		:= ""   //FAX
+		
+	//Dados do representante [SENAI]	
+	Local _cNomeCont	:= ""
+	Local _cCargoCont	:= ""
+	Local _cTelCont		:= ""
+	Local _cEmailCont	:= ""
+	Local _cSiteCont	:= ""
+		
+	Local _nTotProsp	:= 0								// Total da proposta comercial
+	Local _nLinha		:= 0                         		// Usado no laco do WHILE
+
+	Local _cNomeCtt		:= ""
+	Local _cCargoCtt	:= ""
+	Local _cFoneCtt		:= ""
+	Local _cEMailCtt	:= ""
+	Local _cSiteCtt		:= ""
+
+	Local _cDescrProd	:= ""
+	Local _cAceiteS		:= ""
+	Local _cAceiteN		:= ""
+	Local _cReprEmp		:= ""
+	Local _cArqNome		:= "SENAI"+Alltrim(_cProposta)+DTOS(dDataBase)+StrTran(Time(),":","")
+	Local _cDescCdPg	:= ""
+	Local _cPerReal		:= ""
+	
+	//Responsabilidades
+	Local _cRAlim       := ""
+  	Local _cRApos       := ""
+  	Local _cRCert       := ""
+  	Local _cRDHOS       := ""
+  	Local _cRDVPH       := ""
+  	Local _cRestF       := ""
+  	Local _cROutr       := ""
+  	Local _cRRavi       := ""
+  	
+  	//Und Curriculares / Pre Requisitos
+  	Local _cProSGE      := ""
+	Local _cTurma       := ""
+	Local _nModul       := 0
+	Local _cUndCur      := ""
+	Local _cPreReq      := ""
+	Local _lGratis      := .F.
+
+	//+---------------------------------------------------------------------+
+	//| Verifica se o arquivo existe. Se existir APAGA                      |
+	//+---------------------------------------------------------------------+
+	If File(_cPathREP+_cArqDOT)
+		FErase(_cPathREP+_cArqDOT)
+	Endif
+	
+	//+---------------------------------------------------------------------+
+	//| Copia o TEMPLATE "DOT" para repositorio LOCAL                       |
+	//+---------------------------------------------------------------------+
+	If !CpyS2T( AllTrim(_cPathDOT+_cArqDOT), AllTrim(_cPathREP), .T. )
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel copiar TEMPLATE para gerar a integração!",{"OK"})
+		Return Nil
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Abre o NOVO documento do WORD para preencher a Variaveis            |
+	//+---------------------------------------------------------------------+
+	OLE_NewFile(_hWord,_cPathREP+_cArqDOT)
+
+	OLE_SetDocumentVar(_hWord, "Doc_dEmissao", _cDtEmissao)
+	
+	//+---------------------------------------------------------------------+
+	//| Dados da Filial da Proposta	[SENAI]					                |
+	//+---------------------------------------------------------------------+
+	DbSelectArea("SM0")
+	SM0->(DbSetOrder(1))
+	
+	If (SM0->(DbSeek(cEmpAnt+cFilAnt)))
+		_cFilRazSo	:= AllTrim(M0_NOMECOM)
+		_cFilNomeF	:= AllTrim(M0_NOMECOM)
+		_cFilCNPJ	:= Transform(AllTrim(M0_CGC),Iif(Len(AllTrim(M0_CGC))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+		_cFilInscE	:= AllTrim(M0_INSC)
+		_cFilEnder	:= AllTrim(M0_ENDENT)
+		_cFilBair	:= AllTrim(M0_BAIRENT)
+		_cFilMunic	:= AllTrim(M0_CIDENT)
+		_cFilUF		:= SM0->M0_ESTENT
+		_cFilCEP	:= AllTrim(M0_CEPENT)
+		_cFilFAX	:= AllTrim(M0_FAX)
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Dados do representante [SENAI]										|
+	//+---------------------------------------------------------------------+	
+	DbSelectArea("SA3")
+	SA3->(DbSetOrder(1))
+	If (SA3->(DbSeek( FwxFilial("SA3") + ADY->ADY_VEND)))
+		_cNomeCont	:= Alltrim( SA3->A3_NOME )
+		_cCargoCont	:= Posicione( "SUM", 1, FwxFilial("SUM") + SA3->A3_CARGO, "UM_DESC" )
+		_cTelCont	:= Transform( SA3->A3_DDDTEL + SA3->A3_TEL, "@R (999)9999-9999" )
+		_cEmailCont	:= AllTrim( SA3->A3_EMAIL )
+		_cSiteCont	:= AllTrim( SA3->A3_HPAGE )
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Dados do Cliente							                        |
+	//+---------------------------------------------------------------------+
+	fPutDocsCliente(ADY->ADY_ENTIDA)
+	
+	/*
+	//+--------------------------------------------------------------------+
+	//| Dados da Proposta                                                  |
+	//+--------------------------------------------------------------------+
+	*/
+	OLE_SetDocumentVar(_hWord,"Doc_cDtValidadeProposta"	 , _cDtEmissao		)    	
+	OLE_SetDocumentVar(_hWord,"Doc_cNrPoposta"		     , _cProposta		)
+	
+	//+----------------------------------------------------------------------+
+	//| Dados da Filial da Proposta	[SENAI] E DADOS [SENAI]			         |
+	//+----------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_FilRazaoSocial"		 , _cFilRazSo	     )	
+	OLE_SetDocumentVar(_hWord,"Doc_FilCPFCNPJ"			 , _cFilCNPJ	     )
+	OLE_SetDocumentVar(_hWord,"Doc_FilEndereco"			 , _cFilEnder	     )
+	OLE_SetDocumentVar(_hWord,"Doc_FilMunicipio"		 , _cFilMunic 	     )
+	OLE_SetDocumentVar(_hWord,"Doc_Senai_NomeCont"		 , _cNomeCont	     )
+	OLE_SetDocumentVar(_hWord,"Doc_Senai_EmailCont"	     , _cEmailCont       )
+	OLE_SetDocumentVar(_hWord,"Doc_FilInscricaoEstadual" , _cFilInscE	     )
+	OLE_SetDocumentVar(_hWord,"Doc_FilCEP"				 , _cFilCEP	         )
+	OLE_SetDocumentVar(_hWord,"Doc_Senai_CargoCont"  	 , _cCargoCont 	     )
+	OLE_SetDocumentVar(_hWord,"Doc_Senai_TelCont"		 , _cTelCont		 )
+	OLE_SetDocumentVar(_hWord,"Doc_Senai_SiteCont"		 , _cSiteCont	     )
+
+	//+----------------------------------------------------------------------+
+	//| Localiza os Contatos                                                 |
+	//+----------------------------------------------------------------------+
+	DbSelectArea("AD9")
+	AD9->(DbSetOrder(1))				// AD9_FILIAL+AD9_NROPOR+AD9_REVISA+AD9_CODCON
+	If (AD9->(DbSeek(FwxFilial("AD9")+ADY->ADY_OPORTU+ADY->ADY_REVISA)))
+		DbSelectArea("SU5")
+		SU5->(DbSetOrder(1))				//  U5_FILIAL+U5_CODCONT+U5_IDEXC
+		If (SU5->(DbSeek(FwxFilial("SU5")+AD9->AD9_CODCON)))
+			_cNomeCtt	:= SU5->U5_CONTAT
+			_cCargoCtt	:= AllTrim(Posicione("SUM",1,FwxFilial("SUM")+SU5->U5_FUNCAO,"UM_DESC"))
+			_cFoneCtt	:= SU5->U5_FONE
+			_cEMailCtt	:= Alltrim(SU5->U5_EMAIL)
+			_cSiteCtt	:= Alltrim(SU5->U5_URL)
+		EndIf
+	EndIf
+	
+	DbSelectArea("ADZ")
+	ADZ->(DbSetOrder(3))
+	ADZ->(DbGoTop())
+	ADZ->(DbSeek(FwxFilial("ADZ")+ADY->ADY_PROPOS+ADY->ADY_PREVIS+Strzero(1,TamSX3("ADZ_FOLDER")[1])))
+	_cDescCdPg := Posicione("SE4",1,FwxFilial("SE4")+ADZ->ADZ_CONDPG,"E4_DESCRI")
+
+	Do While ADZ->(!Eof()) .And. FwxFilial("ADZ") == ADZ->ADZ_FILIAL .and. Alltrim(ADZ->ADZ_PROPOS)+"-"+Alltrim(ADZ->ADZ_REVISA) == _cProposta .and. ADZ->ADZ_FOLDER == Strzero(1,TamSX3("ADZ_FOLDER")[1])
+		
+		_nLinha++
+	    
+		//+----------------------------------------------------------------------+
+		//| Identificação dos Serviços                                           |
+		//+----------------------------------------------------------------------+
+		_cDescrProd	:= Alltrim(Posicione("SB1",1,FwxFilial("SB1")+ADZ->ADZ_PRODUT,"B1_DESC"))
+		
+		OLE_SetDocumentVar(_hWord,"Doc_Prod"      + Alltrim(str(_nLinha))   , _cDescrProd				                                                   )
+		OLE_SetDocumentVar(_hWord,"Doc_cCargaHor" + Alltrim(str(_nLinha))   , cValToChar(Posicione("SB1",1,FwxFilial("SB1")+ADZ->ADZ_PRODUT,"B1_XCHSIGE")) )
+		OLE_SetDocumentVar(_hWord,"Doc_cObjAten"  + Alltrim(str(_nLinha))   , ADY->ADY_XOBJET                                                              )
+	                                                         
+		//+----------------------------------------------------------------------+
+		//| Investimentos                                                        |
+		//+----------------------------------------------------------------------+
+
+		//+---------------------------------------------------------------------+
+		//|   Produtos/Serviços                                                 |
+		//+---------------------------------------------------------------------+
+		// Insere o campo Descricao do Produto
+		OLE_SetDocumentVar(_hWord,"Prd_descr"+Alltrim(str(_nLinha))		,_cDescrProd		)
+
+		//Insere Carga Horária 
+		OLE_SetDocumentVar(_hWord,"Prd_CargaHoraria"+Alltrim(str(_nLinha)) 	,cValToChar(Posicione("SB1",1,FwxFilial("SB1")+ADZ->ADZ_PRODUT,"B1_XCHSIGE")) )
+		
+		//Insere Percentual de Desconto
+		OLE_SetDocumentVar(_hWord,"Prd_pdesc"+Alltrim(str(_nLinha))       	,Alltrim(Transform(ADZ->ADZ_DESCON	,"@E 999,999,999.99"))+ "%"	)
+		
+		//Insere Valor de Desconto	
+		OLE_SetDocumentVar(_hWord,"Prd_vdesc"+Alltrim(str(_nLinha)) 	    ,Alltrim(Transform(ADZ->ADZ_VALDES	,"@E 999,999,999.99"))	)
+
+		// Insere o campo Quantidade do Produto
+		OLE_SetDocumentVar(_hWord,"Prd_Qtde"+Alltrim(str(_nLinha)) 		    ,Alltrim(Transform(ADZ->ADZ_QTDVEN	,"@E 999,999,999.99"))	)
+		
+		// Insere o campo Valor Unitário
+		//OLE_SetDocumentVar(_hWord,"Prd_VlrUni"+Alltrim(str(_nLinha))  	,Alltrim(Transform(ADZ->ADZ_PRCVEN	,"@E 999,999,999.99"))	)
+		OLE_SetDocumentVar(_hWord,"Prd_VlrUni"+Alltrim(str(_nLinha))  	    ,Alltrim(Transform(ADZ->ADZ_PRCTAB	,"@E 999,999,999.99"))	)
+		
+		// Insere o campo Total
+		_lGratis := IIF(AllTrim(Posicione("SF4",1,xFilial("SF4")+ADZ->ADZ_TES,"F4_DUPLIC")) == 'S',.F.,.T.)
+		If _lGratis
+			OLE_SetDocumentVar(_hWord,"Prd_vtot"+Alltrim(str(_nLinha)) 		,Alltrim(Transform(0, "@E 999,999,999.99"))	)			
+		Else
+			OLE_SetDocumentVar(_hWord,"Prd_vtot"+Alltrim(str(_nLinha)) 		,Alltrim(Transform(ADZ->ADZ_TOTAL, "@E 999,999,999.99"))	)
+		EndIf
+		
+		If .Not. _lGratis
+			_nTotProsp += ADZ->ADZ_TOTAL
+		EndIf
+	
+		//+---------------------------------------------------------------------+
+		//|   Descrição dos Produtos/Serviços                                   |
+		//+---------------------------------------------------------------------+
+		_cProSGE := Alltrim(Posicione("SB1",1,FwxFilial("SB1")+ADZ->ADZ_PRODUT,"B1_XPRDSGE"))
+		_cTurma  := AllTrim(ADZ->ADZ_XTURMA)
+		_nModul  := Val(AllTrim(ADZ->ADZ_XMODUL))
+		_cUndCur := ""
+		_cPreReq := ""
+		
+		If .Not. Empty(_cProSGE)
+		
+			If Select("TRA") > 0
+				DbSelectArea("TRA")
+				TRA->(DbCloseArea())
+			EndIf
+			
+			_cQuery := " SELECT CODIGO_CURSO, MODULO, UNIDADES_CURRICULARES, PRE_REQUISITO "+ CRLF
+			_cQuery += " FROM RM.VISAO_CURSOS_CRM"+ _cAliasRM + CRLF
+			_cQuery += " WHERE CODIGO_CURSO = '"+ _cProSGE +"' "
+			
+			TCQUERY _cQuery NEW ALIAS "TRA"	
+			
+			DbSelectArea('TRA')
+			TRA->(DbGoTop())
+			
+			_cUndCur	:= Upper(Alltrim(FwNoAccent(TRA->UNIDADES_CURRICULARES)))
+			_cPreReq	:= Upper(Alltrim(FwNoAccent(TRA->PRE_REQUISITO)))
+			
+			OLE_SetDocumentVar(_hWord,"Doc_cUnCurric"+Alltrim(str(_nLinha))		     , _cUndCur        )
+			OLE_SetDocumentVar(_hWord,"Doc_cReqAcess"+Alltrim(str(_nLinha))		     , _cPreReq        )
+		
+			TRA->(DbCloseArea())
+		EndIf
+
+		ADZ->(dbSkip())
+	Enddo
+
+	//+----------------------------------------------------------------------+
+	//| Responsabilidades Senai                                              |
+	//+----------------------------------------------------------------------+
+
+	_cRAlim := ADY->ADY_XRALIM
+  	_cRApos := ADY->ADY_XRAPOS
+  	_cRCert := ADY->ADY_XRCERT
+  	_cRDHOS := ADY->ADY_XRDHOS
+  	_cRDVPH := ADY->ADY_XRDVPH
+  	_cRestF := ADY->ADY_XRESTF
+  	_cROutr := ADY->ADY_XROUTR
+  	_cRRavi := ADY->ADY_XRRAVI
+	                                                     
+  	//Alimentacao                                        
+  	If _cRAlim == 'S'                                    
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtSenai"	 , "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtClient"	 , "( )"	)
+  	ElseIf _cRAlim == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtSenai"	 , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtClient"	 , "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtSenai"	 , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cAliemtClient"	 , "( )"	)
+  	EndIf                                                
+
+  	//Despesas com Viagem, passagem e Hospedagem
+  	If _cRDVPH == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHSenai"	 , "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHClient"	 , "( )"	)
+  	ElseIf _cRDVPH == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHSenai"	 , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHClient"	 , "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHSenai"	 , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespVPHClient"	 , "( )"	)
+  	EndIf
+  	
+  	//Apostilas 
+  	If _cRApos == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cApostSenai"		 , "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cRespAposCli"	 , "( )"	)
+  	ElseIf _cRApos == 'C'
+  	  	OLE_SetDocumentVar(_hWord,"Doc_cApostSenai"		 , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cRespAposCli"	 , "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cApostSenai"		 , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cRespAposCli"	 , "( )"	)
+  	EndIf  	
+	
+  	//Certificados
+  	If _cRCert == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertSenai"	     , "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertClient"	     , "( )"	)
+  	ElseIf _cRCert == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertSenai"	     , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertClient"	     , "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertSenai"	     , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cCertClient"      , "( )"	)
+  	EndIf
+  	
+  	//Estrutura Fisica                                   
+  	If _cRestF == 'S'                                    
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFSenai"	     , "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFClient"	     , "( )"	)
+  	ElseIf _cRestF == 'C'                                
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFSenai"	     , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFClient"	     , "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFSenai"	     , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cEstFClient"	     , "( )"	)
+  	EndIf	  	
+	
+  	//Depesas com Hospedagem
+  	If _cRDHOS == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHSenai"		 , "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHClient"	 , "( )"	)
+  	ElseIf _cRDHOS == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHClient"	 , "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHSenai"		 , "( )"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHSenai"		 , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cDespHClient"	 , "( )"	)
+  	EndIf
+
+    //Outros
+  	If _cROutr == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosSenai"	 , "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosClient"	 , "( )"	)
+  	ElseIf _cROutr == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosSenai"	 , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosClient"	 , "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosSenai"	 , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cOutrosClient"	 , "( )"	)
+  	EndIf
+    
+  	//Recursos Audio Visuais
+  	If _cRRavi == 'S'
+  		OLE_SetDocumentVar(_hWord,"Doc_cRecAVSenai"		 , "(X)"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cRecAVClient"	 , "( )"	)
+  	ElseIf _cRRavi == 'C'
+  		OLE_SetDocumentVar(_hWord,"Doc_cRecAVSenai"		 , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cRecAVClient"	 , "(X)"	)
+  	Else
+  		OLE_SetDocumentVar(_hWord,"Doc_cRespAposCli"	 , "( )"	)
+  		OLE_SetDocumentVar(_hWord,"Doc_cRecAVClient"	 , "( )"	)
+  	EndIf
+
+	OLE_SetDocumentVar(_hWord,"TbProd_QtdItens",	_nLinha)
+
+	If _nLinha > 0
+		OLE_ExecuteMacro(_hWord,"tabitens")
+		OLE_ExecuteMacro(_hWord,"TbProd")
+	EndIf
+                                                         
+	//+----------------------------------------------------------------------+
+	//| Localiza os Contatos                                                 |
+	//+----------------------------------------------------------------------+
+	DbSelectArea("AD9")
+	AD9->(DbSetOrder(1))				// AD9_FILIAL+AD9_NROPOR+AD9_REVISA+AD9_CODCON
+	If (AD9->(DbSeek(FwxFilial("AD9")+ADY->ADY_OPORTU+ADY->ADY_REVISA)))
+		DbSelectArea("SU5")
+		SU5->(DbSetOrder(1))				//  U5_FILIAL+U5_CODCONT+U5_IDEXC
+		If (SU5->(DbSeek(FwxFilial("SU5")+AD9->AD9_CODCON)))
+			_cNomeCtt	:= SU5->U5_CONTAT
+			_cCargoCtt	:= AllTrim(Posicione("SUM",1,FwxFilial("SUM")+SU5->U5_FUNCAO,"UM_DESC"))
+			_cFoneCtt	:= SU5->U5_FONE
+			_cEMailCtt	:= Alltrim(SU5->U5_EMAIL)
+			_cSiteCtt	:= Alltrim(SU5->U5_URL)
+		EndIf
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	// Dados do Contato                                                     |
+	//+---------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_cNomeContato"		, _cNomeCtt	)
+	OLE_SetDocumentVar(_hWord,"Doc_cCargo"				, _cCargoCtt)
+	OLE_SetDocumentVar(_hWord,"Doc_cFoneContato"		, _cFoneCtt)
+	OLE_SetDocumentVar(_hWord,"Doc_cEMailContato"		, _cEMailCtt)
+	OLE_SetDocumentVar(_hWord,"Doc_cSiteContato"		, _cSiteCtt	)
+
+	//+---------------------------------------------------------------------+
+	//|   Implementa o Contato de Itens da Macro                            | 
+	//+---------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"prt_nritens",	_nLinha)
+
+	//+---------------------------------------------------------------------+
+	//| Periodo de Realizacao                                               | 
+	//+---------------------------------------------------------------------+
+	_cPerReal := OLE_SetDocumentVar(_hWord,"Doc_cPerReal" , AllTrim(ADY->ADY_XCRONO))
+	
+	//+---------------------------------------------------------------------+
+	//|   Condições Gerais                                                  | 
+	//+---------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_nValorProp"		, Transform( _nTotProsp	,"@E 999,999,999.99"))
+	OLE_SetDocumentVar(_hWord,"Doc_cCondPgto"		, _cDescCdPg	                             )
+	OLE_SetDocumentVar(_hWord,"Doc_cVlrExtenso"		, Extenso(_nTotProsp,.F.,1)                  )
+
+  	//Sobre a Condicao de Pagamento
+  	OLE_SetDocumentVar(_hWord,"Doc_cCondPgto"		   , _cDescCdPg	)
+	
+	//+---------------------------------------------------------------------+
+	//|   Aceite                                                            |
+	//+---------------------------------------------------------------------+
+	_cAceiteS	:= "[ ]"
+	_cAceiteN	:= "[ ]"
+	
+	OLE_SetDocumentVar(_hWord,"Doc_AceiteSIM", _cAceiteS	)
+	OLE_SetDocumentVar(_hWord,"Doc_AceiteNAO", _cAceiteN	)
+	//+---------------------------------------------------------------------+
+	//|  Assinaturas                                                        |
+	//+---------------------------------------------------------------------+
+	dbSelectArea("SU5")
+	SU5->(dbSetOrder(1))
+	If (SU5->( dbSeek(FwxFilial("SU5") + ADY->ADY_XASSIN)) )
+		_cResProp 	    := Alltrim( SU5->U5_CONTAT )
+	EndIf
+	
+	_cReprEmp := IF(!EMPTY(M->AD1_VEND),POSICIONE("SA3",1,XFILIAL("SA3") + M->AD1_VEND,"A3_NOME"),"")
+	
+	OLE_SetDocumentVar(_hWord, "Doc_Data_Assin", dDataBase)
+	OLE_SetDocumentVar(_hWord, "Doc_RespProp", _cReprEmp)
+	OLE_SetDocumentVar(_hWord, "Doc_RepEmp", _cResProp)
+	
+	//+---------------------------------------------------------------------+
+	//| Atualizando as variaveis do documento do Word                       |
+	//+---------------------------------------------------------------------+
+	OLE_UpdateFields(_hWord)
+	
+	//+---------------------------------------------------------------------+
+	//| Verifica se o arquivo a ser gerado ja existe no repositorio, se     | 
+	//| existir apaga                                                       |
+	//+---------------------------------------------------------------------+
+	If File(_cPathREP+_cArqNome)
+		FErase(_cPathREP+_cArqNome+".pdf")
+	EndIf
+
+	OLE_SaveAsFile(_hWord, _cPathREP + _cArqNome +".pdf", '', '', .F., oleWdFormatPDF)
+	
+	//FErase(_cPathREP+_cArqDOT)
+	
+	//+---------------------------------------------------------------------+
+	//| Salva no repositorio LOCAL o arquivo gerado                         | 
+	//+---------------------------------------------------------------------+
+	//OLE_SaveAsFile(_hWord,_cPathREP+_cArqNome)
+	
+	//+---------------------------------------------------------------------+
+	//| Verifica se o arquivo existe no repositorio de AUDITORIA, se existir| 
+	//| apaga.                                                              |
+	//+---------------------------------------------------------------------+
+	//If File(_cPathDOC+_cArqNome)
+	//	FErase(_cPathDOC+_cArqNome)
+	//EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Gera copia para AUDITORIA.                                          | 
+	//+---------------------------------------------------------------------+
+	//CpyT2S(_cPathREP+_cArqNome+".*",_cPathDOC,.T.)
+	
+	//+---------------------------------------------------------------------+
+	//| Fecha o TEMPLATE utilizado para Gerar o Arquivos de Remessa         |
+	//+---------------------------------------------------------------------+
+	OLE_CloseFile(_hWord)
+	
+	//+---------------------------------------------------------------------+
+	//| Fecha o Link com Arquivo de Remessa "Impressao"                     |
+	//+---------------------------------------------------------------------+
+	OLE_CloseLink(_hWord)
+	
+	//+---------------------------------------------------------------------+
+	//| Apaga na unidade LOCAL o TEMPLATE utilizado para gerar o documento. |
+	//+---------------------------------------------------------------------+
+	//If File(_cPathREP+_cArqDOT)
+	//	FErase(_cPathREP+_cArqDOT)
+	//EndIf
+	
+	FErase(_cPathREP+_cArqDOT)
+	
+	Aviso(FunName()+"/"+ProcName(),"Integração finalizada!"+CRLF+"Gerado documento WORD ["+_cArqNome+"]."+CRLF+"Disponivel em ["+_cPathREP+"].",{"OK"})
+
+Return Nil
+
+/*/{Protheus.doc} fPutDocsCliente()
+Preenche as docvariables realcionadas ao cliente.
+@type  Function
+@author Franklin de Brito de Oliveira
+@since 08/07/2021
+@param cEntidade, character, Entidade da Proposta.1=Cliente;2=Prospect.
+/*/
+Static Function fPutDocsCliente(cEntidade)
+	//Dados do Cliente  
+	Local _cCodigo		:= Space(TamSX3("A1_COD")[1])		// Codigo da entidade (cliente ou prospect)
+	Local _cLoja		:= Space(TamSX3("A1_LOJA")[1])		// Loja
+	Local _cNome 		:= Space(TamSX3("A1_NOME")[1])		// Nome
+	Local _cNReduz		:= Space(TamSX3("A1_NREDUZ")[1])  	// Nome Fantasia
+	Local _cCNPJ		:= Space(TamSX3("A1_CGC")[1])     	// CNPJ
+	Local _cInscEst		:= Space(TamSX3("A1_INSCR")[1])		// Inscrição Estadual
+	Local _cEndereco	:= Space(TamSX3("A1_ENDCOB")[1])  	// Endereco de Cobranca
+	Local _cBairro		:= Space(TamSX3("A1_BAIRROC")[1]) 	// Bairro de Cobranca
+	Local _cCidade		:= Space(TamSX3("A1_MUNC")[1])		// Cidade de Cobranca
+	Local _cUF			:= Space(TamSX3("A1_ESTC")[1])  	// Estado (UF) de Cobranca
+	Local _cCEP			:= Space(TamSX3("A1_CEPC")[1])    	// CEP de Cobranca
+	Local _cDDD			:= Space(TamSX3("A1_DDD")[1])     	// DDD
+	Local _cTel			:= Space(TamSX3("A1_TEL")[1])     	// Telefone
+	Local _cFax			:= Space(TamSX3("A1_FAX")[1])     	// Fax
+	Local _cEmail		:= Space(TamSX3("A1_EMAIL")[1])   	// Email
+	Local _cSite		:= Space(TamSX3("A1_HPAGE")[1])     // Site
+
+	If cEntidade==ADY_ENTIDADE_CLIENTE
+		DbSelectArea("SA1")
+		SA1->(DbSetOrder(1))
+		If	(DbSeek(FwxFilial("SA1")+ADY->ADY_CODIGO+ADY->ADY_LOJA))
+			_cCodigo   := SA1->A1_COD
+			_cLoja	   := SA1->A1_LOJA
+			_cNome 	   := AllTrim(SA1->A1_NOME)
+			_cNReduz   := AllTrim(SA1->A1_NREDUZ)
+			_cEndereco := AllTrim(SA1->A1_ENDCOB)
+			_cBairro   := AllTrim(SA1->A1_BAIRROC)
+			_cCidade   := AllTrim(SA1->A1_MUNC)
+			_cUF	   := SA1->A1_ESTC
+			_cCEP	   := SA1->A1_CEPC
+			_cDDD	   := SA1->A1_DDD
+			_cTel	   := SA1->A1_TEL
+			_cFax	   := SA1->A1_FAX
+			_cEmail	   := AllTrim(SA1->A1_EMAIL)
+			_cSite	   := AllTrim(SA1->A1_HPAGE)
+			_cCNPJ	   := Transform(SA1->A1_CGC,Iif(Len(AllTrim(SA1->A1_CGC))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+			_cInscEst  := AllTrim(SA1->A1_INSCR)
+			_xNrFunc   := SA1->A1_XQTEMP
+		EndIf
+	Else
+		DbSelectArea("SUS")
+		SUS->(DbSetOrder(1))
+		If	(SUS->(DbSeek(FwxFilial("SUS")+ADY->ADY_CODIGO+ADY->ADY_LOJA)))
+			_cCodigo   := SUS->US_COD
+			_cLoja	   := SUS->US_LOJA
+			_cNome 	   := AllTrim(SUS->US_NOME)
+			_cNReduz   := AllTrim(SUS->US_NREDUZ)
+			_cEndereco := AllTrim(SUS->US_END)
+			_cBairro   := AllTrim(SUS->US_BAIRRO)
+			_cCidade   := AllTrim(SUS->US_MUN)
+			_cUF	   := SUS->US_EST
+			_cCEP	   := SUS->US_CEP
+			_cDDD	   := SUS->US_DDD
+			_cTel	   := SUS->US_TEL
+			_cFax	   := SUS->US_FAX
+			_cEmail	   := AllTrim(SUS->US_EMAIL)
+			_cSite	   := AllTrim(SUS->US_URL)
+			_cCNPJ	   := Transform(SUS->US_CGC,Iif(Len(AllTrim(SUS->US_CGC))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+			_cInscEst  := AllTrim(US_INSCR)
+			_xNrFunc   := SUS->US_QTFUNC
+		EndIf
+	EndIf
+	
+	OLE_SetDocumentVar(_hWord, "Doc_cNome", Alltrim(_cCodigo)+"-"+_cNome)
+	OLE_SetDocumentVar(_hWord, "Doc_cNFantasia", _cNReduz)
+	OLE_SetDocumentVar(_hWord, "Doc_CGC", _cCNPJ)
+	OLE_SetDocumentVar(_hWord, "Doc_Cliente_InscrEst", _cInscEst)
+	OLE_SetDocumentVar(_hWord, "Doc_NrFuncionarios", fFormNroFun(cEntidade, _xNrFunc))
+	OLE_SetDocumentVar(_hWord, "Doc_cEndereco", _cEndereco)
+	OLE_SetDocumentVar(_hWord, "Doc_cCidade", _cCidade)
+	OLE_SetDocumentVar(_hWord, "Doc_cCEP", _cCEP)
+	OLE_SetDocumentVar(_hWord, "Doc_cNrFAX", _cFax)
+
+Return Nil
+
+/*/{Protheus.doc} fFormNroFun
+Formata o numero de funcionários de acordo com a entidade.
+@type  Function
+@author Franklin de Brito de Oliveira
+@since 08/07/2021
+@param cEntidade, character, Entidade da Proposta.1=Cliente;2=Prospect.
+@param _xNrFunc, character, Numero de funcionários do cliente/prospect.
+@return character, Numero de funcionários do cliente/prospect formatado.
+/*/
+Static Function fFormNroFun(cEntidade, _xNrFunc)
+	Local _aNrFuncs 	:= {"Menos de 50","51 a 200","201 a 500","501 a 1000","1001 a 5000","Mais de 5000"}
+	local _cNrFuncionarios := "Não Informado"
+	
+	if cEntidade==ADY_ENTIDADE_CLIENTE
+		if _xNrFunc>0
+			_cNrFuncionarios := Transform(_xNrFunc, "@E 999,999")
+		endif
+	else
+		if !Empty(_xNrFunc) .and. _xNrFunc$"123456"
+			_cNrFuncionarios := _aNrFuncs[Val(_xNrFunc)]
+		endif
+	endif
+
+Return _cNrFuncionarios

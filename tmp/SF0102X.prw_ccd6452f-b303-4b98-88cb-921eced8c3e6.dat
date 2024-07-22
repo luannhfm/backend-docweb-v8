@@ -1,0 +1,357 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH" 
+#INCLUDE "APWIZARD.CH"
+#INCLUDE "TOPCONN.CH"
+#Include 'TOTVS.CH'
+
+/*/{Protheus.doc} SF0102X
+	Tela para emissão do Relatório de Transferência/Baixa de Bens Materiais
+
+@author	Walmir Gonçalves da Silva Junior
+@since	09/05/2016
+@version 1.0
+
+@return Nil
+
+/*/
+
+User Function SF0102X()
+Local aArea     := GetArea()
+Local aTexto    := {} 
+Local _lReceb   := .F. 
+
+Private _cValIx
+Private _oCbIX
+Private _cValFIX	:= Space(TamSX3("B1_DESC")[1])
+//Variaveis Grade
+Private _oGetFil
+
+Private _aLinhas	:= {}
+
+Private oBrowse
+Private _oOk		:= LoadBitmap( GetResources(), "LBOK")
+Private _oNo		:= LoadBitmap( GetResources(), "LBNO")
+
+// Variáveis FIEMT - Filtros
+Private _oGetBD
+Private _cValBD		:= Space(10)
+Private _oGetBA
+Private _cValBA		:= Space(10)
+Private _oGetFlD 
+Private _cValFlD	:= Space(8)
+Private _oGetFlA 
+Private _cValFlA	:= Space(8)
+Private _oGetLcD 
+Private _cValLcD	:= Space(6)
+Private _oGetLcA 
+Private _cValLcA	:= Space(6)
+Private _oGetMBxD
+Private _cValMBxD	:= Space(50)
+Private _oGetMBxA
+Private _cValMBxA	:= Space(50)
+Private _oConDsc 
+Private _cValDsc	:= Space(50)
+Private _oCbx	  
+Private _cComTP		:= Space(1)
+
+Private _lTrans 	:= .F.
+
+Private aTitulo 	:= {{.T.,"","","","","",0,0,0,0,0,""}}
+Private oWizard
+
+aadd(aTexto,{})
+aTexto[1] := "Assistente para emissão do Relatório Baixa/Transf de Ativos Imobilizados. "+CRLF
+
+DEFINE WIZARD oWizard ;
+	TITLE   "Relatório Baixa/Transf de Ativos Imobilizados" ;
+	HEADER  "Atenção" ;
+	MESSAGE "Siga atentamente os passos para e emissão do relatório." ; 
+	TEXT aTexto[1] ;
+	NEXT {|| pnlIn(), SetPnl(),.T.} ;
+// panel 02
+CREATE PANEL oWizard  ;
+	HEADER  "Assistente para Configuração do Relatório" ;
+	MESSAGE "Selecione os filtros desejados (Os filtros não informados serão ignorados)." ;
+	BACK {||.T.} ;
+	NEXT {|| GrdZEC()} ;
+	PANEL
+// panel 03
+CREATE PANEL oWizard ;
+	HEADER "Seleção de os registros desejados" ; 
+	MESSAGE "Selecione os registros a serem apresentados no relatório." ;
+	BACK {|| .T.} ;
+	FINISH {|| PrepRel()} ;
+	PANEL
+oWizard:oDlg:nRight		:= 900 
+oWizard:oDlg:nHeight	:= 580
+ACTIVATE WIZARD oWizard CENTERED
+
+Return
+
+Static Function PrepRel
+	Local _nx		:= 0
+	Local _aMovs	:= {}
+	Local _lVal		:= .T.
+	Local _aMark	:= {}
+	Local _lRet		:= .T.
+	
+	Local _cMsEnt	:= "Você não pode selecionar registros de Filiais diferentes."
+	Local _cMsSCe	:= "Você não pode selecionar registros de Movimentos diferentes."
+	Local _cMsMsB	:= "Você não pode selecionar registros com motivos de baixa diferentes."
+	
+	Private _nMark	:= 0
+	
+	Begin Transaction
+	
+	For _nx:= 1 to Len(_aLinhas)
+		If _aLinhas[_nx,1]
+			If Len(_aMark) >= 1 .And. _aLinhas[_nx,2] != _aMark[Len(_aMark),2]
+				_lVal := .F.
+				Aviso("Atenção", _cMsEnt, {"Ok"})
+				_lRet := .F.
+				Exit
+			ElseIf Len(_aMark) >= 1 .And. _aLinhas[_nx,3] != _aMark[Len(_aMark),3]
+				_lVal := .F.
+				Aviso("Atenção", _cMsSCe, {"Ok"})
+				_lRet := .F.
+				Exit
+			/*
+			ElseIf Len(_aMark) >= 1 .And. _aLinhas[_nx,7] != _aMark[Len(_aMark),7] .And. !_lTrans
+				_lVal := .F.
+				Aviso("Atenção", _cMsMsB, {"Ok"})
+				_lRet := .F.
+				Exit
+			*/
+			EndIf 
+			_nMark := _nMark + 1
+			aAdd(_aMark,_aLinhas[_nx])
+			aAdd(_aMovs, { _aLinhas[_nx,2], _aLinhas[_nx,3], _aLinhas[_nx,4], _aLinhas[_nx,5]})
+		EndIf
+	Next
+	
+	If _nMark > 0 .And. _lVal
+		U_SF0101X(_aMovs)
+	ElseIf _nMark == 0 .And. _lVal
+		_lRet := .F.
+		Alert("Atenção! Nenhuma Solicitação de Compra foi selecionada.")
+	EndIf
+	End Transaction
+Return _lRet
+
+Static Function SetPnl()
+	oWizard:SetPanel(1)
+Return
+
+Static Function locaSC
+Local _nLin
+Local _nCol
+
+_nCol := Iif( "1"$_cValIx, 2,Iif("2"$_cValIx, 4,5))
+
+If !Empty(_cValFIX)
+	If _nCol = 5
+		_nLin := aScan(_aLinhas,{|x|Alltrim(_cValFIX)$ Alltrim(x[_nCol])})
+	Else
+		_nLin := aScan(_aLinhas,{|x|Alltrim(x[_nCol])== Alltrim(_cValFIX)})
+	EndIf
+	If _nLin > 0
+		oBrowse:nAt := _nLin
+		oBrowse:Refresh()
+	Else
+		Alert("Não existe registro correspondente ao valor informado!")
+	EndIf
+Else
+	Alert("Para localizar é necessário informar o valor desejado!")
+EndIf
+
+Return
+
+Static Function GrdZEC
+Local _lRet := .T.
+
+If ValType(oBrowse) = "O"
+	oBrowse:FreeChildren()
+	FreeObj(oBrowse)
+EndIf
+oBrowse := NIL
+
+oBrowse := MsSelBr():New( 005,001,445,190,,,,oWizard:oMPanel[3],,,,,,,,,,,,.F.,'',.T.,,.F.,,, )    
+
+If !Empty(_cValMBxD) .And. _lTrans
+	_lRet := .F.
+	Aviso("Atenção!", "O filtro 'Motivo de Baixa' é exclusivo para registros de baixa.", {"Ok"})
+	Return _lRet
+EndIf
+
+_aLinhas := ObSCGrd()
+
+If Len(_aLinhas) == 0
+	_lRet := .F.
+	Aviso("Atenção!", "Nenhum registro foi encontrado.", {"Ok"})
+	Return _lRet
+EndIf
+
+oBrowse:SetArray(_aLinhas)
+
+oBrowse:bLDblClick := {|| _aLinhas[oBrowse:nAT,1] := !_aLinhas[oBrowse:nAT,1] }
+
+oBrowse:lHasMark := .T.
+oBrowse:bAllMark := {||fMarkAll()}
+oBrowse:bHeaderClick := {|o, nCol| fOrdena(nCol) }
+
+oBrowse:AddColumn(TCColumn():New('',{|| IIf(_aLinhas[oBrowse:nAT,1],_oOk,_oNo) },,,,,,.T.,.F.,,,,.F.,))
+
+oBrowse:AddColumn(TCColumn():New('FILIAL'		,{|| _aLinhas[oBrowse:nAT,2] },,,,'LEFT',,.F.,.F.,,,,.F.,))    
+oBrowse:AddColumn(TCColumn():New('COD MOV.'		,{|| _aLinhas[oBrowse:nAT,3] },,,,'LEFT',,.F.,.F.,,,,.F.,))
+oBrowse:AddColumn(TCColumn():New('COD BEM'		,{|| _aLinhas[oBrowse:nAT,4] },,,,'LEFT',,.F.,.F.,,,,.F.,))    
+oBrowse:AddColumn(TCColumn():New('ITEM'			,{|| _aLinhas[oBrowse:nAT,5] },,,,'LEFT',,.F.,.F.,,,,.F.,))
+oBrowse:AddColumn(TCColumn():New('DESCRIÇÃO'	,{|| _aLinhas[oBrowse:nAT,6]},,,,'LEFT',,.F.,.F.,,,,.F.,))
+oBrowse:AddColumn(TCColumn():New('CEDENTE'		,{|| RTrim(Posicione("SM0",1, cEmpAnt+_aLinhas[oBrowse:nAT,2],"M0_FILIAL")) },,,,'LEFT',,.F.,.F.,,,,.F.,))
+
+Return _lRet
+
+/*/
+@author: caiocrol
+@data: 20/02/2015
+@descricao: marca todos os registros do browser
+/*/
+Static Function fMarkAll()
+
+	Local _nx := 0
+	for _nx:= 1 to Len(_aLinhas)
+		_aLinhas[_nx,1] := !_aLinhas[_nx,1]
+	next
+	
+Return nil
+
+/*/
+@author: caiocrol
+@data: 20/02/2015
+@descricao: ordena os registros do browse
+/*/
+Static Function fOrdena(_nCol)
+	
+	If _nCol > 1
+		aSort(_aLinhas,,, {|x,y| x[_nCol] < y[_nCol] } )
+	EndIf
+	
+	oBrowse:Refresh()
+	
+Return nil
+
+Static Function pnlIn()
+Local _aCmbTP := {"Baixa", "Transferência"}
+
+@ 010,008 SAY 		"Tipo de Relatório: " 						PIXEL OF oWizard:oMPanel[2]
+@ 010,060 MSCOMBOBOX _oCbx	 var _cComTP ITEMS _aCmbTP  ON CHANGE fSetTr() Size 80,010	PIXEL OF oWizard:oMPanel[2]
+@ 025,008 SAY 		"Bem de: " 						PIXEL OF oWizard:oMPanel[2]
+@ 025,060 MSGET		_oGetBD  var _cValBD F3 "ZEA"	Size 50,010	PIXEL OF oWizard:oMPanel[2]
+@ 025,118 SAY 		"Bem Até: " 					PIXEL OF oWizard:oMPanel[2]
+@ 025,170 MSGET		_oGetBA  var _cValBA F3 "ZEA"	Size 50,010	PIXEL OF oWizard:oMPanel[2]
+@ 040,008 SAY 		"Filial de: "					PIXEL OF oWizard:oMPanel[2]
+@ 040,060 MSGET		_oGetFlD var _cValFlD F3 "SM0"	Size 50,010 PIXEL OF oWizard:oMPanel[2]
+@ 040,118 SAY 		"Filial até: "					PIXEL OF oWizard:oMPanel[2]
+@ 040,170 MSGET		_oGetFlA var _cValFlA F3 "SM0"	Size 50,010 PIXEL OF oWizard:oMPanel[2]
+@ 055,008 SAY 		"Local de: "					PIXEL OF oWizard:oMPanel[2]
+@ 055,060 MSGET		_oGetLcD var _cValLcD F3 "SNL"	Size 50,010 PIXEL OF oWizard:oMPanel[2]
+@ 055,118 SAY 		"Local até: "					PIXEL OF oWizard:oMPanel[2]
+@ 055,170 MSGET		_oGetLcA var _cValLcA F3 "SNL"	Size 50,010 PIXEL OF oWizard:oMPanel[2]
+@ 070,008 SAY 		"Motivo de Baixa De: "			PIXEL OF oWizard:oMPanel[2]
+@ 070,060 MSGET		_oGetMBxD var _cValMBxD F3 "16"	Size 50,010 PIXEL OF oWizard:oMPanel[2]
+@ 070,118 SAY 		"Motivo de Baixa Até: "			PIXEL OF oWizard:oMPanel[2]
+@ 070,170 MSGET		_oGetMBxA var _cValMBxA F3 "16"	Size 50,010 PIXEL OF oWizard:oMPanel[2]
+@ 085,008 SAY 		"Descric Sintética: "			PIXEL OF oWizard:oMPanel[2]
+@ 085,060 MSGET		_oConDsc var _cValDsc			Size 101,010 PIXEL OF oWizard:oMPanel[2]
+
+Return
+
+Static Function fSetTr()
+
+If "T" $ _cComTP 
+	_lTrans := .T.
+Else
+	_lTrans := .F.
+EndIf
+
+Return
+
+Static Function ObSCGrd()
+
+Local _aReturn	:= {}
+Local _cTmp		:= GetNextAlias()
+Local _cQuery	:= ""
+
+/* Por Franklin B. Oliveira 
+_cQuery := "Select DISTINCT	SNM.NM_FILIAL, SN1.N1_CBASE, SNM.NM_ITEM, SN1.N1_DESCRIC, SN3.N3_CCUSTO, SNM.NM_MOTBX  " + CRLF
+_cQuery += "FROM "+RetSqlName("SNM")+" SNM INNER JOIN " + CRLF
+_cQuery += " "+RetSQLName("SN1")+" SN1 ON SNM.NM_FILIAL = SN1.N1_FILIAL AND SNM.NM_CBASE = SN1.N1_CBASE INNER JOIN" + CRLF
+_cQuery += " "+RetSQLName("SN3")+" SN3 ON SN3.N3_FILIAL = SN1.N1_FILIAL AND SN3.N3_CBASE = SN1.N1_CBASE AND SN3.N3_ITEM = SN1.N1_ITEM LEFT JOIN" + CRLF
+_cQuery += " "+RetSQLName("SNL")+" SNL ON SNM.NM_TIPOSOL = '2' AND SNM.NM_LOCAL	= SNL.NL_CODIGO LEFT JOIN" + CRLF
+_cQuery += " "+RetSQLName("SX5")+" SX5 ON Trim(SX5.X5_FILIAL) = SubStr(SNM.NM_FILIAL,1,4) AND SX5.X5_TABELA = '16    ' AND SX5.X5_CHAVE = SNM.NM_MOTBX " + CRLF
+
+_cQuery += "WHERE " + CRLF
+_cQuery += "	SNM.D_E_L_E_T_ = ' ' AND SN1.D_E_L_E_T_ = ' ' " + CRLF
+_cQuery += "	AND SNM.NM_TIPOSOL = '"+ Iif(_lTrans,"2","1") +"' " + CRLF
+If !Empty(_cValBD) .And. !Empty(_cValBA)
+	_cQuery += "	AND SNM.NM_CBASE Between '"+ _cValBD +"' And '"+ _cValBA +"' "+CRLF
+EndIf
+If !Empty(_cValFlD) .And. !Empty(_cValFlA)
+	_cQuery += "	AND SNM.NM_FILIAL Between '"+ _cValFlD +"' And '"+ _cValFlA +"' "+CRLF
+EndIf
+If !Empty(_cValLcD) .And. !Empty(_cValLcA)
+	_cQuery += "	AND SNM.NM_LOCAL Between '"+ _cValLcD +"' And '"+ _cValLcA +"' "+CRLF
+EndIf
+If !Empty(_cValMBx)
+	_cQuery += "	AND SNM.NM_MOTBX = '"+_cValMBx+"' " + CRLF
+EndIf
+If !Empty(_cValDsc)
+	_cQuery += "	AND SN1.N1_DESCRIC like '%"+ Alltrim(_cValDsc) +"%' " + CRLF
+EndIf
+_cQuery += "ORDER BY 1 " + CRLF
+*/
+
+_cQuery := "SELECT ZEC.ZEC_MSFIL, ZEC.ZEC_CODIGO, ZEA.ZEA_CODIGO, ZED.ZED_ITEM, ZEA.ZEA_DESC " + CRLF
+_cQuery += "FROM " + RetSqlName("ZEC") + " ZEC " + CRLF
+_cQuery += "INNER JOIN " + RetSQLName("ZED") + " ZED ON ZEC.ZEC_FILIAL = ZED.ZED_FILIAL AND ZEC.ZEC_CODIGO = ZED.ZED_CODIGO AND ZED.D_E_L_E_T_ = ' '" + CRLF
+_cQuery += "INNER JOIN " + RetSQLName("ZEA") + " ZEA ON ZEC.ZEC_MSFIL = ZEA.ZEA_FILORI AND ZED.ZED_CODBEM = ZEA.ZEA_CODIGO AND ZEA.D_E_L_E_T_ = ' '" + CRLF
+_cQuery += "WHERE " + CRLF
+_cQuery += "ZEC.D_E_L_E_T_   = ' ' " + CRLF
+_cQuery += "	AND ZEC.ZEC_TPMOV = '" + Iif(_lTrans,"T","B") + "' " + CRLF
+If !Empty(_cValFlD) .And. !Empty(_cValFlA)
+	_cQuery += "	AND ZEC.ZEC_MSFIL Between '" + _cValFlD + "' And '" + _cValFlA + "' "+CRLF
+EndIf
+If !Empty(_cValBD) .And. !Empty(_cValBA)
+	_cQuery += "	AND ZED.ZED_CODBEM Between '" + _cValBD + "' And '" + _cValBA + "' "+CRLF
+EndIf
+If !Empty(_cValLcD) .And. !Empty(_cValLcA)
+	_cQuery += "	AND ZEA.ZEA_LOCAL Between '" + _cValLcD + "' And '" + _cValLcA + "' "+CRLF
+EndIf
+If !Empty(_cValMBxD) .And. !Empty(_cValMBxA) 
+	_cQuery += "	AND ZEC.ZEC_MOTBX Between '" + _cValMBxD + "' And '" + _cValMBxA + "' "+CRLF
+EndIf
+If !Empty(_cValDsc)
+	_cQuery += "	AND ZEA.ZEA_DESC like '%" + Alltrim(_cValDsc) + "%' " + CRLF
+EndIf
+_cQuery += "ORDER BY ZEC.ZEC_MSFIL " + CRLF
+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+
+If Select(_cTmp) > 0
+	_cTmp->(dbCloseArea())
+Endif
+
+dbUseArea(.T., "TOPCONN", TCGenQry(,,_cQuery),_cTmp, .T., .T.)
+dbSelectArea(_cTmp)
+&(_cTmp)->(dbGoTop())
+
+//-------------------------------------
+//-- Popula tabela temporária.
+//-------------------------------------
+While !&(_cTmp)->(EOF())
+	Aadd(_aReturn , {.F., (_cTmp)->(ZEC_MSFIL), (_cTmp)->(ZEC_CODIGO), (_cTmp)->(ZEA_CODIGO), (_cTmp)->(ZED_ITEM), (_cTmp)->(ZEA_DESC)})
+	(_cTmp)->(dbSkip()) 
+EndDo
+
+Return _aReturn

@@ -1,0 +1,232 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} SF04M01J
+Função para realizar carga no cadastro de produtos
+
+@author 	Jose Leite de Barros Neto
+@since 	22/07/2015
+@version 	1.0
+
+@return 	_lRet, Logico
+/*/
+User Function SF04M01J()
+	
+	Local _lRet		:= .F.
+	Local aEstrut	:= {}
+	Local cArqTxt	:= Space(50)
+	Local cMemo  	:= ""
+	Local cCadastro	:= "Atualização de Produtos"
+	Local aSays		:= {}
+	Local aButtons	:= {}
+	Local nOpca 		:= 0
+	
+	Private lMsErroAuto	:= .F.
+	
+	AADD(aSays,"Este programa irá realizar a atualização de Produtos")
+
+	AADD(aButtons, { 1,.T.,{|o| nOpca := 1,FechaBatch()}})
+	AADD(aButtons, { 2,.T.,{|o| FechaBatch() }} )
+
+	FormBatch( cCadastro, aSays, aButtons )
+
+	If nOpca == 1
+		If MsgYesNo("Confirma a atualização de Produtos?","Confirmar")
+			
+			_cArqTxt := U_SFXX01J('Importacao de Produtos','Arquivos csv (*.csv) |*.csv|')
+			
+			//Abre o Arquivo
+			nHdl := fOpen(_cArqTxt,68)
+		
+			If nHdl == -1
+				MsgAlert("O arquivo de nome "+_cArqTxt+" nao pode ser aberto! Verifique os parametros.","Atencao!")
+				Return
+			Endif
+		
+			Processa({ |lEnd| aEstrut := SB1CSV(_cArqTxt) },"LENDO ARQUIVO CSV DE PRODUTOS")
+			Processa({ |lEnd| _lRet := IMPSB1(aEstrut) },"GERANDO REGISTROS")
+		
+			If _lRet
+				MemoWrite( "C:\plog\csv\PRODUTOS_"+cFilAnt+".TXT", cMemo ) //+CHR(13)+CHR(10)
+				MsgInfo("FIM DA ATUALIZAÇÃO DO CADASTRO DE PRODUTOS","Atenção")
+			EndIf
+			
+		EndIf
+	EndIf
+	
+Return( Nil )
+
+/** {Protheus.doc} IMPSB1
+Funcao que realiza a atualizacao do produto
+
+@param: 	aEstrut, Array com a estrutura dos campos
+@author: 	Jose Leite de Barros Neto
+@since: 	22/07/2015
+@Uso: 		SFIEMT
+*/
+Static Function IMPSB1(p_aEstrut)
+	
+	Local _lRet 			:= .F.
+	Local _nContador 	:= 0
+	Local _aProduto 	:= {}
+	
+	Default p_aEstrut := 0
+		
+	If Len(p_aEstrut) <= 1
+		Alert('Por favor, verifique o layout do arquivo CSV, a estrutura esta incorreta!')
+		Return( _lRet )
+	EndIf
+
+	For i := 2 to Len(p_aEstrut)
+	
+		//B1_COD
+		_cCodigo	:= PADR(AllTrim(p_aEstrut[i][1]),TAMSX3("CC3_COD")[1])
+		
+		//B1_CODBAR
+		_cCodBar	:= p_aEstrut[i][2]
+		
+		//B1_XESTQ
+		_cEstoque := '1'
+		
+		DbSelectArea('SB1')
+		SB1->(DbSetOrder(1))
+		SB1->(DbGoTop())
+		If SB1->( DbSeek( FwXFilial('SB1') + _cCodigo) )
+			
+			_nOpc	:= 4
+			_aProduto := {}
+			
+			aAdd( _aProduto ,{"B1_COD"		,_cCodigo		,Nil}) // Codigo
+			aAdd( _aProduto ,{"B1_CODBAR"	,_cCodBar		,Nil}) // Codigo de Barras
+			aAdd( _aProduto ,{"B1_XESTQ"	,_cEstoque	,Nil}) // Indica se o produto e estocavel
+			
+			lMsErroAuto := .F.
+			
+			Begin Transaction
+
+				MSExecAuto({|x,y| Mata010(x,y)},_aProduto,_nOpc) //3- Inclusao, 4- Alteracao, 5- Exclusao
+				
+				If lMsErroAuto
+					MostraErro()
+					DisarmTransaction()
+				Else
+					_nContador++
+				EndIf
+			
+			End Transaction
+			
+		Else
+			Alert('O Produto: ' + _cCodigo + ', não esta cadastrado no sistema, favor verificar!')
+		EndIf
+		
+		SB1->( DbCloseArea() )
+		
+	Next
+
+	If _nContador > 0
+		_lRet := .T.
+	EndIf
+	
+Return( _lRet )
+
+/** {Protheus.doc} SB1CSV
+Funcao que realiza a Leitura do arquivo CSV
+
+@param: 	cArquivo, Caminho do arquivo que sera lido
+@author: 	Jose Leite de Barros Neto
+@since: 	22/07/2015
+@Uso: 		SFIEMT
+*/
+Static Function SB1CSV(cArquivo)
+	
+	Local cBuffer     := ""
+	Local cAux        := ""
+	Local cString     := ""
+	Local cSeparador  := ""  //Verifica o tipo de separador do arquivo texto
+	Local aTmp        := {}
+	Local aEstrutura  := {}
+	Local nCont       := 0
+	Local cEof        := Chr(10)+ Chr(13)
+	Local nRec        := 0
+	Local lAspa       := .F.
+
+	//Leitura da quantidade de Registros do Arquivo
+	FT_FUSE(cArquivo)
+	FT_FGOTOP()
+	
+	While !FT_FEOF()
+		nRec++
+		FT_FSKIP()
+	End
+
+	ProcRegua(nRec)
+
+	//Leitura do arquivo e verificacao do ultimo caracter da linha lida para  consistencia da pesquisa
+	FT_FGOTOP()
+
+	While !FT_FEOF()
+	
+		cBuffer:= AllTrim(FT_FREADLN())
+	
+		If At(";",cBuffer) > 0
+			cSeparador:= ";" 
+		Else //linha de arquivo incorreta.
+			IncProc()
+			FT_FSKIP()
+			Loop
+		Endif
+	
+		If (SubStr(cBuffer,Len(cBuffer),1)<>cSeparador)
+			cBuffer += cSeparador + cEof + cSeparador
+		Else
+			cBuffer += cEof + cSeparador
+		Endif
+	
+		//Incrementa a regua
+		IncProc()
+	
+		//Carrega o array aEstrutura com o resultado da Importacao
+		cLinha:= fTAcento(cBuffer)
+		lAspa := .F.
+
+		For nCont := 1 To Len(cBuffer)
+		
+			cAux   := SubStr(cLinha,1,1)
+			cLinha := SubStr(cLinha,2)
+			
+			If (cAux == cEof)
+				Exit
+			Endif
+		
+			//Sao verificadas as marcacoes feitas pelo Excel para concatenacao de strings
+			Do Case
+			
+				Case cAux == '"'
+					lAspa := !lAspa
+					
+				Case cAux == cSeparador .And. !lAspa
+					aAdd(aTmp,cString)
+					cString := ""
+					
+				OtherWise
+					cString += cAux
+					
+			EndCase
+		
+		Next nCont
+	
+		For nCont := Len(aTmp)+1 To 11
+			aAdd(aTmp,"")
+		Next nCont
+	
+		//Validacao para nao salvar registros sem entidades
+		If !Empty(aTmp[1]) .OR. !Empty(aTmp[2])
+			aAdd(aEstrutura,aTmp)
+			aTmp := {}
+		Endif
+		
+		FT_FSKIP()
+	End
+
+	FT_FUSE()
+
+Return( aEstrutura )

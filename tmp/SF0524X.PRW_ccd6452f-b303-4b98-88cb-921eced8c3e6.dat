@@ -1,0 +1,192 @@
+#INCLUDE "PROTHEUS.CH" 
+
+/*/{Protheus.doc} SF0524X
+(long_description)
+@author j2a.luizjunior
+@since 28/08/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+User Function SF0524X
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0524X")
+	Local   oReport
+	Private cPerg   := "SF0524X"
+	Private cAlLoc  := GetNextAlias()
+	
+	CriaSX1(cPerg)
+	If !Pergunte(cPerg,.T.)
+		Return(Nil)
+	EndIf
+
+	oReport := ReportDef()
+	oReport:PrintDialog()	
+
+Return
+
+/*/{Protheus.doc} ReportDef
+(long_description)
+@author j2a.luizjunior
+@since 28/08/2017
+@version 1.0
+@param cPerg, character, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ReportDef(cPerg)
+	
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0524X")
+	Local oReport
+	Local cIDCelula	:= ""	
+	Local cNomeRel	:= "SF0524X"
+	
+	Local cTitRel	:= "Relação de Locações"
+	Local cDescRel	:= "Relação de Locações"
+
+	oReport := TReport():New( cNomeRel, cTitRel, cPerg, { |oReport| ReportPrint(oReport) }, cDescRel )
+	
+	oReport:SetPortrait() 
+	oReport:SetTotalInLine(.F.) 
+	oReport:Page()
+	
+	//-> Ingressos
+	oLocacao  := TRSection():New(oReport, "Relacao de Locacao" ,{"ZH5"}     )	
+
+	oCod      := TRCell():New(oLocacao,"ZH5_COD"     ,"ZH5"                 )
+	oCod:SetSize(20)
+	
+	oCliente  := TRCell():New(oLocacao,"A1_NOME"     ,"SA1"                 )
+	oCliente:SetSize(40)
+	
+	oEspaco   := TRCell():New(oLocacao,"ZH5_DESC"    ,"ZH5"                 )
+	oEspaco:SetSize(40)
+	
+	oInicio   := TRCell():New(oLocacao,"INICIO"      ,cAlLoc,"Inicio" ,"@!" )
+	oInicio:SetSize(30)
+	
+	oTermino  := TRCell():New(oLocacao,"TERMINO"     ,cAlLoc,"Termino","@!" )
+	oTermino:SetSize(30)
+	
+	oUsuario  := TRCell():New(oLocacao,"ZH5_USER"    ,"ZH5"                 )
+	oUsuario:SetSize(20)
+	
+	oValor    := TRCell():New(oLocacao,"ZH0_VRUNIT"  ,"ZH0"                 )
+	oValor:SetSize(20)
+	
+	TRFunction():New(oLocacao:Cell("ZH0_VRUNIT"),,"SUM",/*oBrFor*/,,,,.F.,.T.,.F.)
+
+Return(oReport)	
+
+/*/{Protheus.doc} ReportPrint
+(long_description)
+@author j2a.luizjunior
+@since 28/08/2017
+@version 1.0
+@param oReport, objeto, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ReportPrint(oReport)
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0524X")		 
+	Local cSql   := ""
+	Local oSec1  := oReport:Section(1)	
+	Local cCaixa := xNumCaixa()   
+	 
+	If !Empty(MV_PAR01) .And. !Empty(MV_PAR02) 
+		cSql += " AND ZH5_DATA BETWEEN '"  + DToS(MV_PAR01) + "' AND '" + DToS(MV_PAR02) + "'"
+	EndIf
+
+	If !Empty(MV_PAR03) 
+		cSql += " AND ZH5_PROD = '"  + MV_PAR03 + "' "
+	EndIf
+	
+
+	cSql := "%"+cSql+"%"
+	
+	BeginSql Alias cAlLoc
+		
+		SELECT ZH5_PROD,
+		       ZH5_DESC,
+		       ZH5_USER,
+		       ZH5_COD,
+		       ZH5_HORINI,
+		       ZH5_HORFIM,
+		       ZH5_NUMERO,
+		       ZH5_REVISA,
+		       ZH5_DATA
+		FROM   %Table:ZH5%
+		WHERE  %NotDel%
+		AND    ZH5_FILIAL = %xFilial:ZH5%        			
+	    %Exp:cSql%
+	           
+	EndSql
+	
+	While !(cAlLoc)->(Eof())
+		
+		oReport:IncMeter()
+		
+		oSec1:Init()
+		
+		cCod    := Posicione("CN9",1,xFilial("CN9") + (cAlLoc)->ZH5_NUMERO + (cAlLoc)->ZH5_REVISA,"CN9_CLIENT")
+		cLoja   := Posicione("CN9",1,xFilial("CN9") + (cAlLoc)->ZH5_NUMERO + (cAlLoc)->ZH5_REVISA,"CN9_LOJACL")
+		nValIni := Posicione("CN9",1,xFilial("CN9") + (cAlLoc)->ZH5_NUMERO + (cAlLoc)->ZH5_REVISA,"CN9_VLINI" )
+		cNome   := Posicione("SA1",1,xFilial("SA1") + cCod + cLoja,"A1_NOME")
+		
+		oSec1:Cell("A1_NOME")   :SetValue(AllTrim(cNome                                                      ))
+		oSec1:Cell("ZH5_DESC")  :SetValue(AllTrim((cAlLoc)->ZH5_DESC                                         ))
+		oSec1:Cell("INICIO")    :SetValue(AllTrim(DToC(SToD((cAlLoc)->ZH5_DATA)) + " " + (cAlLoc)->ZH5_HORINI))
+		oSec1:Cell("TERMINO")   :SetValue(AllTrim(DToC(SToD((cAlLoc)->ZH5_DATA)) + " " +(cAlLoc)->ZH5_HORFIM ))
+		oSec1:Cell("ZH5_USER")  :SetValue(AllTrim((cAlLoc)->ZH5_USER                                         ))
+		oSec1:Cell("ZH5_COD")   :SetValue(AllTrim((cAlLoc)->ZH5_COD                                          ))		
+		oSec1:Cell("ZH0_VRUNIT"):SetValue(nValIni                                                             )
+		
+		oSec1:Printline()
+		
+		If oReport:Cancel()
+			Return(Nil)
+		EndIf		
+	
+		(cAlLoc)->(DbSkip())
+	EndDo
+
+	(cAlLoc)->(DbCloseArea())
+	
+	oSec1:Finish()
+		
+Return
+
+/*/{Protheus.doc} CriaSX1
+(long_description)
+@author j2a.luizjunior
+@since 28/08/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function CriaSX1
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0524X")
+	Local aHelp := {}
+	
+	//-> Texto do help em português,inglês, espanhol
+	AAdd(aHelp, {{"Data De"                            }  ,{""},{""}})//1
+	AAdd(aHelp, {{"Data Ate"                           }  ,{""},{""}})//2
+	AAdd(aHelp, {{"Produto"                            }  ,{""},{""}})//3
+
+	u_SFPUTSX1(cPerg,"01","Data De"   ,"","","mv_ch01" ,"D",08,00,00,"G","",""    ,"","","mv_par01",""         ,"","","",""         ,"","","","","","","","","","","" ,aHelp[1,1] ,aHelp[1,2] ,aHelp[1,3] ,"")
+	u_SFPUTSX1(cPerg,"02","Data Ate"  ,"","","mv_ch02" ,"D",08,00,00,"G","",""    ,"","","mv_par02",""         ,"","","",""         ,"","","","","","","","","","","" ,aHelp[2,1] ,aHelp[2,2] ,aHelp[2,3] ,"")
+	u_SFPUTSX1(cPerg,"03","Produto"   ,"","","mv_ch03" ,"C",15,00,00,"G","","SB1" ,"","","mv_par03",""         ,"","","",""         ,"","","","","","","","","","","" ,aHelp[3,1] ,aHelp[3,2] ,aHelp[3,3] ,"")
+	
+Return

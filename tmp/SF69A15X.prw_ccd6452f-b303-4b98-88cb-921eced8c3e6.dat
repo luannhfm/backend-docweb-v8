@@ -1,0 +1,258 @@
+#include "totvs.ch"
+#include "protheus.ch"
+#include "RwMake.ch"
+#include "fileio.ch"
+
+/*/{Protheus.doc} CN100SIT
+LOCALIZAÇÃO : Function CN100Situac() - Responsável pelo controle de situações do contrato.
+EM QUE PONTO : É executado após a alteração da situação do contrato, quando é definido que o contrato passará
+de uma situação para outra. Sua execução ocorre após o processamento interno do sistema.
+SF69A15X.PRW
+@author Gustavo Krebs 
+@since 25/02/2022
+/*/
+User Function SF69A15X()
+	_cSituOrig := ""//ParamIXB[1]
+	_cSituAtua := CN9->CN9_SITUAC//ParamIXB[2]
+	//CN9_SITUAC
+
+	If _cSituAtua == "05" .AND. CN9->CN9_ESPCTR = '2'
+
+		// contratos que possuirem esses produtos serão enviados para o SE
+		_cPPPra  := " IN ('" + StrTran(GetMv("MV_XPPRA"   ,,  "000000000025377,000000000025363,000000000025385,000000000074312,000000000065710"), ",", "','") + "') "
+		_cPPcmso := " IN ('" + StrTran(GetMv("MV_XPCMSO"  ,,  "000000000025361"), ",", "','") + "') "
+		_cErgon  := " IN ('" + StrTran(GetMv("MV_XERGONO" ,,  "000000000025397,000000000074131,000000000025397,000000000074311,000000000075228"), ",", "','") + "') "
+		_cPCA    := " IN ('" + StrTran(GetMv("MV_XPCA"    ,,  "000000000028261"), ",", "','") + "') "
+		_cGinast := " IN ('" + StrTran(GetMv("MV_XGINAST" ,,  "000000000025469"), ",", "','") + "') "
+		_cAliment:= " IN ('" + StrTran(GetMv("MV_XALIMEN" ,,  "000000000026134,000000000025493,000000000026553"), ",", "','") + "') "
+
+		_cSql := " SELECT SUM(CNB_VLTOT) VALOR FROM "+RetSQLName('CNB')+" CNB WHERE CNB.D_E_L_E_T_<>'*'  "+CRLF
+		_cSql += " AND CNB_FILIAL='"+CN9->CN9_FILIAL+"' AND CNB_CONTRA='"+CN9->CN9_NUMERO+"' "+CRLF
+		_cSql += " AND CNB_REVISA='"+CN9->CN9_REVISA+"' "+CRLF
+		_cSql += " AND CNB_PRODUT "+CRLF
+
+		_nPpra  := Fm_sql(_cSql + _cPPPra)
+
+		_nPcmso := Fm_sql(_cSql + _cPPcmso)
+
+		_nErgon := Fm_sql(_cSql + _cErgon)
+
+		_nPCA   := Fm_sql(_cSql + _cPCA)
+
+		_nGinast := Fm_sql(_cSql + _cGinast)
+
+		_nAliment := Fm_sql(_cSql + _cAliment)
+
+		If (_nErgon + _nPcmso + _nPpra + _nPCA + _nGinast + _nAliment) > 0
+			MsgInfo("Contrato possui produtos que serão integrados para o SMais!")
+			QOUT("Contrato possui produtos que serão integrados para o SMais!...Aguarde!")
+			Sleep(3000)
+			FWMsgRun( /* Obj_tela */ , {|oSay| U_fExecuteSE(_nPpra, _nPcmso, _nErgon, _nPCA , _nGinast, _nAliment) } , "Aguarde" , "Integrando com SE..." )
+		EndIf
+
+	EndIf
+
+Return
+
+/*/{Protheus.doc} fExecuteSE
+executa a atividade no SE
+@author Caio.Lima
+@since 05/07/2021
+/*/
+User Function fExecuteSE(_nPpra, _nPcmso, _nErgon, _nPCA , _nGinast, _nAliment)
+
+	//Local _oRest := FwRest():New( GetMv('MV_XURLSE', .F., "http://10.52.28.132:82") ) //Url do ambiente de HOMOLOGACAO
+	Local _oRest    := FwRest():New( GetMv('MV_XURLSE', .F., "http://10.52.28.107:82") ) //Url do ambiente de PRODUCAO
+	Local _aHeader  := {}
+	Local _oJson    := JsonObject():new()
+	Local _oJsonRet := JsonObject():new()
+	Local _cPropos  := ""
+	Local _cUnAten  := ""
+	Local _cConta   := ""
+	Local _cEmail   := ""
+	Local _cFunca   := ""
+	Local _cTel     := ""
+	Local _cFile64  := ""
+	Local _cFFile   := ""
+	Local _cNFile   := ""
+	Local _cDUnAten := ""
+
+	QOUT("Inicio...Dados de integração....Aguarde!")
+
+	Aadd(_aHeader, "Content-Type: application/json" )
+
+	_oRest:setPath("/api/execute")
+
+	// clientes do contrato
+	dbSelectArea("CNC")
+	CNC->(dbSetOrder(1)) // CNC_FILIAL+CNC_NUMERO+CNC_REVISA+CNC_CODIGO+CNC_LOJA
+	CNC->(dbSeek(xFilial("CNC") + CN9->CN9_NUMERO + CN9->CN9_REVISA ))
+
+	// clientes
+	dbSelectArea("SA1")
+	SA1->(dbSetOrder(1))
+	SA1->(dbSeek(xFilial("SA1") + CNC->CNC_CLIENT + CNC->CNC_LOJACL ))
+
+	// Proposta Comercial Cabeçalho
+	dbSelectArea("ADY")
+	ADY->(dbSetOrder(2)) // ADY_FILIAL+ADY_OPORTU+ADY_REVISA+ADY_PROPOS
+	If ADY->(dbSeek(xFilial("ADY") + CN9->CN9_XOPORT + CN9->CN9_XREVOP ))
+		_cPropos := ADY->ADY_PROPOS
+
+		// Proposta Comercial Itens
+		dbSelectArea("ADZ")
+		ADZ->(dbSetOrder(1)) // ADZ_FILIAL+ADZ_PROPOS+ADZ_ITEM
+		If ADZ->(dbSeek(xFilial("ADZ") + ADY->ADY_PROPOS ))
+			_cUnAten := ADZ->ADZ_XUNEXE
+		EndIf
+	EndIf
+
+	// Contatos da oportunidade
+	dbSelectArea("AD9")
+	AD9->(dbSetOrder(1)) // AD9_FILIAL+AD9_NROPOR+AD9_REVISA+AD9_CODCON
+	If AD9->(dbSeek(xFilial("AD9") + CN9->CN9_XOPORT + CN9->CN9_XREVOP ))
+
+		// cadastro de contatos
+		dbSelectArea("SU5")
+		SU5->(dbSetOrder(1)) // U5_FILIAL+U5_CODCONT+U5_IDEXC
+		If SU5->(dbSeek(xFilial("SU5") + AD9->AD9_CODCON ))
+			_cConta := SU5->U5_CONTAT
+			_cEmail := SU5->U5_EMAIL
+			_cFunca := Rtrim(Posicione("SUM", 1, xFilial("SUM")+SU5->U5_FUNCAO, "UM_DESC"))
+			_cTel   := SU5->U5_DDD + SU5->U5_CELULAR
+		EndIf
+	EndIf
+
+	_cFFile  := ""
+	_cNFile  := ""
+
+	// Documentos Contratuais
+	dbSelectArea("CNK")
+	CNK->(dbSetOrder(3)) // CNK_FILIAL+CNK_CONTRA+CNK_TPDOC
+	If CNK->(dbSeek(xFilial("CNK") + CN9->CN9_NUMERO ))
+		dbSelectArea("ZG0")
+		ZG0->(dbSetOrder(1)) // ZG0_FILIAL+ZG0_ENTIDA+ZG0_NUMERO
+		If ZG0->(dbSeek(xFilial("ZG0")+ "CNK" + CNK->CNK_CODIGO ))
+			_cNFile := AllTrim(ZG0->ZG0_OBJETO)
+			_cFFile  := AllTrim(GetMV("MV_XGCTGED")) + CN9->CN9_NUMERO + "\" + AllTrim(ZG0->ZG0_OBJETO)
+			If File(_cFFile)
+				fHdl := fOpen(_cFFile, FO_READ,,.F.)
+				if fHdl = -1
+					MsgAlert("Erro ao abrir o arquivo")
+				Else
+					nLen := fSeek(fHdl,0,FS_END)
+					fSeek(fhdl, 0)
+					_cFile := ""
+					fRead(fHdl, _cFile, nLen)
+					fClose(fHdl)
+					_cFile64 := Encode64(_cFile ,, .F.)
+				EndIf
+			EndIF
+		EndIf
+	EndIf
+
+	_cNCol := "0"
+	If SA1->A1_XQTDESI >= 0 .AND. SA1->A1_XQTDESI <= 99
+		_cNCol := "0"
+	ELseIf SA1->A1_XQTDESI >= 100 .AND. SA1->A1_XQTDESI <= 499
+		_cNCol := "1"
+	ELseIf SA1->A1_XQTDESI >= 500 .AND. SA1->A1_XQTDESI <= 999
+		_cNCol := "2"
+	ELseIf SA1->A1_XQTDESI > 999
+		_cNCol := "3"
+	EndIf
+
+	 /*
+	 	Autor       : Carlos Ryve Gandini
+	 	Data/Time   : 02/02/22 às 16:54:21
+	 	Detalhe     : O contrato quando cadastrado pela DR deve ser informado qual a filial que ira executar o servico(os)
+	 					  Obs.: Colocado a tratativa para caso vazio coloque o _cDUnAten como "1" SESI SST CBA, mas deve ser ajustado.
+	 */
+	If Empty(_cUnAten) .Or. _cUnAten == '02MT0011'
+		_cDUnAten := "1"// "SESI SST CBA"
+	ElseIf _cUnAten == '02MT0006'
+		_cDUnAten := "2"//"SESI SINOP"
+	ElseIf _cUnAten == '02MT0015'
+		_cDUnAten := "3"//"SESI RONDONOPOLIS"
+	ElseIf _cUnAten == '02MT0008'
+		_cDUnAten := "4"//"CACERES"
+	Endif
+
+	_cBaseNac := "1"
+	If CN9->CN9_XCLASS == "6"
+		_cBaseNac := "1"
+	ElseIf CN9->CN9_XCLASS == "1"
+		_cBaseNac := "2"
+	ElseIf CN9->CN9_XCLASS $ "4,5"
+		_cBaseNac := "3"
+	EndIf
+
+	_oJson := JsonObject():new()
+	_oJson["basenacional"]    := _cBaseNac
+	_oJson["col01"]           := _cNCol
+	_oJson["cnpj"]            := AllTrim(SA1->A1_CGC)
+	_oJson["ncontrato"]       := CN9->CN9_XNROCV
+	_oJson["nproposta"]       := _cPropos
+	_oJson["nomeemp"]         := AllTrim(SA1->A1_NOME)
+	_oJson["repemp"]          := AllTrim(_cConta)
+	_oJson["email"]           := AllTrim(_cEmail)
+	_oJson["carrep"]          := AllTrim(_cFunca)
+	_oJson["telfixo"]         := AllTrim(SA1->A1_DDD + SA1->A1_TEL)
+	_oJson["telcel"]          := AllTrim(_cTel)
+	_oJson["datainicial"]     := cValToChar(Year(CN9->CN9_DTINIC)) + "-" + StrZero(Month(CN9->CN9_DTINIC),2) + "-" + StrZero(Day(CN9->CN9_DTINIC),2)
+	_oJson["datafinalctr"]    := cValToChar(Year(CN9->CN9_DTFIM)) + "-" + StrZero(Month(CN9->CN9_DTFIM),2) + "-" + StrZero(Day(CN9->CN9_DTFIM),2)
+	_oJson["datainicioexe"]   := cValToChar(Year(CN9->CN9_XDTINI)) + "-" + StrZero(Month(CN9->CN9_XDTINI),2) + "-" + StrZero(Day(CN9->CN9_XDTINI),2)
+
+	_oJson["datafinexe"]      := cValToChar(Year(CN9->CN9_XDTFIM)) + "-" + cValToChar(Month(CN9->CN9_XDTFIM)) + "-" + cValToChar(Day(CN9->CN9_XDTFIM))
+	_oJson["vigenciainicial"] := ""
+	_oJson["vigenciafinal"]   := ""
+
+	_oJson["ppra1"]           := Iif(_nPpra > 0, "1", "0")
+	_oJson["pcmso1"]          := Iif(_nPcmso > 0, "1", "0")
+	_oJson["ergonomia1"]      := Iif(_nErgon > 0, "1", "0")
+
+	_oJson["valorppra"]       := cValToChar(_nPpra)
+	_oJson["valorpcmso"]      := cValToChar(_nPcmso)
+	_oJson["valorergo"]       := cValToChar( _nErgon)
+
+	/*
+		Autor       : Carlos Ryve Gandini
+		Data/Time   : 01/02/22 às 16:12:59
+		Detalhe     : Implemetacao do PCA e GINASTICA
+	*/
+	_oJson["pcafinal"]        := Iif(_nPCA > 0, "1", "0")
+	_oJson["ginastica"]       := Iif(_nGinast > 0, "1", "0")
+	_oJson["alimentnutricao"] := Iif(_nAliment > 0, "1", "0")
+	_oJson["valorpca"]        :=cValToChar( _nPCA)
+	_oJson["valorginastica"]  :=cValToChar( _nGinast)
+	_oJson["valoralimnutri"]  := cValToChar( _nAliment)
+	_oJson["laudos1"]   := "0"
+
+	_oJson["unatendi"]        := Iif(Empty(_cDUnAten),"1",_cDUnAten)
+	_oJson["rcbundatd"]       :=  Iif(Empty(_cDUnAten),"1",_cDUnAten)
+
+	_oJson["numcolaborador"]  := _cNCol
+
+	_oJson["filename"]        := _cNFile
+
+	_oJson["content"]         := Left(_cFile64,100)
+
+	_oJson["content"]         := _cFile64
+
+	QOUT("")
+	QOUT(Repl("=",50))
+	QOUT(_oJson:ToJson())
+	QOUT(Repl("=",50))
+	QOUT("")
+
+	_oRest:SetPostParams( _oJson:ToJson() )
+	If _oRest:Post( _aHeader )
+		MsgInfo(_oRest:GetResult())
+	Else
+		MsgAlert( cValToChar(ProcLine()) + " - " + _oRest:GetLastError())
+	EndIf
+
+	QOUT("Final...Dados de integração....Terminado!")
+
+Return
+

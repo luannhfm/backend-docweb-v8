@@ -1,0 +1,254 @@
+#Include 'Protheus.ch'
+#Include 'Topconn.ch'
+#Include 'Tbiconn.ch'
+
+/*/{Protheus.doc} SN73J02J
+Funcao responsavel por realizar o envio de emails para consultor de vendas CRM.
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 		04/05/2017
+@version 	1.0
+@return 	Nil, Nulo
+@history 24/07/2019, Franklin de Brito de Oliveira, ajuste nas mensagens via console
+/*/
+User Function SN73J02J(_aParams)
+	
+	Local _aArea := GetArea()
+
+	ConOut(" ")
+  	ConOut(Replicate("=",80))
+	ConOut('[' + dToC(Date()) + ' ' + Time() + '] - ' + FunName() + ': Iniciando Job - Disparar e-mail para consultor de Vendas CRM')
+	ConOut('[' + dToC(Date()) + ' ' + Time() + '] - ' + FunName() + ': Empresa: ' + cEmpAnt)   
+	ConOut('[' + dToC(Date()) + ' ' + Time() + '] - ' + FunName() + ': Filial: ' + cFilAnt)
+	
+	GetAD1()
+	GetADY()
+		
+	RestArea( _aArea )
+	
+	ConOut('[' + dToC(Date()) + ' ' + Time() + '] - ' + FunName() + ': Finalizou JOB')
+	ConOut(Replicate("=",80))
+	ConOut(" ")
+	
+Return Nil
+
+
+/** {Protheus.doc} GetAD1
+Funcao para selecionar os diagnosticos a serem enviados para o consultor
+
+@author: 	Jose Leite de Barros Neto
+@since: 	05/05/2017
+@Uso: 		FIEMT
+*/	
+Static Function GetAD1()
+	
+	Local _cMens	:= ""
+	Local _cQuery	:= ""
+	Local _cCons	:= ""
+	Local _cNCons	:= ""
+	Local _cFilOp	:= ""
+	Local _cRazSoc	:= ""
+	Local _cOport	:= ""
+	Local _cRevOp	:= ""
+	Local _cAssunt	:= "WorkFlow CRM - Nova oportunidade para atendimento"
+	Local _lOk		:= .F.
+	
+	If Select("TRA") > 0
+		DbSelectArea("TRA")
+		TRA->(DbCloseArea())
+	EndIf
+		
+	_cQuery := " SELECT AD1_FILIAL, AD1_NROPOR, AD1_REVISA, AD1_VEND, AD1_CODCLI, AD1_LOJCLI" + CRLF
+	_cQuery += " FROM " + RetSQLName("AD1") +" 	" + CRLF
+	_cQuery += " WHERE AD1_XDIAGN <> ' ' 			" + CRLF 
+	_cQuery += " AND AD1_XDIAGE = 'N' 				" + CRLF
+	_cQuery += " AND D_E_L_E_T_ <> '*' 			" + CRLF 
+	
+	TCQUERY _cQuery NEW ALIAS "TRA"	
+		
+	DbSelectArea('TRA')
+	TRA->(DbGoTop())
+	
+	While .Not. TRA->( EOF() )
+		_cCons    := TRA->AD1_VEND
+		_cNCons   := AllTrim(Posicione("SA3",1,xFilial("SA3") + _cCons,"A3_NOME"))
+		_cEmailCt := Lower(AllTrim(Posicione("SA3",1,xFilial("SA3") + _cCons,"A3_EMAIL")))
+		_cFilOp   := TRA->AD1_FILIAL
+		_cRazSoc  := AllTrim(Posicione("SA1",1,xFilial("SA1") + TRA->AD1_CODCLI + TRA->AD1_LOJCLI,"A1_NOME"))
+		_cOport   := TRA->AD1_NROPOR
+		_cRevOp   := TRA->AD1_REVISA
+		_cMens    := "Prezado(a) - "+ _cNCons +", </br> Você tem uma nova oportunidade para atendimento (Filial: "+ _cFilOp +" / Cliente: "+ _cRazSoc +" / Oportunidade: "+ _cOport +" / Revisão: "+ _cRevOp +" ), favor verificar."
+		
+		//Dispara o email para o consultor escolhido
+		_cMens	:= GetHtml(_cMens)
+		_lOk := U_SFEnvEmail( , _cEmailCt, , , _cAssunt, _cMens,,,)
+		
+		If _lOk
+			ConOut("Filial: "+ _cFilOp)
+			ConOut("Oportunidade: "+ _cOport)
+			ConOut("Revisao: "+ _cRevOp)
+			DbSelectArea("AD1")
+			AD1->(DbSetOrder(1))
+			AD1->(DbGoTop()) //AD1_FILIAL+AD1_NROPOR+AD1_REVISA
+			If AD1->(DbSeek( _cFilOp + _cOport + _cRevOp ))
+				If RecLock("AD1",.F.)
+					AD1->AD1_XDIAGE := "S"
+					AD1->(MsUnlock())
+				EndIf
+			EndIf
+			AD1->(DbCloseArea())
+			ConOut('[' + dToC(Date()) + ' ' + Time() + '] - ' + FunName() + ': Email Enviado com sucesso')
+		EndIf
+		
+		TRA->( DbSkip() )
+	End
+	
+	TRA->(DbCloseArea())
+	
+Return
+
+/** {Protheus.doc} GetADY
+Funcao para selecionar as propostas aceitas pelo gerente a partir dos diagnosticos realizados
+
+@author: 	Jose Leite de Barros Neto
+@since: 	05/05/2017
+@Uso: 		FIEMT
+*/	
+Static Function GetADY()
+	
+	Local _cMens	:= ""
+	Local _cQuery	:= ""
+	Local _cCons	:= ""
+	Local _cNCons	:= ""
+	Local _cFilOp	:= ""
+	Local _cRazSoc	:= ""
+	Local _cOport	:= ""
+	Local _cRevOp	:= ""
+	Local _cProp	:= ""
+	Local _cRevPr	:= ""
+	Local _cAssunt	:= "WorkFlow CRM - Proposta aceita a partir de Diagnosticos"
+	Local _lOk		:= .F.
+	
+	If Select("TRA") > 0
+		DbSelectArea("TRA")
+		TRA->(DbCloseArea())
+	EndIf
+		
+	_cQuery := " SELECT ADY_FILIAL, ADY_OPORTU, ADY_REVISA, ADY_PROPOS, ADY_PREVIS, ADY_CODIGO, ADY_LOJA" + CRLF
+	_cQuery += " FROM " + RetSQLName("ADY") +" 		" + CRLF
+	_cQuery += " WHERE ADY_XDIAPG = 'S' 			" + CRLF
+	_cQuery += " AND D_E_L_E_T_ <> '*' 				" + CRLF 
+	
+	TCQUERY _cQuery NEW ALIAS "TRA"	
+		
+	DbSelectArea('TRA')
+	TRA->(DbGoTop())
+	
+	While .Not. TRA->( EOF() )
+		_cCons   	:= AllTrim(Posicione("AD1",1,TRA->ADY_FILIAL + TRA->ADY_OPORTU + TRA->ADY_REVISA,"AD1_VEND")) 
+		_cNCons  	:= AllTrim(Posicione("SA3",1,xFilial("SA3") + _cCons,"A3_NOME"))
+		_cEmailCt	:= Lower(AllTrim(Posicione("SA3",1,xFilial("SA3") + _cCons,"A3_EMAIL")))
+		_cFilOp  	:= TRA->ADY_FILIAL
+		_cRazSoc  	:= AllTrim(Posicione("SA1",1,xFilial("SA1") + TRA->ADY_CODIGO + TRA->ADY_LOJA,"A1_NOME"))
+		_cOport  	:= TRA->ADY_OPORTU
+		_cRevOp  	:= TRA->ADY_REVISA
+		_cProp		:= TRA->ADY_PROPOS
+		_cRevPr		:= TRA->ADY_PREVIS
+		_cMens   	:= "Prezado(a) - "+ _cNCons +", </br> Você tem uma proposta aceita por diagnostico (Filial: "+ _cFilOp +" / Cliente: "+ _cRazSoc +"/ Oportunidade: "+ _cOport +" / Revisão: "+ _cRevOp +" / Proposta: "+ _cProp +" / Revisão Proposta: "+ _cRevPr +" ), favor verificar."
+		
+		//Dispara o email para o consultor responsavel pela oportunidade/proposta comercial
+		_cMens	:= GetHtml(_cMens)
+		_lOk := U_SFEnvEmail( , _cEmailCt, , , _cAssunt, _cMens,,,)
+		If _lOk
+			ConOut("Filial: "+ _cFilOp)
+			ConOut("Oportunidade: "+ _cOport)
+			ConOut("Revisao: "+ _cRevOp)
+			ConOut("Proposta: "+ _cProp)
+			ConOut("Revisao Proposta: "+ _cRevPr)
+			DbSelectArea("ADY")
+			ADY->(DbSetOrder(2))
+			ADY->(DbGoTop()) //ADY_FILIAL+ADY_OPORTU+ADY_REVISA+ADY_PROPOS
+			If ADY->(DbSeek( _cFilOp + _cOport + _cRevOp + _cProp))
+				If RecLock("ADY",.F.)
+					ADY->ADY_XDIAPG := "E"
+					ADY->(MsUnlock())
+				EndIf
+				ADY->(DbCloseArea())
+			EndIf
+			ConOut('[' + dToC(Date()) + ' ' + Time() + '] - ' + FunName() + ': Email Enviado com sucesso')
+		EndIf
+		
+		TRA->( DbSkip() )
+	End
+	
+	TRA->(DbCloseArea())
+	
+Return
+
+
+/** {Protheus.doc} GetHtml
+Funcao para montar o HTML a ser enviado por e-mail.
+
+@author: 	Jose Leite de Barros Neto
+@since: 	05/05/2017
+@Uso: 		FIEMT
+*/
+Static Function GetHtml(p_cMsg)
+	
+	Local _cHtml := ""
+	
+	_cHtml := '	<html> '
+	_cHtml += '		<head> '
+	_cHtml += '			<title>Workflow CRM Protheus - Sistema FIEMT</title> '
+	_cHtml += '			<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1"> '
+	_cHtml += '		</head> '
+	_cHtml += '		<body> '
+	_cHtml += '			<form name="form1"> '
+	_cHtml += '				<table style="width: 100%;" bordercolorlight="#000000" border="1"> '
+	_cHtml += '					<tbody> '
+	_cHtml += '						<tr> '
+	_cHtml += '							<td style="width: 112px;"> '
+	_cHtml += '								<p align="left"> '
+	_cHtml += '									<img style="border: 0px solid; width: 257px; height: 40px;" alt="Sistema FIEMT" '
+	_cHtml += '										src="http://www.katoombagroup.org/documents/events/event27/FIEMT.JPG"></p> '
+	_cHtml += '							</td> '
+	_cHtml += '							<td style="width: 866px; text-align: center; vertical-align: middle;"> '
+	_cHtml += '								<p> '
+	_cHtml += '									<big><big> <font size="3"><big><big><b>Notificação do Workflow</b></big></big></font></big></big> '
+	_cHtml += '								</p> '
+	_cHtml += '							</td> '
+	_cHtml += '						</tr> '
+	_cHtml += '					</tbody> '
+	_cHtml += '				</table> '
+	_cHtml += '				<p>&nbsp;</p> ' + p_cMsg 
+	_cHtml += '			</form> '
+	_cHtml += '		</body> '
+	_cHtml += ' </html> '
+	
+Return _cHtml
+
+/*/{Protheus.doc} Scheddef
+@description No novo Schedule existe uma forma para a definição 
+	dos Perguntes para o botão Parâmetros, além do cadastro das funções no SXD.
+@author Franklin de Brito de Oliveira
+@since 24/07/2019
+@return aReturn[1] - Tipo: "P" - para Processo, "R" -  para Relatórios
+@return aReturn[2] - Nome do Pergunte
+@return aReturn[3] - Alias  (para Relatório)
+@return aReturn[4] - Array de ordem  (para Relatório)
+@return aReturn[5] - Título (para Relatório)
+@type static function
+@see http://tdn.totvs.com/pages/releaseview.action?pageId=36800166
+/*/
+Static Function Scheddef()
+Local aParam
+Local aOrd     := {}
+
+aParam := { "P",;		//Tipo R para relatorio P para processo   
+	"ParamDef",;		// Pergunte do relatorio, caso nao use passar ParamDef            
+	"",;				// Alias            
+	aOrd,;				//Array de ordens   
+	""}    
+
+Return aParam

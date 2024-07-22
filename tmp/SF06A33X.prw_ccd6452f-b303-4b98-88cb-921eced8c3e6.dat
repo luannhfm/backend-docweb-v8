@@ -1,0 +1,210 @@
+#INCLUDE "TOTVS.CH"
+
+/*/{Protheus.doc} SF06A33X
+    @description Envia emails pendentes
+    @type User Function
+    @author Rafael Karczevski
+    @since 26/8/2019
+    @version 1.0
+    @param param, param_type, param_descr
+    @return return, return_type, return_description
+    @example
+    (examples)
+    @see (links_or_references)
+    /*/
+User Function SF06A33X()
+
+    Local cFilter
+    Local cMsg
+    Local aUsMail       := StrTokArr( GetNewPar("MV_XCNCTML","001558;001019") ,";")
+    Local cEmlResp	    := ""
+    Local cAlTmp2       := GetNextAlias()
+    Private cAssunto	:= "Cancelamento de contrato"
+    Private aRecUpd     := {}
+
+    SchedDef()
+    PswOrder(1)
+    For nX := 1 to Len(aUsMail) 
+        If PswSeek( aUsMail[nX] ) .And. !Empty( Alltrim( PswRet()[1,14] ) )
+            cEmlResp += Alltrim( PswRet()[1,14] ) + ";"
+        EndIf
+    Next nX
+
+    DbSelectArea("ZJB")
+
+    BeginSql Alias cAlTmp2
+        SELECT DISTINCT
+            ZJB_FILIAL, ZJB_NUMBOR, ZJB_NUM,ZJB_NUMCRT,ZJB_REVCRT,R_E_C_N_O_ AS REC
+        FROM ZJB010
+        WHERE
+        	ZJB_FILIAL = %Exp:xFilial('ZJB')%
+            AND ZJB_SITENV = 'N'
+            AND %NotDel%
+        ORDER BY ZJB_NUMBOR DESC, ZJB_NUM DESC
+    EndSql
+    (cAlTmp2)->(dbGoTop())
+    While (cAlTmp2)->(!eof())
+        If ZJB->(dbGoTo((cAlTmp2)->(REC)))
+            If ZJB->ZJB_SITENV == "N"
+                If (Date() == ZJB->ZJB_DTINCL .and. ElapTime(ZJB->ZJB_HRINCL + ":00", Time()) >= GetNewPar("MV_XCNCTTP","00:02:00")) .or. (Date() <> ZJB->ZJB_DTINCL)
+                    aAdd(aRecUpd, (cAlTmp2)->(REC))
+                    cMsg := SF633XB()
+                    If U_SFEnvEmail( , cEmlResp, , , cAssunto, cMsg) //U_SFEnvUMail(cEmlCAQC, cEmlPres, , , cAssunto, cMens, , , _cSvSMTP, cAcCAQC, cPaCAQC, _lSvSSL)
+                        For nX := 1 to Len(aRecUpd) 
+                            ZJB->(dbGoTo(aRecUpd[nX]))
+                            RecLock("ZJB",.f.)
+                                ZJB->ZJB_SITENV := "S"
+                                ZJB->ZJB_DTENVI := Date()
+                                ZJB->ZJB_HRENVI := Time()
+                            ZJB->(MsUnlock())
+                        Next nX
+
+                        aRecUpd := {}
+                    EndIf
+                EndIf
+            EndIf
+        EndIf
+
+        (cAlTmp2)->(dbSkip())
+    End
+    
+    ZJB->(DbCloseArea())
+
+Return
+
+/*/{Protheus.doc} SF633XA
+    @description Grava informações de controle de envio de email.
+    @type User Function
+    @author Rafael Karczevski
+    @since 26/08/2019
+    @version 1.0
+    /*/
+User Function SF633XA(p_cFil, p_cRot, p_cStEnv, p_cContr, p_cRevis, p_cPrefix, p_cNum, p_cParc, p_cTipo, p_cNumBor)
+    
+    Default p_cFil := ""
+    Default p_cRot := ""
+    Default p_cStEnv := ""
+    Default p_cContr := ""
+    Default p_cRevis := ""
+    Default p_cPrefix := ""
+    Default p_cNum := ""
+    Default p_cParc := ""
+    Default p_cTipo := ""
+    Default p_cNumBor := ""
+
+    DbSelectArea("ZJB")
+        RecLock("ZJB", .T.)
+            ZJB->ZJB_FILIAL := p_cFil
+            ZJB->ZJB_COD := GetSXENum("ZJB", "ZJB_COD") ; ZJB->(ConfirmSX8())
+            ZJB->ZJB_ROTINA := p_cRot
+            ZJB->ZJB_SITENV := p_cStEnv
+            ZJB->ZJB_NUMCRT := p_cContr
+            ZJB->ZJB_REVCRT := p_cRevis
+            ZJB->ZJB_PREFIX := p_cPrefix
+            ZJB->ZJB_NUM    := p_cNum
+            ZJB->ZJB_PARCEL := p_cParc
+            ZJB->ZJB_TIPO   := p_cTipo
+            ZJB->ZJB_NUMBOR := p_cNumBor
+            ZJB->ZJB_DTINCL := Date()
+            ZJB->ZJB_HRINCL := Time()
+        ZJB->(MsUnlock())
+    DbCloseArea("ZJB")
+
+Return
+
+/*/{Protheus.doc} SF633XB
+    @description Monta Email
+    @type Static Function
+    @author Rafael Karczevski
+    @since 29/08/2019
+    @version 1.0
+    /*/
+Static Function SF633XB()
+
+    Local cHtml := ""
+    Local cAlTmp
+    Local aFilInf := {Iif(SubStr(ZJB->ZJB_FILIAL,1,2)=="02","SESI","SENAI"),;
+                        Iif(SubStr(ZJB->ZJB_FILIAL,1,2)=="02","RM","SGE")}
+
+    DbSelectArea("CN9")
+    CN9->(dbSetOrder(1))
+    If CN9->(MsSeek( ZJB->ZJB_FILIAL + ZJB->ZJB_NUMCRT + ZJB->ZJB_REVCRT ))
+
+        cHtml += '<p>O Contrato: <strong>' + FWFilialName("01", ZJB->ZJB_FILIAL, 1) + '</strong>, <strong>' + CN9->CN9_XCTRRM + '</strong> foi cancelado.</p> '
+        cHtml += '<p>Cliente: <strong>' + AllTrim(Posicione("SA1",1, xFilial("SA1") + CN9->CN9_CLIENT + CN9->CN9_LOJACL, "A1_NOME")) + '</strong>, CPF: ' + AllTrim(Posicione("SA1",1, xFilial("SA1") + CN9->CN9_CLIENT + CN9->CN9_LOJACL, "A1_CGC")) + '</p> '
+        If !Empty(ZJB->ZJB_NUMBOR)
+            cAssunto := aFilInf[1] + " - " + aFilInf[2] + " - Contrato Cancelado <- Titulo Removido do Bordero " + ZJB->ZJB_NUMBOR
+            cHtml += '<p>Houve remo&ccedil;&atilde;o de t&iacute;tulo do border&ocirc; .</p> '
+        Else
+            cAssunto := "Cancelamento de contrato"
+        EndIf
+
+        If !Empty(ZJB->ZJB_NUM)
+            cHtml += '<p>Titulos Cancelados:</p> '
+
+            cAlTmp := GetNextAlias()
+            BeginSql Alias cAlTmp
+                SELECT 
+                    ZJB_PREFIX, ZJB_NUM, ZJB_PARCEL, ZJB_TIPO, ZJB_NUMBOR, ZJB_FILIAL,R_E_C_N_O_ AS REC
+                FROM ZJB010
+                WHERE
+                    ZJB_FILIAL = %Exp:ZJB->ZJB_FILIAL%
+                    AND ZJB_NUMCRT = %Exp:ZJB->ZJB_NUMCRT%
+                    AND ZJB_REVCRT = %Exp:ZJB->ZJB_REVCRT%
+                    AND %NotDel%
+                ORDER BY ZJB_NUM, ZJB_PARCEL, ZJB_NUMBOR
+            EndSql
+            (cAlTmp)->(dbGoTop())
+            cHtml += '<table style="height: 65px; width: 536px;" border="1"> '
+            cHtml += '    <tbody>'
+            cHtml += '        <tr> '
+            cHtml += '            <td style="width: 109px">Filial</td> '
+            cHtml += '            <td style="width: 59px">Prefixo</td> '
+            cHtml += '            <td style="width: 98px">Numero</td> '
+            cHtml += '            <td style="width: 64px">Parcela</td> '
+            cHtml += '            <td style="width: 78px">Tipo</td> '
+            cHtml += '            <td style="width: 96px">Bordero</td> '
+            cHtml += '        </tr> '
+            While (cAlTmp)->(!Eof())
+                aAdd(aRecUpd, (cAlTmp)->(REC))
+                If !Empty((cAlTmp)->(ZJB_NUM))
+                    cHtml += '        <tr> '
+                    cHtml += '            <td style="width: 109px">' + (cAlTmp)->(ZJB_FILIAL) + '</td> '
+                    cHtml += '            <td style="width: 59px">' + (cAlTmp)->(ZJB_PREFIX) + '</td> '
+                    cHtml += '            <td style="width: 98px">' + (cAlTmp)->(ZJB_NUM) + '</td> '
+                    cHtml += '            <td style="width: 64px">' + (cAlTmp)->(ZJB_PARCEL) + '</td> '
+                    cHtml += '            <td style="width: 78px">' + (cAlTmp)->(ZJB_TIPO) + '</td> '
+                    cHtml += '            <td style="width: 96px">' + (cAlTmp)->(ZJB_NUMBOR) + '</td> '
+                    cHtml += '        </tr> '
+                EndIf
+                (cAlTmp)->(dbSkip())
+            End
+            cHtml += '    </tbody> '
+            cHtml += '</table> '
+        EndIf
+        cHtml += '<p>Favor verificar se ocorreram baixas por cart&atilde;o de cr&eacute;dito.</p> '
+        cHtml += '<p>Integra&ccedil;&atilde;p Protheus X ' + aFilInf[2] + '.</p> '
+
+    EndIf
+
+Return cHtml
+
+/*/{Protheus.doc} SchedDef
+    @description Função novo modelo de schedule
+    @type Static Function
+    @author Rafael Karczevski
+    @since 26/08/2019
+    @version 1.0
+    /*/
+Static Function SchedDef()
+
+    Local aParam := {}
+    Local aOrd := {}
+
+    aParam := {"P", ;
+        "ParamDef", ;
+        ""        , ;
+        aOrd      , ;
+    }
+
+Return aParam

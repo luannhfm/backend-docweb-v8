@@ -1,0 +1,110 @@
+#INCLUDE "PROTHEUS.CH"
+    
+/*/{Protheus.doc} MA030TOK
+Validação da digitação na inclusão e alteração de clientes.
+@return lOk, .T. Dados validados, .F. Dados inconsistentes.
+@type user function
+@see https://tdn.totvs.com/pages/releaseview.action?pageId=6784252
+@history 21/08/2020, Franklin de Brito de Oliveira, incluido validação para não permitir inclusão de CNPJ na SA1 quando este já existir nas tabelas ACH (Suspect) e SUS (Prospect).
+/*/
+User Function MA030TOK()
+Local aArea	:= GetArea()
+Local lOk 	:= .F.          
+//Local lCNPJ := SuperGetMv("SI_xCNPJ",.F.,.F.,cFilant)     //senão existir parametro para a cfilant, será .F.                         
+Local lCNPJ := SuperGetMv("SI_xCNPJ",.F.,.F.,Substr(cFilant,1,4))
+
+If lCNPJ
+	If (M->A1_TIPO = "X" .Or. !Empty(M->A1_CEINSS))
+		lOk := .T.
+	ElseIf Empty(M->A1_CGC)
+		lOk := .F.	
+		MsgStop("Para este cliente deve ser preenchido o campo CGC.")     	
+	ElseIf !Empty(M->A1_CGC)
+		lOk := .T.	
+	Endif
+Else 
+	lOk := .T.
+Endif
+
+//Validar para que não permita inclusão de CNPJ na SA1 quando este 
+//já existir nas tabelas ACH (Suspect) e SUS (Prospect).
+If INCLUI
+	if !l030Auto
+		//Valido se existe o CNPJ na tabela ACH (Suspect).
+		If lOk .And. fExPJACH(M->A1_CGC)
+			Help( ;
+				NIL,;
+				NIL,;
+				"CNPJ possui Suspect cadastrado",;
+				NIL,;
+				"já existe um suspect cadastrado para o CNPJ " + Transform(M->A1_CGC, "@R 99.999.999/9999-99") + ".",;
+				1,;
+				0,;
+				NIL,;
+				NIL,;
+				NIL,;
+				NIL,;
+				NIL,;
+				{"Faça a classificação e evolução deste CNPJ no cadastro de suspect."};
+			)
+			lOk := .F.
+		EndIf
+		//Valido se existe o CNPJ na tabela SUS (Prospect).
+		If lOk .And. fExPJSUS(M->A1_CGC)
+			Help( ;
+				NIL,;
+				NIL,;
+				"CNPJ possui Prospect cadastrado",;
+				NIL,;
+				"já existe um prospect cadastrado para o CNPJ " + Transform(M->A1_CGC, "@R 99.999.999/9999-99") + ".",;
+				1,;
+				0,;
+				NIL,;
+				NIL,;
+				NIL,;
+				NIL,;
+				NIL,;
+				{"Faça a classificação e evolução deste CNPJ no cadastro de prospect."};
+			)
+			lOk := .F.
+		EndIf
+	endif
+EndIf
+RestArea(aArea)
+Return(lOk)
+
+/*/{Protheus.doc} fExPJACH
+Função para verificar a existencia do CNPJ na tabela ACH (Suspects).
+@author Franklin B. Oliveira
+@since 21/08/2020
+@return lRet, .T. CNPJ encontrado, .F. CNPJ não encontrado
+@param cCnpj, characters, CNPJ a ser pesquisado
+@type static function
+/*/
+Static Function fExPJACH(cCnpj)
+Local lRet := .F.
+	DbSelectArea("ACH")
+	ACH->( DbSetOrder(2) )
+	If ACH->( DbSeek(xFilial("ACH") + cCnpj) )
+		lRet := .T.
+	EndIf
+	ACH->( DbCloseArea() )
+Return lRet
+
+/*/{Protheus.doc} fExPJSUS
+Função para verificar a existencia do CNPJ na tabela SUS (Prospects).
+@author Franklin B. Oliveira
+@since 21/08/2020
+@return lRet, .T. CNPJ encontrado, .F. CNPJ não encontrado
+@param cCnpj, characters, CNPJ a ser pesquisado
+@type static function
+/*/
+Static Function fExPJSUS(cCnpj)
+Local lRet := .F.
+	DbSelectArea("SUS")
+	SUS->( DbSetOrder(4) )
+	If SUS->( DbSeek(xFilial("SUS") + cCnpj) )
+		lRet := .T.
+	EndIf
+	SUS->( DbCloseArea() )
+Return lRet

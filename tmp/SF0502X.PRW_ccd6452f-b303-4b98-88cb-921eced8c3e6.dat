@@ -1,0 +1,535 @@
+#Include 'Protheus.ch'
+#Include "Totvs.ch"
+#Include "FWPrintSetup.ch"
+#INCLUDE "RPTDEF.CH"
+#INCLUDE "TBICONN.CH
+
+/*/{Protheus.doc} SF0502X
+CLASSE RESPONSAVEL PELO GERENCIAMENTO DE IMPRESSAO E GRAVAÇÃO DE DADOS NA TABELA DE HISTORICO DE VENDA
+@author j2a.luizjunior
+@since 29/06/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+CLASS SF0502X
+
+	DATA oPrint
+	
+	METHOD New() CONSTRUCTOR
+	METHOD Init()	  
+	METHOD GRAVAZH0()
+	METHOD PRINT()
+	METHOD HISTPOR()
+	
+ENDCLASS
+
+/*/{Protheus.doc} New
+(long_description)
+@author j2a.luizjunior
+@since 29/06/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+METHOD New() CLASS SF0502X	
+RETURN SELF	
+
+/*/{Protheus.doc} Init
+(long_description)
+@author j2a.luizjunior
+@since 29/06/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+METHOD Init() CLASS SF0502X	
+	
+	Local aImp	  := GetImpWindows(.F.)
+	Local cImpRet := aImp[1]
+	
+	Self:oPrint   := FWMSPrinter():New("Cabeçalho Padrão" ,, .F., /*cStartPath*/, .T.,, @::oPrint,cImpRet,.F.,.F.,,)
+	
+RETURN SELF
+
+/*/{Protheus.doc} GRAVAZH0
+(long_description)
+@author j2a.luizjunior
+@since 30/06/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+METHOD GRAVAZH0() CLASS SF0502X
+
+	Local cAlSL2 := GetNextAlias()
+	Local cCaixa := xNumCaixa() 
+	Local nCont  := 0
+	
+	BeginSql Alias cAlSL2
+	
+		SELECT L2_DOC,
+		       L2_SERIE,
+		       L2_QUANT,
+		       L2_VRUNIT,
+		       L2_PRODUTO,
+		       L2_DESCRI		      
+		FROM   %Table:SL2%
+		WHERE  %NOTDEL%
+		AND    L2_NUM     = %Exp:SL1->L1_NUM%
+		AND    L2_DOC     = %Exp:SL1->L1_DOC%
+		AND    L2_EMISSAO = %Exp:dDataBase%
+	
+	EndSql 
+	
+	While !(cAlSL2)->(Eof())
+		
+		For nI := 1 To (cAlSL2)->L2_QUANT
+		
+			nCont++
+			
+			If nCont <= 9
+				cItem  := "0"+ AllTrim(Str(nCont))
+			Else	
+				cItem  := AllTrim(Str(nCont))
+			EndIf
+		
+			cCodigoBar := "3" + AllTrim(SL2->L2_DOC) + cItem
+		
+			DbSelectArea("ZH0")
+			If Reclock("ZH0",.T.)
+				
+				ZH0->ZH0_FILIAL := xFilial("ZH0")
+				ZH0->ZH0_NUMORC := SL1->L1_NUM
+				ZH0->ZH0_NUMNOT := (cAlSL2)->L2_DOC
+				ZH0->ZH0_SERIE  := (cAlSL2)->L2_SERIE
+				ZH0->ZH0_ITEM   := cItem
+				ZH0->ZH0_CODBAR := cCodigoBar 
+				ZH0->ZH0_DATA   := M->LQ_DTLIM
+				ZH0->ZH0_HORA   := Time()
+				ZH0->ZH0_USADO  := "2"
+				ZH0->ZH0_VRUNIT := (cAlSL2)->L2_VRUNIT
+				ZH0->ZH0_COD    := (cAlSL2)->L2_PRODUTO
+				ZH0->ZH0_DESC   := (cAlSL2)->L2_DESCRI
+				ZH0->ZH0_CAIXA  := cCaixa
+				
+				ZH0->(MsUnlock())
+				
+			EndIf
+		
+		Next nI
+		
+		(cAlSL2)->(DbSkip())		
+	EndDo
+	
+	If cFilAnt == "02MT0008"
+		FWMsgRun(,{||HISTPOR()},"Gerando movimento de historico...", "Aguarde")
+	EndIf
+	
+	FWMsgRun(,{||GRVDADOSSE1()},"Atualizando movimento de venda...", "Aguarde")
+	
+RETURN SELF
+
+/*/{Protheus.doc} PRINT
+(long_description)
+@author j2a.luizjunior
+@since 29/06/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+METHOD PRINT(p_lEnd,p_cAlias) CLASS SF0502X
+	
+	Local cBitMap	:= GetNewPar('SF_IMGCLUB', '\system\LogoPark.bmp')
+	Local nLin	     := 0
+	Local nCol	     := 0
+	Local nLargura   := 200
+	Local nPosMsg	:= 0
+	Local nRecno    := Nil
+	Local lCond     := Nil
+	Local oFontGN    := TFont():New( "Arial",,-10,,.T. )
+	Local oFontDT    := TFont():New( "Arial",,-8,,.T. )				
+	Local oFontObs   := TFont():New("Courier new",, -6,, .T.)		
+	Local cCodigoBar	:= ''
+	Local cDesc      := ""
+	Local oSF0510X	:= SF0510X():New()
+	Local aMSG		:= {}
+	Local cChAlias
+	Local cNum
+	
+	Default p_lEnd := .F.
+	Default p_cAlias := "SL1"
+
+	If p_cAlias == "SL1"
+		cChAlias := SL1->L1_FILIAL + SL1->L1_NUM + SL1->L1_DOC
+		cNum := SL1->L1_NUM
+	Else
+		cChAlias := ZH0_FILIAL + ZH0_NUMORC + ZH0_NUMNOT
+		cNum := ZH0_NUMORC
+	EndIf
+
+	aMSG := oSF0510X:TrataMSG()
+	
+	DbSelectArea("ZH0")
+	DbSetOrder(1)
+	If DbSeek(cChAlias)
+
+		While !ZH0->(Eof()) .And. cChAlias == ZH0->ZH0_FILIAL + ZH0->ZH0_NUMORC  + ZH0->ZH0_NUMNOT
+			
+			If !Empty(ZH0->ZH0_NOMCLI) .And. !Empty(ZH0->ZH0_DTNASC) .And. AllTrim(ZH0->ZH0_ITEM) = "01"
+			
+				lCond := .F.
+			
+			Else
+			
+				lCond := .T.
+			
+			End
+			
+			If p_lEnd
+				Exit	
+			EndIf				
+
+			MsProcTxt('Imprimindo o bilhete N° ' + AllTrim(ZH0->ZH0_ITEM) + '.')
+
+			cDesc      := ZH0->ZH0_DESC
+			
+			Self:Init()
+			Self:oPrint:SetPortrait()		
+			Self:oPrint:StartPage()
+
+			cCodigoBar := AllTrim(ZH0->ZH0_CODBAR)
+
+			If .not. Empty(cBitMap)
+				::oPrint:SayBitMap(nLin, nCol, cBitMap, 40, 53)
+			EndIf
+						
+			nLin += 7
+			Self:oPrint:Say(nLin, 45, cDesc, oFontGN )
+
+			nLin += 15
+			Self:oPrint:SayAlign(nLin, 45, "Lote: " + ZH0->ZH0_NUMORC, oFontGN, nLargura, , , 0 )
+		
+			nLin += 10
+			Self:oPrint:SayAlign(nLin, 45, "Validade: " + DToC(ZH0->ZH0_DATA), oFontGN, nLargura, , , 0 )
+		
+			nLin += 10
+			Self:oPrint:SayAlign(nLin, 45, "R$ "+ AllTrim(TransForm(ZH0->ZH0_VRUNIT,PesqPict("ZH0","ZH0_VRUNIT"))) + Space(8) + cCodigoBar , oFontGN, nLargura, , , 0 )
+
+			nLin += 10
+			Self:oPrint:FWMSBAR("INT25",5,nCol,cCodigoBar,Self:oPrint /*oPrint*/, .F. /*lCheck*/,/*Color*/,/*lHorz*/, 0.02/*nWidth*/, 0.8/*nHeigth*/,.F. /*lBanner*/, "Times New Roman"/*cFont*/, /*"EAN13"*/ /*cMode*/, .F. /*lPrint*/, 0.5/*nPFWidth*/, 0.5/*nPFHeigth*/,/*lCmtr2Pix*/)				 
+			                     
+			nLin += 55
+			Self:oPrint:Say(nLin, nCol , "Impressão de ingresso direto no PDV", oFontGN )
+			
+			If lCond = .F.
+			
+			nLin += 7
+			
+			nRecno := ZH0->(Recno())
+			
+				While ZH0->ZH0_FILIAL = xFilial("ZH0") .And. ZH0->ZH0_NUMORC = cNum
+					
+					Self:oPrint:SayAlign(nLin, nCol, "Nome: " + ZH0->ZH0_NOMCLI + " " + " Dt. Nasc: " + DtoC(ZH0->ZH0_DTNASC) + " " + " CPF: " + ZH0->ZH0_CPFCLI, oFontObs, nLargura, , , 0 )
+				
+					ZH0->(DbSkip())
+					
+					nLin += 19
+				
+				EndDo
+				
+				nLin -= 19
+				lCond := .T.
+				ZH0->(DbGoTo(nRecno))
+			
+			End
+			
+			If Len(aMSG) > 0
+
+				nLin += 26
+				::oPrint:Say(nLin, nCol , "Observações:", oFontGN )
+
+				nLin += 5
+
+				For nPosMsg := 1 to Len(aMSG)
+					nLin += 7
+					::oPrint:Say(nLin, nCol , aMSG[nPosMsg], oFontObs)
+				Next
+
+			EndIf
+			
+			If FWIsInCallStack('U_SFF701A1')
+				
+				nLin += 10
+				Self:oPrint:SayAlign(nLin, 140, '2ª via do bilhete', oFontObs, nLargura,,, 0)
+
+			EndIf
+
+			Self:oPrint:Print()			
+			Self:oPrint:EndPage()
+			
+			nLin := 0
+		
+			(DbSkip())
+		EndDo		
+			
+	EndIf
+	
+Return Self
+
+/*/{Protheus.doc} HISTPOR
+(long_description)
+@author j2a.luizjunior
+@since 22/08/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function HISTPOR()
+
+	Local dDataBanco := GetData()
+	
+	//->ZH0_FILIAL + ZH0_NUMNOT + ZH0_ITEM
+	DbSelectArea("ZH0")
+	DbSetOrder(1)
+	If DbSeek(SL1->L1_FILIAL + SL1->L1_NUM + SL1->L1_DOC)
+
+		While !ZH0->(Eof()) .And. SL1->L1_FILIAL + SL1->L1_NUM + SL1->L1_DOC == ZH0->ZH0_FILIAL + ZH0->ZH0_NUMORC  + ZH0->ZH0_NUMNOT
+			
+			If dDataBanco == ZH0->ZH0_DATA
+			
+				If RecLock("ZH0",.F.)
+					ZH0->ZH0_USADO := "1"
+					ZH0->ZH0_DATUS := dDataBanco
+					ZH0->ZH0_HORUS := Time()
+					ZH0->(MsUnlock())
+				EndIf
+
+				GRVHIST("1","3",ZH0->ZH0_NUMNOT,ZH0->ZH0_ITEM)
+				
+			EndIf
+			
+			ZH0->(Dbskip())			
+		EndDo
+		
+	EndIf	
+
+Return
+/*/{Protheus.doc} GRVDADOSSE1
+(long_description)
+@author j2a.luizjunior
+@since 31/08/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function GRVDADOSSE1
+	
+	Local cChave   := xFilial("SE1") + SE1->E1_PREFIXO + SE1->E1_NUM
+	Local cPref    := SE1->E1_PREFIXO
+	Local cNum     := SE1->E1_NUM
+	Local cParc    := SE1->E1_PARCELA
+	Local cTipo    := SE1->E1_TIPO 
+	Local cCliente := SE1->E1_CLIENTE
+	Local cLoja    := SE1->E1_LOJA
+	Local cCCC     := GetNewPar("MV_XCCCPRQ","1301090103"   )
+	Local cItemC   := GetNewPar("MV_XITEMPQ","1730403011603")
+	Local cNaturez := GetNewPar("MV_XNATVDI","1300000024"   )
+	Local cConCRed := GetNewPar("MV_XCONCRE","41010408002"  )
+	Local aHistCob := Array(9)	
+	Local cNum     := Posicione("SL1",2,xFilial("SL1") + SF2->F2_SERIE + SF2->F2_DOC,"L1_NUM"    )
+	Local cForma   := Posicione("SL4",1,xFilial("SL4") + cNum                       ,"L4_FORMA"  )
+	Local cNumCart := Posicione("SL4",1,xFilial("SL4") + cNum                       ,"L4_NUMCART")	
+	
+	DbSelectarea("SE1")
+	DbSetOrder(1)
+	If DbSeek(cChave)
+		While !SE1->(Eof()) .And. cChave == SE1->E1_FILIAL + SE1->E1_PREFIXO + SE1->E1_NUM
+			If Reclock("SE1",.F.)			
+				SE1->E1_CCC     := cCCC
+				SE1->E1_ITEMC   := cItemC
+				SE1->E1_NATUREZ := cNaturez	
+				SE1->E1_CREDIT  := cConCRed
+				If AllTrim(cForma) $ "CC|CD"
+					SE1->E1_XDGCART := cNumCart
+				EndIf
+				SE1->(MsUnlock())
+			EndIf
+			SE1->(DbSkip())
+		EndDo
+	EndIf
+	
+	//TxtTit := ""
+	//cTxtTit += "Filial: " + FWxFilial("SE1") + " Prefixo: " + cPref + " Número: " + cNum + " Tipo: " + cTipo + " Parcela: " + cParc //+ CRLF
+	//------------------------------------------------------
+	//-- Grava Histórico de cobrança - Novos Títulos
+	//------------------------------------------------------
+	aHistCob[1]:= cCliente
+	aHistCob[2]:= cLoja
+	aHistCob[3]:= cPref
+	aHistCob[4]:= cNum
+	aHistCob[5]:= cParc
+	aHistCob[6]:= cTipo
+	aHistCob[7]:= STOD("//")
+	aHistCob[8]:= "TÍTULO GERADO PELA GESTAO DE PARQUE - VENDA DIRETA " + CRLF 
+	aHistCob[8]+= "Numero do Titulo: "  + cNum + CRLF
+	//aHistCob[8]+= "Condição: "+ cCondPg + "-"  + Posicione("SE4",1,FWxFilial("SE4")+cCondPg,"E4_DESCRI")+ CRLF + CRLF
+
+	aHistCob[9]:= "01"
+	
+	//------------------------------------------------------
+	//-- Chama unção que grava historico
+	//------------------------------------------------------
+
+	ADDHISTOR(aHistCob,"SF0503X") 
+
+Return
+
+/*/{Protheus.doc} GetData
+Retorna data do banco
+@author j2a.luizjunior
+@since 11/07/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function GetData
+
+	Local dRet    := ""
+	Local cAlData := GetNextAlias()
+
+	BeginSql Alias cAlData
+
+		SELECT TO_CHAR(sysdate, "dd/mm/yyyy") Data_Banco 
+		FROM DUAL;
+
+	EndSql
+	
+	If !(cAlData)->(Eof())
+		dRet := CToD((cAlData)->Data_Banco)
+	EndIf
+
+Return dRet
+
+/*/{Protheus.doc} GRVHIST
+Grava historico de acesso
+@author j2a.luizjunior
+@since 20/07/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+Static Function GRVHIST(pAcess,pTipo,pCod,pItem)
+
+	Local cAcess := pAcess
+	Local cTipo  := pTipo
+	Local cHist  := "" 
+	Local cCod   := pCod
+	Local cUser  := UsrFullName(__cUserId)
+	Local cItem  := pItem
+
+	If cAcess == "1"
+		cHist  := "Acesso Permitido"
+	Else
+		cHist  := "Acesso Negado"
+	EndIf	
+	
+	DbSelectArea("ZH4")
+	If RecLock("ZH4",.T.)
+		
+		ZH4->ZH4_FILIAL := xFilial("ZH4")
+		ZH4->ZH4_TIPO   := cTipo
+		ZH4->ZH4_COD    := cCod
+		ZH4->ZH4_DTACES := dDataBase
+		ZH4->ZH4_HORA   := Time()
+		ZH4->ZH4_ACESSO := cAcess
+		ZH4->ZH4_USER   := cUser
+		ZH4->ZH4_HIST   := cHist
+		ZH4->ZH4_ITEM   := cItem
+		ZH4->ZH4_USADO  := "1"
+		
+		ZH4->(MsUnlock())
+	EndIf
+	
+Return
+
+//-----------------------------------------------------
+/*/{Protheus.doc} AddHistor
+Grava na tabela o Historico.
+
+@author Allan da Silva Faria
+@since 15/04/2016
+@version 1.0
+@param _aDados	, Array		, Dados do cliente, título e historico
+@param _cFunName, Caracter	, Nome da função que solicitou a gravação
+/*/
+//-----------------------------------------------------
+
+Static Function AddHistor(_aDados,_cFunMame,_dDataInc,_cFilial, _pnRad)
+
+	DEFAULT _cFunMame := AllTrim(FunName())	
+	DEFAULT _dDataInc := dDatabase
+	DEFAULT _cFilial  := FWxFilial("ZF1")
+
+	dbSelectArea("ZF1")
+	ZF1->(dbSetOrder(1))
+
+	If ! Empty(_aDados[08]) .or. ! Empty(_aDados[07]) .or.  ! Empty(_dDataInc) 
+		RecLock("ZF1",.T.)
+		Replace ZF1_FILIAL 	With _cFilial
+		Replace ZF1_CLIENT	With _aDados[01]
+		Replace ZF1_LOJA	With _aDados[02]
+		Replace ZF1_PREF	With _aDados[03]
+		Replace ZF1_NUM		With _aDados[04]
+		Replace ZF1_PARC	With _aDados[05]
+		Replace ZF1_TIPO	With _aDados[06]
+		Replace ZF1_DATA	With _dDataInc
+		Replace ZF1_AGENDA	With _aDados[07]
+		Replace ZF1_HISTOR 	With _aDados[08]
+		Replace ZF1_CODUSR	With RetCodUsr()
+		//Replace ZF1_ORIGEM  With _cFunMame+STR(_pnRad,1)
+		Replace ZF1_SEQ		With _aDados[09]
+		Replace ZF1_HORA	With Time()
+		
+        // A função AddHistor() é executada tambem pelo faturamento e a variável _nRad não é utilizada no MÓDULO
+        // Paulo Schwind - 23/05/2019
+		if ValType(_pnRad) <> 'U'
+		   Replace ZF1_ORIGEM  With _cFunMame+STR(_pnRad,1)
+		   Replace ZF1_ACAO	With STR(_pnRad,1)
+		Else
+	  	   Replace ZF1_ORIGEM  With _cFunMame
+		   Replace ZF1_ACAO	With '2'   
+		Endif   
+
+		If LEN(_aDados) >= 12
+			Replace ZF1_DTPROC	With _aDados[12]
+		EndIf
+
+		If LEN(_aDados) > 9
+			Replace	ZF1_XJREC	With _aDados[10]
+			Replace ZF1_XJPARE	With _aDados[11]
+		Else
+			Replace	ZF1_XJREC	With .F.
+			Replace ZF1_XJPARE	With .F.
+		EndIf
+		MsUnLock()
+	EndIf
+
+Return 

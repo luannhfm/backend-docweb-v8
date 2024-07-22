@@ -1,0 +1,1346 @@
+#INCLUDE "TOTVS.CH"
+
+/*/{Protheus.doc} SNSGTX01
+Schedule para integração do Protheus com o SGT.
+@type function
+@author Rafael Karczevski
+@since 19/09/2019
+@history 21/01/2020, Franklin Oliveira, Inclusão da integração de cliente
+@history 12/02/2020, Franklin Oliveira, Alterado o uso do parâmetro MV_XSGTUPD para considerar a versão da API
+@history 20/02/2020, Franklin Oliveira, Incluido consulta de cliente antes da tentativa de inclusão do mesmo.
+/*/
+User Function SNSGTX01()
+Local lEnvLog := .F.
+Local lSaveLog := .F.
+Local lEnd  := .F.
+Private aErrLog := {}
+
+	ConOut(" ")
+  	ConOut(Replicate("=",80))
+	ConOut('[' + dToC(Date()) + ' ' + Time() + '] - ' + FunName() + ': Iniciando Job - Integração Protheus X SGT')
+	ConOut('[' + dToC(Date()) + ' ' + Time() + '] - ' + FunName() + ': Empresa: ' + cEmpAnt)   
+	ConOut('[' + dToC(Date()) + ' ' + Time() + '] - ' + FunName() + ': Filial: ' + cFilAnt)
+	
+	oGrid := FWGridProcess():New( ;
+        "SNSGTX01",;                            //Nome da rotina de menu de processamento
+        "Integração SGT",;          //Titulo da rotina de menu
+        "Rotina de integração com o SGT",;		//Descrição completa da rotina
+        { |oGrid, lEnd| DoTask(oGrid, @lEnd)},; //Bloco de código de processamento. O bloco recebe a variavel que informa que a rotina foi cancelada
+        "SNSGTX01",;							//Nome do grupo de perguntas do dicionário de dados
+        Nil,;									//Nome da função que será executada caso o processamento permita processamento em grid
+        lSaveLog;								//Indica se permite a gravação de Log sempre que chamar o método SaveLog()
+    )
+    
+	oGrid:SetMeters(1)
+	oGrid:Activate()
+	
+	If !FWGetRunSchedule()
+		if Len(aErrLog)>0
+			if MsgNoYes("Deseja visualizar os erros ocorridos?")
+				fVisLog()
+			endif
+		endif
+	EndIf
+
+	lEnvLog := If(MV_PAR01==1, .T., .F.)
+
+	//Envia log de erros por e-mail.
+	If lEnvLog .And. !Empty(aErrLog)
+		fEnvLog()
+	else
+		fGrvLog()
+	EndIf
+	
+	ConOut('[' + dToC(Date()) + ' ' + Time() + '] - ' + FunName() + ': Finalizou JOB')
+	ConOut(Replicate("=",80))
+	ConOut(" ")
+
+Return nil
+
+/*/{Protheus.doc} DoTask
+	(long_description)
+	@type  Static Function
+	@author Franklin de Brito de Oliveira
+	@since 19/04/2022
+	@version version
+	@param oGrid, object, objeto FWGridProcess com grid de processamento
+	@param lEnd, logical, indica que a opção "cancelar" foi selecionada
+/*/
+Static Function DoTask(oGrid, lEnd)
+	
+	oGrid:SetMaxMeter(8, 1)
+
+	oGrid:SetIncMeter(1, "Inserindo produtos no SGT.")
+	IncProdSGT()	// Inserir Produto Regional no SGT
+	
+	oGrid:SetIncMeter(1, "Editando produtos no SGT.")	
+	AltProdSGT()	// Editar Produto Regional no SGT
+
+	oGrid:SetIncMeter(1, "Inserindo clientes no SGT.")		
+	IncCliSGT()		// Inserir Cliente no SGT
+
+	oGrid:SetIncMeter(1, "Inserindo propostas no SGT.")
+	IncPropSGT()	// Inserir Proposta no SGT
+
+	oGrid:SetIncMeter(1, "Inserindo atendimentos no SGT.")
+	IncAteSGT()		// Inserir atendimentos com status em negociação.
+
+	oGrid:SetIncMeter(1, "Alterando atendimentos para aceito no SGT.")
+	AceAteSGT()		// Alterar Atendimento para Aceito.
+
+	oGrid:SetIncMeter(1, "Alterando atendimentos para recusado no SGT.")
+	RecAteSGT()		// Alterar Atendimento para Recusado.
+
+	oGrid:SetIncMeter(1, "Alterando atendimentos para recusado no SGT.")
+	ConAteSGT()		// Alterar Atendimento para Concluido.
+
+Return Nil
+
+/*/{Protheus.doc} IncProdSGT
+Inclusão de produto no SGT
+@type Function
+@author Rafael Karczevski
+@since 19/09/2019
+@version 1.0
+/*/
+Static Function IncProdSGT
+
+	Local cUrl 		:= GetNewPar("MV_XSGTUPD","https://apisgth.cni.org.br:8253")
+	local cRet
+	Local oSgtWs 	:= SNWSSGT():New()
+	Local lAuth
+	Local cAlTmp
+	Local oRest 	:= FWRest():New(cUrl)
+	Local aHeader   := {}
+	Local oJson, oJsonRet
+	
+	If !Empty(cUrl)
+		cAlTmp := GetNextAlias()
+
+		BeginSql Alias cAlTmp
+			SELECT
+				SB1.R_E_C_N_O_ AS RECSB1,
+				ZCN.R_E_C_N_O_ AS RECZCN
+			FROM %Table:SB1% SB1
+			INNER JOIN %Table:ZCN% ZCN ON
+				ZCN.ZCN_FILIAL = SB1.B1_FILIAL
+				AND ZCN.ZCN_COD = SB1.B1_COD
+				AND ZCN.%NotDel%
+			WHERE 
+				SB1.%NotDel%
+				AND ZCN.ZCN_SGTINC = 'X'
+		EndSql
+		(cAlTmp)->(dbGoTop())
+		dbSelectArea("SB1")
+		dbSelectArea("ZCN")
+
+		If (cAlTmp)->(!Eof())
+			lAuth 	:= oSgtWs:Auth()
+
+			AAdd(aHeader, "Content-Type: application/json")
+			Aadd(aHeader, "Accept: application/json" )
+			Aadd(aHeader, "Authorization: Bearer " + oSgtWs:cBearer)
+
+			oRest:SetPath("/produtosRegionais")
+		EndIf
+
+		If lAuth
+			While (cAlTmp)->(! Eof())
+				SB1->(dbGoTo((cAlTmp)->(RECSB1)))
+				oJson := JsonObject():New()
+				oJson["codigoIntegracaoProdutoRegional"] := SB1->B1_COD
+				oJson["codigoDNProdutoNacional"]         := Val(SB1->B1_XPRODDN)
+				oJson["CRProdutoRegional"]               := AllTrim(SB1->B1_ITEMCC)
+				oJson["isAtivo"]                         := Iif(SB1->B1_XATIVO == "1", .t., .f.)
+				oJson["nome"]                            := SB1->B1_DESC
+
+				oRest:SetPostParams(EncodeUTF8(oJson:ToJson()))
+				If oRest:Post(aHeader)
+					oJsonRet := JsonObject():New()
+					cRet := oJsonRet:FromJson( oRest:GetResult() )
+					If cRet == Nil
+						ConOut("[Inserir Produto Regional] Produto regional criado com sucesso. Codigo no Protheus: " + SB1->B1_COD + ". Código no SGT: " + AllTrim(Str( oJsonRet["id"] )) + ".")
+						ZCN->(dbGoTo((cAlTmp)->(RECZCN)))
+						RecLock("ZCN", .f.)
+							ZCN->ZCN_SGTINC := " "
+						ZCN->(MsUnlock())
+						RecLock("SB1", .f.)
+							SB1->B1_XPRDSGT := AllTrim(Str( oJsonRet["id"] ))
+						SB1->(MsUnlock())							
+					Else
+						Conout("[Inserir Produto Regional] Falha ao transformar texto em objeto json. Erro: " + cRet)
+					EndIf
+					FreeObj(oJsonRet)
+				Else
+					oJsonRet := JsonObject():New()
+					cRet := oJsonRet:FromJson( oRest:GetResult() )
+					If ValType(cRet)=="U"
+						ConOut("[Inserir Produto Regional] Erro ao incluir produto regional. " + ;
+							"Codigo no Protheus: " + AllTrim(SB1->B1_COD) + ". " + ;
+							"Erro HTTP da operação: " + DecodeUTF8( oRest:GetLastError() ) + ". " + ; 
+							"Codigo do erro SGT: " + AllTrim( Str( oJsonRet["code"] ) ) + ". " + ; 
+							"Mensagem do erro SGT: " + AllTrim( DecodeUTF8( oJsonRet["message"] ) ) + ". " ; 
+							)
+							aAdd( aErrLog, {;
+								"Inserir Produto Regional",;
+								{ AllTrim(SB1->B1_COD) },;
+								AllTrim( Str( oJsonRet["code"] ) ),;
+								AllTrim( DecodeUTF8( oJsonRet["message"] ) );
+							})
+					else
+						ConOut("[Inserir Produto Regional] Erro ao incluir produto regional. " + ;
+							"Codigo no Protheus: " + AllTrim(SB1->B1_COD) + ". " + ;
+							"Erro HTTP da operação: " + DecodeUTF8( oRest:GetLastError() ) + ". " + ; 
+							"Mensagem do erro: " + AllTrim(cRet) + ". " ; 
+							)
+							aAdd( aErrLog, {;
+								"Inserir Produto Regional",;
+								{ AllTrim(SB1->B1_COD) },;
+								"",;
+								AllTrim(cRet);
+							})
+					endif
+					FreeObj(oJsonRet)
+				EndIf
+				(cAlTmp)->(DbSkip())
+			EndDo
+		EndIf
+
+		SB1->(dbCloseArea())
+		ZCN->(dbCloseArea())
+		(cAlTmp)->(dbCloseArea())
+	EndIf
+
+Return
+
+/*/{Protheus.doc} AltProdSGT
+Alteração de produto no SGT
+@type Function
+@author Rafael Karczevski
+@since 19/09/2019
+@version 1.0
+/*/
+Static Function AltProdSGT
+
+	Local cUrl 		:= GetNewPar("MV_XSGTUPD","https://apisgth.cni.org.br:8253")
+	Local cIdProReg	:= ""
+	Local oSgtWs 	:= SNWSSGT():New()
+	Local lAuth
+	Local cAlTmp
+	Local oRest 	:= FWRest():New(cUrl)
+	Local aHeader   := {}
+	Local oJson
+	Local oJsonGET
+	
+	If !Empty(cUrl)
+		cAlTmp := GetNextAlias()
+
+		BeginSql Alias cAlTmp
+			SELECT
+				SB1.R_E_C_N_O_ AS RECSB1,
+				ZCN.R_E_C_N_O_ AS RECZCN
+			FROM %Table:SB1% SB1
+			INNER JOIN %Table:ZCN% ZCN ON
+				ZCN.ZCN_FILIAL = SB1.B1_FILIAL
+				AND ZCN.ZCN_COD = SB1.B1_COD
+				AND ZCN.%NotDel%
+			WHERE 
+				SB1.%NotDel%
+				AND ZCN.ZCN_SGTALT = 'X'
+		EndSql
+		(cAlTmp)->(dbGoTop())
+		dbSelectArea("SB1")
+		dbSelectArea("ZCN")
+
+		If (cAlTmp)->(!Eof())
+			lAuth 	:= oSgtWs:Auth()
+
+			Aadd(aHeader, "Accept: application/json" )
+			Aadd(aHeader, "Authorization: Bearer " + oSgtWs:cBearer)
+
+			oRest:SetPath("/produtosRegionais")
+		EndIf
+		If lAuth
+			While (cAlTmp)->(! Eof())
+				cIdProReg := ""
+				oJsonGET := Nil
+				oJson := Nil
+				SB1->(dbGoTo((cAlTmp)->(RECSB1)))
+				//Se o produto não tem um código SGT, procuro o produto pelo conversor SGT.
+				If Empty(Alltrim(SB1->B1_XPRDSGT))
+					oRest:SetPath("/conversorProdutoRegional?codigoIntegracaoProdutoRegional=" + EncodeUTF8(Alltrim(SB1->B1_COD)))
+					If oRest:Get(aHeader)
+						FWJsonDeserializa(oRest:GetResult(), @oJsonGET)
+						// oJsonGET['PRODUTOSREGIONAIS']['PRODUTOREGIONAL']['IDPRODUTOREGIONAL']
+						If !Empty(oJsonGET['PRODUTOSREGIONAIS'])
+							cIdProReg := oJsonGET['PRODUTOSREGIONAIS']['PRODUTOREGIONAL']['IDPRODUTOREGIONAL']
+						Else
+							ConOut("[Converter Código de Integração em ID] Erro para consultar o ID do SGT: ID Não localizado. " + ;
+								"Código do produto no Protheus: " + Alltrim(SB1->B1_COD) + ". " ;
+								)
+							aAdd( aErrLog, {;
+								"Converter Código de Integração em ID",;
+								{ AllTrim(SB1->B1_COD) },;
+								"",;
+								"Erro para consultar o ID do SGT.";
+								})
+						EndIf
+					EndIf
+				Else
+					cIdProReg := Alltrim(SB1->B1_XPRDSGT)
+				EndIf
+				//Só envio a alteração se encontrei o ID SGT do produto.
+				If !Empty(cIdProReg)
+					oJson := JsonObject():New()
+					oJson["codigoIntegracaoProdutoRegional"] := SB1->B1_COD
+					oJson["codigoDNProdutoNacional"]         := Val(SB1->B1_XPRODDN)
+					oJson["CRProdutoRegional"]               := AllTrim(SB1->B1_ITEMCC)
+					oJson["isAtivo"]                         := Iif(SB1->B1_XATIVO == "1", .t., .f.)
+					oJson["nome"]                            := SB1->B1_DESC
+
+					AAdd(aHeader, "Content-Type: application/json")
+					oRest:SetPath("/produtosRegionais/" + cIdProReg)
+					oRest:SetPostParams(EncodeUTF8(oJson:ToJson()))
+					
+					//Produto Regional Alterado com sucesso.
+					If oRest:Put(aHeader, EncodeUTF8(oJson:ToJson())) .Or. DecodeUTF8(oRest:GetLastError()) == "204 NoContent"
+						ConOut("[Editar Produto Regional] Produto regional alterado com sucesso." + ;
+							"Código do produto no Protheus: " + Alltrim(SB1->B1_COD) + ". " + ;
+							"Código do produto no SGT: " + Alltrim(cIdProReg) + ". " ;
+							)
+						ZCN->(dbGoTo((cAlTmp)->(RECZCN)))
+						RecLock("ZCN", .f.)
+							ZCN->ZCN_SGTALT := " "
+						ZCN->(MsUnlock())
+					//Erro ao alterar o produto Regional.
+					Else
+						oJsonRet := JsonObject():New()
+						cRet := oJsonRet:FromJson( oRest:GetResult() )
+						ConOut("[Editar Produto Regional] Erro ao alterar o produto Regional. " + ;
+							"Codigo no Protheus: " + Alltrim(SB1->B1_COD) + ". " + ;
+							"Codigo no SGT: " + Alltrim(cIdProReg) + ". " + ;
+							"Erro HTTP da operação: " + DecodeUTF8( oRest:GetLastError() ) + ". " + ; 
+							"Codigo do erro SGT: " + AllTrim( Str( oJsonRet["code"] ) ) + ". " + ; 
+							"Mensagem do erro SGT: " + AllTrim( DecodeUTF8( oJsonRet["message"] ) ) + ". " ; 
+							)
+							aAdd( aErrLog, {;
+								"Editar Produto Regional",;
+								{ AllTrim(SB1->B1_COD) },;
+								AllTrim( Str( oJsonRet["code"] ) ),;
+								AllTrim( DecodeUTF8( oJsonRet["message"] ) );
+								})
+							FreeObj(oJsonRet)
+					EndIf
+				EndIf
+				(cAlTmp)->(DbSkip())
+			EndDo
+		EndIf
+
+		SB1->(dbCloseArea())
+		ZCN->(dbCloseArea())
+		(cAlTmp)->(dbCloseArea())
+	EndIf
+
+Return
+
+/*/{Protheus.doc} IncCliSGT
+Função para inserir clientes na base do SGT. 
+Regras SGT:
+	Estes clientes, após inseridos, não podem ser alterados. 
+	Apenas o endereço que foi inserido pelo regional pode ser alterado. 
+	Após inseridos é rodado uma rotina para validar as informaçõs do cliente e inserir o endereço que pertence ao DN.
+@author Franklin Oliveira
+@since 21/01/2020
+@type function
+/*/
+Static Function IncCliSGT()
+Local cUrl 		:= GetNewPar("MV_XSGTUPD","https://apisgth.cni.org.br:8253")
+Local oSgtWs 	:= SNWSSGT():New()
+Local lAuth
+Local cAlTmp
+Local oRest 	:= FWRest():New(cUrl)
+Local aHeader   := {}
+Local oJson, oJsonRet
+	
+	If !Empty(cUrl)
+		cAlTmp := GetNextAlias()
+
+		BeginSql Alias cAlTmp
+			SELECT
+				SA1.R_E_C_N_O_ AS RECSA1,
+				Z06.R_E_C_N_O_ AS RECZ06,
+				AI0.R_E_C_N_O_ AS RECAI0
+			FROM %Table:SA1% SA1
+			INNER JOIN %Table:Z06% Z06 ON
+				Z06.Z06_FILIAL = SA1.A1_FILIAL
+				AND Z06.Z06_CODCLI = SA1.A1_COD
+				AND Z06.Z06_LOJCLI = SA1.A1_LOJA
+				AND Z06.%NotDel%
+			LEFT JOIN 
+				%Table:AI0% AI0
+			ON
+				AI0.%NotDel%
+				AND AI0.AI0_FILIAL = SA1.A1_FILIAL
+				AND AI0.AI0_CODCLI = SA1.A1_COD
+				AND AI0.AI0_LOJA = SA1.A1_LOJA
+			WHERE 
+				SA1.%NotDel%
+				AND Z06.Z06_INCSGT = '1'
+				AND Z06.Z06_SGTINC = 'F'
+		EndSql
+		
+		(cAlTmp)->(dbGoTop())
+		dbSelectArea("Z06")
+		dbSelectArea("SA1")
+		dbSelectArea("AI0")
+		
+		If (cAlTmp)->(!Eof())
+			lAuth := oSgtWs:Auth()
+		EndIf
+		
+		If lAuth
+			While (cAlTmp)->(! Eof())
+				SA1->( dbGoTo( (cAlTmp)->(RECSA1) ) )
+				AI0->( dbGoTo( (cAlTmp)->(RECAI0) ) )
+				oRest:SetPath("/clientes?cpfcnpj=" + AllTrim(SA1->A1_CGC))
+				Aadd(aHeader, "Accept: application/json" )
+				Aadd(aHeader, "Authorization: Bearer " + oSgtWs:cBearer)
+				If oRest:Get(aHeader)
+					oJsonGet := JsonObject():New()
+					cRet := oJsonGet:FromJSOn(oRest:GetResult())
+					
+					If ValType(cRet) == "U"
+						If !(ValType(oJsonGet:GetJsonObject("Clientes")) == "J")
+							//Dados do cliente
+							oJson := JsonObject():New()
+							oJson["cpfcnpj"]			:= AllTrim(SA1->A1_CGC)
+							oJson["tipoPessoa"]         := IIf(SA1->A1_PESSOA=="F", 0, 1)
+							oJson["nomeFantasia"]       := AllTrim(SA1->A1_NREDUZ)
+							oJson["razaoSocial"]        := AllTrim(SA1->A1_NOME)
+							oJson["cnae"]               := Iif(!Empty(AllTrim( SA1->A1_CNAE )), AllTrim( SA1->A1_CNAE ), Space( TamSX3("A1_CNAE")[1] ))
+							oJson["inscricaoEstadual"]  := Iif(!Empty(AllTrim(SA1->A1_INSCR)), AllTrim(SA1->A1_INSCR), Space( TamSX3("A1_INSCR")[1] ))
+							oJson["numeroFuncionarios"]	:= SA1->A1_XQTEMP
+							oJson["pais"]				:= "BRA"
+							oJson["tipoCnpj"] := If(Empty(AI0->AI0_XTPCNP), 3, Val(AI0->AI0_XTPCNP)) //1=Agência de Fomento;2=ICT;3=Empresa4=Sistema Indústria;
+							
+							//dados do endereço do cliente
+							oJsonEnd := JsonObject():New()
+							If !Empty( SA1->A1_END ) //idTipoEndereco: 1=faturamento 
+								oJsonEnd["idTipoEndereco"]	:= 1
+								oJsonEnd["cep"] 			:= AllTrim( SA1->A1_CEP )
+								oJsonEnd["logradouro"] 		:= AllTrim(SA1->A1_END)
+								oJsonEnd["numero"] 			:= " "
+								oJsonEnd["bairro"] 			:= AllTrim(SA1->A1_BAIRRO)
+								oJsonEnd["complemento"] 	:= AllTrim(SA1->A1_COMPLEM)
+								cCodEst := U_SF73A01F( SA1->A1_EST ) 
+								oJsonEnd["codigoIBGEMunicipio"] := Val( cCodEst + SA1->A1_COD_MUN )
+								oJson["Enderecos"]	:= oJsonEnd
+							EndIf
+							
+							If !Empty(SA1->A1_ENDCOB) //idTipoEndereco: 2=cobrança
+								oJsonEnd["idTipoEndereco"] := 2
+								oJsonEnd["cep"] 			:= AllTrim( SA1->A1_CEPC )
+								oJsonEnd["logradouro"] 		:= AllTrim(SA1->A1_ENDCOB)
+								oJsonEnd["numero"] 			:= " "
+								oJsonEnd["bairro"] 			:= AllTrim(SA1->A1_BAIRROC)
+								oJson["Enderecos"]	:= oJsonEnd
+							EndIf
+							
+							If aScan(aHeader, {|x| x == "Content-Type: application/json"} ) == 0
+								AAdd(aHeader, "Content-Type: application/json")
+							EndIf
+							
+							oRest:SetPath("/clientes")
+							oRest:SetPostParams(EncodeUTF8(oJson:ToJson()))
+							
+							If oRest:Post(aHeader)
+								oJsonRet := JsonObject():New()
+								cRet := oJsonRet:FromJson( oRest:GetResult() )
+								If cRet == Nil .Or. Empty(cRet)
+									ConOut("[Inserir Cliente] Cliente incluido com sucesso. " + ;
+										"CGC: " + AllTrim( SA1->A1_CGC ) + ". " + ;
+										"Código no SGT: " + AllTrim(Str( oJsonRet["id"] )) + ". " ;
+										)
+									Z06->(dbGoTo((cAlTmp)->(RECZ06)))
+									RecLock("Z06", .f.)
+										Z06->Z06_SGTINC := .T.
+									Z06->(MsUnlock())
+								Else
+									Conout("[Inserir Cliente] Falha ao transformar texto em objeto json. " + ;
+										"Erro: " + cRet + ". " + ;
+										"CGC: " + AllTrim( SA1->A1_CGC ) + ". " ;
+										)
+									aAdd( aErrLog, {;
+										"Inserir Cliente",;
+										{ AllTrim( SA1->A1_COD ), AllTrim( SA1->A1_LOJA) },;
+										"",;
+										"Falha ao transformar texto em objeto json. Erro: " + cRet + ". ";
+										})
+								EndIf
+							Else
+								oJsonRet := JsonObject():New()
+								cRet := oJsonRet:FromJson( oRest:GetResult() )
+								if cRet == Nil .Or. Empty(cRet)
+									ConOut("[Inserir Cliente] Erro ao inserir cliente. " + ;
+										"CGC: " + AllTrim( SA1->A1_CGC ) + ". " + ;
+										"Erro HTTP da operação: " + DecodeUTF8( oRest:GetLastError() ) + ". " + ; 
+										"Codigo do erro SGT: " + AllTrim( Str( oJsonRet["code"] ) ) + ". " + ; 
+										"Mensagem do erro SGT: " + AllTrim( DecodeUTF8( oJsonRet["message"] ) ) + ". " ; 
+									)
+									aAdd( aErrLog, {;
+										"Inserir Cliente",;
+										{ AllTrim( SA1->A1_COD ), AllTrim( SA1->A1_LOJA) },;
+										AllTrim( Str( oJsonRet["code"] ) ),;
+										AllTrim( DecodeUTF8( oJsonRet["message"] ) );
+										})
+								else
+									ConOut("Falha ao transformar retorno em JSON: " + cRet)
+								endif
+								FreeObj(oJsonRet)
+							EndIf
+						Else
+							ConOut("[Inserir Cliente] Erro ao inserir cliente. " + ;
+								"O cliente " + AllTrim(SA1->A1_CGC) + " já está cadastrado no SGT." ;
+								)
+							Z06->(dbGoTo((cAlTmp)->(RECZ06)))
+							RecLock("Z06", .f.)
+								Z06->Z06_SGTINC := .T.
+							Z06->(MsUnlock())
+						EndIf
+					Else
+						ConOut("[Buscar Clientes] Falha ao transformar texto em objeto json. " + ;
+							"Erro: " + cRet + ". " + ;
+							"CGC: " + AllTrim( SA1->A1_CGC ) + ". " ;
+							)
+							aAdd( aErrLog, {;
+								"Buscar Clientes",;
+								{ AllTrim( SA1->A1_COD ), AllTrim( SA1->A1_LOJA) },;
+								"",;
+								"Falha ao transformar texto em objeto json. Erro: " + cRet + ". ";
+								})
+					EndIf
+				Else
+					oJsonRet := JsonObject():New()
+					cRet := oJsonRet:FromJson( oRest:GetResult() )
+					ConOut("[Buscar Clientes] Erro ao Consultar Cliente. " + ;
+						"CGC: " + AllTrim( SA1->A1_CGC ) + ". " + ;
+						"Erro HTTP da operação: " + DecodeUTF8( oRest:GetLastError() ) + ". " + ; 
+						"Codigo do erro SGT: " + AllTrim( Str( oJsonRet["code"] ) ) + ". " + ; 
+						"Mensagem do erro SGT: " + AllTrim( DecodeUTF8( oJsonRet["message"] ) ) + ". " ; 
+					)
+					aAdd( aErrLog, {;
+							"Buscar Clientes",;
+							{ AllTrim( SA1->A1_COD ), AllTrim( SA1->A1_LOJA) },;
+							AllTrim( Str( oJsonRet["code"] ) ),;
+							AllTrim( DecodeUTF8( oJsonRet["message"] ) );
+							})
+					FreeObj(oJsonRet)
+				EndIf
+				aHeader := {}
+				(cAlTmp)->(DbSkip())
+			EndDo
+		EndIf
+	
+		(cAlTmp)->(dbCloseArea())
+		Z06->(dbCloseArea())
+		SA1->(dbCloseArea())
+		AI0->(dbCloseArea())
+	EndIf
+Return Nil
+
+/*/{Protheus.doc} IncPropSGT
+Função para inserir proposta.
+@author Franklin Oliveira
+@since 16/04/2020
+@type function
+/*/
+Static Function IncPropSGT()
+Local cUrl 		:= GetNewPar("MV_XSGTUPD","https://apisgth.cni.org.br:8253")
+local cRet
+Local oSgtWs 	:= SNWSSGT():New()
+Local lAuth
+Local cAlTmp
+Local oRest 	:= FWRest():New(cUrl)
+Local aHeader   := {}
+Local oJson, oJsonRet	
+	If !Empty(cUrl)
+		cAlTmp := GetNextAlias()
+		BeginSql Alias cAlTmp
+			SELECT
+				ADY.R_E_C_N_O_ AS ADYRECNO
+			FROM %Table:ADY% ADY
+			WHERE 
+				ADY.%NotDel%
+				AND ADY.ADY_XINSGT = '1'
+				AND ADY.ADY_XSGTIN = 'F'
+		EndSql
+		(cAlTmp)->(dbGoTop())
+		dbSelectArea("ADY")
+		If (cAlTmp)->(!Eof())
+			lAuth 	:= oSgtWs:Auth()
+			AAdd(aHeader, "Content-Type: application/json")
+			Aadd(aHeader, "Accept: application/json" )
+			Aadd(aHeader, "Authorization: Bearer " + oSgtWs:cBearer)
+			oRest:SetPath("/propostas")
+			If lAuth
+				While (cAlTmp)->(! Eof())
+					ADY->(dbGoTo((cAlTmp)->(ADYRECNO)))
+						oJson := JsonObject():New()
+						oJson["codigoIntegracaoProposta"] := AllTrim( ADY->ADY_FILIAL + ADY->ADY_PROPOS )
+						oJson["descricao"] := "Filial " + AllTrim( ADY->ADY_FILIAL )
+							oJson["descricao"] += ",Proposta " + AllTrim( ADY->ADY_PROPOS )
+							oJson["descricao"] += ",Cliente " + AllTrim( ADY->ADY_CODIGO ) + " " + AllTrim( ADY->ADY_LOJA )
+						oRest:SetPostParams(EncodeUTF8(oJson:ToJson()))
+						If oRest:Post(aHeader)
+							oJsonRet := JsonObject():New()
+							cRet := oJsonRet:FromJson( oRest:GetResult() )
+							If cRet == Nil .Or. Empty(cRet)
+								ConOut("[Inserir Proposta] Proposta incluida com sucesso. " + ;
+									"Codigo da proposta no Protheus: " + AllTrim( ADY->ADY_FILIAL + ADY->ADY_PROPOS ) + ". " + ;
+									"Código no SGT: " + AllTrim(Str( oJsonRet["id"] )) + ". " ;
+									)
+								RecLock("ADY", .F.)
+									ADY->ADY_XSGTIN := .T.
+								ADY->(MsUnlock())							
+							Else
+								Conout("[Inserir Proposta] Falha ao transformar texto em objeto json. " + ;
+									"Erro: " + cRet + ". " + ;
+									"Codigo da proposta no Protheus: " + AllTrim( ADY->ADY_FILIAL + ADY->ADY_PROPOS )  + ". " ;
+									)
+							EndIf
+							FreeObj(oJsonRet)
+						Else
+							oJsonRet := JsonObject():New()
+							cRet := oJsonRet:FromJson( oRest:GetResult() )
+							if cRet == Nil .Or. Empty(cRet)
+								ConOut("[Inserir Proposta] Erro ao incluir proposta. " + ;
+									"Codigo da proposta no Protheus: " + AllTrim( ADY->ADY_FILIAL + ADY->ADY_PROPOS ) + ". " + ;
+									"Erro HTTP da operação: " + DecodeUTF8( oRest:GetLastError() ) + ". " + ; 
+									"Codigo do erro SGT: " + AllTrim( Str( oJsonRet["code"] ) ) + ". " + ; 
+									"Mensagem do erro SGT: " + AllTrim( DecodeUTF8( oJsonRet["message"] ) ) + ". " ; 
+									)
+							else
+								ConOut("Falha ao transformar retorno em JSON: " + cRet)
+							endif
+							FreeObj(oJsonRet)
+						EndIf
+					(cAlTmp)->(DbSkip())
+				EndDo
+			EndIf
+		Else
+			Conout("[Inserir Proposta] Nenhuma Proposta para ser incluida foi localizada para integração com SGT.")
+		EndIf
+
+		ADY->(dbCloseArea())
+		(cAlTmp)->(dbCloseArea())
+	EndIf
+Return Nil
+
+/*/{Protheus.doc} IncAteSGT
+Função para inserir atendimentos com status em negociação.
+Regras SGT:
+	Primeiro é necessário criar uma proposta e, após a criação, criar o atendimento e vincular a proposta existente. 
+	Todo atendimento terá que ser integrado a partir de quando entra para o status de em negociação.
+@author Franklin Oliveira
+@since 16/04/2020
+@type function
+/*/
+Static Function IncAteSGT()
+Local cUrl 			:= GetNewPar("MV_XSGTUPD","https://apisgth.cni.org.br:8253")
+local cRet			:= ""
+Local cIdProposta	:= ""
+Local cIdPrdSGT		:= ""
+Local oSgtWs 		:= SNWSSGT():New()
+Local oRest 		:= FWRest():New(cUrl)
+Local aHeader   	:= {}
+Local lAuth
+Local cAlTmp
+Local oJson, oJsonRet, oJsonPrRec
+	If !Empty(cUrl)
+		cAlTmp := GetNextAlias()
+		BeginSql Alias cAlTmp
+			SELECT
+				ADY.R_E_C_N_O_ AS ADYRECNO,
+				ADZ.R_E_C_N_O_ AS ADZRECNO
+			FROM %Table:ADZ% ADZ
+			INNER JOIN %Table:ADY% ADY ON
+				ADY.%NotDel%
+				AND ADY.ADY_FILIAL = ADZ.ADZ_FILIAL
+				AND ADY.ADY_PROPOS = ADZ.ADZ_PROPOS
+				AND ADY.ADY_PREVIS = ADZ.ADZ_REVISA
+			WHERE 
+				ADZ.%NotDel%
+				AND ADZ.ADZ_XINSGT = '1'
+				AND ADZ.ADZ_XSGTIN = 'F'
+		EndSql
+		(cAlTmp)->(dbGoTop())
+		dbSelectArea("ADY")
+		dbSelectArea("ADZ")
+		If (cAlTmp)->(!Eof())
+			lAuth 	:= oSgtWs:Auth()
+			AAdd(aHeader, "Content-Type: application/json")
+			Aadd(aHeader, "Accept: application/json" )
+			Aadd(aHeader, "Authorization: Bearer " + oSgtWs:cBearer)
+			oRest:SetPath("/atendimentos")
+			If lAuth
+				While (cAlTmp)->(! Eof())
+					ADY->(dbGoTo((cAlTmp)->(ADYRECNO)))
+					cIdProposta := fConProp(AllTrim( ADY->ADY_FILIAL + ADY->ADY_PROPOS ))
+					If !Empty(cIdProposta)
+						ADZ->(dbGoTo((cAlTmp)->(ADZRECNO)))
+						cIdPrdSGT := AllTrim( Posicione("SB1", 1, xFilial("SB1") + ADZ->ADZ_PRODUT, "B1_XPRDSGT") )
+						If !Empty(cIdPrdSGT)
+							oJson := JsonObject():New()
+							oJson["dataEmissao"] := SubStr(DToS( ADY->ADY_DATA ), 1, 4) + "-"
+								oJson["dataEmissao"] += SubStr(DToS( ADY->ADY_DATA ), 5, 2) + "-"
+								oJson["dataEmissao"] += SubStr(DToS( ADY->ADY_DATA ), 7, 2) + "T00:00:00"
+							oJson["codigoIntegracaoAtendimento"] := ADZ->ADZ_FILIAL + ADZ->ADZ_PROPOS + ADZ->ADZ_REVISA + ADZ->ADZ_PRODUT
+							oJson["idProposta"] := cIdProposta
+							oJson["cliente"] := AllTrim( Posicione("SA1", 1, xFilial("SA1") + ADY->ADY_CODIGO + ADY->ADY_LOJA, "A1_CGC") )
+							oJson["idProdutoRegional"] := Val(cIdPrdSGT)
+							oJson["isEscopoIndefinido"] := "false"
+							oJson["isValorHora"] := "false"
+							oJson["numeroDeProducaoEstimada"] := ADZ->ADZ_QTDVEN
+							oJson["numeroDeRelatorioEstimado"] := 0
+							oJson["titulo"] := AllTrim( Posicione("AD1", 1, ADY->ADY_FILIAL + ADY->ADY_OPORTU + ADY->ADY_REVISA, "AD1_DESCRI") )
+							oJson["unidade"] := 5277234 //Código OBA da Filial 03MT0018
+								oJsonPrRec := JsonObject():New()
+								oJsonPrRec["cpfcnpj"] := oJson["cliente"]
+								oJsonPrRec["tipoPrevisaoReceita"] := 1
+								oJsonPrRec["valor"] :=  ADZ->ADZ_TOTAL
+								oJsonPrRec["vlrfinanceiro"] :=  0
+								oJsonPrRec["vlreconomico"] :=  0
+							oJson["previsaoReceitaList"] := oJsonPrRec
+							oRest:SetPostParams(EncodeUTF8(oJson:ToJson()))
+							If oRest:Post(aHeader)
+								oJsonRet := JsonObject():New()
+								cRet := oJsonRet:FromJson( oRest:GetResult() )
+								If cRet == Nil .Or. Empty(cRet)
+									ConOut("[Inserir Atendimentos] Atendimento incluido com sucesso. " + ;
+										"Codigo no Protheus: " + AllTrim( oJson["codigoIntegracaoAtendimento"] ) + ". " + ;
+										"Código no SGT: " + AllTrim(Str( oJsonRet["id"] )) + ". ")
+									RecLock("ADZ", .F.)
+										ADZ->ADZ_XSGTIN := .T.
+									ADZ->(MsUnlock())							
+								Else
+									Conout("[Inserir Atendimentos] Falha ao transformar texto em objeto json. " + ;
+										"Erro: " + cRet  + ". " + ;
+										"Codigo no Protheus: " + AllTrim( ADZ->ADZ_FILIAL + ADZ->ADZ_PROPOS + ADZ->ADZ_REVISA + ADZ->ADZ_PRODUT ) + ". " ;
+										)
+								EndIf
+								FreeObj(oJsonRet)
+							Else
+								oJsonRet := JsonObject():New()
+								cRet := oJsonRet:FromJson( oRest:GetResult() )
+								ConOut("[Inserir Atendimentos] Erro ao incluir atendimento. " + ;
+									"Codigo no Protheus: " + AllTrim( ADZ->ADZ_FILIAL + ADZ->ADZ_PROPOS + ADZ->ADZ_REVISA + ADZ->ADZ_PRODUT ) + ". " + ;
+									"Erro HTTP da operação: " + DecodeUTF8( oRest:GetLastError() ) + ". " + ; 
+									"Codigo do erro SGT: " + AllTrim( Str( oJsonRet["code"] ) ) + ". " + ; 
+									"Mensagem do erro SGT: " + AllTrim( DecodeUTF8( oJsonRet["message"] ) ) + ". " ; 
+									)
+								FreeObj(oJsonRet)
+							EndIf
+						Else
+							ConOut("[Inserir Atendimentos] Erro ao incluir atendimento: O produto [" + ADZ->ADZ_PRODUT + "] não possui ID do SGT. ")
+						EndIf
+					else
+						ConOut("[Inserir Atendimentos] Erro ao incluir atendimento. ID da Proposta não localizado." + ;
+									"Codigo no Protheus: " + AllTrim( ADZ->ADZ_FILIAL + ADZ->ADZ_PROPOS + ADZ->ADZ_REVISA + ADZ->ADZ_PRODUT ) + ". " ;
+								)
+					EndIf
+					(cAlTmp)->(DbSkip())
+				EndDo
+			EndIf
+		Else
+			Conout("[Inserir Atendimentos] Nenhum atendimento para ser aceito foi localizado para integração com SGT.")
+		EndIf
+		ADY->(dbCloseArea())
+		ADZ->(dbCloseArea())
+		(cAlTmp)->(dbCloseArea())
+	EndIf
+Return Nil
+
+/*/{Protheus.doc} AceAteSGT
+Função para alterar atendimento para o status aceito.
+Antes de alterar status, o atendimento é atualizado com a data de inicio e término prevista, 
+	de acordo com o inicio e fim de execução informados no contrato.
+Regras SGT:
+	Para alterar o atendimento para aceito, obrigatoriamente o mesmo precisa estar com status de em negociação.
+	Caso utilize o codigoIntegracaoAtendimento será necessário converter pelo id do SGT utilizando os recursos de conversores.
+Função para converter codigoIntegracaoAtendimento em IDSGT vide fConAten.
+@author Franklin Oliveira
+@since 16/04/2020
+@type function
+/*/
+Static Function AceAteSGT()
+Local aHeader   := {}
+Local cUrl 		:= GetNewPar("MV_XSGTUPD","https://apisgth.cni.org.br:8253")
+local cRet
+Local lAuth
+Local cAlTmp
+Local oRest 	:= FWRest():New(cUrl)
+Local oSgtWs 	:= SNWSSGT():New()
+Local oJson, oJsonRet	
+	If !Empty(cUrl)
+		cAlTmp := GetNextAlias()
+		BeginSql Alias cAlTmp
+			SELECT
+				CNB.R_E_C_N_O_ AS CNBRECNO,
+				CN9.R_E_C_N_O_ AS CN9RECNO,
+				ADY.R_E_C_N_O_ AS ADYRECNO
+			FROM %Table:CNB% CNB
+			INNER JOIN %Table:CN9% CN9 ON
+				CN9.%NotDel%
+				AND CNB.CNB_FILIAL = CN9.CN9_FILIAL
+				AND CNB.CNB_CONTRA = CN9.CN9_NUMERO
+				AND CNB.CNB_REVISA = CN9.CN9_REVISA
+			INNER JOIN %Table:ADY% ADY ON
+				ADY.%NotDel%
+				AND ADY.ADY_FILIAL = CN9.CN9_FILIAL
+				AND ADY.ADY_OPORTU = CN9.CN9_XOPORT
+				AND ADY.ADY_REVISA = CN9.CN9_XREVOP
+				AND ADY.ADY_STATUS =  'B'
+			WHERE 
+				CNB.%NotDel%
+				AND CNB.CNB_XACSGT = '1'
+				AND CNB.CNB_XSGTAC = 'F'
+		EndSql
+		(cAlTmp)->(dbGoTop())
+		dbSelectArea("CNB")
+		dbSelectArea("CN9")
+		dbSelectArea("ADY")
+		If (cAlTmp)->(!Eof())
+			lAuth 	:= oSgtWs:Auth()
+			AAdd(aHeader, "Content-Type: application/json")
+			Aadd(aHeader, "Accept: application/json" )
+			Aadd(aHeader, "Authorization: Bearer " + oSgtWs:cBearer)
+			If lAuth
+				While (cAlTmp)->(! Eof())
+					CNB->(dbGoTo((cAlTmp)->(CNBRECNO)))
+					CN9->(dbGoTo((cAlTmp)->(CN9RECNO)))
+					ADY->(dbGoTo((cAlTmp)->(ADYRECNO)))
+					cIdAtend := fConAten(CNB->CNB_FILIAL + ADY->ADY_PROPOS + ADY->ADY_PREVIS + CNB->CNB_PRODUT)
+					If !Empty(cIdAtend)
+						oJson := JsonObject():New()
+						oJson["dataInicioPrevista"] := SubStr(DToS( CN9->CN9_XDTINI ), 1, 4) + "-"
+							oJson["dataInicioPrevista"] += SubStr(DToS( CN9->CN9_XDTINI ), 5, 2) + "-"
+							oJson["dataInicioPrevista"] += SubStr(DToS( CN9->CN9_XDTINI ), 7, 2) + "T00:00:00"
+						oJson["dataConclusaoPrevista"] := SubStr(DToS( CN9->CN9_XDTFIM ), 1, 4) + "-"
+							oJson["dataConclusaoPrevista"] += SubStr(DToS( CN9->CN9_XDTFIM ), 5, 2) + "-"
+							oJson["dataConclusaoPrevista"] += SubStr(DToS( CN9->CN9_XDTFIM ), 7, 2) + "T23:59:59"
+						oRest:SetPath("/atendimentos/" + AllTrim( cIdAtend ))
+						If oRest:Put( aHeader, EncodeUTF8(oJson:ToJson()) ) .Or. oRest:GetHTTPCode() == "204"
+							ConOut("[Alterar Atendimento para Aceito] Atendimento atualizado com sucesso. " + ;
+								"Codigo no Protheus: " + AllTrim( CNB->CNB_FILIAL + ADY->ADY_PROPOS + ADY->ADY_PREVIS + CNB->CNB_PRODUT ) + "." ;
+								)
+							oRest:SetPath("/atendimentos/" + AllTrim( cIdAtend ) + "/aceito")
+							If oRest:Put( aHeader ) .Or. oRest:GetHTTPCode() == "204"
+								ConOut("[Integração SGT] Atendimento atualizado para aceito com sucesso. " + ;
+									"Codigo no Protheus: " + AllTrim( CNB->CNB_FILIAL + ADY->ADY_PROPOS + ADY->ADY_PREVIS + CNB->CNB_PRODUT ) + "." ;
+									)
+								RecLock("CNB", .F.)
+									CNB->CNB_XSGTAC := .T.
+								CNB->(MsUnlock())
+							Else
+								oJsonRet := JsonObject():New()
+								cRet := oJsonRet:FromJson( oRest:GetResult() )
+								ConOut("[Alterar Atendimento para Aceito] Erro ao alterar situação do atendimento. " + ;
+									"Codigo no Protheus: " + AllTrim( CNB->CNB_FILIAL + ADY->ADY_PROPOS + ADY->ADY_PREVIS + CNB->CNB_PRODUT ) + ". " + ;
+									"Erro HTTP da operação: " + DecodeUTF8( oRest:GetLastError() ) + ". " + ; 
+									"Codigo do erro SGT: " + AllTrim( Str( oJsonRet["code"] ) ) + ". " + ; 
+									"Mensagem do erro SGT: " + AllTrim( DecodeUTF8( oJsonRet["message"] ) ) + ". " ; 
+									)
+								FreeObj(oJsonRet)
+							EndIf
+						Else
+							oJsonRet := JsonObject():New()
+							cRet := oJsonRet:FromJson( oRest:GetResult() )
+							ConOut("[Alterar Atendimento para Aceito] Erro ao alterar atendimento. " + ;
+								"Codigo no Protheus: " + AllTrim( CNB->CNB_FILIAL + ADY->ADY_PROPOS + ADY->ADY_PREVIS + CNB->CNB_PRODUT ) + ". " + ;
+								"Erro HTTP da operação: " + DecodeUTF8( oRest:GetLastError() ) + ". " + ; 
+								"Codigo do erro SGT: " + AllTrim( Str( oJsonRet["code"] ) ) + ". " + ; 
+								"Mensagem do erro SGT: " + AllTrim( DecodeUTF8( oJsonRet["message"] ) ) + ". " ; 
+								)
+							FreeObj(oJsonRet)
+						EndIf
+					else
+						ConOut("[Alterar Atendimento para Aceito] Erro ao alterar situação do atendimento. Atendimento não encontrado. " + ;
+								"Codigo no Protheus: " + AllTrim( CNB->CNB_FILIAL + ADY->ADY_PROPOS + ADY->ADY_PREVIS + CNB->CNB_PRODUT ) + ". ";
+							)
+					EndIf
+					(cAlTmp)->(DbSkip())
+				EndDo
+			EndIf
+		Else
+			Conout("[Alterar Atendimento para Aceito] Nenhum atendimento para ser aceito foi localizado para integração com SGT.")
+		EndIf
+
+		CNB->(dbCloseArea())
+		CN9->(dbCloseArea())
+		ADY->(dbCloseArea())
+		(cAlTmp)->(dbCloseArea())
+	EndIf
+Return Nil
+
+/*/{Protheus.doc} RecAteSGT
+Função para alterar atendimento para o status recusado.
+Regras do SGT:
+	Para alterar o atendimento para recusado, obrigatoriamente o mesmo precisa estar com status de em negociação.
+	Caso utilize o codigoIntegracaoAtendimento será necessário converter pelo id do SGT utilizando os recursos de conversores.
+Função para converter codigoIntegracaoAtendimento em IDSGT vide fConAten.
+@author Franklin Oliveira
+@since 16/04/2020
+@type function
+/*/
+Static Function RecAteSGT()
+Local cUrl 			:= GetNewPar("MV_XSGTUPD","https://apisgth.cni.org.br:8253")
+Local cIdAtend		:= ""
+Local oSgtWs 		:= SNWSSGT():New()
+Local oRest 		:= FWRest():New(cUrl)
+Local aHeader   	:= {}
+Local lAuth
+Local cAlTmp
+	If !Empty(cUrl)
+		cAlTmp := GetNextAlias()
+		BeginSql Alias cAlTmp
+			SELECT
+				ADZ.R_E_C_N_O_ AS ADZRECNO
+			FROM %Table:ADZ% ADZ
+			WHERE 
+				ADZ.%NotDel%
+				AND ADZ.ADZ_XRESGT = '1'
+				AND ADZ.ADZ_XSGTRE = 'F'
+		EndSql
+		(cAlTmp)->(dbGoTop())
+		dbSelectArea("ADZ")
+		If (cAlTmp)->(!Eof())
+			lAuth 	:= oSgtWs:Auth()
+			Aadd(aHeader, "Accept: application/json" )
+			AAdd(aHeader, "Content-Type: application/json")
+			Aadd(aHeader, "Authorization: Bearer " + oSgtWs:cBearer)
+			If lAuth
+				While (cAlTmp)->(! Eof())
+					ADZ->(dbGoTo((cAlTmp)->(ADZRECNO)))
+					cIdAtend := fConAten(AllTrim( ADZ->ADZ_FILIAL + ADZ->ADZ_PROPOS + ADZ->ADZ_REVISA + ADZ->ADZ_PRODUT ))
+					If !Empty(cIdAtend)
+						oRest:SetPath("/atendimentos/"+ cIdAtend + "/recusado")
+						If oRest:Put(aHeader) .Or. oRest:GetHTTPCode() == "204"
+								ConOut("[Alterar Atendimento para Recusado] Atendimento recusado com sucesso. " + ;
+									"Codigo no Protheus: " + AllTrim( ADZ->ADZ_FILIAL + ADZ->ADZ_PROPOS + ADZ->ADZ_REVISA + ADZ->ADZ_PRODUT ) + "." ;
+									)
+								RecLock("ADZ", .F.)
+									ADZ->ADZ_XSGTRE := .T.
+								ADZ->(MsUnlock())							
+						Else
+							oJsonRet := JsonObject():New()
+							cRet := oJsonRet:FromJson( oRest:GetResult() )
+							ConOut("[Alterar Atendimento para Recusado] Erro ao recusar atendimento. " + ;
+								"Codigo no Protheus: " + AllTrim( ADZ->ADZ_FILIAL + ADZ->ADZ_PROPOS + ADZ->ADZ_REVISA + ADZ->ADZ_PRODUT ) + ". " + ;
+								"Erro HTTP da operação: " + DecodeUTF8( oRest:GetLastError() ) + ". " + ; 
+								"Codigo do erro SGT: " + AllTrim( Str( oJsonRet["code"] ) ) + ". " + ; 
+								"Mensagem do erro SGT: " + AllTrim( DecodeUTF8( oJsonRet["message"] ) ) + ". " ; 
+								)
+							FreeObj(oJsonRet)
+						EndIf
+					else
+						ConOut("[Alterar Atendimento para Recusado] Erro ao recusar atendimento. Atendimento não encontrado. " + ;
+								"Codigo no Protheus: " + AllTrim( ADZ->ADZ_FILIAL + ADZ->ADZ_PROPOS + ADZ->ADZ_REVISA + ADZ->ADZ_PRODUT ) + ". " ;
+							)
+					EndIf
+					(cAlTmp)->(DbSkip())
+				EndDo
+			EndIf
+		Else
+			Conout("[Alterar Atendimento para Recusado] Nenhum atendimento para ser recusado foi localizado para integração com SGT.")
+		EndIf
+		ADZ->(dbCloseArea())
+		(cAlTmp)->(dbCloseArea())
+	EndIf
+Return Nil
+
+/*/{Protheus.doc} ConAteSGT
+Função para alterar atendimento para o status concluído.
+Regras do SGT:
+	Para alterar o atendimento para concluído, obrigatoriamente o mesmo precisa estar com status de aceito.
+	Somente é possível concluir o atendimento que tiver 100% da receita prevista enviada para financeiro e que a produção não seja igual a zero.
+	Caso utilize o codigoIntegracaoAtendimento será necessário converter pelo id do SGT utilizando os recursos de conversores.
+Função para converter codigoIntegracaoAtendimento em IDSGT vide fConAten.
+@author Franklin Oliveira
+@since 16/04/2020
+@type function
+/*/
+Static function ConAteSGT()
+Local cUrl 			:= GetNewPar("MV_XSGTUPD","https://apisgth.cni.org.br:8253")
+Local cIdAtend		:= ""
+Local oSgtWs 		:= SNWSSGT():New()
+Local oRest 		:= FWRest():New(cUrl)
+Local aHeader   	:= {}
+Local lAuth
+Local cAlTmp
+	If !Empty(cUrl)
+		cAlTmp := GetNextAlias()
+		BeginSql Alias cAlTmp
+			SELECT
+				CNB.R_E_C_N_O_ AS CNBRECNO,
+				CN9.R_E_C_N_O_ AS CN9RECNO,
+				ADY.R_E_C_N_O_ AS ADYRECNO
+			FROM %Table:CNB% CNB
+			INNER JOIN %Table:CN9% CN9 ON
+				CN9.%NotDel%
+				AND CNB.CNB_FILIAL = CN9.CN9_FILIAL
+				AND CNB.CNB_CONTRA = CN9.CN9_NUMERO
+				AND CNB.CNB_REVISA = CN9.CN9_REVISA
+			INNER JOIN %Table:ADY% ADY ON
+				ADY.%NotDel%
+				AND ADY.ADY_FILIAL = CN9.CN9_FILIAL
+				AND ADY.ADY_OPORTU = CN9.CN9_XOPORT
+				AND ADY.ADY_REVISA = CN9.CN9_XREVOP
+				AND ADY.ADY_STATUS =  'B'
+			WHERE 
+				CNB.%NotDel%
+				AND CNB.CNB_XCOSGT = '1'
+				AND CNB.CNB_XSGTCO = 'F'
+		EndSql
+		(cAlTmp)->(dbGoTop())
+		dbSelectArea("CNB")
+		dbSelectArea("ADY")
+		If (cAlTmp)->(!Eof())
+			lAuth 	:= oSgtWs:Auth()
+			Aadd(aHeader, "Accept: application/json" )
+			AAdd(aHeader, "Content-Type: application/json")
+			Aadd(aHeader, "Authorization: Bearer " + oSgtWs:cBearer)
+			If lAuth
+				While (cAlTmp)->(! Eof())
+					CNB->(dbGoTo((cAlTmp)->(CNBRECNO)))
+					ADY->(dbGoTo((cAlTmp)->(ADYRECNO)))
+					cIdAtend := fConAten(AllTrim( CNB->CNB_FILIAL + ADY->ADY_PROPOS + ADY->ADY_PREVIS + CNB->CNB_PRODUT ))
+					If !Empty(cIdAtend)
+						oRest:SetPath("/atendimentos/"+ cIdAtend + "/concluido")
+						If oRest:Put(aHeader) .Or. oRest:GetHTTPCode() == "204"
+								ConOut("[Alterar Atendimento para Concluído] Atendimento concluido com sucesso. " + ;
+									"Codigo no Protheus: " + AllTrim( CNB->CNB_FILIAL + ADY->ADY_PROPOS + ADY->ADY_PREVIS + CNB->CNB_PRODUT ) + "." ;
+									)
+								RecLock("CNB", .F.)
+									CNB->CNB_XSGTCO := .T.
+								CNB->(MsUnlock())							
+						Else
+							oJsonRet := JsonObject():New()
+							cRet := oJsonRet:FromJson( oRest:GetResult() )
+							ConOut("[Alterar Atendimento para Concluído] Erro ao alterar atendimento para Concluído. " + ;
+								"Codigo no Protheus: " + AllTrim( CNB->CNB_FILIAL + ADY->ADY_PROPOS + ADY->ADY_PREVIS + CNB->CNB_PRODUT ) + ". " + ;
+								"Erro HTTP da operação: " + DecodeUTF8( oRest:GetLastError() ) + ". " + ; 
+								"Codigo do erro SGT: " + AllTrim( Str( oJsonRet["code"] ) ) + ". " + ; 
+								"Mensagem do erro SGT: " + AllTrim( DecodeUTF8( oJsonRet["message"] ) ) + ". " ; 
+								)
+							FreeObj(oJsonRet)
+						EndIf
+					else
+						ConOut("[Alterar Atendimento para Concluído] Erro ao alterar atendimento para Concluído. Atendimento não localizado." + ;
+								"Codigo no Protheus: " + AllTrim( CNB->CNB_FILIAL + ADY->ADY_PROPOS + ADY->ADY_PREVIS + CNB->CNB_PRODUT ) + ". ";
+								)
+					EndIf
+					(cAlTmp)->(DbSkip())
+				EndDo
+			EndIf
+		Else
+			Conout("[Alterar Atendimento para Concluído] Nenhum atendimento para ser concluido foi localizado para integração com SGT.")
+		EndIf
+		CNB->(dbCloseArea())
+		ADY->(dbCloseArea())
+		(cAlTmp)->(dbCloseArea())
+	EndIf
+Return Nil
+
+/*/{Protheus.doc} fConProp
+Função para consultar o ID do SGT referente ao código de integração da proposta.
+@type function
+@author Franklin Oliveira
+@since 13/04/2020
+@version 1.0
+@return character, Id da proposta no SGT
+@param cCodInteg, characters, ID do SGT
+/*/
+Static Function fConProp(cCodInteg)
+Local aHeader		:= {}
+Local cIdProposta	:= ""
+Local cUrl 			:= GetNewPar("MV_XSGTUPD","https://apisgth.cni.org.br:8253")
+Local lAuth 		:= .F.
+Local oSgtWs 		:= SNWSSGT():New()
+Local oRest 		:= FWRest():New(cUrl)
+Local oJsonRet
+	If !Empty(cCodInteg)
+		lAuth 	:= oSgtWs:Auth()
+		Aadd(aHeader, "Accept: application/json" )
+		Aadd(aHeader, "Authorization: Bearer " + oSgtWs:cBearer)
+		oRest:SetPath("/conversorProposta?codigoIntegracaoProposta=" + EncodeUTF8(cCodInteg))
+		If lAuth
+			If oRest:Get(aHeader)
+				oJsonRet := JsonObject():New()
+				cRet := oJsonRet:FromJson( oRest:GetResult() )
+				If cRet == Nil
+					If ValType(oJsonRet["Propostas"]) == "J"
+						cIdProposta := AllTrim( oJsonRet["Propostas"]["Proposta"]["idProposta"] )
+					EndIf						
+				EndIf
+			Else
+				oJsonRet := JsonObject():New()
+				cRet := oJsonRet:FromJson( oRest:GetResult() )
+			EndIf
+		EndIf
+		FreeObj(oJsonRet)
+	EndIf
+Return cIdProposta
+
+/*/{Protheus.doc} fConAten
+//TODO Descrição auto-gerada.
+@author Sistem
+@since 17/07/2020
+@version 1.0
+@return characters, código do atendimento no SGT.
+@param cCodInteg, characters, descricao
+@type function
+/*/
+Static Function fConAten(cCodInteg)
+Local aHeader		:= {}
+Local cIdAtendimento	:= ""
+Local cUrl 			:= GetNewPar("MV_XSGTUPD","https://apisgth.cni.org.br:8253")
+Local lAuth 		:= .F.
+Local oSgtWs 		:= SNWSSGT():New()
+Local oRest 		:= FWRest():New(cUrl)
+Local oJsonRet
+	If !Empty(cCodInteg)
+		lAuth 	:= oSgtWs:Auth()
+		Aadd(aHeader, "Accept: application/json" )
+		Aadd(aHeader, "Authorization: Bearer " + oSgtWs:cBearer)
+		oRest:SetPath("/conversorAtendimento?codigoIntegracaoAtendimento=" + EncodeUTF8(cCodInteg))
+		If lAuth
+			If oRest:Get(aHeader)
+				oJsonRet := JsonObject():New()
+				cRet := oJsonRet:FromJson( oRest:GetResult() )
+				If cRet == Nil
+					If ValType(oJsonRet["Atendimentos"]) == "J"
+						cIdAtendimento := AllTrim( oJsonRet["Atendimentos"]["Atendimento"]["idAtendimento"] )
+					EndIf
+				EndIf
+				FreeObj(oJsonRet)
+			Else
+				oJsonRet := JsonObject():New()
+				cRet := oJsonRet:FromJson( oRest:GetResult() )
+				FreeObj(oJsonRet)
+			EndIf
+		EndIf
+	EndIf
+Return cIdAtendimento
+
+/*/{Protheus.doc} fEnvLog
+//TODO Descrição auto-gerada.
+@author Sistem
+@since 17/07/2020
+@version 1.0
+@type function
+/*/
+Static Function fEnvLog()
+Local cDest		:= SuperGetMV( "MV_XEMISGT", .F., "franklin.oliveira@sfiemt.ind.br" )
+Local cAssunto	:= "Relatorio da integração SGT x Prothus
+Local cHtml 	:= ""
+Local nX		:= 1
+Local nY		:= 1
+Local cRegistro	:= ""
+	ConOut( '[' + dToC(Date()) + ' ' + Time() + '] - ' + FunName() + ': Enviando E-mail de log.' )
+	cHtml := "<!DOCTYPE html>"
+	cHtml += "<html>"
+	cHtml += "<style>"
+	cHtml += "table, th, td {"
+	cHtml +=	"border: 1px solid black;"
+	cHtml +=	"border-collapse: collapse;"
+	cHtml += "}"
+	cHtml += "th, td {"
+	cHtml +=	"padding: 5px;"
+	cHtml += "}"
+	cHtml += "</style>"
+	cHtml += "</head>"
+	cHtml += "<body>"
+	cHtml += "<p>Abaixo, uma relação dos registro que não foram integrados com o SGT: </p>"
+	cHtml += '<table style="width:100%">'
+	cHtml += "	<tr>"
+	cHtml += "	    <th>Ação</th>"
+	cHtml += "	    <th>Identificação no Protheus</th>" 
+	cHtml += "	    <th>Codigo do erro</th>"
+	cHtml += "	    <th>Mensagem</th>"
+	cHtml += "	</tr>"
+	For nX := 1 To Len(aErrLog)
+		cRegistro := ""
+		cHtml += "	  <tr>"
+		cHtml += "	    <td>" + aErrLog[nX][1] + "</td>"
+		If Len(aErrLog[nX][2]) > 1
+			For nY := 1 To Len(aErrLog[nX][2])
+				cRegistro += aErrLog[nX][2][nY] + "/"
+			Next nY
+		Else
+			cRegistro := aErrLog[nX][2][1]
+		EndIf
+		cHtml += "	    <td>" + cRegistro + "</td>"
+		cHtml += "	    <td>" + aErrLog[nX][3] + "</td>"
+		cHtml += "	    <td>" + aErrLog[nX][4] + "</td>"
+		cHtml += "	  </tr>"
+	Next nX
+	cHtml += "</table>"
+	//SFEnvEmail(p_cDe, p_cPara, p_cCC, p_cCCO, p_cAssunto, p_cMsg, p_cAnexo, p_lConLe)
+	U_SFEnvEmail(, cDest, , , cAssunto, cHtml, , )
+Return Nil
+
+/*/{Protheus.doc} SchedDef
+Função novo modelo de schedule
+@type Function
+@author Rafael Karczevski
+@since 26/08/2019
+@version 1.0
+/*/
+Static Function SchedDef()
+
+    Local aParam := {}
+    Local aOrd := {}
+
+    aParam := {"P", ;
+        "SNSGTX01", ;
+        ""        , ;
+        aOrd      , ;
+    }
+
+Return aParam
+
+Static Function fVisLog()
+Local aHeaders := {"Ação", "Identificação no Protheus", "Codigo do erro", "Mensagem"}
+Local  aColSizes:= {50, 80, 50, 200}
+  
+    DEFINE DIALOG oDlg TITLE "Relação de erros" FROM 100,100 TO 600,800 PIXEL
+  
+        // Cria Browse
+        oBrowse := TCBrowse():New(2, 2, 345, 230, , aHeaders, aColSizes, oDlg, , , , , {||}, , , , , , , .F., , .T., , .F., , , )
+  
+        // Seta vetor para a browse
+        oBrowse:SetArray(aErrLog)
+  
+        // Monta a linha a ser exibina no Browse
+        oBrowse:bLine := {||{ aErrLog[oBrowse:nAt, 01],;
+                              aErrLog[oBrowse:nAt, 02, 01],;
+                              aErrLog[oBrowse:nAt, 03],;
+                              aErrLog[oBrowse:nAT, 04];
+							} }
+  
+        // Evento de clique no cabeçalho da browse
+        oBrowse:bHeaderClick := {|o, nCol| alert('bHeaderClick') }
+  
+        // Evento de duplo click na celula
+        oBrowse:bLDblClick := {|| alert('bLDblClick') }
+  
+        // Cria Botoes
+        TButton():New(235, 005, "Primei. Registro" , oDlg, {|| oBrowse:GoTop(),oBrowse:setFocus()}, 40, 010,,,.F.,.T.,.F.,,.F.,,,.F.)
+        TButton():New(235, 052, "Ultimo Registro", oDlg, {|| oBrowse:GoBottom(),oBrowse:setFocus() },40,010,,,.F.,.T.,.F.,,.F.,,,.F.)
+        TButton():New(235, 102, "Expor. Dados", oDlg, {|| fExpDados(),oBrowse:setFocus() },40,010,,,.F.,.T.,.F.,,.F.,,,.F.)
+  
+    ACTIVATE DIALOG oDlg CENTERED
+
+Return Nil
+
+/*/{Protheus.doc} fExpDados
+	(long_description)
+	@type  Static Function
+	@author Franklin de Brito de Oliveira
+	@since 19/04/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+/*/
+Static Function fExpDados()
+Local cHeader := "Ação; Identificação no Protheus; Codigo do erro; Mensagem" + CRLF
+Local cBuffer := ""
+Local cMascara := ""
+Local cPath := ""
+Local cFile := "LOGSGT_"+DToS(DATE())+"_"+StrTran(TIME(), ":", "")+".csv"
+Local cTitulo := "Selecione a pasta"
+Local lSalvar := .T.
+Local lArvore := .F.
+Local lKeepCase := .T.
+Local nHandle := 0
+local nX := 0
+ 
+	cPath := cGetFile(cMascara, cTitulo, 1, 'C:\', lSalvar, nOR(GETF_LOCALHARD, GETF_NETWORKDRIVE , GETF_RETDIRECTORY), lArvore, lKeepCase)
+	
+	nHandle := FCREATE(cPath+cFile)
+ 
+    if nHandle = -1
+		conout("Erro ao criar arquivo - ferror " + Str(Ferror()))
+        MsgInfo("Erro ao criar arquivo - ferror " + Str(Ferror()), "Erro")
+    else
+		FWrite(nHandle, cHeader)
+		for nX := 1 to Len(aErrLog)
+			cBuffer := aErrLog[nX, 01] + ";"
+			cBuffer += aErrLog[nX, 02, 01] + ";"
+			cBuffer += aErrLog[nX, 03] + ";"
+			cBuffer += aErrLog[nX, 04] + CRLF
+			FWrite(nHandle, cBuffer)
+		next
+		MsgInfo("Arquivo de log gerado com sucesso.", "Arquivo gerado")
+	endif
+	
+	FClose(nHandle)
+ 
+Return Nil
+
+/*/{Protheus.doc} fGrvLog
+Grava o log de erros
+@type  Static Function
+@author Franklin de Brito de Oliveira
+@since 09/05/2022
+/*/
+Static Function fGrvLog()
+Local cPathErr := SuperGetMV("MV_XPATHER", .F., "\log\")
+Local cFldErr := "SNSGTX01"
+Local cFileEr := DtoS(Date())+"-"+ StrTran(Time(), ':', '-')+".log"
+Local cErro := ""
+
+	//Se não existir o diretório de logs dentro da Protheus Data, será criado
+	if .NOT. ExistDir(cPathErr)
+		MakeDir(cPathErr)
+	endIf
+	
+	//Se não existir o diretório específico de logs dentro da Protheus Data, será criado
+	if .NOT. ExistDir(cPathErr+cFldErr)
+		MakeDir(cPathErr+cFldErr)
+	endif
+
+	cErro := fGetErro()
+
+	MemoWrite(cPathErr+cFldErr+"\"+cFileEr, cErro)
+
+Return nil
+
+/*/{Protheus.doc} fGetErro
+Recupera os erros ocorridos durante a integração, no formato texto
+@type  Function
+@author Franklin de Brito de Oliveira
+@since 09/05/2022
+@version version
+@return cErro, character, erro(s) no formato texto
+/*/
+Static Function fGetErro()
+Local cErro := ""
+Local cBuffer := ""
+Local nX := 0
+	if Empty(aErrLog)
+		cErro := "Não foram encontrados erros."
+	else
+		cErro := "Ação; Identificação no Protheus; Codigo do erro; Mensagem" + CRLF
+		for nX := 1 to Len(aErrLog)
+			cBuffer := aErrLog[nX, 01] + ";"
+			cBuffer += aErrLog[nX, 02, 01] + ";"
+			cBuffer += aErrLog[nX, 03] + ";"
+			cBuffer += aErrLog[nX, 04] + CRLF
+			cErro += cBuffer
+		next
+	endif
+Return cErro

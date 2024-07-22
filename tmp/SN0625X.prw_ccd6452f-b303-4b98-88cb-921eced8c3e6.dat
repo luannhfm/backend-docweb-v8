@@ -1,0 +1,1469 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "APWIZARD.CH"
+#INCLUDE "TBICONN.CH"
+#INCLUDE "TOPCONN.CH"
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<SN0625X>                                                   |
+| Conjuntos de Rotinas que permite LER Arquivos de RETORNO RELATIVOS A     |
+| ARQUIVOS DE REMESSA DE PAGAMENTO enviadas ao Conveniado para Pagamento   |
+| do Beneficio PRONATEC.                                                   |          
+|                                                                          |
+|  ATENCAO:                                                                |
+|  ---------                                                               |
+|   Definir Parametros                                                     |
+|  	MV_XRETPGT - Repositorio de Layout dos Retornosde Pagamento            |
+|  	             DEFAULT = "\Pronatec\Layouts\Pagto\Retorno"               |
+|  	MV_XLOGPRO - Repositorio dos Logs de transacao                         |
+|  	             DEFAULT = "\Pronatec\Logs\"                               |
+|  	MV_XPRTFIN - Ativa/Desativa Integracao Financeira                      |
+|  	             DEFAULT = "N"Não                                          |
+|   MV_XPREPRN - Prefixo" dos Titulos PRONATEC                             |
+|  	             DEFAULT = "PRT"                                           |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<22/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<Nil>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function SN0625X()   
+Local _aArea		:= GetArea() 
+Local _oModel      	:= FWModelActive() 
+Local _nOper		:= _oModel:GetOperation()    
+Local _oStruZP6 	:= _oModel:GetModel("ZP6MASTER")
+Local _cSessa		:= _oStruZP6:GetValue("ZP6_XCOD")
+Local _lOK 			:= .f.     
+Local _bBloqVer		:= {||}
+Local _bBloqLer		:= {||}
+//-- **********************************************************************
+//--    Variavies de controle do MsNewGetDados 
+//-- **********************************************************************   
+Local _cCodConv		:= ""
+Local _nOpcA		:= GD_INSERT + GD_DELETE + GD_UPDATE	//-- Define o modo de edicao da MsNewGetDados (Soma dos Modos) 
+Local _cIniCposA	:= ""									//-- Nome dos campos do tipo caracter que utilizarao incremento automatico.
+Local _cLinOkA		:= "AllwaysTrue"						//-- Funcao de usuario na saida da edicao da linha
+Local _cTudoOkA		:= "AllwaysTrue"						//-- Funcao de usuario para validado de toda a grid
+Local _cFieldOkA	:= "AllwaysTrue"						//-- Funcao de usuario para validacao do campo e foco de edicao 
+Local _cDelOkA		:= "AllwaysTrue"						//-- Funcao de usuario para validavao do DEL
+Local _nFreezeA		:= 000									//-- Campos estaticos na GetDados.
+Local _nMaxA		:= 999									//-- Numero Maximo de Elementos na Grid
+Local _cSupDelA		:= NIL                             		//-- Funcao executada quando pressionada as teclas <Ctrl>+<Delete>
+//--
+Private _aAlterA	:= {}									//-- Array dos campos que podem ser editados MsNewGetDados
+Private _aHeaderA	:= {}									//-- Array com os Elementos da Grid
+Private _aColsA		:= {}									//-- Array (Descricao) Cabecalho dos campos da Grid    
+//-- **********************************************************************
+//--    Campos que seram apresentados nas EnChoice A e B
+//-- **********************************************************************
+Private _aFildsA	:= {}
+Private _aFildsB 	:= {}       
+Private _nRecZP1	:= 0
+Private _nRecZP6	:= 0  
+Private _nOpc		:= 2
+//-- **********************************************************************
+//--    Variaveis de controle da Operacao
+//-- **********************************************************************
+Private _cIntegrFN	:= GetNewPar("MV_XPRTFIN","N") 			//-- Parametros de (ON/OFF) para integracao financeira: S=Realiza Integracao Financeira
+Private _nVlrTotal	:= 0.00
+Private _nQtdMatr	:= 0         
+Private _cCodRemes	:= ""
+//--
+Private _aCabecalh 	:= {}
+Private _aDetalhe 	:= {}
+Private _aTrailler	:= {}
+Private _aColsCab	:= {}
+Private _aColsDet	:= {}
+Private _aColsTra	:= {}
+Private _aErros 	:= {}
+//-- **********************************************************************
+//--    Variavies de controle do MsNewGetDados dos Itens da Carga
+//-- **********************************************************************
+Private _aTELA 		:= {}
+Private _aGETS 		:= {}
+Private _bCpo 		:= {|nField| Field(nField)} 
+Private _oDlgMB     := Nil  
+//-- **********************************************************************
+//--    Variavies de controle e Dimencionamento da Tela 
+//-- **********************************************************************
+Private _aSize 		:= MsAdvSize()
+Private _aInfo 		:= {_aSize[1],_aSize[2],_aSize[3],_aSize[4],3,3}
+Private _aObjects 	:= {{100,030,.T.,.T.},{100,020,.T.,.T.},{100,040,.T.,.T.},{100,010,.T.,.T.}}
+Private _APosObj 	:= MsObjSize(_aInfo,_aObjects,.T.)
+Private _APosGet 	:= MsObjGetPos((_aSize[3]-_aSize[1]),315,{{004,024,240,270}})
+//-- **********************************************************************
+//--    Declaração de Variaveis Private dos Objetos
+//-- **********************************************************************
+SetPrvt("_oBrwMatr","_oDlgMatr","_oQtdeMat","_oVlrTot","_oQtdMatr","_oQtdeLib")
+SetPrvt("_oBtnTpPg","_oBtnLER","_oBtnVER","_oBtnFIL","_oBtnSalv","_oBtnLIB")   
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Valido o Periodo e Calendario                                      ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If !(Alltrim(Str(_nOper)) $ "4#1")  		//-- Alteracao/Visualizacao
+	Aviso(FunName()+"/"+ProcName(),"Esta opção só pode ser executada no modo de [Manuteção] ou [Visualização]!",{"OK"})
+	Return .f.
+Endif             
+//-- *******************************************************************
+//--    Funcao que Cria a aHeader que sera utilizada pela MsNewGetDados
+//-- *******************************************************************
+fCriaHeA()   
+//-- *******************************************************************
+//--    Seleciona a Tabela de SESSOES e Garante o Posicionamento no 
+//--    Registro selecionado
+//--    inicializa as variaveis do Registro Atual, monta array
+//--    dos campos que seram exibidos 
+//-- *******************************************************************
+dbSelectArea("ZP6")
+ZP6->(dbSetOrder(1))			//-- Codigo da Sessao
+ZP6->(dbSeek(FwxFilial("ZP6")+_cSessa))  
+_nRecZP6 := ZP6->(Recno())
+//--    Inicializa as Variaveis 
+_nCtaA := 0
+For _nCtaA := 1 To ZP6->(FCount())
+	M->&(Eval(_bCpo,_nCtaA)) := ZP6->(FieldGet( _nCtaA))
+Next _nCtaA
+//--   A expressao "NOUSER" para evitar que a enchoice apresente por DEFAULT os campos customizados.
+_aFildsB	:={	"NOUSER","ZP6_XPERIO","ZP6_XSEG","ZP6_XDATA","ZP6_XVLR","ZP6_XPREVI",;
+				"ZP6_XDTFIM","ZP6_XSTATU" }
+//-- *******************************************************************
+//--    Seleciona a Tabela de CONVENIOS e Garante o Posicionamento no 
+//--    Registro selecionado
+//--    inicializa as variaveis do Registro Atual, monta array
+//--    dos campos que seram exibidos 
+//-- *******************************************************************
+_cCodConv	:=  fSelConX(ZP6->ZP6_FILIAL,ZP6->ZP6_XPERIO,ZP6->ZP6_XSEG,ZP6->ZP6_XCOD)
+If _cCodConv == "SEM_MATRICULAS"   
+	Aviso(FunName()+"/"+ProcName(),"Não existem Matriculas em Aguardo de Retorno, nesta Sessão!",{"OK"})
+	Return .f.
+Endif 
+//-- Captura o Codigo da Remessa Para este [ Periodo + Calendario + Sessao + Convenio ]
+dbSelectArea("ZPA")
+ZPA->(dbSetOrder(2))
+If (ZPA->(DbSeek(ZP6->ZP6_FILIAL+ZP6->ZP6_XPERIO+ZP6->ZP6_XSEG+ZP6->ZP6_XCOD+_cCodConv+"PG")))
+	_cCodRemes	:= ZPA->ZPA_XCOD
+Endif 	
+If Alltrim(_cCodRemes) == ""
+	Aviso(FunName()+"/"+ProcName(),"Não foi Localizada a REMESSA para este Convenio!", {"OK"})
+	Return .f.
+ENdif   
+If Alltrim(_cCodConv) == ""
+	Aviso(FunName()+"/"+ProcName(),"A seleção do CONVENIO é Obrigatório!!", {"OK"})
+	Return .f.
+ENdif     
+//+----------------------------------------------------------------+
+//| Antonio Dantas                                      11/12/2014 |
+//| Controle para processamento do Retorno da Remessa              |
+//| ZPA - Remessas de Pagamento							           |
+//| 	R=Remessa Efetivada							               |
+//| 	T=Retorno OK							                   |
+//| 	E=Encerrada							                       |
+//| 	C=Cancelada							                       |
+//+----------------------------------------------------------------+
+If ZP6->ZP6_XSTATU $ "E#C"
+	Aviso(FunName()+"/"+ProcName(),"Remessa encontra-se ["+Iif(ZP6->ZP6_XSTATU=="E","Encerrada","Cancelada")+"], não permite processamento do Retorno de Remessa!", {"OK"}) 
+	Return .t.	
+Endif  
+//-- 
+_cMensagem := "ATENÇÃO:"+CRLF
+_cMensagem += "O Arquivo de Retorno da Remessa já foi processado para esta remessa. "
+_cMensagem += "Se prosseguir ira perder o resultado do Primeiro Processamento. "
+_cMensagem += "Valendo somente este ultimo!"+CRLF
+_cMensagem += "Tem CERTEZA que deseja continuar? "
+//-- 
+If ZP6->ZP6_XSTATU == "T"
+	If Aviso(FunName()+"/"+ProcName(),_cMensagem, {"Sim","Não"}) == 2  
+		Return .t.	
+	Endif 		
+Endif  
+//-- 
+//-- *******************************************************************
+//--    Trata a existencia de Lançamentos no financeiro
+//-- *******************************************************************
+If u_fTemFin(ZP6->ZP6_FILIAL,ZP6->ZP6_XPERIO,ZP6->ZP6_XSEG,ZP6->ZP6_XCOD,_cCodConv)
+	Aviso(FunName()+"/"+ProcName(),"Leitura do Retorno Não pode ser executada. Já existe titulo no financeiro relativo ao retorno!", {"OK"})
+	Return .f.
+Endif 
+//--   A expressao "NOUSER" para evitar que a enchoice apresente por DEFAULT os campos customizados.
+_aFildsA	:={	"NOUSER","ZP1_XBCO","ZP1_XAGEN","ZP1_XCONTA","ZP1_XCONTR","ZP1_XDESCR","ZP1_XLYREM",;
+				"ZP1_XLYRET","ZP1_XPRECA","ZP1_XTIPO","ZP1_XSTATU" }     
+dbSelectArea("ZP1")
+ZP1->(dbSetOrder(1))
+ZP1->(dbSeek(FwxFilial("ZP1")+_cCodConv))
+_nRecZP1 := ZP1->(Recno())
+_nCtaA := 0
+For _nCtaA := 1 To ZP1->(FCount())
+	M->&(Eval(_bCpo,_nCtaA)) := ZP1->(FieldGet( _nCtaA))
+Next _nCtaA 
+//-- *******************************************************************
+//--    Monta os Blocos de Codigo para Botoes "Ler Retorno" e 
+//--    "Visualizar" 
+//-- *******************************************************************
+_bBloqLer	:= {|| fLerRet(ZP6->ZP6_FILIAL,_cCodConv,ZP6->ZP6_XPERIO,ZP6->ZP6_XSEG,ZP6->ZP6_XCOD) }
+_bBloqVer	:= {|| Processa( {|| fCriaCoA(ZP6->ZP6_FILIAL,_cCodConv,ZP6->ZP6_XPERIO,ZP6->ZP6_XSEG,ZP6->ZP6_XCOD) }, "Busca Matriculas A Pagar", "Processando...") }
+//-- *******************************************************************
+//--    Funcao que Cria a aCols que sera utilizada pela MsNewGetDados
+//--    Neste momento VAZIO. O Operador pode utilizar o Botao 
+//--    "VISUALISAR" para Carga das Matriculas 
+//-- *******************************************************************
+Processa( {|| fCriaCoA() }, "Busca Matriculas A Pagar", "Processando...")
+//-- *******************************************************************
+//--    Monta a Interfase (Tela) que sera apresentada ao usuario 
+//-- *******************************************************************
+DEFINE MSDIALOG _oDlgMatr TITLE "Ler Arquivo de Retorno da Renmessa" FROM _aSize[7],_aSize[1] TO _aSize[6],_aSize[5] OF oMainWnd PIXEL
+//-- **********************************************************************
+//--   Apresenta a Enchoice para CONVENIOS 
+//-- **********************************************************************
+EnChoice("ZP1",_nRecZP1,_nOpc,,,,_aFildsA,_APosObj[1],,3)    
+//-- **********************************************************************
+//--    Apresenta a Enchoice para SESSOES 
+//-- **********************************************************************
+EnChoice("ZP6",_nRecZP6,_nOpc,,,,_aFildsB,_APosObj[2],,3)    
+//-- **********************************************************************
+//--    Grid das Matriculas a Serem liberadas 
+//-- **********************************************************************
+_oBrwMatr	:= MsNewGetDados():New(_APosObj[3,1],_APosObj[3,2],_APosObj[3,3],_APosObj[3,4],_nOpcA,_cLinOkA,_cTudoOkA,_cIniCposA,_aAlterA,_nFreezeA,_nMaxA,_cFieldOkA,_cSupDelA,_cDelOkA,_oDlgMatr,_aHeaderA,_aColsA)
+_oBrwMatr:oBrowse:SetFocus()
+//-- **********************************************************************
+//--   Informacoes de Rodape: Valor toral e Quantidade de Matriculas 
+//-- **********************************************************************
+@ _APosObj[4,1],_APosGet[1,1] SAY "Valor Total (R$): " SIZE 70,7 OF _oDlgMatr PIXEL
+@ _APosObj[4,1],_APosGet[1,2] SAY _oVlrTot VAR _nVlrTotal PICTURE _aHeaderA[aScan(_aHeaderA, {|x| Trim (x[2]) == "ZP7_XVALOR" }),3] 	SIZE 70,7 OF _oDlgMatr PIXEL
+//--
+@ _APosObj[4,1]+08,_APosGet[1,1] SAY "Qtde de Matriculas: " SIZE 70,7 OF _oDlgMatr PIXEL
+@ _APosObj[4,1]+08,_APosGet[1,2] SAY _oQtdMatr VAR _nQtdMatr PICTURE "@E 999,999" 			SIZE 70,7 OF _oDlgMatr PIXEL
+//-- **********************************************************************
+//--    Objeto de controle do falso Marca/Desmarca
+//-- **********************************************************************   
+_oBtnLER	:= TButton():New( _APosObj[4,1]+10,_APosObj[3,4]-190,"Lêr Retorno"	,_oDlgMatr,_bBloqLer				,050,012,,,,.T.,,"",,,,.F. )
+_oBtnVER 	:= TButton():New( _APosObj[4,1]+10,_APosObj[3,4]-135,"Visualizar"		,_oDlgMatr,_bBloqVer				,050,012,,,,.T.,,"",,,,.F. )
+_oBtnESC 	:= TButton():New( _APosObj[4,1]+10,_APosObj[3,4]-080,"Encerrar"		,_oDlgMatr,{|| _oDlgMatr:End()}		,050,012,,,,.T.,,"",,,,.F. )
+//--
+_oDlgMatr:Activate(,,,.T.)   
+RestArea(_aArea)
+Return .t. 
+ 
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCriaHeA>                                                  |
+|Funcao de contrucao do aHearder que sera utilizado pelo MsNewGetDados.    |
+|ATENCAO: Considera criada PRIVATE pela funcao que chamou o array          |
+|         [_aHeaderA]                                                      |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<28/04/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<Nil>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fCriaHeA()          
+Aadd(_aHeaderA 	,{"Filial"			,"ZP7_FILIAL"	,TRIM(X3PICTURE("ZP7_FILIAL"))	,TamSX3("ZP7_FILIAL")[1]	,TamSX3("ZP7_FILIAL")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Matricula"		,"ZP7_XMATRI"	,TRIM(X3PICTURE("ZP7_XMATRI"))	,TamSX3("ZP7_XMATRI")[1]	,TamSX3("ZP7_XMATRI")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Nome"			,"ZP7_XNOME"	,TRIM(X3PICTURE("ZP7_XNOME"))	,TamSX3("ZP7_XNOME")[1]		,TamSX3("ZP7_XNOME")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"CPF"				,"ZP7_XCPF"		,TRIM(X3PICTURE("ZP7_XCPF"))	,TamSX3("ZP7_XCPF")[1]		,TamSX3("ZP7_XCPF")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Evento"			,"ZP7_XEVENT"	,TRIM(X3PICTURE("ZP7_XEVENT"))	,TamSX3("ZP7_XEVENT")[1]	,TamSX3("ZP7_XEVENT")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Descr Curso"		,"ZP7_XDESCS"	,TRIM(X3PICTURE("ZP7_XDESCS"))	,TamSX3("ZP7_XDESCS")[1]	,TamSX3("ZP7_XDESCS")[2]	,"" ,"","C",""  ,""})
+&&-- Aadd(_aHeaderA 	,{"Descricao"		,"ZP7_XDESEV"	,TRIM(X3PICTURE("ZP7_XDESEV"))	,TamSX3("ZP7_XDESEV")[1]	,TamSX3("ZP7_XDESEV")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Inicio" 			,"ZP7_XEVINI"	,TRIM(X3PICTURE("ZP7_XEVINI"))	,TamSX3("ZP7_XEVINI")[1]	,TamSX3("ZP7_XEVINI")[2]	,"" ,"","D",""  ,""})
+Aadd(_aHeaderA 	,{"Termino"			,"ZP7_XEVFIM"	,TRIM(X3PICTURE("ZP7_XEVFIM"))	,TamSX3("ZP7_XEVFIM")[1]	,TamSX3("ZP7_XEVFIM")[2]	,"" ,"","D",""  ,""})
+Aadd(_aHeaderA 	,{"Turno"			,"ZP7_XTURNO"	,TRIM(X3PICTURE("ZP7_XTURNO"))	,TamSX3("ZP7_XTURNO")[1]	,TamSX3("ZP7_XTURNO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Modalidade"		,"ZP7_XMODAL"	,TRIM(X3PICTURE("ZP7_XMODAL"))	,TamSX3("ZP7_XMODAL")[1]	,TamSX3("ZP7_XMODAL")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Descr Modali"	,"ZP7_XDESMO"	,TRIM(X3PICTURE("ZP7_XDESMO"))	,TamSX3("ZP7_XDESMO")[1]	,TamSX3("ZP7_XDESMO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Unid Ref"		,"ZP7_XUNREF"	,TRIM(X3PICTURE("ZP7_XUNREF"))	,TamSX3("ZP7_XUNREF")[1]	,TamSX3("ZP7_XUNREF")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Quantidade"		,"ZP7_XQTDE"	,TRIM(X3PICTURE("ZP7_XQTDE"))	,TamSX3("ZP7_XQTDE")[1]		,TamSX3("ZP7_XQTDE")[2]		,"" ,"","N",""  ,""})
+Aadd(_aHeaderA 	,{"Vlr Benefic"		,"ZP7_XVALOR"	,TRIM(X3PICTURE("ZP7_XVALOR"))	,TamSX3("ZP7_XVALOR")[1]	,TamSX3("ZP7_XVALOR")[2]	,"" ,"","N",""  ,""})
+Aadd(_aHeaderA 	,{"Situacao"		,"ZP7_XSTATU"	,TRIM(X3PICTURE("ZP7_XSTATU"))	,TamSX3("ZP7_XSTATU")[1]	,TamSX3("ZP7_XSTATU")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Area Tecnolo"	,"ZP7_XATECN"	,TRIM(X3PICTURE("ZP7_XATECN"))	,TamSX3("ZP7_XATECN")[1]	,TamSX3("ZP7_XATECN")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Descr A Tecn"	,"ZP7_XDESAT"	,TRIM(X3PICTURE("ZP7_XDESAT"))	,TamSX3("ZP7_XDESAT")[1]	,TamSX3("ZP7_XDESAT")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Periodo"			,"ZP7_XPERIO"	,TRIM(X3PICTURE("ZP7_XPERIO"))	,TamSX3("ZP7_XPERIO")[1]	,TamSX3("ZP7_XPERIO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Seg Calendar"	,"ZP7_XSEG"		,TRIM(X3PICTURE("ZP7_XSEG"))	,TamSX3("ZP7_XSEG")[1]		,TamSX3("ZP7_XSEG")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Sessao"			,"ZP7_XSESSA"	,TRIM(X3PICTURE("ZP7_XSESSA"))	,TamSX3("ZP7_XSESSA")[1]	,TamSX3("ZP7_XSESSA")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Data Geracao"	,"ZP7_XDATAG"	,TRIM(X3PICTURE("ZP7_XDATAG"))	,TamSX3("ZP7_XDATAG")[1]	,TamSX3("ZP7_XDATAG")[2]	,"" ,"","C",""  ,""})
+&&-- Aadd(_aHeaderA 	,{"Curso"			,"ZP7_XCURSO"	,TRIM(X3PICTURE("ZP7_XCURSO"))	,TamSX3("ZP7_XCURSO")[1]	,TamSX3("ZP7_XCURSO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Cod Aluno"		,"ZP7_XALUNO"	,TRIM(X3PICTURE("ZP7_XALUNO"))	,TamSX3("ZP7_XALUNO")[1]	,TamSX3("ZP7_XALUNO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Tp Convenio"		,"ZP7_XTIPO"	,TRIM(X3PICTURE("ZP7_XTIPO"))	,TamSX3("ZP7_XTIPO")[1]		,TamSX3("ZP7_XTIPO")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Convenio"		,"ZP7_XCONVE"	,TRIM(X3PICTURE("ZP7_XCONVE"))	,TamSX3("ZP7_XCONVE")[1]	,TamSX3("ZP7_XCONVE")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Desc Conv"		,"ZP7_XDESCO"	,TRIM(X3PICTURE("ZP7_XDESCO"))	,TamSX3("ZP7_XDESCO")[1]	,TamSX3("ZP7_XDESCO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Sit. Matricu"	,"ZP7_XSITMA"	,TRIM(X3PICTURE("ZP7_XSITMA"))	,TamSX3("ZP7_XSITMA")[1]	,TamSX3("ZP7_XSITMA")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Remessa"			,"ZP7_XREMES"	,TRIM(X3PICTURE("ZP7_XREMES"))	,TamSX3("ZP7_XREMES")[1]	,TamSX3("ZP7_XREMES")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Seg Remessa"		,"ZP7_XSEGRE"	,TRIM(X3PICTURE("ZP7_XSEGRE"))	,TamSX3("ZP7_XSEGRE")[1]	,TamSX3("ZP7_XSEGRE")[2]	,"" ,"","C",""  ,""})
+//--
+Aadd(_aHeaderA 	,{"Chave de Origem"	,"ZP7_XCHVOR"	,TRIM(X3PICTURE("ZP7_XCHVOR"))	,TamSX3("ZP7_XCHVOR")[1]	,TamSX3("ZP7_XCHVOR")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Remessa"			,"ZP7_XREMES"	,TRIM(X3PICTURE("ZP7_XREMES"))	,TamSX3("ZP7_XREMES")[1]	,TamSX3("ZP7_XREMES")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Seg Remessa"		,"ZP7_XSEGRE"	,TRIM(X3PICTURE("ZP7_XSEGRE"))	,TamSX3("ZP7_XSEGRE")[1]	,TamSX3("ZP7_XSEGRE")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"ID Retorno  "	,"ZP7_XIDRET"	,TRIM(X3PICTURE("ZP7_XIDRET"))	,TamSX3("ZP7_XIDRET")[1]	,TamSX3("ZP7_XIDRET")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"OCORRENCIA"		,"ZP7_XOCORR"	,"@S40"							,TamSX3("ZP7_XOCORR")[1]	,TamSX3("ZP7_XOCORR")[2]	,"" ,"","C",""  ,""})
+Return .t.    	
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCriaCoA>                                                  |
+|Funcao de contrucao do aCols que sera utilizado pelo MsNewGetDados.       |
+|ATENCAO: Considera criado PRIVATE pela funcao que chamou o array          |
+|         [_aColsA]                                                        |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<28/04/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<    _cFilial (c) - Codigo da Filial                                      |
+|    _cCodConv (c) - Codigo do Convenio                                    |
+|    _cPeriodo (c) - Codigo do Periodo selecionado                         |
+|        _cSeg (c) - Codigo do Calendario (Seguencia)                      |
+|     _cSessao (c) - Codigo da Sessao                                      |
+|        _nOpc (n) - Opcao de operacao                                     |
+|>                                                                         |
+|>                                                                         |
+|@return                                                                   |
+|<   _aNewCols (a) - Espelho da acols                                      |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fCriaCoA(_cFilial,_cCodConv,_cPeriodo,_cSeg,_cSessao)
+Local _nCOLS		:= 0  
+Local _aNewCols		:= {}
+//-- 
+DEFAULT _cFilial	:= ""
+DEFAULT _cCodConv	:= ""
+DEFAULT _cPeriodo	:= ""
+DEFAULT _cSeg		:= ""
+DEFAULT _cSessao	:= ""
+//-- ****************************************************************
+//--    Garante que aCols estara vazia, zera os totalizadores 
+//-- ****************************************************************
+_aColsA		:= {}
+_nVlrTotal	:= 0.00
+_nQtdMatr	:= 0
+//-- Localiza as Matriculas 
+dbSelectArea("ZP7")
+ZP7->(dbSetOrder(5)) 			//-- Convenio+Periodo+Seg Calendar+Sessao+Matricula
+ZP7->(dbgotop())
+ZP7->(dbSeek(_cFilial+_cCodConv+_cPeriodo+_cSeg+_cSessao))   
+//-- Inicializa Termometro
+ProcRegua(0)
+Do While ZP7->(!Eof()) .and. ZP7_FILIAL == _cFilial .and. ZP7_XCONVE == _cCodConv .and. ;
+         ZP7_XPERIO == _cPeriodo .and. ZP7_XSEG == _cSeg .and. ZP7_XSESSA == _cSessao
+	_nCOLS++
+	//-- Implementa Termometro
+	IncProc("Lido: "+Alltrim(Transform(_nCOLS,"@E 999,999,999")))   
+	//-- Calcula a Quantidade e o valor total a Pagar das Matriculas
+	_nQtdMatr 	:= _nCOLS
+	_nVlrTotal	+= ZP7->ZP7_XVALOR
+	//-- Preenche aCols 
+	aAdd(_aColsA, {	ZP7->ZP7_FILIAL		,;
+					ZP7->ZP7_XMATRI		,;
+					ZP7->ZP7_XNOME		,;
+					ZP7->ZP7_XCPF		,;
+					ZP7->ZP7_XEVENT		,;
+					ZP7->ZP7_XDESCS		,;
+					ZP7->ZP7_XEVINI		,;
+					ZP7->ZP7_XEVFIM		,;
+					ZP7->ZP7_XTURNO		,;
+					ZP7->ZP7_XMODAL		,;
+					ZP7->ZP7_XDESMO		,;
+					ZP7->ZP7_XUNREF		,;
+					ZP7->ZP7_XQTDE		,;
+					ZP7->ZP7_XVALOR		,;
+					ZP7->ZP7_XSTATU		,;
+					ZP7->ZP7_XATECN		,;
+					ZP7->ZP7_XDESAT		,;
+					ZP7->ZP7_XPERIO		,;
+					ZP7->ZP7_XSEG		,;
+					ZP7->ZP7_XSESSA		,;
+					ZP7->ZP7_XDATAG		,;
+					ZP7->ZP7_XALUNO		,;
+					ZP7->ZP7_XTIPO		,;
+					ZP7->ZP7_XCONVE		,;
+					ZP7->ZP7_XDESCO		,;
+					ZP7->ZP7_XSITMA		,;
+					ZP7->ZP7_XREMES		,;
+					ZP7->ZP7_XSEGRE		,;
+					ZP7->ZP7_XCHVOR		,;
+					ZP7->ZP7_XREMES		,;
+					ZP7->ZP7_XSEGRE		,;
+					ZP7->ZP7_XIDRET		,;
+					ZP7->ZP7_XOCORR		,;
+					.f.					} )
+	dbSelectArea("ZP7")
+	ZP7->(dbSkip())    
+Enddo
+_aNewCols	:= aClone(_aColsA)
+If !Empty(_cCodConv) .and. !Empty(_cPeriodo) .and. !Empty(_cSeg) .and. !Empty(_cSessao)
+	//_oBrwMatr
+	_oBrwMatr:aCols := _aNewCols
+	_oBrwMatr:Refresh()
+Endif 
+Return _aNewCols
+
+
+&&**************************************************************************
+&&**************************************************************************
+&&**************************************************************************
+&& ---   ROTINAS DE CONTROLE DE INTERFACE PARA SELECAO DO CONVENIO    --- &&
+&& ---   NA GERACAO DO ARQUIVO DE REMESSA DE PARAMENTO.               --- &&
+&&**************************************************************************
+&&**************************************************************************
+&&**************************************************************************
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fSelConX>                                                  |
+|Conjunto de Rotinas que permite ao operador selecionar o CONVENIO para    |
+|geracao dos arquivos de remesas de pagamento ao Banco ou gerar as inform. |
+|no financeiro para pagamento manual.                                      |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<12/04/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<    _cFilial (c) - Codigo da Filial                                      |
+|    _cPeriodo (c) - Codigo do Periodo selecionado                         |
+|        _cSeg (c) - Codigo do Calendario (Seguencia)                      |
+|     _cSessao (c) - Codigo da Sessao                                      |
+|>                                                                         |
+|@return                                                                   |
+|<   _cCodConv (c) - Codigo do Convenio Selecionado                        |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fSelConX(_cFilial,_cPeriodo,_cSeg,_cSessao)
+Local _nOpcB		:= GD_INSERT + GD_DELETE + GD_UPDATE	//-- Define o modo de edicao da MsNewGetDados (Soma dos Modos) 
+Local _cIniCposB	:= ""									//-- Nome dos campos do tipo caracter que utilizarao incremento automatico.
+Local _cLinOkB		:= "AllwaysTrue"						//-- Funcao de usuario na saida da edicao da linha
+Local _cTudoOkB		:= "AllwaysTrue"						//-- Funcao de usuario para validado de toda a grid
+Local _cFieldOkB	:= "AllwaysTrue"						//-- Funcao de usuario para validacao do campo e foco de edicao 
+Local _cDelOkB		:= "AllwaysTrue"						//-- Funcao de usuario para validavao do DEL
+Local _nFreezeB		:= 000									//-- Campos estaticos na GetDados.
+Local _nMaxB		:= 999									//-- Numero Maximo de Elementos na Grid
+Local _cSupDelB		:= NIL                             		//-- Funcao executada quando pressionada as teclas <Ctrl>+<Delete>
+Local _cCodConv		:= ""
+Local _cCabec		:= "Convenios Relacionados"                   
+Local _cMesag		:= "Selecione o Convenio para Leitura do Arquivo de Retorno da Remessa"
+Private _aAlterB	:= {}									//-- Array dos campos que podem ser editados MsNewGetDados
+Private _aHeaderB	:= {}									//-- Array com os Elementos da Grid
+Private _aColsA		:= {}									//-- Array (Descricao) Cabecalho dos campos da Grid  
+Private _nRegs		:= 0
+//-- *******************************************************************
+//--    Declaracao de Variaveis Private dos Objetos
+//-- *******************************************************************
+SetPrvt("_oFontAR","_oDlgCOV","_oGrid","_oSayMsg","_oBrwMatr","_oSayLG","_oLegGren","_oSayGren","_oLegRed","_oSayRed","_oBtnOK","_oBtnESC")
+//-- Define a Fonte da mensagem 
+_oFontAR	:= TFont():New( "Arial Rounded MT Bold",0,-15,,.F.,0,,400,.F.,.F.,,,,,, )
+//-- *******************************************************************
+//--    Funcao que Cria a aHeader que sera utilizada pela MsNewGetDados
+//-- *******************************************************************
+fCriaHeB()
+//-- *******************************************************************
+//--    Funcao que Cria a aCols que sera utilizada pela MsNewGetDados
+//-- *******************************************************************
+If ! fCriaCoB(_cFilial,_cPeriodo,_cSeg,_cSessao)     
+	Return "SEM_MATRICULAS"
+Endif 
+//-- *******************************************************************
+//--    Apresenta a Interface para selecao do Convenio 
+//-- *******************************************************************
+_oDlgCOV	:= MSDialog():New(130,250,470,860,_cCabec,,,.F.,,,,,,.T.,,,.T. )
+//-- Mensagem do Cabecalho 	
+_oGrid		:= TGroup():New( 004,008,032,300,"",_oDlgCOV,CLR_BLACK,CLR_WHITE,.T.,.F. )
+_oSayMsg	:= TSay():New(015,018,{|| _cMesag },_oGrid,,_oFontAR,.F.,.F.,.F.,.T.,CLR_BLUE,CLR_WHITE,300,008)
+//-- Grid de Selecao 
+_oBrwMatr	:= MsNewGetDados():New(040,0010,150,300,_nOpcB,_cLinOkB,_cTudoOkB,_cIniCposB,_aAlterB,_nFreezeB,_nMaxB,_cFieldOkB,_cSupDelB,_cDelOkB,_oDlgCOV,_aHeaderB,_aColsA)
+//-- Leganda Verde 
+_oLegGren	:= TBitmap():New(155,010,08,08,"BR_VERDE",,.F.		,_oDlgCOV,,,,.T.,,,,,.T.)
+_oSayGren	:= TSay():New(155,020,{|| "Retorno Não Processado" }	,_oDlgCOV,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,070,008)
+//-- Leganda Vermelha
+_oLegRed	:= TBitmap():New(155,090,08,08,"BR_VERMELHO",,.F.	,_oDlgCOV,,,,.T.,,,,,.T.)
+_oSayRed	:= TSay():New(155,100,{|| "Retorno Já Processado" }	,_oDlgCOV,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,070,008)
+//-- Botoes de Comando
+_oBtnOK		:= TButton():New( 155,224,"Continua"	,_oDlgCOV,{|| _cCodConv := u_fGetC625()	,_oDlgCOV:End() }	,037,012,,,,.T.,,"",,,,.F. )
+_oBtnESC	:= TButton():New( 155,264,"Cancela"	,_oDlgCOV,{|| _oDlgCOV:End() }								,037,012,,,,.T.,,"",,,,.F. )
+//-- 
+_oDlgCOV:Activate(,,,.T.)
+Return _cCodConv   
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGetC625>                                                  |
+|Permite que o Operador possa seleciona qual o Convenio que sera Processado|
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<12/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<Nil>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fGetC625()
+Local _lOK			:= .f.
+Local _aNewCols		:= aClone(_oBrwMatr:aCols)
+Local _aNewHead		:= aClone(_oBrwMatr:aHeader)   
+Local _nPosC 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP1_XCONV"}) 
+Local _cCodConv 	:= _aNewCols[_oBrwMatr:nAt,_nPosC]
+Return _cCodConv   
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCriaHeB>                                                  |
+|Funcao de contrucao do aHearder que sera utilizado pelo MsNewGetDados.    |
+|ATENCAO: Considera criada PRIVATE pela funcao que chamou o array          |
+|         [_aHeaderB]                                                      |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<13/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<Nil>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fCriaHeB()
+Aadd(_aHeaderB	,{"  " 				,"LEGENDA"		,"@BMP"        	  				,4							,0							,".F.","","C","","V" ,"", "","","V"})
+Aadd(_aHeaderB 	,{"Cod Conv"		,"ZP1_XCONV" 	,TRIM(X3PICTURE("ZP1_XCONV"))	,TamSX3("ZP1_XCONV")[1]  	,TamSX3("ZP1_XCONV")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Cod SIGE"		,"ZP1_XSIGE" 	,TRIM(X3PICTURE("ZP1_XSIGE"))	,TamSX3("ZP1_XSIGE")[1]  	,TamSX3("ZP1_XSIGE")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Cod Banco"		,"ZP1_XBCO" 	,TRIM(X3PICTURE("ZP1_XBCO"))	,TamSX3("ZP1_XBCO")[1]  	,TamSX3("ZP1_XBCO")[2] 		,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Agencia"			,"ZP1_XAGEN" 	,TRIM(X3PICTURE("ZP1_XAGEN"))	,TamSX3("ZP1_XAGEN")[1]  	,TamSX3("ZP1_XAGEN")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Num Conta"		,"ZP1_XCONTA" 	,TRIM(X3PICTURE("ZP1_XCONTA"))	,TamSX3("ZP1_XCONTA")[1]  	,TamSX3("ZP1_XCONTA")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Contrat Conv"	,"ZP1_XCONTR" 	,TRIM(X3PICTURE("ZP1_XCONTR"))	,TamSX3("ZP1_XCONTR")[1]  	,TamSX3("ZP1_XCONTR")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Descricao"		,"ZP1_XDESCR" 	,TRIM(X3PICTURE("ZP1_XDESCR"))	,TamSX3("ZP1_XDESCR")[1]  	,TamSX3("ZP1_XDESCR")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Naturez CR"		,"ZP1_XNATCR" 	,TRIM(X3PICTURE("ZP1_XNATCR"))	,TamSX3("ZP1_XNATCR")[1]  	,TamSX3("ZP1_XNATCR")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Desc Nat CR"		,"ZP1_XNCRDE" 	,TRIM(X3PICTURE("ZP1_XNCRDE"))	,TamSX3("ZP1_XNCRDE")[1]  	,TamSX3("ZP1_XNCRDE")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Naturez DB"		,"ZP1_XNATDB" 	,TRIM(X3PICTURE("ZP1_XNATDB"))	,TamSX3("ZP1_XNATDB")[1]  	,TamSX3("ZP1_XNATDB")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Desc Nat Deb"	,"ZP1_XNDBDE" 	,TRIM(X3PICTURE("ZP1_XNDBDE"))	,TamSX3("ZP1_XNDBDE")[1]  	,TamSX3("ZP1_XNDBDE")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Layout Rem"		,"ZP1_XLYREM" 	,TRIM(X3PICTURE("ZP1_XLYREM"))	,TamSX3("ZP1_XLYREM")[1]  	,TamSX3("ZP1_XLYREM")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Layout Retor"	,"ZP1_XLYRET" 	,TRIM(X3PICTURE("ZP1_XLYRET"))	,TamSX3("ZP1_XLYRET")[1]  	,TamSX3("ZP1_XLYRET")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Tp Convenio"		,"ZP1_XTIPO" 	,TRIM(X3PICTURE("ZP1_XTIPO"))	,TamSX3("ZP1_XTIPO")[1]  	,TamSX3("ZP1_XTIPO")[2] 	,"" ,"","C",""  ,""})
+Return
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCriaCoB>                                                  |
+|Funcao de contrucao do aCols que sera utilizado pelo MsNewGetDados.       |
+|ATENCAO: Considera criado PRIVATE pela funcao que chamou o array          |
+|         [_aColsB]                                                        |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<13/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<  _cFilial (c) - Codigo da Filial                                        |
+|  _cPeriodo (c) - Codigo do Periodo selecionado                           |
+|      _cSeg (c) - Codigo do Calendario (Seguencia)                        |
+|   _cSessao (c) - Codigo da Sessao                                        |
+|>                                                                         |
+|@return                                                                   |
+|<Nil>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fCriaCoB(_cFilial,_cPeriodo,_cSeg,_cSessao)
+Local _aConven		:= {}
+Local _cQuery		:= ""
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+Local _lTemRemes	:= .t.
+Local _cLengenda	:= ""   
+//-- ********************************************************************
+//--    Seleciona a Tabela de Convenios 
+//-- ********************************************************************
+dbSelectArea("ZP1")
+ZP1->(dbSetOrder(1)) 		//-- Cod Periodo+Seg Calendar+Cod Sessao    
+ZP1->(dbGoto(_nRecZP1))
+//-- ********************************************************************
+//--    Efetua consulta na Tabela de Matriculas a Pagar para selecionar 
+//--    os convenios EM CONDICOES: Remessa Enviada/Aguardando RETORNO
+//-- ********************************************************************
+_cQuery	:= ""
+_cQuery	+= "Select Distinct ZP7_XCONVE From "+RetSqlName("ZP7")+_ChrBreak
+_cQuery	+= "Where D_E_L_E_T_ <> '*'"+_ChrBreak
+_cQuery	+= "and ZP7_FILIAL = '"+_cFilial+"'"+_ChrBreak
+_cQuery	+= "and ZP7_XPERIO = '"+_cPeriodo+"'"+_ChrBreak
+_cQuery	+= "and ZP7_XSEG = '"+_cSeg+"'"+_ChrBreak
+_cQuery	+= "and ZP7_XSESSA = '"+_cSessao+"'"+_ChrBreak  
+_cQuery	+= "and ZP7_XSTATU = 'E' "+_ChrBreak  
+If Select("TMPZP7")>0
+	TMPZP7->(DbCloseArea())
+Endif  
+//-- ********************************************************************
+//--    Retorna {TMP} Tabela temporaria com o resultado da Query 
+//-- ********************************************************************
+dbUseArea(.t.,"TOPCONN",TCGENQRY(,,_cQuery),"TMPZP7",.t.,.t.)
+dbSelectArea("TMPZP7")
+TMPZP7->(dbGoTop())
+If TMPZP7->(Eof()) .and. TMPZP7->(Bof())
+	_lTemRemes	:= .t.
+Endif
+If _lTemRemes
+	Do While TMPZP7->(!Eof())
+		//-- Verifica se ja foi gerado remessa para estes convenio em relacao nesta    
+		dbSelectArea("ZPA")
+		ZPA->(dbSetOrder(2))						//-- Cod Periodo+Seg Calendar+Cod Sessao+Convenio
+		If(ZPA->(DbSeek(_cFilial+_cPeriodo+_cSeg+_cSessao+ZP1->ZP1_XCONV+"PG")))
+			//-- R=Remessa Efetivada / T=Retorno OK
+			_lTemRemes	:= Iif(ZPA->ZPA_XSTATU == "R",.t.,.f.)
+		Endif 
+		_cLengenda	:= Iif(_lTemRemes,"BR_VERDE","BR_VERMELHO")		
+	 	ZP1->(dbSeek(FwxFilial("ZP1")+TMPZP7->ZP7_XCONVE)) 
+		//-- SO considera Ordem de Pagamento/Remessa 
+		//-- 1=Ordem de Pagamento/Gera Remessa
+	 	If ZP1->ZP1_XTIPO != "1"
+			TMPZP7->(dbSkip())
+			Loop
+	 	Endif 
+	 	aAdd(_aColsA, {	_cLengenda	,;
+						ZP1->ZP1_XCONV 	,;
+						ZP1->ZP1_XSIGE 	,;
+						ZP1->ZP1_XBCO  	,;
+						ZP1->ZP1_XAGEN 	,;
+						ZP1->ZP1_XCONTA	,;
+						ZP1->ZP1_XCONTR	,;
+						ZP1->ZP1_XDESCR	,;
+						ZP1->ZP1_XNATCR	,;      
+						POSICIONE("SED",1,XFILIAL("SED")+ZP1->ZP1_XNATCR,"ED_DESCRIC")	,;
+						ZP1->ZP1_XNATDB	,;
+						POSICIONE("SED",1,XFILIAL("SED")+ZP1->ZP1_XNATDB,"ED_DESCRIC")	,;
+						ZP1->ZP1_XLYREM	,;
+						ZP1->ZP1_XLYRET	,;
+						ZP1->ZP1_XTIPO	,;
+						.f.				} )
+		TMPZP7->(dbSkip())
+	Enddo   
+Endif 	
+If Select("TMPZP7")>0
+	TMPZP7->(DbCloseArea())
+Endif     
+Return _lTemRemes
+
+
+&&**************************************************************************
+&&**************************************************************************
+&&**************************************************************************
+&& ---   ROTINAS DE CONTROLE DO PROCESSO DE LEITURA DO ARQUIVOS DE    --- &&
+&& ---   DE RETORNO E GRAVACAO DAS INFORMACOES RELATIVAS AO RETORNO.  --- &&
+&&**************************************************************************
+&&**************************************************************************
+&&**************************************************************************
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fLerRet>                                                   |
+|Rotina Responsavel pela chamadas as rotinas que Le o arquivo de retorno   |
+|e que, Modifica o FLAG dos Conveniados enviado na remessa.                |
+|																		   |
+|@Author<Antonio Dantas>                                                   |
+|@since<28/05/2014>                                                        |
+|@version<Nil>                                                             |
+|@Receive                                                                  |
+|<   _cFilial (c) - Codigo da Filial                                       |
+|    _cConven (c) - Codigo do Convenio (Protheus)                          |
+|   _cPeriodo (c) - Codigo do Periodo                                      |
+|       _cSeg (c) - Codigo da Seguencia (Calendario)                       |
+|    _cSessao (c) - Codigo da Sessao                                       |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _lRetOK (l) - (.t.) Se a Geracao do Arquivo foi OK                    |
+|                  (.f.) Por qualquer motivo não gerou arquivo de remesa   |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fLerRet(_cFilial,_cConven,_cPeriodo,_cSeg,_cSessao)
+Private _lRetOK		:= .t.     
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Seleciona o Arquivos de Convenio, pega o nome do Arquivo de Layout    |
+//| do arquivo de retorno de Remessa.                                     |
+//| ATENCAO: NAO CONFUNDIR COM LAYOUT DO ARQUIVO DE RETORNO DE PAGAMENTOS.|
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+dbSelectArea("ZP1")
+ZP1->(dbSetOrder(1))			//-- Convenio 
+ZP1->(dbGoto(_nRecZP1))
+//-- ********************************************************************
+//--    Monta o Array com as mensagem de erro PADRAO fornecida 
+//--    pelo Convenio.
+//-- ********************************************************************
+If Alltrim(UPPER(ZP1->ZP1_XBCO)) $ "EBC#001"						//--  EBC = Empresa Brasileira de Correio e Telefrafos/ 001 = banco do Brasil 
+	//-- INI com os Codigos de ERRO não existe para BANDO DO BRASIL 
+	If Alltrim(UPPER(ZP1->ZP1_XBCO)) == "EBC"						//--  EBC = Empresa Brasileira de Correio e Telefrafos
+		_aErros := u_fAErros(ZP1->ZP1_XBCO,ZP1->ZP1_XCONV)
+		If Len(_aErros) == 1 .and. Valtype(_aErros[1]) == "C" .and. _aErros[1] == "NOERRO"
+			_lRetOK := .f.
+		EndIf
+	Endif 
+	If _lRetOK
+		//-- Le o Arquivo de Retorno
+		Processa( {|| fLer_EBC(_cFilial,_cConven,_cPeriodo,_cSeg,_cSessao) }, "Lendo Arquivo de Retorno", "Processando...")
+		If _lRetOK
+			Processa( {|| fPrc_EBC(_cFilial,_cConven,_cPeriodo,_cSeg,_cSessao) }, "Gravando Retorno", "Processando...")
+		Endif
+	Endif	
+ElseIf Alltrim(UPPER(ZP1->ZP1_XBCO)) = "104"	//--  104 = CEF - Caixa Economica Federal 
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Antonio Dantas                                     25/08/2014 |
+	//| As Rotinas para Leitura do Arquivo de Retorno do BANCO 104 -  |
+	//| CEF - Caixa Economica Federal estao descritas no Programa     |
+	//| SN062JX.PRW                                                   |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_aErros := u_fAErros(ZP1->ZP1_XBCO,ZP1->ZP1_XCONV)
+	If Len(_aErros) == 1 .and. Valtype(_aErros[1]) == "C" .and. _aErros[1] == "NOERRO"
+		_lRetOK := .f.
+	EndIf
+	If _lRetOK
+		//-- Le o Arquivo de Retorno
+		Processa( {|| u_fLer_104(_cFilial,_cConven,_cPeriodo,_cSeg,_cSessao) }, "Lendo Arquivo de Retorno", "Processando...")
+		If _lRetOK
+			Processa( {|| u_fPrc_104(_cFilial,_cConven,_cPeriodo,_cSeg,_cSessao) }, "Gravando Retorno", "Processando...")
+		Endif
+	Endif	
+Endif 
+Return _lRetOK
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fLer_EBC>                                                  |
+| Rotina Responsavel por Ler o arquivo de Retorno conforme configuracao    |
+| para os convenios EBC - Correios e 001 - Banco do Brasil                 |
+|																		   |
+|@Author<Antonio Dantas>                                                   |
+|@since<28/04/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@Receive                                                                  |
+|<   _cFilial (c) - Codigo da Filial                                       |
+|    _cConven (c) - Codigo do Convenio (Protheus)                          |
+|   _cPeriodo (c) - Codigo do Periodo                                      |
+|       _cSeg (c) - Codigo da Seguencia (Calendario)                       |
+|    _cSessao (c) - Codigo da Sessao                                       |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _lRetOK (l) - (.t.) Se a Geracao do Arquivo foi OK                    |
+|                  (.f.) Por qualquer motivo não gerou arquivo de remesa   |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fLer_EBC(_cFilial,_cConven,_cPeriodo,_cSeg,_cSessao)
+Local _cArqRet 		:= ""
+Local _cArLayout	:= M->ZP1_XLYRET
+Local _cPathRoot	:= GetNewPar("MV_XRETPGT","\Pronatec\Layouts\Pagto\Retorno")   
+Local _aArqLyt 		:= {} 
+Local _aFilds		:= {}
+Local _nH_Arq		:= 0
+Local _cFileLog		:= ""
+Local _nRegs		:= 0
+Local _nCtaREG		:= 0 
+Local _nPosH		:= 0
+Local _nPosD		:= 0
+Local _nPosT		:= 0
+Local _bBlock		:= "" 
+Local _cTpReg   	:= "" 
+Local _lHeader		:= .f.
+Local _lDetalhe		:= .f.
+Local _lTrailler	:= .f. 
+Local _lE_Header	:= .f.
+Local _lE_Traill	:= .f.
+Local _lE_Detalh	:= .f.
+Local _cString 		:= ""   
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Validacoes antes da chamada da rotina de geracao do arquivo de Remesa |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If Alltrim(_cArLayout) == ""
+	Aviso(FunName()+"/"+ProcName(),"Não foi informado neste Convênio o nome do Arquivo de Configuração do Arquivo de Retorno!",{"OK"})
+	_lRetOK := .f.	
+Endif
+If _lRetOK
+	_cArqRet := cGetFile('Arquivo |*.*','Lêr Arquivo',1,'C:\TEMP',.F.,GETF_LOCALHARD)
+	If _cArqRet == ""
+		Aviso(FunName()+"/"+ProcName(),"Nome do Arquivo de Retorno não Foi Informado!",{"OK"})
+		_lRetOK := .f.
+	Endif  
+Endif  
+If _lRetOK
+	If !File(_cPathRoot+Alltrim(_cArLayout))
+		Aviso(FunName()+"/"+ProcName(),"Arquivo de Layout: "+_cPathRoot+Alltrim(_cArLayout)+". não foi encontrado!",{"OK"})
+		_lRetOK := .f.
+	EndIf
+EndIf     
+If _lRetOK
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Carrega o Layout do Arquivo de Retorno                                |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_aArqLyt := u_fCrArqIn(_cPathRoot+Alltrim(_cArLayout))
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Identifica os Arrays de Header, Detalhe e Trailler                    |
+	//| OBS: Caso venha a existir tipo de arquivos com mais de uma linha por  |
+	//|      tipo; Tratar caso a caso. Deve-se adicionar ao array do tipo e   |
+	//|      tratar na seguencia.                                             |
+	//|      - Inicialmente estamos considerando um de cada tipo.             |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ  
+	_nCtaA	:= 0
+	For _nCtaA := 1 To Len(_aArqLyt) 
+		_cLinTP := Substr(_aArqLyt[_nCtaA,1],2,1)
+		Do Case
+			Case _cLinTP == "H"   	//-- Header
+				_aCabecalh 	:= _aArqLyt[_nCtaA,4] 
+				_aCabecalh 	:= u_fAjustSt(_aCabecalh)
+				_lHeader	:= .t.
+			Case _cLinTP == "D"   	//-- Detalhe
+				_aDetalhe 	:= _aArqLyt[_nCtaA,4]
+				_aDetalhe 	:= u_fAjustSt(_aDetalhe)
+				_lDetalhe	:= .t.
+			Case _cLinTP == "T" 	//-- Trailler
+				_aTrailler	:= _aArqLyt[_nCtaA,4]   
+				_aTrailler	:= u_fAjustSt(_aTrailler)
+				_lTrailler	:= .t.
+		Endcase
+	Next _nCtaA    
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Abre o arquivo de RETORNO com acesso exclusivo                        |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_nH_Arq	:= fOpen(_cArqRet,68) 
+	If _nH_Arq = -1
+		Aviso(FunName()+"/"+ProcName(),"Não foi Possivel Abrir o Arquivo de Retorno!",{"OK"})
+		_lRetOK := .f.
+	EndIf         
+Endif 	 
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Trata caso a caso os Layout's da Remessa                              |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ  
+If _lRetOK .and. Len(_aDetalhe) >= 1
+	//-- Seleciona tabela de Alunos 	
+	dbSelectArea("ZP0")
+	ZP0->(dbSetOrder(1))			//-- CPF 
+	//-- Seleciona Tabela de Convenios (Posiciona convencio corrente) 
+	dbSelectArea("ZP3")
+	ZP3->(dbSetOrder(2))		//-- Convenio + Situacao 
+ 	ZP3->(dbSeek(FwxFilial("ZP3")+_cConven+"L"))
+	//-- Seleciona o Arquivo TXT       
+	FT_FUse(_cArqRet)
+	//-- Manda o Ponteiro para topo 
+	FT_FGOTOP()
+	//-- Conta o Numero de Linhas 	
+	_nTotLIN := FT_FLASTREC()
+	//-- Inicializa o Termometro 	
+	ProcRegua(_nTotLIN)
+	//-- Loop de Leitura  
+	Do While !FT_FEof()
+        //-- Captura a linha a ser lida 
+		_cTexto := Upper(AllTrim(FT_FReadln()))
+		//-- Implementa Termometro
+		_nCtaREG++
+		IncProc("Total de Registros:"+Alltrim(Transform(_nTotLIN,"@E 999,999,999"))+"|  Lidos:"+Alltrim(Transform(_nCtaREG,"@E 999,999,999")))   
+		//-- Regras para definir se a linha e de Cabecalho, Detalhe ou Rodape	
+		_lE_Header := Iif(_lHeader,Iif(_nCtaREG==1,.t.,.f.),.f.)
+		_lE_Traill := Iif(_lTrailler,Iif(_nCtaREG==_nTotLIN,.t.,.f.),.f.)
+		_lE_Detalh := Iif(_lDetalhe,Iif((!_lE_Header .and. !_lE_Traill),.t.,.f.),.f.)
+		do Case
+			Case _lRetOK .and. _lE_Header
+			  	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//| ***** LER CABECALHO "Header"                                          |
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			 	//--     
+				_aFilds	:= {} 
+				_nCtaA 	:= 0    
+				For _nCtaA := 1 To Len(_aCabecalh)    
+					aadd(_aFilds, Substr(_cTexto,_aCabecalh[_nCtaA,2,4],_aCabecalh[_nCtaA,2,6]))  
+				Next _nCtaA
+				aadd(_aColsCab,_aFilds)  
+				//-- *********************************************************************
+                //--    Considera a ultima linha, caso Header tenha mais de uma linha 
+				//-- *********************************************************************
+				_nPosH	:= Len(_aColsCab)
+				_nPc 	:= aScan(_aCabecalh, {|x| Upper(x[2,2]) == "ZP1_XCONTR" })
+				//-- *********************************************************************
+				//--    Valida o Contrato/Convenio 
+				//-- *********************************************************************
+				If Val(_aColsCab[_nPosH,_nPc]) != Val(ZP1->ZP1_XCONTR)
+					Aviso(FunName()+"/"+ProcName(),"O Arquivo de retorno não pertence á este Contrato/Convênio!",{"OK"})
+					_lRetOK := .f.
+					Exit
+				Endif  
+				//-- *********************************************************************
+                //--   Observa se ocorreu erro no Cabecalho da Remessa. 
+                //--   Se ocorreu erro no Cabelho da Remessa, consideramos que nao
+                //--   foi processado, entao, aborta. 
+				//-- *********************************************************************
+				_nPc 		:= aScan(_aCabecalh, {|x| Upper(x[2,2]) == "STATUS" })
+				_nStatus	:= Val(Substr(_aColsCab[_nPosH,_nPc],1,2))
+				//-- Se Maior que zero existe ocorrencia de erro		
+				If _nStatus > 0
+					_nPc := aScan(_aErros, {|x| x[1] == _nStatus })
+					Aviso(FunName()+"/"+ProcName(),"Erro no Cabeçalho da remessa: "+_aErros[_nPc,3],{"OK"})
+					_lRetOK := .f.
+					Exit
+				Endif 					
+			Case _lRetOK .and. _lE_Detalh
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//| ***** LER DETALHE "Detalhe"                                           |
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			 	//--     
+				_aFilds	:= {} 
+				_nCtaA 	:= 0 
+				For _nCtaA := 1 To Len(_aDetalhe)    
+					aadd(_aFilds, Substr(_cTexto,_aDetalhe[_nCtaA,2,4],_aDetalhe[_nCtaA,2,6]))   
+				Next _nCtaA
+				aadd(_aColsDet,_aFilds)   
+				//-- *********************************************************************
+                //--    Considera a ultima linha, para Tratamento Linha a linha lida
+				//-- *********************************************************************
+				_nPosD	:= Len(_aColsDet)   
+			Case _lRetOK .and. _lE_Traill
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//| ***** LER RODAPE "Trailler"                                           |
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			 	//-- 
+				_aFilds	:= {} 
+				_nCtaA 	:= 0 
+				For _nCtaA := 1 To Len(_aTrailler)    
+					aadd(_aFilds, Substr(_cTexto,_aTrailler[_nCtaA,2,4],_aTrailler[_nCtaA,2,6])) 
+				Next _nCtaA
+				aadd(_aColsTra,_aFilds)    
+				//-- *********************************************************************
+                //--    Considera a ultima linha, caso Traller tenha mais de uma linha 
+				//-- *********************************************************************
+				_nPosT	:= Len(_aColsTra)  
+		Endcase
+		//-- Segue para Proxima Linha 
+		FT_FSkip()
+	EndDo
+	If !_lRetOK
+		Aviso(FunName()+"/"+ProcName(),"Não existem registros aptos para retorno!",{"OK"})
+	Endif 
+	//-- *********************************************************************
+	//--    Fecha o Arquivo de Retorno que esta sendo lido
+	//-- *********************************************************************
+	fClose(_nH_Arq)
+Endif 
+Return _lRetOK
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fPrc_EBC>                                                  |
+| Processa as Informacoes do Arquivo de Retorno para os convenios          |
+| EBC - Correios e 001 - Banco do Brasil, GRAVA na ZP7-Matriculas a Pagar. |
+|																		   |
+|@Author<Antonio Dantas>                                                   |
+|@since<29/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@Receive                                                                  |
+|<   _cFilial (c) - Codigo da Filial                                       |
+|    _cConven (c) - Codigo do Convenio (Protheus)                          |
+|   _cPeriodo (c) - Codigo do Periodo                                      |
+|       _cSeg (c) - Codigo da Seguencia (Calendario)                       |
+|    _cSessao (c) - Codigo da Sessao                                       |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _lRetOK (l) - (.t.) Se a Geracao do Arquivo foi OK                    |
+|                  (.f.) Por qualquer motivo não gerou arquivo de remesa   |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fPrc_EBC(_cFilial,_cConven,_cPeriodo,_cSeg,_cSessao)
+Local _aArea		:= GetArea()
+Local _lFez 		:= .f.
+//-- Posicoes do Arquivo de Retorno -- PARA CORREIO
+Local _Per 			:= 0
+Local _Pcv 			:= 0
+Local _pIR 			:= 0      
+//--                                                                           
+Local _nPosM 		:= 0
+Local _nCodErro 	:= 0
+Local _cMsgErro 	:= ""   
+//-- Posicoes do Arquivo de Retorno -- PARA BANCO DO BRASIL - PRE PAGO
+Local _nPosH		:= 0
+Local _Poc 			:= 0
+Local _Prm 			:= 0
+Local _pnc 			:= 0      
+Local _cNrCartao	:= ""
+Local _cNrRefere	:= ""
+//--
+Local _cOcorrenc	:= ""   
+Local _cChaveRM		:= ""
+Local _lTemErro 	:= .f.   
+//--
+Local _nRegs		:= Len(_aColsDet)  
+Local _nRecNOTOK	:= 0
+Local _nRegOK		:= 0
+Local _cPathRoot	:= GetNewPar("MV_XLOGPRO","\Pronatec\Logs\")   
+Local _cFileLog		:= CriaTrab(Nil,.F.)
+Local _nHdl_log		:= fCreate(_cPathRoot + cFilAnt + "_" + FunName()+"_"+ProcName() + _cFileLog +"_LOG.txt")  
+Local _cMensagem	:= ""
+Local _lIntFIN		:= .f.
+Private _aInfTit	:= {}
+//-- Cria Regua
+ProcRegua(_nRegs)   
+//-- *********************************************************************
+//-- Implementa controle de Transacao.
+//-- *********************************************************************
+Begin Transaction           
+	//-- *********************************************************************
+	//--    Posiciona o Convenio 
+	//-- *********************************************************************
+	dbSelectArea("ZP1")
+	ZP1->(dbSetOrder(1))			//-- Convenio 
+	ZP1->(dbGoto(_nRecZP1))   
+	do Case 
+		Case Alltrim(UPPER(ZP1->ZP1_XBCO)) == "EBC"						//--  EBC = EMPRESA BRASILEIRA DE CORREIO E TELEFRAFOS 
+			//-- Posicoes do Arquivo de Retorno
+			_Per	:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "STATUS" 	}	)
+			_Pcv 	:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "CHVREMESSA"}	)
+			_pIR 	:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "IDRETORNO"}	)
+		Case Alltrim(ZP1->ZP1_XBCO) == "001" .and. ZP1_XSCARD == "S"		//-- BANCO DO BRASIL, Cartoes Pre-Pago 
+			_Poc	:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "OCORRENCIA"}	)
+			_pnc 	:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "NRCARTAO"}	)  
+			_psq 	:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "SEQUENCIA"}	)
+			//-- Posicao no Cabecalho 
+			_Prm 	:= aScan(_aCabecalh	,{|x| Upper(AllTrim(x[2,2])) == "IDREMESSA"}	)
+			//
+			_pnr  := aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "NRREFERENC"}	)
+	EndCase 
+	//-- *********************************************************************
+	//--    Monta cabecalho do Lod de Leitura do Arquivod e Pre Cadastro
+	//-- *********************************************************************
+	_cTextLOG := "#RELATORIO DE LOG - LEITURA DO ARQUIVO DE RETORNO DA REMESSA DE PAGAMENTO - "+DTOC(date())+" as "+time()+CHR(13)+CHR(10) 
+	_cTextLOG += "       Convenio: "+_cConven+CHR(13)+CHR(10) 
+	_cTextLOG += " Qtde de Regist: "+Alltrim(Transform(_nRegs,"@E 999,999,999"))+_cConven+CHR(13)+CHR(10) 
+	//-- *********************************************************************
+	//--    Imprime o Cabecalho do Relatorio de LOG 
+	//-- *********************************************************************
+	_cTextLOG +=	PadR("Tp SIGE" 		,TamSx3("ZP1_XSIGE")[1])+";"+;
+					PadR("Evento" 		,TamSx3("ZP7_XEVENT")[1])+";"+;
+					PadR("Matricula"	,TamSx3("ZP7_XMATRI")[1])+";"+;
+					PadR("Codigo" 		,TamSx3("ZP0_XCOD")[1])+";"+;
+					PadR("Nome"			,TamSx3("ZP0_XNOME")[1])+";"+;
+					PadR("CPF" 			,TamSx3("ZP0_XCPF")[1])+";"+;
+					PadR("Dt Nasc." 	,TamSx3("ZP0_XDTNAS")[1])+";"+;
+					PadR("Tip Pgto" 	,TamSx3("ZP7_XTIPO")[1])+";"+;	
+					PadR("Ocorr,"		,40)+CHR(13)+CHR(10)      
+	fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+	_nCtaA := 0    
+	For _nCtaA := 1 To Len(_aColsDet)
+		IncProc("Total de Registros:"+Alltrim(Transform(_nRegs,"@E 999,999,999"))+"|  Lidos:"+Alltrim(Transform(_nCtaA,"@E 999,999,999")))   
+		do Case 
+			Case Alltrim(UPPER(ZP1->ZP1_XBCO)) == "EBC"						//--  EBC = EMPRESA BRASILEIRA DE CORREIO E TELEFRAFOS 
+				//-- *********************************************************************
+				//--    Define a Chave para localizar na ZP7
+				//-- *********************************************************************
+				_cChaveRM := FwxFilial("ZP7")+Substr(_aColsDet[_nCtaA,_Pcv],8,13)	 
+				//-- *********************************************************************
+				//--   Identifica se houve erro e qual a mensagem 
+				//-- *********************************************************************
+				_nCodErro := Val(_aColsDet[_nCtaA,_Per])
+				If _nCodErro > 0 
+					_lTemErro 	:= .t.
+					_cMsgErro := Iif(_nCodErro <= Len(_aErros),_aErros[_nCodErro,3],"Codigo ["+StrZero(_nCodErro,2)+"]. Erro Não Identificado!")
+				Endif 	
+				//+----------------------------------------------------------------------+
+				//|       EFETIVA O PROCESSAMENTO GRAVANDO NA ZP7 - MATRICULA 			 |
+				//+----------------------------------------------------------------------+
+				dbSelectArea("ZP7")
+				ZP7->(dbSetOrder(7))		//-- Cod Remessa+Seguencia+Convenio
+				If (ZP7->(dbSeek(_cChaveRM + ZP1->ZP1_XCONV)))
+					//-- Posiciona o Cadastro do Aluno 			
+					dbSelectArea("ZP0")
+					ZP0->(DbSetOrder(1))
+					ZP0->(dbSeek(FwxFilial("ZP0")+ZP7->ZP7_XCPF))
+					//-- *********************************************************************
+					//--   GRAVA EFETIVAMENTE O RETORNO
+					//-- *********************************************************************
+					ZP7->(RecLock("ZP7",.f.))
+					//-- *********************************************************************
+					//--   Identifica a mensagem de erro se o registro tiver sido rejeitado.
+					//-- *********************************************************************
+					If _lTemErro
+						Replace ZP7->ZP7_XSTATU With "R"			//-- Status (Situacao) -- Rejeitado
+						Replace ZP7->ZP7_XOCORR With _cMsgErro		//-- Ocorrencia 
+						//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+						//| Se nao for valido, grava no LOG                                    ³
+						//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+						_cTextLOG := 	ZP1->ZP1_XSIGE+";"+;
+										ZP7->ZP7_XEVENT+";"+;
+										ZP7->ZP7_XMATRI+";"+;
+										ZP0->ZP0_XCOD+";"+;
+										ZP0->ZP0_XNOME+";"+;
+										ZP0->ZP0_XCPF+";"+;
+										DTOC(ZP0->ZP0_XDTNAS)+";"+;
+										ZP7->ZP7_XTIPO+";"+;	
+										"Ocorrência: "+_cMsgErro+" "+CHR(13)+CHR(10)    
+						fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG) 
+						_lTemErro := .f. 
+						_nRecNOTOK++
+					Else
+						/*	Jose Leite - CSI - 03-11-15 
+						*/
+						If ZP7->ZP7_XSTATU <> 'x'
+							Replace ZP7->ZP7_XSTATU With "O"		  	//-- Status (Situacao): Ordem de Pagamento Agendada
+							_nRegOK++
+						EndIf
+					Endif    
+					Replace ZP7->ZP7_XIDRET With _aColsDet[_nCtaA,_pIR]			  	//-- ID de Retorno 
+					//-- 
+					ZP7->(MsUnLock())
+					ZP7->(dbCommit()) 
+					_lFez := .T.
+				Endif
+			Case Alltrim(ZP1->ZP1_XBCO) == "001" .and. ZP1->ZP1_XSCARD == "S"		//-- BANCO DO BRASIL, Cartoes Pre-Pago 
+				//+----------------------------------------------------------------------+
+				//| No caso do Banco do Brasil identifica o Nr de Referencia do Cartão   |
+				//| A Partir do Numero de Cartão que recebemos no Retorno                |
+				//+----------------------------------------------------------------------+
+				 DbSelectArea("ZP3")
+				 ZP3->(dbSetOrder(7)) 				//-- Numero do Cartão
+	         	 _cNrCartao	:= PadR(Alltrim(_aColsDet[_nCtaA,_pnc]),TamSX3("ZP3_XIDCON")[1])
+	         	 /* Jose Leite - 06-07-15
+	         	 	Validacao para tratar o retorno inesperado
+	         	 */
+	         	 //Inicio
+	         	 If _cNrCartao == "0000000000000000    " //Retorno inesperado
+	         	 	_cNrRefere := PadR(Alltrim(_aColsDet[_nCtaA,_pnr]),TamSX3("ZP3_XIDCON")[1])
+	         	 Else
+	         	 	ZP3->(dbSeek(_cNrCartao))
+               _cNrRefere := ZP3->ZP3_XNRREF
+	         	 EndIf
+				 //Fim
+				//-- *********************************************************************
+				//--   Identifica se houve erro e qual a mensagem 
+				//-- *********************************************************************
+	            _cOcorrenc 	:= _aColsDet[_nCtaA,_Poc]
+				If Upper(Alltrim(_cOcorrenc)) != "OPERACAO REALIZADA COM SUCESSO"
+					_lTemErro := .t. 
+					_cMsgErro := Alltrim(_cOcorrenc)			//-- Ocorrencia  
+				Endif  
+				//+----------------------------------------------------------------------+
+				//|       EFETIVA O PROCESSAMENTO GRAVANDO NA ZP7 - MATRICULA 			 |
+				//+----------------------------------------------------------------------+
+				dbSelectArea("ZP7")
+				ZP7->(dbSetOrder(13))		//-- Sessao+Nr Referenc
+				If (ZP7->(dbSeek(FwxFilial("ZP7")+_cSessao+_cNrRefere)))
+					Do While ZP7->(!Eof()) .and. ZP7->ZP7_FILIAL == FwxFilial("ZP7") .and. ZP7->ZP7_XSESSA == _cSessao .and. ZP7->ZP7_XNRREF == _cNrRefere
+						
+						/* Jose Leite - 06-07-15
+						   Posiciona o Cadastro do Aluno
+						*/ 			
+						dbSelectArea("ZP0")
+						ZP0->(DbSetOrder(1))
+						ZP0->(dbSeek(FwxFilial("ZP0")+ZP7->ZP7_XCPF))
+						
+						//-- *********************************************************************
+						//--   GRAVA EFETIVAMENTE O RETORNO
+						//-- *********************************************************************
+						ZP7->(RecLock("ZP7",.f.))
+						//-- *********************************************************************
+						//--   Identifica a mensagem de erro se o registro tiver sido rejeitado.
+						//-- *********************************************************************
+						If _lTemErro
+							Replace ZP7->ZP7_XSTATU With "R"			//-- Status (Situacao) -- Rejeitado
+							Replace ZP7->ZP7_XOCORR With _cMsgErro		//-- Ocorrencia 
+							//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+							//| Se nao for valido, grava no LOG                                    ³
+							//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+							_cTextLOG := 	ZP1->ZP1_XSIGE+";"+;
+											ZP7->ZP7_XEVENT+";"+;
+											ZP7->ZP7_XMATRI+";"+;
+											ZP0->ZP0_XCOD+";"+;
+											ZP0->ZP0_XNOME+";"+;
+											ZP0->ZP0_XCPF+";"+;
+											DTOC(ZP0->ZP0_XDTNAS)+";"+;
+											ZP7->ZP7_XTIPO+";"+;	
+											"Ocorrência: "+_cMsgErro+" "+CHR(13)+CHR(10)    
+							fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG) 
+							_lTemErro := .f. 
+							_nRecNOTOK++
+						Else
+							/*	Jose Leite - CSI - 03-11-15 
+							*/
+							If ZP7->ZP7_XSTATU <> 'x'
+								Replace ZP7->ZP7_XSTATU With "O"		  	//-- Status (Situacao): Ordem de Pagamento Agendada
+								_nRegOK++
+							EndIf
+						Endif    
+						//-- 
+						ZP7->(MsUnLock())
+						ZP7->(dbCommit()) 
+						_lFez := .T.
+						//-- Segue para a proxima Matricula com Mesmo Numero de Cartão	            
+						ZP7->(dbSkip()) 
+					Enddo
+				Endif
+		EndCase 
+	Next _nCtaA   
+	If _lFez
+		//-- ****************************************************************
+		//--    MODIFICA O STATUS DA REMESSA: R=Remessa Efetivada
+		//--    Localiza a Remessa [Periodo+Calendario+Sessao+Convenio]
+		//-- ****************************************************************
+		dbSelectArea("ZPA")
+		ZPA->(dbSetOrder(3))			//-- Codigo da Remessa 
+		ZPA->(DbSeek(FwxFilial("ZPA")+_cConven+_cCodRemes+"PG"))
+		//--
+		ZPA->(RecLock("ZPA",.f.))
+		Replace ZPA->ZPA_XSTATU With "T" 			//-- Status da RETORNO OK 
+		ZPA->(MsUnLock())
+		ZPA->(dbCommit())
+		//-- ****************************************************************
+		//--    Modifica o Status da Sessão para Remessa Enviada 
+		//-- ****************************************************************
+		u_fCkRtZP6(_cPeriodo,_cSeg,_cSessao)	  
+	Endif 	//-- _lFez
+End Transaction     
+If _lFez
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Gera a Integracao FINANCEIRA.                                   |
+	//| A Integracao financeira so ocorre se o parametro [MV_XPRTFIN]   |
+	//| estiver DECLARADO como S=Sim                                    |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	If _cIntegrFN == "S"
+		FWMsgRun(,{|| _lIntFIN := U_SN0698X("Retorno_da_Remessa",ZP1->ZP1_XCONV,_cCodRemes,_cPeriodo,_cSeg,_cSessao)  }, "Integração Financeira.", "Aguarde..." )
+		If _lIntFIN
+			If Len(_aInfTit) > 0
+				//-- _aInfTit := {_cPrefixo,_cNum,_cTipoTIT,_cCliFor,_cLoja,dDataBase+10,_cPeriodo,_cSeg,_cSessao,_nValTit}
+				_cMensagem := "  * A T E N Ç Ã O:  Integração Financeira finalizada com sucesso! "+Chr(13)+Chr(10)
+				_cMensagem += " Gerado o Titulo: "+Chr(13)+Chr(10)
+				_cMensagem += " [Fornecedor : "+_aInfTit[4]+"/"+_aInfTit[5]+" - "+Alltrim(Posicione("SA2",1,FwxFilial("SA2")+_aInfTit[4]+_aInfTit[5],"A2_NOME"))+"]"+Chr(13)+Chr(10)
+				_cMensagem += " [Prefixo: "+Alltrim(_aInfTit[1])+"], [Numero: "+Alltrim(_aInfTit[2])+"], [No Valor de R$ "+Alltrim(TransForm(_aInfTit[10],PesqPict("SE2","E2_VALOR")))+"]"+Chr(13)+Chr(10)
+				_cMensagem += " [Vencimento :"+Dtoc(_aInfTit[6])+"]"+Chr(13)+Chr(10)
+				_cMensagem += " [Periodo :"+_aInfTit[7]+"], [Calendario: "+_aInfTit[8]+"], [Sessão: "+_aInfTit[9]+"] "+Chr(13)+Chr(10)
+				Aviso(FunName()+"/"+ProcName(),_cMensagem,{"OK"})
+			Endif 	//-- _lIntFIN
+		Endif	//-- _lIntFIN
+	Endif 	//-- _cIntegrFN == "S"
+Endif 	//-- _lFez
+_cTextLOG := "Resumo da Leitura do Retorno: "+CHR(13)+CHR(10) 
+_cTextLOG += "    Total de Registro: "+Alltrim(Transform(_nRegs		,"@E 999,999,999"))+CHR(13)+CHR(10) 
+_cTextLOG += "        Total Aceitos: "+Alltrim(Transform(_nRegOK	,"@E 999,999,999"))+CHR(13)+CHR(10) 
+_cTextLOG += "     Total Rejeitados: "+Alltrim(Transform(_nRecNOTOK	,"@E 999,999,999"))+CHR(13)+CHR(10) 
+fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+//-- ****************************************************************
+//--    Fecha o Arquivo de Log
+//-- ****************************************************************
+fClose(_nHdl_Log) 
+If Aviso(FunName()+"/"+ProcName(),"Leitura encerrada. Deseja imprimir o arquivo de Log ["+_cFileLog+"_LOG.txt] neste momento?", {"Sim","Não"}) == 1
+	u_SN069BX(_cPathRoot + cFilAnt + "_" + FunName()+"_"+ProcName() + _cFileLog +"_LOG.txt")
+Endif    
+RestArea(_aArea)
+Return Nil
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCkRtZP6>                                                 |
+|Rotina para verifica se as REMESSAS dos Convenio de uma sessao ja foram   |
+|Retornadas. Caso ainda exista convenio com remessa em ABERTO ou REMETIDA  |
+|marca a sessao [F=Retorno Parciais] ou entao [T=Retornos] ==> OK          |
+|(Apos Retorno de Confirmação de todos os Covenios da Sessao).             |
+|																		   |
+|@Author<Antonio Dantas>                                                   |
+|@since<30/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@Receive                                                                  |
+|<  _cPeriodo (c) - Codigo do Periodo                                      |
+|       _cSeg (c) - Codigo do Calendario                                   |
+|    _cSessao (c) - Codigo da Sessao                                       |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _lTudoOK (l) - (.t.) A gerou titulo no financeiro OK                  |
+|                   (.f.) Nao consegui Gerar o titulo no financeiro        |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fCkRtZP6(_cPeriodo,_cSeg,_cSessao)
+Local _cQuery		:= ""  
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+Local _lAllClose	:=  .t.     
+//+--------------------------------------------------------------------+
+//| Verifica na Tabela ZP7 - Matriculas A PAGAR, se ainda existem      |
+//| Matriculas em Codições de Remessa e ainda não foram Geradas.       |
+//+--------------------------------------------------------------------+
+_cQuery	:= ""
+_cQuery	+= "Select *From "+RetSqlName("ZP7")+" "+_ChrBreak
+_cQuery	+= "Where D_E_L_E_T_ <> '*' "+_ChrBreak
+_cQuery	+= "and ZP7_FILIAL = '"+FwxFilial("ZP7")+"' "+_ChrBreak
+_cQuery	+= "and ZP7_XPERIO = '"+_cPeriodo+"'  "+_ChrBreak
+_cQuery	+= "and ZP7_XSEG = '"+_cSeg+"' "+_ChrBreak
+_cQuery	+= "and ZP7_XSESSA = '"+_cSessao+"' "+_ChrBreak 
+_cQuery	+= "and ZP7_XSTATU in ('B','L') "+_ChrBreak
+If Select("TMPZP7")>0
+	TMPZP7->(DbCloseArea())
+Endif  
+//-- ********************************************************************
+//--    Retorna {TMP} Tabela temporaria com o resultado da Query 
+//-- ********************************************************************
+dbUseArea(.t.,"TOPCONN",TCGENQRY(,,_cQuery),"TMPZP7",.t.,.t.)
+dbSelectArea("TMPZP7")
+TMPZP7->(dbGoTop())
+//-- ****************************************************************
+//--    Nao encontrou nenhuma Remessa em Aberto
+//-- ****************************************************************
+If TMPZP7->(!Eof()) .and. TMPZP7->(!Bof())
+	_lAllClose := .f.
+Endif
+If Select("TMPZP6")>0
+	TMPZP6->(DbCloseArea())
+Endif    
+//+--------------------------------------------------------------------+
+//| ATENÇÃO: Se ainda existirem matriculas com condição de REMESSA     |
+//|          AINDA não Gerada, Significa que ainda podem ocorrer       |
+//|          Retorno a estas remessa. Portanto, não permite encerrar.  |
+//+--------------------------------------------------------------------+
+If _lAllClose
+	//+--------------------------------------------------------------------+
+	//| Verifica na tabela [ZP6 - Controle de Remessas] se para o Periodo+ |
+	//| Calendario + Sessao, existe Remessa em Aberto.                     |
+	//+--------------------------------------------------------------------+
+	_cQuery	:= ""
+	_cQuery	+= "Select *From "+RetSqlName("ZPA")+" "+_ChrBreak
+	_cQuery	+= "Where D_E_L_E_T_ <> '*' "+_ChrBreak
+	_cQuery	+= "and ZPA_FILIAL = '"+FwxFilial("ZPA")+"' "+_ChrBreak
+	_cQuery	+= "and ZPA_XPERID = '"+_cPeriodo+"'  "+_ChrBreak
+	_cQuery	+= "and ZPA_XSEG = '"+_cSeg+"' "+_ChrBreak
+	_cQuery	+= "and ZPA_XSESSA = '"+_cSessao+"' "+_ChrBreak 
+	_cQuery	+= "and ZPA_XSESSA = '"+_cSessao+"' "+_ChrBreak 
+	_cQuery	+= "and ZPA_XTIPO  = 'PG' "+_ChrBreak 
+	_cQuery	+= "and ZPA_XSTATU in (' ','R') "+_ChrBreak
+	If Select("TMPZPA")>0
+		TMPZP6->(DbCloseArea())
+	Endif  
+	//-- ********************************************************************
+	//--    Retorna {TMP} Tabela temporaria com o resultado da Query 
+	//-- ********************************************************************
+	dbUseArea(.t.,"TOPCONN",TCGENQRY(,,_cQuery),"TMPZPA",.t.,.t.)
+	dbSelectArea("TMPZPA")
+	TMPZPA->(dbGoTop())
+	//-- ****************************************************************
+	//--    Nao encontrou nenhuma Remessa em Aberto
+	//-- ****************************************************************
+	If TMPZPA->(!Eof()) .and. TMPZPA->(!Bof())
+		_lAllClose := .f.
+	Endif
+	If Select("TMPZPA")>0
+		TMPZPA->(DbCloseArea())
+	Endif    
+Endif 
+//-- ****************************************************************
+//--    Modifica o Status da Sessão para Remessa Enviada 
+//-- ****************************************************************
+dbSelectArea("ZP6")
+ZP6->(dbSetOrder(1))			//-- Codigo da Sessao
+ZP6->(dbGoto(_nRecZP6))  
+ZP6->(RecLock("ZP6",.f.))
+Replace ZP6->ZP6_XSTATU With Iif(_lAllClose,"T","F")   
+ZP6->(MsUnLock())
+ZP6->(dbCommit())
+Return .t.
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fTemFin>                                                    |
+| Verifica se ja foi gerado titulos no financeiro para as Matriculas da    |
+| Sessao Convenio                                                          |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<04/08/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@Receive                                                                  |
+|<   _cFilial (c) - Codigo da Filial                                       |
+|   _cPeriodo (c) - Codigo do Periodo                                      |
+|       _cSeg (c) - Codigo do Calendario "Sequencia"                       |
+|    _cSessao (c) - Codigo da Sessao de Pagamento                          |
+|   _cCodConv (c) - Codigo do Covenio                                      |
+|>                                                                         |
+|@return                                                                   |
+|<      _lTem (L) - [.t.] - Ja existe Titulo Gerado                        |
+|                   [.f.] - Nao existe Titulo Gerado                       |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/           
+User Function fTemFin(_cFilial,_cPeriodo,_cSeg,_cSessao,_cConvenio)
+Local _lTem    		:= .f.
+Local _cSql 		:= ""
+Local _cALias 		:= GetNextAlias()
+//+---------------------------------------------------------------------+
+//| Seleciona a Tabela de Titulos a Pagar para verificar se os titulos  |
+//| gerados, "caso de integração financeira ativa", foram excluidos.    |
+//| Considera quem TEM FINANCEIRO, se os titulos relativos a remenssa   |
+//| existerem na SE2 - A Pagar                                          |
+//+---------------------------------------------------------------------+
+dbSelectArea("SE2") 		//-- Titulos a Pagar 
+SE2->(dbSetOrder(1))		//-- Prefixo + No. Titulo + Parcela + Tipo + Fornecedor + Loja             
+_cSql := ""
+_cSql += " SELECT *FROM "+RetSQLName("ZP7")+" "+CRLF
+_cSql += " WHERE D_E_L_E_T_<>'*' AND ZP7_FILIAL = '"+_cFilial+"' "+CRLF
+_cSql += " AND ZP7_XPERIO='"+_cPeriodo+"' AND ZP7_XSEG='"+_cSeg+"' AND ZP7_XSESSA='"+_cSessao+"' "+CRLF
+_cSql += " AND ZP7_XCONVE='"+_cConvenio+"' "+CRLF
+_cSql += " AND ZP7_XTITPG = 'S' "+CRLF
+If Select(_cALias) > 0
+	(_cALias)->(dbCloseArea())
+Endif
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cSql)
+DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSql)), _cALias, .F., .F.)
+(_cALias)->(DbGotop())
+Do While (_cALias)->(!Eof())
+	//+---------------------------------------------------------------------+
+	//| Se esta BAIXADO. Senão "O titulo encontra-se EM ABERTO", CONSIDERA  |
+	//| EXISTENCIA DO TITULO!                                               |
+	//| Verifica se a baixa e por CANCELAMNETO; Se foi "BAIXADO POR         |
+	//| CANCELAMENTO", esta OK. Senão Conderar a EXISTENCIA do Titulo!!     |
+	//+---------------------------------------------------------------------+
+	If (SE2->(dbSeek(RTrim((_cALias)->ZP7_XCHTPG))))		//-- Filial + Prefixo + No. Titulo + Parcela + Tipo + Fornecedor + Loja             
+		_lTem := .t.
+		If !Empty(SE2->E2_BAIXA)
+			DbSelectArea("SE5")
+			SE5->(DBSetOrder(7))		//-- Prefixo + Titulo + Parcela + E5_TIPO+Cli/For + Loja + Sequencia       
+			If SE5->(dbSeek(FwxFilial("SE5")+SE2->E2_PREFIXO+SE2->E2_NUM+SE2->E2_PARCELA+SE2->E2_TIPO+SE2->E2_FORNECE+SE2->E2_LOJA))
+				If SE5->E5_MOTBX == "CAN"
+					_lTem := .f.
+				Endif 
+	        Endif 
+		Endif 
+	Endif 
+	(_cALias)->(dbSkip())
+Enddo 
+(_cAlias)->( dbCloseArea() )
+Return _lTem 

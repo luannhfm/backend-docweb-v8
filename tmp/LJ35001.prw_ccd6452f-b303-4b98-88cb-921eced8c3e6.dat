@@ -1,0 +1,120 @@
+#INCLUDE 'PROTHEUS.CH'
+
+#DEFINE CRLF CHR(10) + CHR(13)
+
+/*/{Protheus.doc} LJ35001
+@description ponto de entrada apos o preenchimento dos valores de fechamento do caixa. 
+@type  Function
+@author Alan Teles de Oliveira
+@since 03/01/2018
+@version 11.8
+@return _lRet, logico, se valores corresponderem ao valor apurado retorna verdadeiro
+@obs utilizado para confrontar o valor digitado pelo operador com o valor apurado
+/*/
+User Function LJ35001()
+    
+    Local cMsg      := ''
+    Local cAliTMP   := GetNextAlias()
+    Local nVlApu    := 0
+    Local nVTroco   := 0
+    Local nX        := 0
+    Local nOption   := 0
+    Local aButtons  := {'Autorizar', 'Fechar'}
+
+    If cFilAnt = '02MT0012'
+    
+	    Public _lRet 	:= .T.
+	    Public _nVSangr := 0
+	    Public _nVCC    := 0
+	    Public _nVCD    := 0
+    
+		If Select(cAliTMP) > 0
+			(cAliTMP)->(DbCloseArea())
+		EndIf
+	
+		BeginSql Alias cAliTMP
+	
+	        SELECT 
+	            SUM(
+	                CASE 
+	                    WHEN SE5.E5_NATUREZ = 'TROCO'
+	                    THEN SE5.E5_VALOR 
+	                    WHEN SE5.E5_NATUREZ = 'SANGRIA'
+	                    THEN SE5.E5_VALOR * -1 
+	                END) AS TROCO
+	        FROM %Table:SE5% SE5
+	        WHERE 
+	            SE5.E5_FILIAL  = %Exp:xFilial('SE5')% AND	
+	            SE5.E5_DATA    = %Exp:DtoS(dDataBase)% AND
+	            SE5.E5_BANCO   = %Exp:cCaixa% AND
+	            SE5.E5_NATUREZ IN ('TROCO', 'SANGRIA') AND
+	            SE5.%NotDel%
+	
+	    EndSQL
+	
+	    If .not. (cAliTMP)->(Eof())
+	
+	        nVTroco := (cAliTMP)->TROCO
+	
+	    EndIf
+	
+		If Select(cAliTMP) > 0
+			(cAliTMP)->(DbCloseArea())
+		EndIf
+	
+	    For nX := 1 To Len(aCols)
+	
+	        nVlApu := aCols[nX, 4]
+	
+	        If aCols[nX, 1] == 'R$'
+	            nVlApu += nVTroco
+	            _nVSangr := nVlApu
+	        ElseIf aCols[nX, 1] == 'CC'
+	
+	            If SA6->A6_XDTULFC == dDataBase
+	                nVlApu -= SA6->A6_XSCCUFC
+	            EndIf
+	
+	            _nVCC := nVlApu
+	
+	        ElseIf aCols[nX, 1] == 'CD'
+	
+	            If SA6->A6_XDTULFC == dDataBase
+	                nVlApu -= SA6->A6_XSCDUFC
+	            EndIf
+	
+	            _nVCD := nVlApu
+	
+	        EndIf
+	
+	        If aCols[nX, 3] != nVlApu
+	            _lRet := .F.
+	            cMsg += Space(5) + aCols[nX, 1] + '-' + aCols[nX, 2] + CRLF
+	        EndIf
+	 
+	    Next
+	    
+	    If _lRet
+	
+	        If SA6->A6_XDTULFC == dDataBase
+	            _nVCC += SA6->A6_XSCCUFC
+	            _nVCD += SA6->A6_XSCDUFC
+	        EndIf
+	
+	        oWizard:NPanel += 3
+	    
+	    Else
+	        
+	        nOption := Aviso('Atenção - LJ35001', 'Existe divergência entre os valores digitados com os valores apurados para as seguintes formas de pagamento:' + CRLF + CRLF + cMsg + CRLF + CRLF + 'Por gentileza verificar.', aButtons, 3)
+	        
+	        If nOption = 1
+	            _lRet := u_SFVUSERA('SF_GRSUPER', '001016', 'Abertura de caixa sem troco', 'G')
+	        EndIf
+	
+	    EndIf
+    
+    Else
+		_lRet := .T.
+	EndIf
+    
+Return _lRet

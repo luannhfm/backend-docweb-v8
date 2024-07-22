@@ -1,0 +1,220 @@
+#INCLUDE "PROTHEUS.CH" 
+
+User Function PonaPo4()		
+														
+Local __aMarcacoes  := aClone( ParamIxb[1] )				  		
+Local __aTabCalend  := aClone( ParamIxb[2] )				  		
+Local __aCodigos    := aClone( ParamIxb[3] )				  	
+Local __aEvesIds    := aClone( ParamIxb[4] )				  	
+Local __aResult	  	:= aClone( aEventos )					
+Local nTotATR		:= 0
+Local dDataAux		:= CTOD('//')
+Local cCusto 	  	:= SRA->RA_CC
+Local lAbonado		:= .F.
+Local dDataGer		:= CTOD('//')
+//Local cFun			:= SRA->RA_CODFUNC
+Local __cTurno		:= SRA->RA_TNOTRAB
+Local __cSemana		:= SRA->RA_SEQTURN
+Local __nQtdDia		:= 0
+Local nQtdAux		:= 0
+Local nX := 0
+
+Private aEveTol		:= {}
+
+
+
+//MsgAlert("Total Eventos aEventos: "+STR(len(aEventos))+" - "+SRA->RA_FILIAL+" - "+SRA->RA_MAT)
+
+//nTotATR := SumTolerancia()
+
+//SumTolerancia()
+
+For nX := 1 to LEN(__aResult)
+	
+	If (dDataAux <> __aResult[nX][1] .AND. dDataAux <> ctod('//') .AND. __nQtdDia > 0)	
+	
+		fGeraRes(__aResult, dDataAux,;
+							__nQtdDia,;
+							"120",	;
+							cCusto,	;
+							,		;
+							.F.,	;
+							,		;
+							,		;
+							"",		;
+							.T.)
+		__aResult[nX][17] := __cTurno
+		__aResult[nX][18] := __cSemana
+		
+		__nQtdDia := 0
+			
+	EndIf
+	
+	dDataAux := __aResult[nX][1] //Data do apontamento
+	
+	If __aResult[nX][2] $ ('011,012,013,014,019')
+		
+		//nQtdAux 	:= 0
+		lAbonado 	:= .F.
+		
+		//-- CONTROLA SE O EVENTO 120 FOI ABONADO E EXISTE NO ARRAY
+		nPos := Ascan( aEveTol, {|x| x[1] == DTOS(__aResult[nX][1]) } )
+		If 	nPos > 0
+			lAbonado := IIF(AllTrim(aEveTol[nPos][3]) = '',.F.,.T.)
+		EndIf
+	
+		If (nTotATR < 1.2 .AND. __nQtdDia < 0.1)
+			
+			nQtdAux 	:= __TimeSum(nTotAtr, __aResult[nX][3])
+			
+			Do Case
+				Case nQtdAux >= 1.2 	//Estrapolou limite mensal
+					nQtdAux := Abs(__TimeSub(1.2, nTotATR) - __nQtdDia)	// ABS Inserido para tratamento de casos em que o resultado é negativo.
+					nQtdAux := Abs(__TimeSub(nQtdAux,__nQtdDia))
+					If nQtdAux > 0.1
+						nQtdAux := 0.1
+					EndIf
+					nTotATR := __TimeSum(nTotAtr, nQtdAux)		
+					__aResult[nX][3]	:= Abs(__TimeSub(__aResult[nX][3], nQtdAux))
+				Case __aResult[nX][3] > 0.1	//Estrapolou limite diario
+					nQtdAux := 0.1
+					nQtdAux	:= Abs(__TimeSub(nQtdAux,__nQtdDia))	// ABS Inserido para tratamento de casos em que o resultado é negativo.
+					nTotATR := __TimeSum(nTotAtr, nQtdAux)
+					__aResult[nX][3]	:= Abs(__TimeSub(__aResult[nX][3], nQtdAux))
+				Case __aResult[nX][3] <= 0.1 //Não estrapolou o limite diário
+					nQtdAux := __aResult[nX][3]
+					nQtdAux	:= Abs(__TimeSub(nQtdAux,__nQtdDia)) // ABS Inserido para tratamento de casos em que o resultado é negativo.
+					nTotATR := __TimeSum(nTotAtr, nQtdAux)
+					__aResult[nX][3]	:= 0
+			EndCase
+			
+			//Resta a quantidade abonada, do evento atual.
+			//__aResult[nX][3]	:= Abs(__TimeSub(__aResult[nX][3], nQtdAux))
+			__nQtdDia			:= IIF(__TimeSum(__nQtdDia,nQtdAux) < 0.1,__TimeSum(__nQtdDia,nQtdAux),0.1)//__TimeSum(__nQtdDia,nQtdAux) --William 14/10/15
+			
+			If lAbonado
+				nTotATR := Abs(__TimeSub(nTotAtr, nQtdAux))
+			EndIf	
+			
+			
+		EndIf
+	
+	EndIf
+	
+Next nX
+
+	//QUANDO FOR A ÚLTIMA EXECUÇÃO DO WHILE E O VALOR
+	//DA ÚLTIMA APURAÇÃO DO EVENTO TER GERADO QUANTIDADE A SER GRAVADA
+	//NO EVENTO 120.
+	IF __nQtdDia > 0
+		
+		fGeraRes(__aResult, dDataAux,;
+						   __nQtdDia,;
+							"120",	;
+							cCusto,	;
+							,		;
+							.F.,	;
+							,		;
+							,		;
+							"",		;
+							.T.)
+		__aResult[nX][17] := __cTurno
+		__aResult[nX][18] := __cSemana
+			
+		__nQtdDia := 0
+				
+	EndIf	
+
+aEventos := aClone(__aResult)
+
+Return (NIL)
+         
+
+/*fGeraRes( __aResult ,; //01 -> Array com os Resultados do Dia ³
+³ dDtGer ,; //02 -> Data da Geracao ³
+³ nHoras ,; //03 -> Numero de Horas Resultantes ³
+³ cEvento ,; //04 -> Codigo do Evento           ³
+³ cCusto ,; //05 -> Centro de Custo a ser Gravado ³
+³ cTpMarc ,; //06 -> Tipo de Marcacao ³
+³ lSoma ,; //07 -> True para Acumular as Horas ³
+³ cPeriodo ,; //08 -> Periodo de Apuracao ³
+³ nTole ,; //09 -> Tolerancia ³
+³ cArred ,; //10 -> Tipo de Arredondamento a Ser Utilizado ³
+³ lSubstitui ,; //11 -> Substitui a(s) Hora(s) Existente(s) ³
+³ cFuncao ;  //12 -> Funcao ³
+*/
+
+                                      
+//----------------------------------------------------------------
+//busca exceções
+//-------------------------------------------------------------------
+Static Function Excecoes(cTurno,dData)
+
+Local cAlias1 	:= GetNextAlias()
+       
+cQuery := "SELECT P2_DATA,P2_TURNO,P2_ENTRA1,P2_SAIDA1 FROM "+RetSqlName("SP2")+" "
+cQuery += "WHERE P2_DATA = "+dDATA+" AND P2_TURNO = '"+cTurno+"'"
+      
+cQuery := ChangeQuery(cQuery)
+dbUseArea(.T.,"TOPCONN",TcGenQry(, ,cQuery),cAlias1,.T.,.T.)  
+  
+ 
+While (cAlias1)->(!eof())     
+	nHI := (cAlias1)->P2_ENTRA1
+	nHS := (cAlias1)->P2_SAIDA1
+	(cAlias1)->(DbSkip())
+EndDo
+
+(cAlias1)->(dbclosearea())   
+
+Return      
+
+
+//---------------------------------
+//Totaliza a tolerância já apurada
+//---------------------------------
+
+Static Function SumTolerancia()
+
+Local nRet 			:= 0
+Local aArea 		:= GetArea()
+Local cAlias2 		:= GetNextAlias()
+
+cQuery	:= "SELECT PC_DATA D1,PC_QUANTC QTD,PC_ABONO ABONO FROM "+RetSqlName("SPC")
+cQuery	+= "Where D_E_L_E_T_ <> '*' "
+cQuery	+= "AND PC_PD = '120' "
+cQuery	+= "AND PC_MAT = '"+SRA->RA_MAT+"' "
+cQuery	+= "AND PC_ABONO <> '' "
+cQuery	+= "ORDER BY PC_DATA"
+
+cQuery := ChangeQuery(cQuery)
+dbUseArea(.T.,"TOPCONN",TcGenQry(, ,cQuery),cAlias2,.T.,.T.)  
+
+While (cAlias2)->(!Eof())
+
+	AADD(aEveTol,{(cAlias2)->D1,(cAlias2)->QTD,(cAlias2)->ABONO})
+	IF AllTrim((cAlias2)->ABONO) = ''
+		nRet := __TimeSum((cAlias2)->QTD,nRet)
+	EndIf
+	(cAlias2)->(DbSkip())
+EndDo
+
+(cAlias2)->(DbCloseArea())
+/*
+//APAGA OS EVENTOS PARA CRIAR NOVAMENTE - EVENTOS 120
+cQuery	:= "DELETE FROM "+RetSqlName("SPC")+" "
+cQuery	+= "Where D_E_L_E_T_ <> '*' "
+cQuery	+= "AND PC_PD = '120' "
+cQuery	+= "AND PC_MAT = '"+SRA->RA_MAT+"'"
+
+IF TCSQLEXEC(cQuery) < 0 
+  MSGSTOP("tcsqlerror()" + tcsqlerror())
+else
+ tcsqlexec("commit")
+EndIf  
+*/ 
+RestArea(aArea)
+
+Return nRet
+  
+                                                                                                           	

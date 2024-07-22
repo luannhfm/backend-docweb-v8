@@ -1,0 +1,298 @@
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE 'IDATOOLS.CH'
+
+#DEFINE CR Chr(13) + Chr(10)
+
+/*/{Protheus.doc} SF06A63X
+@description  Rotina automatica FINA070 - Baixa Contas Receber
+
+@author Diego Donatti Moura
+@since 21/08/2020
+@version 12.1.17
+
+/*/
+//User Function SF06A63X()
+//PREPARE ENVIRONMENT EMPRESA '01' FILIAL '02MT0005'
+//SF06A63X()
+//Return
+User Function SF06A63X()
+
+	Local cAlias    := GetNextAlias()
+	Local aBaixa    := {}
+	Local aMovPag   := {}
+	Local aMovRec   := {}
+	Local cQuery    := ""
+	Local cMotBx    := "Motivo da baixa por liquidacao automatica APIBB"
+	Local cCusto    := ""
+	Local nValDif   := 0
+	Local cFilOld   := cFilAnt
+	Local cNatureOr := GetNewPar('MV_XNATORI'  	, '1000000000')
+	Local cNatureDe := GetNewPar('MV_XNATDES'  	, '2000000000')
+	Local cFilCtaDR := GetNewPar('MV_XCTADR'  	, '02MT0001')
+	Local cBanco    := PadR(GetNewPar('MV_XBANCO'  	, '001') 	,TamSX3('A6_COD')[1])
+	Local cAgencia  := PadR(GetNewPar('MV_XAGENC'	, '4205')	,TamSX3('A6_AGENCIA')[1])
+	Local cConta    := PadR(GetNewPar('MV_XCONTA'  	, '123873')	,TamSX3('A6_NUMCON')[1])
+	Local cUo       := GetNewPar('MV_XNUNOU'  	, '9999999999')
+	Local cCr       := GetNewPar('MV_XNUMCR'  	, '209999999999999')
+	Local cBenefici := SubStr(FWFilialName(), 1, At(" ", FWFilialName())) + " DEPART RE"
+	Local cHist     := "Transferencia entre filiais automatica"
+	Local cNumerDoc := StrTran(DtoC(Date()),"/","")+Substr(StrTran(Time(),":",""),1,4)
+	Local aLogErro  := {}
+	Local cLogErro  := ''
+	Local nX        := 0
+	Local dDatabkp  := dDataBase
+
+	Private lMsErroAuto    := .F.
+	Private lAutoErrNoFile := .T.
+
+	cQuery := " SELECT EA_FILIAL,"
+	cQuery += "        EA_PREFIXO,"
+	cQuery += "        EA_NUM,"
+	cQuery += "        EA_PARCELA,"
+	cQuery += "        EA_TIPO,"
+	cQuery += "        EA_PORTADO,"
+	cQuery += "        EA_AGEDEP,"
+	cQuery += "        EA_NUMCON,"
+	cQuery += "        E1_VALOR,"
+	cQuery += "        EA_XDTMOV,"
+	cQuery += "        EA_XVLRPGA,"
+	cQuery += "        EA_XSTATUS,"
+	cQuery += "        EA_XDESCON,"
+	cQuery += "        EA_XJURMOR,"
+	cQuery += "        EA_XMULTA,"
+	cQuery += "        EA.R_E_C_N_O_ AS EA_RECNO,"
+	cQuery += "        E1.R_E_C_N_O_ AS E1_RECNO"
+	cQuery += "   FROM " + RetSqlName("SEA") + " EA "
+	cQuery += " INNER JOIN " + RetSqlName("SE1") + " E1 ON E1.E1_PREFIXO = EA.EA_PREFIXO "
+	cQuery += "                                        AND E1.E1_NUM     = EA.EA_NUM "
+	cQuery += "                                        AND E1.E1_PARCELA = EA.EA_PARCELA "
+	cQuery += "                                        AND E1.E1_TIPO    = EA.EA_TIPO "
+	cQuery += "                                        AND E1.E1_PORTADO = EA.EA_PORTADO "
+	cQuery += "                                        AND E1.E1_SALDO   > 0 "
+	cQuery += "                                        AND E1.E1_FILIAL  = EA.EA_FILIAL "
+	cQuery += "                                        AND E1.D_E_L_E_T_ = ' ' "
+	cQuery += "  WHERE EA.EA_XSTATUS = '04' "
+	cQuery += "    AND EA.EA_FILIAL  = '" + xFilial("SEA") + "' "
+	cQuery += "    AND EA.D_E_L_E_T_ = ' ' "
+	cQuery += "  ORDER BY " + SqlOrder(SEA->(IndexKey()))
+
+	cQuery := ChangeQuery(cQuery)
+
+	If Select(cAlias) > 0
+		(cAlias)->(DbCloseArea())
+	EndIf
+
+	DbUseArea(.T., "TOPCONN", TCGenQry(,,cQuery),cAlias, .F., .T.)
+	TCSetField( cAlias, "EA_XDTMOV", TamSX3("EA_XDTMOV")[3], TamSX3("EA_XDTMOV")[1],TamSX3("EA_XDTMOV")[2] )
+	TCSetField( cAlias, "EA_XVLRPGA", TamSX3("EA_XVLRPGA")[3], TamSX3("EA_XVLRPGA")[1], TamSX3("EA_XVLRPGA")[2])
+
+	While (cAlias)->(!Eof())
+
+		//posicionamento para identificar titulos com multiplas natureza
+		DbSelectArea("SE1")
+		DBGoTo((cAlias)->E1_RECNO)
+
+		If .not. SE1->E1_SALDO > 0
+			(cAlias)->(DbSkip())
+			Loop
+		EndIf
+
+		Begin Transaction
+
+			lMsErroAuto    := .F.
+			lAutoErrNoFile := .T.
+
+			//Setando Variavel
+			aBaixa := {}
+			nValDif := 0
+			//Utilizado para fazer a movimentacao igual ao cnab
+			dDatabase := (cAlias)->EA_XDTMOV
+			//Montando Array
+			aAdd(aBaixa, {"E1_FILIAL"   , (cAlias)->EA_FILIAL   , Nil})
+			aAdd(aBaixa, {"E1_PREFIXO"  , (cAlias)->EA_PREFIXO  , Nil})
+			aAdd(aBaixa, {"E1_NUM"      , (cAlias)->EA_NUM      , Nil})
+			aAdd(aBaixa, {"E1_PARCELA"  , (cAlias)->EA_PARCELA  , Nil})
+			aAdd(aBaixa, {"E1_TIPO"     , (cAlias)->EA_TIPO	    , Nil})
+			aAdd(aBaixa, {"AUTMOTBX"    , "NOR"			        , Nil})
+			aAdd(aBaixa, {"AUTDTBAIXA"  , dDatabase             , Nil})
+			aAdd(aBaixa, {"AUTDTCREDITO", DataValida(dDatabase+1,.t.)  , Nil})
+			aAdd(aBaixa, {"AUTHIST"     , cMotBx                , Nil})
+			nValDif := (cAlias)->EA_XVLRPGA + (cAlias)->EA_XDESCON - (cAlias)->E1_VALOR - (cAlias)->EA_XJURMOR - (calias)->EA_XMULTA
+			aAdd(aBaixa, {"AUTVALREC"   ,(cAlias)->E1_VALOR + nValDif - (cAlias)->EA_XDESCON + (cAlias)->EA_XJURMOR + (calias)->EA_XMULTA  , Nil,.T.})
+			aAdd(aBaixa, {"AUTDESCONT"  ,(cAlias)->EA_XDESCON   , Nil,.T.})
+
+			nValJurMulta := (calias)->EA_XJURMOR + (calias)->EA_XMULTA
+			IF nValJurMulta == 0
+				aAdd(aBaixa, {"AUTMULTA"    , nValDif               , Nil,.T.})
+				aAdd(aBaixa, {"AUTJUROS"    , 0                     , Nil,.T.})
+			Else
+				nValMulta := round(SE1->E1_SALDO - (SE1->E1_SALDO * 0.98),2)
+				IF nValMulta < nValJurMulta
+					nValJur := nValJurMulta - nValMulta
+					aAdd(aBaixa, {"AUTMULTA", nValMulta , Nil, .T.})
+					aAdd(aBaixa, {"AUTJUROS", nValJur               , Nil, .T.})
+				Else
+					aAdd(aBaixa, {"AUTMULTA", nValJurMulta, Nil, .T.})
+					aAdd(aBaixa, {"AUTJUROS", 0                     , Nil, .T.})
+				EndIf
+			EndIf
+			aAdd(aBaixa, {"AUTACRESC"   , 0                     , Nil})
+			aAdd(aBaixa, {"AUTDECRESC"  , 0                     , Nil})
+			aAdd(aBaixa, {"AUTBANCO"	, (cAlias)->EA_PORTADO  , Nil, .T.})
+			aAdd(aBaixa, {"AUTAGENCIA"  , (cAlias)->EA_AGEDEP   , Nil, .T.})
+			aAdd(aBaixa, {"AUTCONTA"	, (cAlias)->EA_NUMCON   , Nil, .T.})
+
+			MSExecAuto({|x,y,b,a,c,d,e| Fina070(x,y,b,a,c,d,e)}, aBaixa, 3,,,,,IIF(SE1->E1_MULTNAT== "1",.T.,.F.) ,)
+
+			If lMsErroAuto
+
+				aLogErro := GetAutoGRLog()
+
+				cLogErro += 'Filial: ' + (cAlias)->EA_FILIAL + CR
+				cLogErro += 'Prefixo: ' + (cAlias)->EA_PREFIXO + CR
+				cLogErro += 'Titulo: ' + (cAlias)->EA_NUM + CR
+				cLogErro += 'Parcela: ' + (cAlias)->EA_PARCELA + CR
+				cLogErro += 'Tipo: ' + (cAlias)->EA_TIPO + CR
+
+				For nX := 1 to Len(aLogErro)
+					cLogErro += aLogErro[nX] + CR
+				Next
+
+				GravLog(cLogErro, 'SF06A63X', 'BAIXA_CONTAS_RECEBER_INCLUIR', !IsBlind())
+
+				DisarmTransaction()
+
+			ElseIf cFilAnt != cFilCtaDR
+
+				//Rastreabilidade do Titulo
+				cNumerDoc :=  (cAlias)->EA_FILIAL + (cAlias)->EA_PREFIXO + (cAlias)->EA_NUM + (cAlias)->EA_PARCELA
+				DbSelectArea("SEA")
+				DBGoTo((cAlias)->EA_RECNO)
+				If RecLock("SEA", .F.)
+					SEA->EA_XSTATUS := "05"
+					SEA->EA_XMENSG  := "Titulo Baixado"
+					SEA->(MsUnlock())
+				EndIf
+
+				//Localizando Centro de custo
+				DbSelectArea("SA6")
+				SA6->(DbSetOrder(1))
+				If SA6->(DbSeek(xFilial("SA6") + cBanco + cAgencia + cConta))
+					cCusto := SA6->A6_CC
+				EndIf
+
+				// Array com dados da baixa a pagar
+				aMovPag := {}
+				Aadd(aMovPag, {"E5_DATA"   , DataValida(dDatabase+1,.t.), Nil})
+				Aadd(aMovPag, {"E5_DTDISPO", DataValida(dDatabase+1,.t.), Nil})
+				Aadd(aMovPag, {"E5_MOEDA"  , "M1"                 , Nil})
+				Aadd(aMovPag, {"E5_VALOR"  , (cAlias)->EA_XVLRPGA , Nil})
+				Aadd(aMovPag, {"E5_NATUREZ", cNatureOr            , Nil})
+				Aadd(aMovPag, {"E5_BANCO"  , cBanco               , Nil})
+				Aadd(aMovPag, {"E5_AGENCIA", cAgencia             , Nil})
+				Aadd(aMovPag, {"E5_CONTA"  , cConta               , Nil})
+				Aadd(aMovPag, {"E5_ITEMD"  , cCr                  , Nil})
+				Aadd(aMovPag, {"E5_BENEF"  , cBenefici            , Nil})
+				Aadd(aMovPag, {"E5_HISTOR" , cHist                , Nil})
+				Aadd(aMovPag, {"E5_DOCUMEN", cNumerDoc            , Nil})
+				Aadd(aMovPag, {"E5_CCD"    , cCusto               , Nil})
+
+				MSExecAuto({|x,y,z| FinA100(x,y,z)}, 0, aMovPag, 3)
+
+				If lMsErroAuto
+
+					aLogErro := GetAutoGRLog()
+
+					cLogErro += 'Filial: ' + (cAlias)->EA_FILIAL + CR
+					cLogErro += 'Prefixo: ' + (cAlias)->EA_PREFIXO + CR
+					cLogErro += 'Titulo: ' + (cAlias)->EA_NUM + CR
+					cLogErro += 'Parcela: ' + (cAlias)->EA_PARCELA + CR
+					cLogErro += 'Tipo: ' + (cAlias)->EA_TIPO + CR
+
+					For nX := 1 to Len(aLogErro)
+						cLogErro += aLogErro[nX] + CR
+					Next
+
+					GravLog(cLogErro, 'SF06A63X', 'MOVIMENTO_BANCARIO_PAGAR', !IsBlind())
+
+					DisarmTransaction()
+
+				Else
+
+					//Setando Filial de Destino
+					cFilAnt := cFilCtaDR
+					//cCusto  := ""
+
+					//Localizando Centro de custo
+					//DbSelectArea("SA6")
+					//SA6->(DbSetOrder(1))
+					//If SA6->(DbSeek(xFilial("SA6") + cBanco + cAgencia + cConta))
+					//    cCusto := SA6->A6_CC
+					//EndIf
+
+					// Array com dados da baixa a receber
+					aMovRec := {}
+					Aadd(aMovRec, {"E5_DATA"    , DataValida(dDatabase+1,.t.), Nil})
+					Aadd(aMovRec, {"E5_DTDISPO" , DataValida(dDatabase+1,.t.), Nil})
+					Aadd(aMovRec, {"E5_MOEDA"   , "M1"                 , Nil})
+					Aadd(aMovRec, {"E5_VALOR"   , (cAlias)->EA_XVLRPGA , Nil})
+					Aadd(aMovRec, {"E5_NATUREZ" , cNatureDe            , Nil})
+					Aadd(aMovRec, {"E5_BANCO"   , cBanco               , Nil})
+					Aadd(aMovRec, {"E5_AGENCIA" , cAgencia             , Nil})
+					Aadd(aMovRec, {"E5_CONTA"   , cConta               , Nil})
+					//Aadd(aMovRec, {"E5_CCC"     , cUo                  , Nil})
+					Aadd(aMovRec, {"E5_ITEMC"   , cCr                  , Nil})
+					Aadd(aMovRec, {"E5_BENEF"   , cBenefici            , Nil})
+					Aadd(aMovRec, {"E5_HISTOR"  , cHist                , Nil})
+					Aadd(aMovRec, {"E5_DOCUMEN" , cNumerDoc            , Nil})
+					Aadd(aMovRec, {"E5_CCC"     , cCusto               , Nil})
+
+					MSExecAuto({|x,y,z| FinA100(x,y,z)}, 0, aMovRec, 4)
+
+					If lMsErroAuto
+
+						aLogErro := GetAutoGRLog()
+
+						cLogErro += 'Filial: ' + (cAlias)->EA_FILIAL + CR
+						cLogErro += 'Prefixo: ' + (cAlias)->EA_PREFIXO + CR
+						cLogErro += 'Titulo: ' + (cAlias)->EA_NUM + CR
+						cLogErro += 'Parcela: ' + (cAlias)->EA_PARCELA + CR
+						cLogErro += 'Tipo: ' + (cAlias)->EA_TIPO + CR
+
+						For nX := 1 to Len(aLogErro)
+							cLogErro += aLogErro[nX] + CR
+						Next
+
+						GravLog(cLogErro, 'SF06A63X', 'MOVIMENTO_BANCARIO_RECEBER', !IsBlind())
+
+						DisarmTransaction()
+					EndIf
+
+				EndIf
+
+			Else
+
+				//Rastreabilidade do Titulo
+				cNumerDoc :=  (cAlias)->EA_FILIAL + (cAlias)->EA_PREFIXO + (cAlias)->EA_NUM + (cAlias)->EA_PARCELA
+				DbSelectArea("SEA")
+				DBGoTo((cAlias)->EA_RECNO)
+				If RecLock("SEA", .F.)
+					SEA->EA_XSTATUS := "05"
+					SEA->EA_XMENSG  := "Titulo Baixado"
+					SEA->(MsUnlock())
+				EndIf
+
+			EndIf
+
+		End Transaction
+
+		//Voltando Filial Origem
+		cFilant := cFilOld
+		dDatabase := dDatabkp
+		(cAlias)->(dbSkip())
+	EndDo
+
+	//Voltando Filial Origem
+	cFilant := cFilOld
+	dDatabase := dDatabkp
+Return

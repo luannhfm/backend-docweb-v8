@@ -28,16 +28,16 @@ export async function getKeyColumnIndices(prefix: string) {
     }
   }
   
-  export async function createCompositeKey(header: { [x: string]: string; }, columns: { [x: string]: string; }, keyColumnIndices: any[]) {
-    // Gera uma chave composta combinando nome da coluna e valor
+  export async function createCompositeKey(header: string[], columns: string[], keyColumnIndices: number[]): Promise<string> {
     const keyParts = keyColumnIndices.map(index => {
-        const columnName = header[index] || `Coluna ${index + 1}`; // Usa o nome da coluna do cabeçalho ou um padrão
-        const columnValue = columns[index].trim();
-        if (columnValue) { // Verifica se o valor não está vazio
-            return `${columnName}:${columnValue}`; // Formato NomeColuna:Valor
-        }
-        return null; // Retorna null se o valor estiver vazio
-    }).filter(part => part !== null); // Filtra partes nulas (onde o valor da coluna estava vazio)
+      const columnName = header[index] || `Coluna ${index + 1}`;
+      const columnValue = columns[index].trim();
+      if (columnValue) {
+        return `${columnName}:${columnValue}`;
+      }
+      return null;
+    }).filter(part => part !== null);
   
-    return keyParts.join(' | '); // Separa múltiplas colunas válidas com '|'
+    return keyParts.join(' | ');
   }
+    

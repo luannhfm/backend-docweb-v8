@@ -1,0 +1,393 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"  
+#INCLUDE "PARMTYPE.CH"     
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"    
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <SN7304X>
+   Browser MVC para tratamento das LIBERACOES/REPROVACOES dos Pedidos de 
+   Viabilidade [ZCH-Cadastros de Liberacoes de Viabilidade]
+
+@author Antonio Dantas 
+@since 19/10/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/                                                                       
+User Function SN7304X()
+Local _oBrowse 		:= FWMBrowse():New()
+Local _cFilderD		:= ""
+Local _cMsgDesc		:= ""
+//Salvando as variáveis quando vindo de outra rotina.
+Local _aSlvRot		:= IIF(Type("aRotina")   != "U", aRotina	, {} )
+Local _cSlvCad		:= IIF(Type("cCadastro") != "U"	, cCadastro	, "" )
+Private aRotina	:= MenuDef() 
+//-- 
+DbSelectArea("ZCH")                                                                                  	
+DbSetOrder(1)
+ZCH->(DbGoTop())
+//-- Define o Alias
+_oBrowse:SetAlias("ZCH")
+//-- Descricao
+_oBrowse:SetDescription("Liberação de Viabilidade")
+//-- Define a Legenda conforme o STATUS
+_oBrowse:AddLegend("ZCH_TOPASS == '0'"	,"BR_LARANJA"	,"Em Aprovação" ) 
+_oBrowse:AddLegend("ZCH_TOPASS == '1'"	,"ENABLE"		,"Aprovada" 	)
+_oBrowse:AddLegend("ZCH_TOPASS == '2'"	,"DISABLE"		,"Rejeitada" 	)
+//-- Implementa FILTRO nas Viabilidade pela oportunidade posicionada.
+_cFilderD	:= "ZCH_APROV = '"+__cUserID+"'"
+_oBrowse:SetFilterDefault(_cFilderD)
+//-- Ativa o browse
+_oBrowse:Activate()
+aRotina		:= aClone(_aSlvRot)
+cCadastro	:= _cSlvCad
+Return Nil
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <MenuDef>
+   Responsavel pela criacao dos botoes, alterar, incluir, excluir e demais. 
+
+@author Antonio Dantas 
+@since 19/10/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/                                                                       
+Static Function MenuDef()
+Local _aRotina 	:= {}
+ADD OPTION _aRotina TITLE "Pesquisar"	ACTION "PESQBRW"       	OPERATION 1 ACCESS 0
+ADD OPTION _aRotina TITLE "Visualizar"	ACTION "VIEWDEF.SN7304X"	OPERATION 2 ACCESS 0
+ADD OPTION _aRotina TITLE "Lib./Rej."	ACTION "VIEWDEF.SN7304X" 	OPERATION 4 ACCESS 0
+ADD OPTION _aRotina TITLE "Imprimir"	ACTION "VIEWDEF.SN7304X" 	OPERATION 8 ACCESS 0
+Return _aRotina
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <ModelDef>
+   Contem  a  construcao e a definicao do Model, lembrando que o Modelo de
+   dados (Model) contem as regras de negocio.
+
+@author Antonio Dantas 
+@since 19/10/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function ModelDef()
+Local _oModel	:= Nil 
+Local _oStZCH	:= FWFormStruct(1,"ZCH")
+//-- Objeto de modelo de dados
+_oModel := MPFormModel():New("SN7304XX",/*PreValid*/,/*Valid*/, {|_oModel| fGravar(_oModel)} , /*Cancel*/)
+//-- A  estrutura  do  modelo  de  dados  (Model) 
+_oModel:AddFields("ZCHMASTER",/*cOwner*/,_oStZCH)
+//-- Chave Primaria
+_oModel:SetPrimaryKey({"ZCH_FILIAL","ZCH_VIABIL","ZCH_APROV"})
+//VALIDANDO A ATIVAÇÃO DO MODELO.
+_oModel:SetVldActivate( {|_oModel| fVldActivate(_oModel) })
+Return _oModel
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <ViewDef>
+   Contem a construcao e a definicao da View, ou seja, contrucao da interface
+
+@author Antonio Dantas 
+@since 19/10/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function ViewDef()
+Local _oModel 		:= FWLoadModel("SN7304X")
+Local _oStZCHV		:= FWFormStruct(2,"ZCH") 
+Local _oView   	:= FWFormView():New()
+//Ajustando a estrura os campos para os Aprovadores de Liberação
+_oStZCHV:SetProperty("ZCH_APROV"	,MVC_VIEW_CANCHANGE	,.F.)
+_oStZCHV:SetProperty("ZCH_DATA"		,MVC_VIEW_CANCHANGE	,.F.)
+_oStZCHV:SetProperty("ZCH_HORA"		,MVC_VIEW_CANCHANGE	,.F.)
+_oStZCHV:SetProperty("ZCH_NIVEL"	,MVC_VIEW_CANCHANGE	,.F.)
+//-- Defino modelo da view
+_oView:SetModel(_oModel)
+//-- Mesma regra do modeldef
+_oView:AddField("VW_ZCH",_oStZCHV,"ZCHMASTER")
+//-- Crio a tela
+_oView:CreateHorizontalBox("LIBERAR",100)
+//-- Defino owner da tela
+_oView:SetOwnerView("VW_ZCH","LIBERAR")
+//Fecha a tela após a confirmação.
+_oView:bCloseOnOk	:= {|| .T. }
+Return _oView
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldActivate>
+   Efetua a Validacao do Formulario
+
+@author j2a.fabiopinto
+@since 28/10/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function fVldActivate(_oModel)
+Local _lRet 		:= .T.
+Local _nOpc 		:= _oModel:GetOperation()
+Local _aFildsLib	:= {"ZCG_PROJET","ZCG_DIDATI","ZCG_DOCENT","ZCG_TECNOL","ZCG_FISICO","ZCG_OBSANA"}
+Local _nPosX 		:= 0
+Local _aArea   	:= {}
+Local _nCtaA 		:= 0
+//-- 
+If ZCH->ZCH_APROV != __cUserID
+	_lRet	:= .F.
+	_cMsg	:= "Somente o Aprovador ("+ZCH->ZCH_APROV+") pode realizar essa Aprovação ou Rejeição."
+Elseif ZCH->ZCH_TOPASS != '0' .And. _nOpc == 4
+	_lRet	:= .F.
+	_cMsg	:= "Somente Pedidos de Liberações [Aberta] podem ser Aprovadas ou Rejeitas."
+Endif
+If _lRet
+	_aArea := GetArea()
+	//-- 
+	dbSelectArea("ZCG")
+	ZCG->(dbSetOrder(1))
+	ZCG->(dbSeek(ZCH->ZCH_FILIAL+ZCH->ZCH_VIABIL))		
+	_nCtaA := 0
+	For _nCtaA := 1 to Len(_aFildsLib)
+		If Empty(Alltrim(ZCG->(FieldGet(FieldPos(_aFildsLib[_nCtaA])))))
+			_lRet	:= .F.
+			_cMsg	:= "Para Liberação/Rejeição da viabilidade o campo [ "+TitSX3(_aFildsLib[_nCtaA])[1]+" ], deve Obrigatoriamente estar preenchido!"
+			Exit 		
+		Endif 
+	Next _nCtaA
+	RestArea(_aArea)
+Endif 
+If !_lRet
+	Help( , , FunName()+"/"+ProcName(),, _cMsg, 1, 0 )
+Endif
+Return(_lRet)
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fGrvReg>
+   Funcao de Controel de Gravacao: Chamada as Funcoes de Validacao das acoes 
+   do Formulario
+
+@author Antonio Dantas 
+@since 19/10/2015
+@version<1.00>
+@receive<Nil>
+<    _oModel (o) - Objeto do Modelo Principal
+>
+@return
+<     _lReturn (l) - (.t.) Pode Executar a Acao
+                     (.f.) Nao Pode executar a Acao
+>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function fGravar(_oModel)
+Local _lReturn  	:= .t.
+Local _aArea		:= GetArea()
+//-- 
+Local _nOper		:= _oModel:GetOperation()
+Local _oStrucZCH	:= _oModel:GetModel("ZCHMASTER")
+Local _cZCH_VIABIL	:= _oStrucZCH:GetValue("ZCH_VIABIL") 
+Local _cZCH_TOPASS	:= _oStrucZCH:GetValue("ZCH_TOPASS") 
+Local _cZCH_OBS		:= _oStrucZCH:GetValue("ZCH_OBS")    
+//-- 
+do Case
+	Case _nOper == 3	//-- Incluir
+		_lReturn  := .t.
+	Case _nOper == 4	//-- Alterar
+		_lReturn  := .t.
+		//+---------------------------------------------------------------------+
+		//| Inicializa os valore para DATA e HORA do Evento para serem Gravados |
+		//+---------------------------------------------------------------------+
+		_oModel:LoadValue("ZCHMASTER", "ZCH_DATA", MsDate())
+		_oModel:LoadValue("ZCHMASTER", "ZCH_HORA", Replace(Time(), ":", ""))
+		If _cZCH_TOPASS == "2" .and. Empty(Alltrim(_cZCH_OBS))
+			Help(,,"HELP",,"Na rejeição (reprovação) a justificativa é Obrigatoria!",1,0)    
+			_lReturn  := .f.
+		Endif 
+	Case _nOper == 5	//-- Excluir
+		_lReturn  := .t.
+	Case _nOper == 8	//-- Imprimir
+		_lReturn  := .t.
+	Case _nOper == 9	//-- Copiar
+		_lReturn  := .t.
+Endcase
+//-- Se estiver tudo OK Grava! 
+If _lReturn
+	If u_fLibZCG(_cZCH_VIABIL,_cZCH_TOPASS)	
+		FWFormCommit(_oModel)
+	Else
+		Help(,,"HELP",,". Operação não foi realizada. Ocorreram problemas na Liberação dos Itens das Propostas Vinculadas a Viabilidade!",1,0)    
+		_lReturn  := .f.
+	Endif 
+Endif 	
+RestArea(_aArea)
+Return _lReturn
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fLibZCG>
+  Verifica as Liberacoes para Viabilidade fornecida como argumento e conforme
+  as regras de LIBERACAO, libera a viabildade.
+  REGRAS:
+     Se houver um LIBERADOR com 0=UNICA assinatura, LIBERA ou BLOQUEIA
+     a Viabilidade Conforme a opcao do LIBERADOR.
+         
+     Se houver mais de um assinante para liberar a viabilidade;
+        1a Opcao = So LIBERA a Viabilidade se todos os LIBERADORES tiverem 
+                   aprovado. 
+        2a Opcao = Se Pelo menos UM tiver REPROVADO a viabilidade BLOQUEIA.
+
+@author Antonio Dantas 
+@since 19/10/2015
+@version<Nil>
+@receive<Nil>
+<      _cCodViab (c) - Codigo da Viabilidade 
+	_cZCH_TOPASS (c) - Status da LIBERACAO: 
+	                   0=Em Aprovacao;1=Aprovada;2=Rejeitada                                                                                           
+>
+@return
+< DEFAULT .T.
+>     
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+User Function fLibZCG(_cCodViab,_cZCH_TOPASS)
+Local _aArea		:= GetArea()
+Local _cSTATUS		:= "2"
+Local _cStatuZCG	:= "2"
+Local _lReturn		:= .T.  
+//-- Seleciona a Tabela de Liberacoes  
+dbSelectArea("ZCH")
+ZCH->(dbSetOrder(1))
+ZCH->(dbSeek(FwxFilial("ZCH")+_cCodViab))
+//-- Loop nos LIBERADORES: Verifica se estao TODAS APROVADAS. 
+Do While ZCH->(!Eof()) .And. ZCH->ZCH_FILIAL == FwxFilial("ZCH") .And. ZCH->ZCH_VIABIL == _cCodViab
+	//-- Se for  [ZCH_NIVEL == 0-Unica Assinatura]                                                                                           
+	If ZCH->ZCH_NIVEL == "0"
+		_cSTATUS := Iif(_cZCH_TOPASS == "1","3",Iif(_cZCH_TOPASS == "2","5",_cSTATUS))
+		Exit 
+	Endif 
+	//-- Se for  [ZCH_NIVEL <> 0-Unica Assinatura]                                                                                            
+	If ZCH->ZCH_NIVEL != "0" 
+		Do Case 
+			Case _cZCH_TOPASS == "1"
+				_cSTATUS := "3"
+			Case _cZCH_TOPASS == "2"
+				_cSTATUS := "5"
+				Exit 
+		EndCase
+	Endif
+	ZCH->(dbSkip())
+Enddo
+//+------------------------------------------------------------------+
+//|   Se estiver REJEITADA: Libera a Viabilidade                     | 
+//+------------------------------------------------------------------+
+If _cSTATUS > "2"
+	//+------------------------------------------------------------------+
+	//| Implementa o controle de Transacao para Garantir a Integridade.  | 
+	//| Se ocorrer qualquer problema com a liberacao das Propostas       |
+	//| Vinculadas DEFAZ a transacao inteira.                            | 
+	//+------------------------------------------------------------------+
+	Begin Transaction
+		DbSelectArea("ZCG")
+		ZCG->(dbSetOrder(1))
+		ZCG->(dbSeek(FwxFilial("ZCG")+_cCodViab))
+		If (ZCG->(RecLock("ZCG",.f.)))
+			//+------------------------------------------------------------------+
+			//| No Momero da Liberacao da Viabilidade se o CODIGO DO PRODUTO     |
+			//| [ZCG_PRODUT] que atende a Viabilidade tiver sido informado pelo  |
+			//| Liberador o STATUS DA VIABILIDADE sera gravado como [3=Aprovada].|
+			//| Se não houver CODIGO DO PRODUTO informado a Viabilidade tera o   |
+			//| STATUS GRAVADO como [4=Aguardando Produto].                      |   
+			//+------------------------------------------------------------------+
+			do Case 
+				Case _cSTATUS == "3"
+					_cStatuZCG := Iif(Empty(Alltrim(ZCG->ZCG_PRODUT)),"4","3")
+				Case _cSTATUS == "5"
+					_cStatuZCG := "5"
+				Otherwise 
+					_cStatuZCG := _cSTATUS
+			EndCase 				
+			//-- 
+			Replace ZCG->ZCG_STATUS With  _cStatuZCG		//-- 1=Em Elaboracao;2=Aberta;3=Aprovada;4=Aguardando Produto;5=Rejeitada                                                            
+			//-- 
+			ZCG->(MsUnLock())
+			ZCG->(dbCommit())
+			If _cSTATUS == "5"
+				If !fEndAD1(cFilAnt,_cCodViab)
+					DisarmTransaction()
+					_lReturn := .f.  			
+				Endif 
+			Endif 
+		Endif
+	End Transaction
+Endif 
+//-- 
+RestArea(_aArea)
+Return _lReturn	
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fEndAD1>
+ Se a viabilidade for NEGADA, Encerra a Oportunidade viculada a ela COMO
+ FSI = 
+  
+@author Antonio Dantas 
+@since 12/11/2015
+@version<Nil>
+@receive<Nil>
+<   _cFilial (c) - Codigo da Filial que sera considerada   
+   _cCodViab (c) - Codigo da Viabilidade
+>
+@return
+<  _lReturn (L) - (.t.) - Completou a Liberacao das Proposta Com sucesso  
+                  (.f.) - Não completou a liberacao das Propostas.
+>     
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function fEndAD1(_cFilial,_cCodViab)
+Local _lReturn		:= .T.  
+Local _nRet			:= 0  
+Local _cQuery 		:= ""
+Local _cCodFCI		:= GetNewPar("MV_XFSI73","000002") 
+//-- Monta a Rotina de Update 
+_cQuery 	:= ""
+_cQuery 	:= "UpDate "+RetSqlName("AD1")+" AD1 set AD1.AD1_FCI = '"+_cCodFCI+"', AD1.AD1_STATUS = '2' "+CRLF
+_cQuery 	+= "Where AD1.D_E_L_E_T_ = ' '  "+CRLF
+_cQuery 	+= "And AD1.AD1_XVIABI = '"+_cCodViab+"' "+CRLF
+//-- Executa o UpDate 
+_nRet 		:= TcSqlExec(_cQuery)
+//-- Verica se a Execucao ocorreu OK  
+_lReturn	:= Iif(_nRet < 0,.f.,_lReturn)
+Return _lReturn

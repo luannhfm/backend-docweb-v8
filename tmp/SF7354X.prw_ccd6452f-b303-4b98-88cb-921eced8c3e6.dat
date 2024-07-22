@@ -1,0 +1,126 @@
+#include "rwmake.ch"
+#include "Protheus.ch"
+#include "topconn.ch"
+#include "tbiconn.ch"
+
+//+==================================================================+
+/*/ {Protheus.doc} SF7354X
+Função responsável pela integração com o WebSite Pesquisa de Satisfação.
+esta função irá receber o array aParametros retornado so site logo após
+o usuário salvar as respostas da pesquisa de satisfação.
+@author    Breno Nogueira
+@version   1.00
+< 25/02/16 - Breno - ADD CAMPOS - IdLoja | IdCurso | IpCliente | >
+@since     11/02/2016
+/*/
+//+==================================================================+
+User function SF7354X(aParametros)
+
+	Local	IdPesquisa, IdFilial, IdOportu, IdRevisa, IdProposta, IdPrevis, IdCliente, IdLoja,;
+			IdTopico, IdQuestao, IdSubQuestao, IdResposta, IdPeso, IdComplemento, IdCurso, IdSugestao
+	Local _aArea  := GetArea()
+	Local _aVetor := {}
+	
+	IdPesquisa		:=	aParametros[1]
+	IdFilial 			:=	aParametros[2]
+	IdOportu  		:=	aParametros[3]
+	IdRevisa			:=	aParametros[4]
+	IdProposta		:=	aParametros[5]
+	IdPrevis 			:=	aParametros[6]
+	IdCliente 		:=	aParametros[7]
+	IdTopico 			:=	aParametros[8]
+	IdQuestao 		:=	aParametros[9]
+	IdSubQuestao		:=	aParametros[10]
+	IdResposta 		:=	aParametros[11]
+	IdPeso     		:=	Val(aParametros[12])
+	IdComplemento  	:=	aParametros[13]
+	IdSugestao     	:=	aParametros[14]
+	IdLoja				:=	aParametros[15]
+
+
+	//+==================================================================+
+	//| Verifica se a pesquisa já foi respondida, se sim aborta envia	 |
+	//| mensagem ao usuário e não grava na tabela ZJX					 |
+	//+==================================================================+
+	dbSelectArea("AD1")
+	AD1->(dbSetOrder(1))
+	AD1->(dbSeek(IdFilial+IdOportu+IdRevisa))
+	If AllTrim(AD1->AD1_XPESQ) == "R"
+		cErro := "Esta pesquisa já foi respondida, portanto não poderá ser respondida novamente"
+		ApMsgInfo(cErro,"..::Já Respondido::..")
+		Return { "False", IdOportu, cErro }
+	//+==================================================================+
+	//| Se não respondida grava os dados das respostas na tabela ZJX	 |
+	//+==================================================================+
+	Else
+		DbSelectArea("ZJX")
+		If RecLock("ZJX",.T.)
+			ZJX->ZJX_FILIAL	:= IdFilial
+			ZJX->ZJX_IDPESQ	:= IdPesquisa
+			ZJX->ZJX_IDTOPI	:= IdTopico
+			ZJX->ZJX_IDQUES	:= IdQuestao
+			ZJX->ZJX_IDSUBQ	:= IdSubQuestao
+			ZJX->ZJX_IDRESP	:= IdResposta
+			ZJX->ZJX_PESO	:= IdPeso
+			ZJX->ZJX_IDPROP	:= IdProposta
+			ZJX->ZJX_REVPRO	:= IdPrevis
+			ZJX->ZJX_IDOPOR	:= IdOportu
+			ZJX->ZJX_REVOPO	:= IdRevisa
+			ZJX->ZJX_IDCLIE	:= IdCliente
+			ZJX->ZJX_COMPLE	:= IdComplemento
+			ZJX->ZJX_SUGEST	:= IdSugestao
+			ZJX->ZJX_RSPMAI	:= "S"
+			ZJX->ZJX_DATRES	:= Date()
+			ZJX->ZJX_HRARES	:= Time()
+			ZJX->ZJX_LJCLIE	:= IdLoja
+			ZJX->(MsUnLock())
+		EndIf
+		
+		DbCloseArea("ZJX")
+
+		//+=============================================================+
+		//| Retorno do OK para o C# 										 |
+		//+=============================================================+
+		ConOut("SUCESSO")
+		_aVetor := { "True", IdOportu, "" }
+
+		RestArea(_aArea)
+	EndIf
+
+return _aVetor
+
+
+/*/ {Protheus.doc} SF7354X2
+@version   1.00
+< 25/02/16 - Breno - ADD CAMPOS - IdFilial | IdOportunidade | IdRevOp | >
+@since     11/02/2016
+/*/
+User Function SF7354X2( p_aParam )
+
+	Local _cFilial 	:= p_aParam[1]
+	Local _cOport 	:= p_aParam[2]
+	Local _cRevOp 	:= p_aParam[3]
+	Local _aRet		:= {}
+
+	//+==================================================================+
+	//|Marcar a oportunidade como já respondida, para que o sistema não	 |
+	//|envie novamente a pesquisa quando finalizar o prazo de espera   	 |
+	//|do retorno de uma resposta do cliente						   	 |
+	//+==================================================================+
+	DbSelectArea("AD1") 				//-- Se encontrei travo o registro para alteração
+	AD1->(DbSetOrder(1))
+	AD1->(DbGoTop())
+	If AD1->(DbSeek(_cFilial+_cOport+_cRevOp))
+		If RecLock("AD1",.F.)
+			Replace AD1->AD1_XPESQ 	With "R"		//--  E-Enviada | R=Respondida | C=Cancelada  //-- Quando cancelada o email não mais será enviado
+			Replace AD1->AD1_XDTENV 	With Date()	//-- Grava a data da resposta
+			_aRet := {"True"}
+			AD1->(MsUnLock())
+		EndIf
+	Else
+		_aRet := {"False"}
+	Endif
+	
+	AD1->(DbCloseArea())
+		
+Return _aRet

@@ -1,0 +1,247 @@
+#Include 'Protheus.ch'
+#Include 'FWMVCDEF.CH'
+
+/*/{Protheus.doc} SS3306S
+Rotina para Realização dos Atendimentos
+
+@author 	Sergio Ricardo Leite Salustiano
+@since 		16/06/2014
+@version 	1.0
+
+@return Nil, Nulo
+/*/
+User Function SS3306S()
+	Local oBrowse
+	
+	oBrowse := FWMBrowse():New()
+	oBrowse:SetAlias('ZZM')
+	oBrowse:SetDescription('Atendimentos')
+	oBrowse:Activate()
+	
+Return ( Nil )
+
+Static Function MenuDef()
+	
+	Local aRotina := {}
+	
+	ADD OPTION aRotina Title 'Visualizar'      Action 'VIEWDEF.SS3306S' OPERATION 2 ACCESS 0
+	ADD OPTION aRotina Title 'Incluir'         Action 'VIEWDEF.SS3306S' OPERATION 3 ACCESS 0
+	ADD OPTION aRotina Title 'Alterar'         Action 'VIEWDEF.SS3306S' OPERATION 4 ACCESS 0
+	ADD OPTION aRotina Title 'Excluir'         Action 'VIEWDEF.SS3306S' OPERATION 5 ACCESS 0
+	ADD OPTION aRotina Title 'Imprimir G.A.'   Action 'U_SS33R3S'       OPERATION 8 ACCESS 0
+	ADD OPTION aRotina Title 'Copiar'          Action 'VIEWDEF.SS3306S' OPERATION 9 ACCESS 0
+	 
+	
+Return ( aRotina )
+
+Static Function ModelDef()
+	
+	Local oStruZZM := FWFormStruct(1, 'ZZM')
+	Local oStruZZN := FWFormStruct(1, 'ZZN')
+	Local oModel
+	
+	If FunName() <> 'SS3318S'
+	oStruZZN:AddTrigger( "ZZN_CODCRE", "ZZN_VUNIT"    , { || .t. }, { | x |TABPRE( x ) } )
+	oStruZZN:AddTrigger( "ZZN_PROCED", "ZZN_CODCRE"   , { || .t. }, { | x |LIMPRO( x ) } )
+			
+	//-------------------------------------------------------------------------------------------------------------------------------------
+	//Alterado dia 07/08/2014
+	oStruZZM:AddTrigger( "ZZM_CNPJ", "ZZM_CEI"   , { || .t. }, { | x |VERCEI( x ) } )
+	//-------------------------------------------------------------------------------------------------------------------------------------	
+	EndIf
+	
+			
+	oModel:= MPFormModel():New('SS3306SM')
+	oModel:AddFields('ZZMMASTER',/*cOwner*/, oStruZZM)
+	oModel:AddGrid('ZZNDETAIL','ZZMMASTER',oStruZZN)
+	oModel:SetRelation('ZZNDETAIL',{{'ZZN_FILIAL','xFilial("ZZN")'}, {'ZZN_ATEND','ZZM_ATEND'}},ZZN->(IndexKey(1)))
+	oModel:SetPrimaryKey({"ZZM_FILIAL","ZZM_ATEND"})
+	oModel:GetModel( 'ZZNDETAIL' ):SetUniqueLine( { 'ZZN_PROCED' } )
+	oModel:SetDescription('Atendimentos')
+	oModel:GetModel('ZZMMASTER'):SetDescription('Dados Gerais do Atendimentos')
+	oModel:GetModel('ZZNDETAIL'):SetDescription('Procedimetos do Atendimentos')
+	
+	oModel:AddCalc( 'COMP015CALC1', 'ZZMMASTER', 'ZZNDETAIL', 'ZZN_VUNIT', 'ZZN__VUNIT2', 'SUM', , ,'Total R$' )
+	
+Return ( oModel )
+
+Static Function ViewDef()
+	
+	Local oModel   := FWLoadModel('SS3306S')
+	Local oStruZZM := FWFormStruct(2, 'ZZM')
+	Local oStruZZN := FWFormStruct(2, 'ZZN')
+	Local oView
+
+	oView:=FWFormView():New()
+	oView:SetModel(oModel)
+	oView:AddField('VIEW_ZZM', oStruZZM, 'ZZMMASTER')
+	oView:AddGrid ('VIEW_ZZN', oStruZZN, 'ZZNDETAIL')
+	
+	// Cria o objeto de Estrutura
+	oCalc1 := FWCalcStruct( oModel:GetModel( 'COMP015CALC1') )
+	
+	//Adiciona no nosso View um controle do tipo FormGrid(antiga newgetdados)
+	oView:AddField( 'VIEW_CALC', oCalc1, 'COMP015CALC1' )
+	oView:AddIncrementField( 'VIEW_ZZN', 'ZZN_ITEM' )
+	oView:EnableTitleView('VIEW_ZZN','PROCEDIMENTOS')
+	oView:EnableTitleView('VIEW_CALC','TOTAIS')
+	oView:CreateHorizontalBox ('SUPERIOR', 31)
+	oView:CreateHorizontalBox ('INFERIOR', 57)
+	oView:CreateHorizontalBox ('CALCULO' , 12)
+	oView:SetOwnerView ('VIEW_ZZM', 'SUPERIOR')
+	oView:SetOwnerView ('VIEW_ZZN', 'INFERIOR')
+	oView:SetOwnerView ('VIEW_CALC','CALCULO')
+	
+Return ( oView )
+
+/*/{Protheus.doc} SS3306S
+Seleciona a Tabela que sera utilizada e retorna o 
+valor do procedimento.
+@author 	Sergio Ricardo Leite Salustiano
+@since 		16/06/2014
+@version 	1.0
+
+@return Nil, Nulo
+/*/
+
+Static Function TABPRE(oFields)
+	
+	Local lRetorno       := .T.
+	Local aAreaAtu       := GetArea()
+	Local oModel 			:= FwModelActive()
+	Local oGrdZZM			:= oModel:GetModel('ZZMMASTER')
+	Local oGrdZZN			:= oModel:GetModel('ZZNDETAIL')
+	Local cCredenc		:= oFields:GetValue('ZZN_CODCRE')
+	Local cProced			:= oFields:GetValue('ZZN_PROCED')
+	Local cCliente       := oGrdZZM:GetValue('ZZM_CODCLI')
+	Local cLoja          := oGrdZZM:GetValue('ZZM_LOJA')
+	Local dDtLanc			:= oGrdZZM:GetValue('ZZM_DTPROC')
+	Local cAtndF         := oGrdZZM:GetValue('ZZM_ATNDFO')
+	Local cTabela        := " "
+	Local cValor			:= 0
+	Local cInd           := " "
+	
+	dbSelectArea('ZZO')
+	dbSetOrder(2)
+	dbGoTop()
+	If(dbSeek(xFilial('ZZO') + cCliente + cLoja))
+		cTabela := ZZO->ZZO_TABELA
+		cInd    := ZZO_IND
+		
+		If empty(cTabela)
+	
+			dbSelectArea('ZZG')
+			dbSetOrder(1)
+			dbGoTop()
+		
+			If(dbSeek(xFilial('ZZG') + cCredenc))
+				
+				If (cInd = '1') .and. (cAtndF = 'N')
+					cTabela := AllTrim(ZZG->ZZG_TABELA)
+				EndIf
+		
+				If (cInd = '1') .and. (cAtndF = 'S')
+					cTabela := AllTrim(ZZG->ZZG_TAB2)
+				EndIf
+		
+				If (cInd = '2') .and. (cAtndF = 'N')
+					cTabela := AllTrim(ZZG->ZZG_TAB1)
+				EndIf
+			
+				If (cInd = '2') .and. (cAtndF = 'S')
+					cTabela := AllTrim(ZZG->ZZG_TAB3)
+				EndIf
+			EndIf
+		EndIf
+		
+	Else
+		dbSelectArea('ZZG')
+		dbSetOrder(1)
+		dbGoTop()
+		
+		If((dbSeek(xFilial('ZZG') + cCredenc)))
+			cTabela := AllTrim(ZZG->ZZG_TABELA)
+		EndIf
+	
+	EndIf
+	
+	dbSelectArea('ZZL')
+	dbSetOrder(1)
+	dbGoTop()
+		
+	If(dbSeek(xFilial('ZZL') + cTabela + cProced))
+	
+		While .Not. EOF() .And. ZZL->ZZL_CODTAB = cTabela .And. ZZL->ZZL_PROCED = cProced
+			If(DTOS(ZZL->ZZL_VIGENC) <= DTOS(dDtLanc)) .OR. EMPTY(ZZL->ZZL_VIGENC)
+				cValor := ZZL->ZZL_PRECOV
+				
+				If(cProced = "002070")
+					cValor = ZZO->ZZO_VALOR
+				EndIf
+				
+			EndIf
+			DBSKIP()
+		EndDo
+		
+	Else
+		Help(, ,"AJUDA",  ,"O procedimento nao esta Cadastrado na Tabela de Preços",1,0)
+	EndIf
+	
+	oGrdZZN:SetValue( "ZZN_CODCRE" ,cCredenc)
+	oGrdZZN:SetValue( "ZZN_VUNIT"  ,cValor )
+	
+	//DbCloseArea('ZZO')
+	//DbCloseArea('ZZG')
+	//DbCloseArea('ZZL')
+	
+Return(cValor)
+
+/*/{Protheus.doc} SS3306S
+Limpa os Campos Credenciado e Valor Unitario.
+@author 	Sergio Ricardo Leite Salustiano
+@since 		16/06/2014
+@version 	1.0
+@return Nil, Nulo
+/*/
+
+Static Function LIMPRO()
+	Local lRetorno       := .T.
+	Local aAreaAtu       := GetArea()
+	Local oModel 			:= FwModelActive()
+	Local oGrdZZN			:= oModel:GetModel('ZZNDETAIL')
+	
+	oGrdZZN:SetValue( "ZZN_CODCRE" ,' ')
+	oGrdZZN:SetValue( "ZZN_VUNIT"  ,0 )
+	
+Return()
+
+
+/*/{Protheus.doc} SS3306S
+Verifica se a empresa possui C.E.I.
+@author 	Sergio Ricardo Leite Salustiano
+@since 		16/06/2014
+@version 	1.0
+@return Nil, Nulo
+/*/
+Static Function VERCEI()
+
+	Local lRetorno := .T.
+	Local aAreaAtu       := GetArea()
+	Local oModel 			:= FwModelActive()
+	Local oGrdZZM			:= oModel:GetModel('ZZMMASTER')
+	Local oGrdZZN			:= oModel:GetModel('ZZNDETAIL')
+	Local cCliente       := oGrdZZM:GetValue('ZZM_CODCLI')
+	Local cLoja          := oGrdZZM:GetValue('ZZM_LOJA')
+	Local cCEI           := oGrdZZM:GetValue('ZZM_CEI')
+	
+	dbSelectArea('ZZP')
+	dbSetOrder(3)
+	dbGoTop()
+	If DbSeek(xFilial('ZZP')+ cCliente + cLoja)
+		Help( ,, 'Help',, 'Cliente Possui C.E.I.', 1, 0 )
+	EndIf
+	
+	dbCloseArea('ZZP')
+	
+	
+Return()

@@ -45,9 +45,6 @@ __decorateClass([
 ], SourceFunction.prototype, "id", 2);
 __decorateClass([
   (0, import_typeorm.Column)("varchar")
-], SourceFunction.prototype, "uuid", 2);
-__decorateClass([
-  (0, import_typeorm.Column)("varchar")
 ], SourceFunction.prototype, "type", 2);
 __decorateClass([
   (0, import_typeorm.Column)("varchar")
@@ -56,17 +53,17 @@ __decorateClass([
   (0, import_typeorm.Column)("text")
 ], SourceFunction.prototype, "source", 2);
 __decorateClass([
-  (0, import_typeorm.Column)("integer")
+  (0, import_typeorm.Column)("int")
 ], SourceFunction.prototype, "line", 2);
 __decorateClass([
-  (0, import_typeorm.Column)("integer")
+  (0, import_typeorm.Column)("int")
 ], SourceFunction.prototype, "blankLines", 2);
 __decorateClass([
-  (0, import_typeorm.Column)("integer")
+  (0, import_typeorm.Column)("int")
 ], SourceFunction.prototype, "commentedLines", 2);
 __decorateClass([
-  (0, import_typeorm.ManyToOne)(() => Source, (source) => source.sourceFunctions, { onDelete: "CASCADE" })
-], SourceFunction.prototype, "sourceTxt", 2);
+  (0, import_typeorm.ManyToOne)(() => Source, (source) => source.Functions, { onDelete: "CASCADE" })
+], SourceFunction.prototype, "Source", 2);
 SourceFunction = __decorateClass([
   (0, import_typeorm.Entity)("source_function")
 ], SourceFunction);
@@ -79,9 +76,6 @@ __decorateClass([
 ], Source.prototype, "id", 2);
 __decorateClass([
   (0, import_typeorm2.Column)("varchar")
-], Source.prototype, "uuid", 2);
-__decorateClass([
-  (0, import_typeorm2.Column)("varchar")
 ], Source.prototype, "label", 2);
 __decorateClass([
   (0, import_typeorm2.Column)("varchar")
@@ -90,35 +84,35 @@ __decorateClass([
   (0, import_typeorm2.Column)("varchar")
 ], Source.prototype, "name", 2);
 __decorateClass([
-  (0, import_typeorm2.Column)("integer")
+  (0, import_typeorm2.Column)("int")
 ], Source.prototype, "tables", 2);
 __decorateClass([
-  (0, import_typeorm2.Column)("integer")
+  (0, import_typeorm2.Column)("int")
 ], Source.prototype, "functions", 2);
 __decorateClass([
   (0, import_typeorm2.Column)("text")
 ], Source.prototype, "source", 2);
 __decorateClass([
-  (0, import_typeorm2.Column)("integer")
+  (0, import_typeorm2.Column)("int")
 ], Source.prototype, "line", 2);
 __decorateClass([
-  (0, import_typeorm2.Column)("integer")
+  (0, import_typeorm2.Column)("int")
 ], Source.prototype, "blankLines", 2);
 __decorateClass([
-  (0, import_typeorm2.Column)("integer")
+  (0, import_typeorm2.Column)("int")
 ], Source.prototype, "commentedLines", 2);
 __decorateClass([
-  (0, import_typeorm2.Column)("smallint")
+  (0, import_typeorm2.Column)("smallint", { default: 0 })
 ], Source.prototype, "status", 2);
 __decorateClass([
   (0, import_typeorm2.Column)("boolean")
 ], Source.prototype, "reserv", 2);
 __decorateClass([
-  (0, import_typeorm2.OneToMany)(() => SourceFunction, (sourceFunction) => sourceFunction.source)
-], Source.prototype, "sourceFunctions", 2);
+  (0, import_typeorm2.OneToMany)(() => SourceFunction, (sourceFunction) => sourceFunction.Source)
+], Source.prototype, "Functions", 2);
 __decorateClass([
   (0, import_typeorm2.OneToMany)(() => SourceTable, (sourceTable) => sourceTable.source)
-], Source.prototype, "sourceTables", 2);
+], Source.prototype, "Tables", 2);
 Source = __decorateClass([
   (0, import_typeorm2.Entity)("source")
 ], Source);
@@ -132,12 +126,9 @@ __decorateClass([
 ], SourceTableField.prototype, "id", 2);
 __decorateClass([
   (0, import_typeorm3.Column)("varchar")
-], SourceTableField.prototype, "uuid", 2);
-__decorateClass([
-  (0, import_typeorm3.Column)("varchar")
 ], SourceTableField.prototype, "name", 2);
 __decorateClass([
-  (0, import_typeorm3.ManyToOne)(() => SourceTable, (sourceTable) => sourceTable.sourceTableFields, { onDelete: "CASCADE" })
+  (0, import_typeorm3.ManyToOne)(() => SourceTable, (sourceTable) => sourceTable.fields, { onDelete: "CASCADE" })
 ], SourceTableField.prototype, "sourceTable", 2);
 SourceTableField = __decorateClass([
   (0, import_typeorm3.Entity)("source_table_field")
@@ -151,16 +142,13 @@ __decorateClass([
 ], SourceTable.prototype, "id", 2);
 __decorateClass([
   (0, import_typeorm4.Column)("varchar")
-], SourceTable.prototype, "uuid", 2);
-__decorateClass([
-  (0, import_typeorm4.Column)("varchar")
 ], SourceTable.prototype, "name", 2);
 __decorateClass([
-  (0, import_typeorm4.ManyToOne)(() => Source, (source) => source.sourceTables, { onDelete: "CASCADE" })
+  (0, import_typeorm4.ManyToOne)(() => Source, (source) => source.Tables, { onDelete: "CASCADE" })
 ], SourceTable.prototype, "source", 2);
 __decorateClass([
   (0, import_typeorm4.OneToMany)(() => SourceTableField, (sourceTableField) => sourceTableField.sourceTable)
-], SourceTable.prototype, "sourceTableFields", 2);
+], SourceTable.prototype, "fields", 2);
 SourceTable = __decorateClass([
   (0, import_typeorm4.Entity)("source_table")
 ], SourceTable);

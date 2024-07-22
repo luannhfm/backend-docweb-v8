@@ -1,0 +1,85 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} CN120PED
+@description Localizado na função CN120PED, responsável por gerar Pedido de Compras ou Vendas por meio de rotina automática.Este ponto de entrada é executado no encerramento da medição, no momento em que é gerado o Pedido de Compras, por meio da rotina automática MATA120 ou Pedido de Vendas, por meio da rotina automática MATA410. Tem por objetivo permitir o preenchimento dos campos específicos do SC7 para Pedidos de Compras ou SC6 para Pedidos de Vendas.
+@type User Function
+@author Cadubitski
+@since 01/05/2010
+@version 11.0
+@param ExpA1, Array of Record, O array contendo as informações do cabeçalho do Pedido de Compra ou Pedido de Venda, possui os campos e os valores que serão simulados na rotina automática, no seguinte formato {nome do campo,valor do campo, nil}. A manipulação pode ser feita nos campos existentes ou incluindo novos campos de acordo com a estrutura.
+@param ExpA2, Array of Record, Cada item do array armazena um novo array, com os campos que serão simulados, na mesma estrutura do cabeçalho {nome do campo,valor do campo, nil}, permitindo manipular ou incluir os campos necessários.
+@param ExpC3, Array of Record, Alias da query da tabela CNE. No momento da execução deste ponto de entrada, este alias estará em fim de arquivo devido a utilização em rotina anterior. Portanto é necessário posicionar o alias em início de arquivo, por exemplo com a função (cAlias)->(dbGoTop()), e utlizar um laço para poder utilizar a tabela CNE no ponto de entrada se desejado.
+@return aRet, array, Array com os campos do cabeçalho do pedido + Array com os itens do pedido e seus respectivos campos.
+@see http://tdn.totvs.com/pages/releaseview.action?pageId=6089570
+@obs Ponto de entrada executado no momento do encerramento da medicao, quando o sistema gera o pedido.
+/*/
+User Function CN120PED()
+
+	Local aArea		:= GetArea()		
+	Local aCab		:= ParamIXB[1]	//Cabecalho
+	Local aItem		:= ParamIXB[2]  //Itens
+	//Local cAliasCNE	:= ParamIXB[3]	
+	Local cTipo		:= ""
+	Local nI		:= 0     
+	Local nPos 		:= 0          
+	Local nFISCORI	:= 0
+	Local aRet 		:= {} 
+
+	Public aPC := {}
+
+	nPos 		:= aScan(aCab,	{|x| x[1] == "C7_NUM"})
+
+	If (nPos > 0)
+
+		aAdd(aPC, {aCab[nPos, 2]})
+
+	EndIf
+					
+	dbSelectArea("CN9")
+	dbSetOrder(1)
+	dbSeek(xFilial("CN9") + CND->CND_CONTRA + CND->CND_REVISA)
+
+	dbSelectArea("CN1")
+	dbSetOrder(1)
+	dbSeek(xFilial("CN1") + CN9->CN9_TPCTO)
+
+	cTipo := CN1->CN1_ESPCTR
+
+	For nI:=1 to len(aItem)
+
+		If !Empty(Alltrim(SC1->C1_FILENT)) //Nesse caso o SC1 esta posicionado
+
+			nFISCORI   := aScan(aItem[nI], {|x| Alltrim(x[1])  == "C7_FISCORI"})
+
+			If nFISCORI <> 0 //Se achou soma com o que ja tem
+
+				aItem[nI, nFISCORI, 2] := SC1->C1_FILENT
+
+			EndIf
+
+		EndIf
+
+	Next
+
+	//Incluido o trecho abaixo para tratamento da filial de entrega vinculada a SC
+	If cTipo == "1"
+
+		If !Empty(Alltrim(SC1->C1_FILENT)) //Nesse caso o SC1 esta posicionado
+
+			nPosFilEnt := aScan(aCab, {|x| x[1] == "C7_FILENT"})//Procura no array pela primeira coluna
+
+			If nPosFilEnt <> 0 //Se achou soma com o que ja tem
+
+				aCab[nPosFilEnt, 2] := SC1->C1_FILENT
+
+			EndIf
+
+		EndIf
+		
+	EndIf
+
+	aRet := {aCab, aItem}
+
+	RestArea(aArea)
+
+Return aRet

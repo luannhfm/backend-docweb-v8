@@ -1,0 +1,332 @@
+#Include "TopConn.Ch"
+#Include "FileIO.Ch"
+
+#Define ENTER CHR(13)+CHR(10)
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIFISA04  ºAutor  ³Renato Lucena Neves º Data ³  23/08/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Rotina para geração do arquivo de guia de recolhimento     º±±
+±±º          ³ conforme o layout definido nas tabelas SZA e SZB.          º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP                                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function SIFISA04()
+
+Local _aSays	:= {}
+Local _aButtons	:= {}
+Local _cTitle	:= "Exportação de Guias de Recolhimento"
+Local _cPerg	:= PadR("XFISA04",len(SX1->X1_GRUPO))
+Local _nOpca	:= 0
+Local _lEnd		:= .F.
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³Cria o grupo de perguntas do SX1³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+AjustaSX1(_cPerg)
+
+AADD(_aSays,"Rotina específica para exportação de guias de")
+AADD(_aSays,"impostos conforme layout pré definido.")
+AADD(_aSays,"Os layouts devem estar previamente cadastrados")
+AADD(_aSays,"antes da exportação dos dados")
+
+AADD(_aButtons, { 5,.T.,{|| pergunte(_cPerg,.T.) } } )
+AADD(_aButtons, { 1,.T.,{|o| _nOpca:= 1,o:oWnd:End()}} )
+AADD(_aButtons, { 2,.T.,{|o| _nOpca:= 2,o:oWnd:End()}} )
+FormBatch( _cTitle, _aSays, _aButtons )
+
+
+Pergunte(_cPerg,.F.)
+
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³Se confirmou e os parametros são validos executa o processamento		   ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If _nOpca = 1 .and. ValidPar()
+	Processa({|_lEnd| GeraGuia(@_lEnd)} )
+Endif
+
+Return
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³GeraGuia  ºAutor  ³Renato Lucena Neves º Data ³  23/08/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Gera o arquivo de guia de recolhimento conforme layout     º±±
+±±º          ³ previamente cadasstrado (SZA/SZB)                          º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP                                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function GeraGuia(_lEnd)
+Local _cQuery 		:= ""
+Local _lOracle  	:= ( AllTrim(TCGetDB()) == "ORACLE" )
+Local _nHandle		:= 0
+Local _cFile		:= ""
+Local _cPath		:= AllTrim(MV_PAR13)
+Local _cLayout		:= MV_PAR01
+Local _cSeparador   := ""
+Local _nCt			:= 0
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³Define o separador de campos e nome do arquivo a ser gerado  ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+DbSelectArea("SZA")
+DbSetOrder(1)
+DbSeek(xFilial("SZA")+MV_PAR01)
+_cFile := AllTrim(SZA->ZA_PREFIXO)+StrZero(MV_PAR08,4)+StrZero(MV_PAR07,2)+"."+AllTrim(SZA->ZA_EXT)
+
+Do Case
+	Case SZA->ZA_DELIMIT = "1"
+		_cSeparador := ";"
+	Case SZA->ZA_DELIMIT = "2"
+		_cSeparador := ","
+	Case SZA->ZA_DELIMIT = "3"
+		_cSeparador := Chr(9)
+EndCase
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³Verifica se o arquivo já existe se sim, exclui o arquivo³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If File(_cPath+_cFile)//verifica se o arquivo ja existe
+	If MsgYesNo("O arquivo "+_cPath+_cFile+" já existe, para prosseguir será necessário excluir esse arquivo. Deseja continuar?")
+		If fErase(_cPath+_cFile) = -1 //caso deu erro na exclusao
+			MsgStop("O arquivo "+_cPath+_cFile+" não pode ser excluido. "+FError())
+			Return
+		EndIf
+	Else
+		MsgAlert("Processo não finalizado.")
+		Return()
+	EndIF
+EndIF
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³Seleciona os registros a serem processados³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_cQuery := " Select R_E_C_N_O_ "
+_cQuery += " From "+RetSqlName("SF6")
+_cQuery += " Where F6_FILIAL = '"+xFilial("SF6")+"' and D_E_L_E_T_='' "
+_cQuery += " and F6_NUMERO between '"+MV_PAR02+"' and '"+MV_PAR03+"' "
+_cQuery += " and F6_EST between '"+MV_PAR04+"' and '"+MV_PAR05+"' "
+_cQuery += " and F6_DTVENC = '"+DToS(MV_PAR06)+"' "
+_cQuery += " and F6_MESREF = "+AllTrim(Str(MV_PAR07))+" "
+_cQuery += " and F6_ANOREF = "+AllTrim(Str(MV_PAR08))+" "
+_cQuery += " and F6_TIPOIMP = '"+SZA->ZA_TIPO+"' "
+If _lOracle
+	_cQuery += " and F6_CLIFOR||F6_LOJA between '"+MV_PAR09+MV_PAR10+"' and '"+MV_PAR11+MV_PAR12+"' "
+Else
+	_cQuery += " and F6_CLIFOR+F6_LOJA between '"+MV_PAR09+MV_PAR10+"' and '"+MV_PAR11+MV_PAR12+"' "
+EndIf
+_cQuery := changequery(_cQuery)
+
+MemoWrit( 'SIFISA04.SQL', _cQuery )
+
+dBUseArea( .T., 'TOPCONN', TCGENQRY( ,, _cQuery ), 'QRY1', .F., .T. )
+
+QRY1->( dbEval( { || _nCt++ },,{ || !EOF() } ) )
+QRY1->( dbGoTop() )
+ProcRegua( _nCt )
+
+IF _nCt == 0
+	MsgAlert("Não existem dados a serem gerados!")
+	QRY1->(dbCloseArea())
+	Return()
+ELSE
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ0¿
+	//³Cria o arquivo no local especificado³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ0Ù
+	_nHandle := FCreate(_cPath+_cFile)
+	If _nHandle = -1
+		MsgStop("O arquivo "+_cPath+_cFile+" não pode ser criado. "+FError())
+		Return
+	EndIf
+ENDIF
+
+While QRY1->(!Eof())	
+	IncProc()
+	
+	SF6->(DbGoTo(QRY1->R_E_C_N_O_))
+	IF SF6->(Recno()) == QRY1->R_E_C_N_O_
+		EscreveArq(_cLayout,_nHandle,_cSeparador)
+	ENDIF
+	
+	QRY1->(DbSkip())	
+EndDo
+
+QRY1->(dbCloseArea())
+fClose(_nHandle) //fecha o arquivo
+MsgAlert("Processamento concluído.")
+Return()
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIFISA04  ºAutor  ³Microsiga           º Data ³  23/08/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Escreve uma linha no arquivo conforme configuração do      º±±
+±±º          ³ Layout                                                     º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP                                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function EscreveArq(_cLayout,_nHandle,_cSep)
+Local _aArea  := GetArea()
+Local _cLinha := ""
+
+SZB->(dbSetOrder(1))
+SZB->(dbSeek(xFilial("SZB")+_cLayout))
+
+While SZB->(!Eof()) .and. SZB->ZB_FILIAL == xFilial("SZB") .and. SZB->ZB_LAYOUT == _cLayout
+	
+	IF SZB->ZB_TIPO == "1" //Campo Fixo
+		_cLinha += AllTrim(SZB->ZB_FORMULA)
+	Else //Formula
+		_cLinha += FormataTexto(&(SZB->ZB_FORMULA))
+	EndIF
+	
+	_cLinha += _cSep
+	
+	SZB->(DbSkip())
+EndDo
+
+
+FWrite(_nHandle,_cLinha+ENTER )
+
+RestArea(_aArea)
+
+Return
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ValidPar  ºAutor  ³Renato Lucena Neves º Data ³  23/08/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Verifica se os parametros selecionados são validos         º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP                                                        º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function ValidPar()
+
+Local _lRet		:= .T.
+Local _cErro	:= ""
+Local _cTitulo	:= ""
+Local _aArea	:= GetArea()
+
+DbSelectArea("SZA")
+DbSetOrder(1)
+DbSeek(xFilial("SZA")+MV_PAR01)
+
+Do Case
+	Case MV_PAR03 < MV_PAR02
+		_lRet 	:= .F.
+		_cTitulo:= "Número inválido"
+		_cErro 	:= "Faixa de numeração (de/até) inválida. Verifique os parâmetros. "
+	Case MV_PAR05 < MV_PAR04
+		_lRet 	:= .F.
+		_cTitulo:= "Estado inválido"
+		_cErro 	:= "Faixa de estado de/até) inválido. Verifique os parâmetros. "
+	Case ( MV_PAR11+MV_PAR12 )  < ( MV_PAR09+MV_PAR10 )
+		_lRet 	:= .F.
+		_cTitulo:= "Cliente + Loja inválido"
+		_cErro 	:= "Faixa de Cliente + Loja (de/até) inválido. Verifique os parâmetros. "
+	Case SZA->(!Found())
+		_lRet 	:= .F.
+		_cTitulo:= "Layout inválido"
+		_cErro 	:= "O layout definido é inválido. Verifique os parâmetros. "
+	Case Empty(MV_PAR13) .or. !ExistDir(MV_PAR13)
+		_lRet	:= .F.
+		_cTitulo:= "Caminho inválido"
+		_cErro 	:= "O caminho de gravação do arquivo (Path)é inválido. Verifique os parâmetros. "
+EndCase
+
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³Em caso de parametro inválido exibe a mensagem de erro³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If !_lRet
+	MsgAlert(_cErro,_cTitulo)
+EndIf
+
+
+RestArea(_aArea)
+
+Return _lRet
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³AjustaSX1 ºAutor  ³Renato Lucena Neves º Data ³  23/08/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Cria o grupo de perguntas no SX1                           º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP                                                        º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function AjustaSX1(_cPerg)
+
+u_SFPUTSX1(_cPerg,"01","Layout ?","Layout ?","Layout ?","mv_ch1","C",TamSx3("ZA_COD")[1],0,0,"G","","SZA","X01","","MV_PAR01","","","","","","","","","","","","","","","","",{},{},{})
+u_SFPUTSX1(_cPerg,"02","Numero de ?","Numero de ?","Numero de ?","mv_ch2","C",TamSx3("F6_NUMERO")[1],0,0,"G","","XSF6","","","MV_PAR02","","","","","","","","","","","","","","","","",{},{},{})
+u_SFPUTSX1(_cPerg,"03","Numero ate ?","Numero ate ?","Numero ate ?","mv_ch3","C",TamSx3("F6_NUMERO")[1],0,0,"G","","XSF6","","","MV_PAR03","","","","","","","","","","","","","","","","",{},{},{})
+u_SFPUTSX1(_cPerg,"04","Estado de ?","Estado de ?","Estado de ?","mv_ch4","C",TamSx3("F6_EST")[1],0,0,"G","","12","010","","MV_PAR04","","","","","","","","","","","","","","","","",{},{},{})
+u_SFPUTSX1(_cPerg,"05","Estado ate ?","Estado ate ?","Estado ate ?","mv_ch5","C",TamSx3("F6_EST")[1],0,0,"G","","12","010","","MV_PAR05","","","","","","","","","","","","","","","","",{},{},{})
+u_SFPUTSX1(_cPerg,"06","Vencimento ?","Vencimento ?","Vencimento ?","mv_ch6","D",8,0,0,"G","","","","","MV_PAR06","","","","","","","","","","","","","","","","",{},{},{})
+u_SFPUTSX1(_cPerg,"07","Mes ?","Mes ?","Mes ?","mv_ch7","N",02,0,0,"G","(MV_PAR07>=1.AND.MV_PAR07<=12)","","","","MV_PAR07","","","","","","","","","","","","","","","","",{},{},{})
+u_SFPUTSX1(_cPerg,"08","Ano ?","Ano ?","Ano ?","mv_ch8","N",04,0,0,"G","","","","","MV_PAR08","","","","","","","","","","","","","","","","",{},{},{})
+u_SFPUTSX1(_cPerg,"09","Cliente de ?","Cliente de ?","Cliente de ?","mv_ch9","C",TamSx3("F6_CLIFOR")[1],0,0,"G","","SA1","001","","MV_PAR09","","","","","","","","","","","","","","","","",{},{},{})
+u_SFPUTSX1(_cPerg,"10","Loja de ?","Loja de ?","Loja de ?","mv_cha","C",TamSx3("F6_LOJA")[1],0,0,"G","","","002","","MV_PAR10","","","","","","","","","","","","","","","","",{},{},{})
+u_SFPUTSX1(_cPerg,"11","Cliente ate ?","Cliente ate ?","Cliente ate ?","mv_chb","C",TamSx3("F6_CLIFOR")[1],0,0,"G","","SA1","001","","MV_PAR11","","","","","","","","","","","","","","","","",{},{},{})
+u_SFPUTSX1(_cPerg,"12","Loja ate ?","Loja ate ?","Loja ate ?","mv_chc","C",TamSx3("F6_LOJA")[1],0,0,"G","","","002","","MV_PAR12","","","","","","","","","","","","","","","","",{},{},{})
+u_SFPUTSX1(_cPerg,"13","Caminho do Arquivo ?","Caminho do Arquivo ?","Caminho do Arquivo ?","mv_chd","C",60,0,0,"G","","DIR2","","","MV_PAR13","","","","","","","","","","","","","","","","",{},{},{})
+
+Return
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³FormataTextoºAutor  ³Microsiga           º Data ³  29/09/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³Funcao de formatacao do conteudo para TEXTO                   º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function FormataTexto(uConteudo)
+Local cRetorno := ""
+
+If ValType(uConteudo) == "C"
+	cRetorno := uConteudo
+ElseIf ValType(uConteudo) == "D"
+	cRetorno := DToS(uConteudo)
+ElseIf ValType(uConteudo) == "N"
+	cRetorno := AllTrim(Str(uConteudo))
+EndIf
+
+Return(cRetorno)

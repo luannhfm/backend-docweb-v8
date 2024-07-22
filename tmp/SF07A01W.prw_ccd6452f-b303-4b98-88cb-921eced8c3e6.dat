@@ -1,0 +1,125 @@
+#Include 'Protheus.ch'
+
+
+
+/*/{Protheus.doc} SF07A01W
+
+Esta rotina irá gerar a base de calculo para a 1a. parcela do 13o. salario
+aos funcionarios.
+
+@author willian.santos
+@since 14/04/2015
+@version 1.0
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+
+/*/
+
+User Function SF07A01W()
+
+Local _cMat		:= SRA->RA_MAT
+Local _cFil		:= SRA->RA_FILIAL
+Local _dAdm		:= SRA->RA_ADMISSA
+Local _cSitac	:= SRA->RA_SITFOLH
+Local _cPeriodo	:= GetMv("MV_FOLMES")
+Local _cAno		:= Substr(_cPeriodo,1,4)
+Local _nMes		:= val(Substr(_cPeriodo,5,2))
+Local _cPerIni	:= _cAno+"01"
+Local _dDataAtu	:= CTOD('01/'+Substr(_cPeriodo,5,2)+"/"+Substr(_cPeriodo,1,4))
+Local _dDataIni	:= CTOD('01/01/'+Substr(_cPeriodo,1,4))
+Local _cVerbas	:= ''
+Local _nRet		:= 0
+Local _nMeses	:= 0 
+Local _lProp	:= .F.
+Local aArea		:= GetArea()
+Local _nPercAdConf := SRA->RA_ADCCONF
+
+If _dAdm > _dDataIni
+	_lProp := .T.
+	_dDataIni	:= _dAdm
+	_nMeses := (DateDiffMonth(_dDataIni,_dDataAtu))+1
+EndIf
+
+
+//--Verbas para base
+IF SRA->RA_CATFUNC = 'J'
+	_cVerbas := "'113','172','192','130','145'"
+Else
+	_cVerbas := "'122'"
+EndIf
+
+
+//---Consulta para buscar a base nos periodos anteriores
+
+If SRA->RA_CATFUNC = 'J'
+	//19/02/16
+	//acumulado
+	cQuery	:= "SELECT RD_MAT,SUM(RD_VALOR) TOTAL FROM "+RetSqlName("SRD")+" "
+	cQuery	+= "WHERE D_E_L_E_T_ <> '*' AND "
+	cQuery	+= "RD_MAT = '"+_cMat+"' AND "
+	cQuery	+= "RD_FILIAL = '"+_cFil+"' AND "
+	cQuery 	+= "RD_DATARQ >= '"+_cPerIni+"' AND "
+	cQuery	+= "RD_PD IN ("+_cVerbas+") "
+	cQuery	+= "GROUP BY RD_MAT"
+	
+	cQuery := ChangeQuery( cQuery )
+	dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery), 'TRB', .T., .T. )
+	
+		While TRB->(!EOF())
+		
+			_nRet := TRB->TOTAL
+			
+			TRB->(DbSkip())
+		EndDo 
+		
+		TRB->(DBCLOSEAREA())
+		
+		
+	//19/02/16
+	//valor pago no mes
+	//---CONSULTA PARA BUSCAR BASE NO MOVIMENTO DO MES
+	cQuery	:= "SELECT RC_MAT,SUM(RC_VALOR) TOTAL FROM "+RetSqlName("SRC")+" "
+	cQuery	+= "WHERE D_E_L_E_T_ <> '*' AND "
+	cQuery	+= "RC_MAT = '"+_cMat+"' AND "
+	cQuery	+= "RC_FILIAL = '"+_cFil+"' AND "
+	cQuery	+= "RC_PD IN ("+_cVerbas+") "
+	cQuery	+= "GROUP BY RC_MAT"
+
+	cQuery := ChangeQuery( cQuery )
+	dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery), 'TRB1', .T., .T. )
+
+		While TRB1->(!EOF())
+	
+			_nRet += TRB1->TOTAL
+		
+			TRB1->(DbSkip())
+		EndDo 
+	
+	TRB1->(DBCLOSEAREA())
+	
+ELSE
+	_nRet := SRA->RA_SALARIO
+	_nRet += (_nRet * _nPercAdConf)/100
+ENDIF
+	
+		
+	
+	Do Case
+	 	Case SRA->RA_CATFUNC = 'J' .AND. _lProp = .F.
+			_nRet 	:= (_nRet / _nMes) / 2
+			
+		Case SRA->RA_CATFUNC = 'J' .AND.  _lProp = .T.
+			_nRet	:= ((_nRet / _nMeses) / 2 )
+			
+		Case SRA->RA_CATFUNC = 'M' .AND.  _lProp = .F.
+			_nRet 	:= (_nRet / 2)
+			
+		Case SRA->RA_CATFUNC = 'M' .AND.  _lProp = .T.
+			_nRet 	:= (((_nRet / 12) * _nMeses ) / 2 )
+	EndCase
+
+RestArea(aArea)
+
+Return _nRet

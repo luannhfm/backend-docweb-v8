@@ -1,0 +1,83 @@
+#INCLUDE "PROTHEUS.CH"
+
+/*/{Protheus.doc} MT010ALT
+Ponto de Entrada para complementar a alteração no cadastro do Produto.
+LOCALIZAÇÃO : Function A010Altera - Função de Alteração do Produto, após sua alteração.
+EM QUE PONTO: Após alterar o Produto, este Ponto de Entrada nem confirma nem cancela a operação, 
+deve ser utilizado para gravar arquivos/campos do usuário, complementando a alteração.
+@type function
+@author Microsiga
+@since 19/02/12
+@history 10/03/2021, Franklin de Brito de Oliveira, correção na marcação dos 
+produtos a serem integrados com o SGT.
+/*/
+User Function MT010ALT()
+	
+	Local _aArea := GetArea()
+	Local lTem := .T.
+
+	If ALTERA .AND. SB1->B1_TIPO == "ST" .AND. SB1->B1_XPRDVEN == "S" .AND. SB1->B1_XPRDFIL $ "03/06"
+		dbSelectArea("ZCN")
+		dbSetOrder(1)
+		lTem := ZCN->(MsSeek(SB1->B1_FILIAL + SB1->B1_COD))
+		RecLock("ZCN", !(lTem))
+			 //Se o código de produto já existe na tabela ZCN
+			If lTem
+				//Se o código de produto SGT está preenchido então é uma alteração no SGT.
+				If !Empty(SB1->B1_XPRDSGT) 
+					ZCN->ZCN_SGTALT := "X"
+				Else
+					ZCN->ZCN_SGTINC := "X"
+				EndIf
+			Else
+				ZCN->ZCN_FILIAL := SB1->B1_FILIAL
+				ZCN->ZCN_COD 	:= SB1->B1_COD
+				//Se o código de produto SGT está preenchido então é uma alteração no SGT.
+				If !Empty(SB1->B1_XPRDSGT) 
+					ZCN->ZCN_SGTALT := "X"
+				Else
+					ZCN->ZCN_SGTINC := "X"
+				EndIf
+			EndIf
+		ZCN->( MsUnlock() )
+		ZCN->( DbCloseArea() )
+	EndIf
+	
+	SZZ->(dbSetOrder(1))
+	IF SZZ->(dbSeek(XFilial("SZZ")+"MATA010"))
+		MsgRun('Enviando pacote para ESB. Aguarde...',, {|| U_SIESBA10() } )
+   	Endif
+	//+------------------------------------------------------------------+
+	//| Antonio Dantas                                        07/03/2016 |
+	//| Preenche o Campo [B1_XOPER - Dta Alteracao - DN] com a data de   |
+	//| Alracao no formato AAAAMMAA, para ser utilizado na INTEGRACAO    |
+	//| CRM x DN.                                                        |        
+	//+------------------------------------------------------------------+
+	fMarkSB1()
+	
+	RestArea(_aArea)
+	
+Return Nil
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fMarkSB1>
+   #CONTROLE_DN
+   Preenche o Campo [B1_XOPER - OPER DN] com a data de ALTERACAO no formato 
+   AAAAMMAA:hh:mm, para ser utilizado na INTEGRACAO CRM x DN.        
+
+@author Antonio Dantas
+@since<07/03/2016>
+@version<1.00>
+@receive<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function fMarkSB1()
+If SB1->(RecLock("SB1",.f.))
+	Replace SB1->B1_XOPER With Substr(SB1->B1_XOPER,1,15)+Dtos(dDataBase)+':'+Substr(Time(),1,5)
+	SB1->(MsUnlock())
+	SB1->(dbCommit())
+Endif
+Return

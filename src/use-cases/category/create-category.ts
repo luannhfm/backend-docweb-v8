@@ -6,7 +6,7 @@ export class CreateCategoryUseCase {
     async handler({ category, content }: { category: string; content: string }): Promise<void> {
         const existingCategory = await this.categoryRepository.findById(category);
         if (existingCategory) {
-            throw new Error('Categoria já existente.');
+           
         }
         await this.categoryRepository.create(category, content);
     }

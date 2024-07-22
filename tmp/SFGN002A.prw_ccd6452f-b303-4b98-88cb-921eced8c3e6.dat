@@ -1,0 +1,184 @@
+#INCLUDE 'PROTHEUS.CH'
+
+/*/{Protheus.doc} SFGN002A
+@description Relatório de estatística de uso dos fontes customizados.
+@author alan.oliveira
+@since 23/10/2018
+@version 1.0
+
+@type function
+/*/
+User Function SFGN002A()
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SFGN002A")
+	Local oReport 	:= Nil
+
+	oReport := ReportDef('SFGN002A')
+
+	oReport:PrintDialog()
+
+Return
+
+/*/{Protheus.doc} ReportDef
+@description Criação dos componentes de impressão, seções, células, totalizadores e demais componentes do relatório.
+@type  Function
+@author Alan Teles de Oliveira
+@since 23/10/2018
+@version 1.0
+@param p_cPerg,	caracter, nome da pergunta 
+@return oReport, objeto, objeto do relatório   
+/*/
+Static Function ReportDef(p_cPerg)
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SFGN002A")
+	Local oReport	:= Nil
+	Local oSection1	:= Nil //Valores acumulados por conta gerencial 
+	Local oSection2	:= Nil //Detalhamento dos títulos que compõem o resultado da conta gerencial
+	Local oBrkRes   := Nil //Break
+
+	oReport := TReport():New('SFGN002A', 'Relatório de fontes não utilizados.', p_cPerg, {|oReport| ReportPrint(oReport)}, '')
+
+	oReport:SetTotalInLine(.f.)
+	oReport:SetLandScape()
+	oReport:DisableOrientation()
+
+	oSection1 := TRSection():New(oReport, "Customizações", {})
+	TRCell():New(oSection1, "FONTE",,	"Fonte",, 				TamSx3("ZJC_FONTE")[1])
+	TRCell():New(oSection1, "FUNCAO",,	"Função",,				TamSx3("ZJC_FUNCAO")[1])
+	TRCell():New(oSection1, "TIPO",,	"Tipo",, 				10)
+	TRCell():New(oSection1, "DATA",,	"Data",, 				12)
+	TRCell():New(oSection1, "HORA",,	"Hora",, 				10)
+	TRCell():New(oSection1, "LINHA",,	"Linha", '@R 999999',	6,,, "LEFT",, "LEFT")
+
+	oBrkRes:= TRBreak():New(oSection1, {|| .t.}, "Total Geral",, "TOTRES")	
+	
+	TRFunction():New(oSection1:Cell("FONTE"), 	"", "SUM", 		oBrkRes,,,, .f., .f.)
+	TRFunction():New(oSection1:Cell("FUNCAO"),	"", "COUNT",	oBrkRes,,,, .f., .f.)
+
+Return oReport
+
+/*/{Protheus.doc} ReportDef
+@description Controla o fluxo do relatório.
+@type  Function
+@author Alan Teles de Oliveira
+@since 23/10/2018
+@version 1.0
+@param p_oReport, objeto, objeto do relatório 
+/*/
+Static Function ReportPrint(p_oReport)
+	
+	Local cEstat := U_SFGN001A(ProcName(0), "SFGN002A")
+	Local nTotRegs  	:= 0	
+	Local aCuston		:= {}
+	Local oSection1		:= p_oReport:Section(1)
+	Local oBrkRes  		:= oSection1:GetBreak("TOTRES")
+
+	oSection1:Cell("FONTE"):SetBlock({|| 	aCuston[nX][1]})
+	oSection1:Cell("FUNCAO"):SetBlock({|| 	aCuston[nX][2]})
+	oSection1:Cell("TIPO"):SetBlock({|| 	aCuston[nX][3]})
+	oSection1:Cell("DATA"):SetBlock({|| 	aCuston[nX][4]})
+	oSection1:Cell("HORA"):SetBlock({||		aCuston[nX][5]})
+	oSection1:Cell("LINHA"):SetBlock({||	aCuston[nX][6]})
+
+	aCuston 	:= GetCuston(p_oReport)
+	nTotRegs	:= Len(aCuston) 
+
+	If nTotRegs > 0
+	
+		p_oReport:SetMeter(nTotRegs)
+		
+		oSection1:Init()
+		
+		For nX := 1 to nTotRegs
+
+			//---  Verifica se o relatroio foi cancelado pelo usuário
+			If p_oReport:Cancel()
+				Exit
+			EndIf
+
+			p_oReport:IncMeter()	
+			oSection1:PrintLine()
+
+		Next 
+
+	EndIf	
+
+	p_oReport:SetMeter(nTotRegs)
+
+Return
+
+/*/{Protheus.doc} GetCuston
+@description Compara fontes customizados usados com fontes existentes no repositório do Protheus.
+@type  Function
+@author Alan Teles de Oliveira
+@since 23/10/2018
+@version 1.0
+@param p_oReport, objeto, objeto do relatório 
+@return aRet, array, relação de fontes não utilizados
+/*/
+Static Function GetCuston(p_oReport)
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SFGN002A")
+	Local cAliTMP	:= GetNextAlias()
+	Local nPos		:= 0
+	Local nX 		:= 0
+    Local aTipo 	:= {}
+    Local aArquivo 	:= {}
+    Local aLinha 	:= {}
+    Local aData 	:= {}
+    Local aHora 	:= {}
+    Local aScr 		:= {}
+	Local aRet		:= {}
+
+    aScr := GetFuncArray('U_*', @aTipo, @aArquivo, @aLinha, @aData, @aHora)
+
+	For nX := 1 to Len(aScr)
+
+		If p_oReport:Cancel()
+			Exit
+		EndIf
+
+        aAdd(aRet, {aArquivo[nX], aScr[nX], aTipo[nX], aData[nX], aHora[nX], aLinha[nX]})
+
+    Next
+
+	If Select(cAliTMP) > 0
+		(cAliTMP)->(DbCloseArea())
+	EndIf
+
+	BeginSql Alias cAliTMP
+
+		SELECT DISTINCT
+			ZJC.ZJC_FONTE	AS FONTE,
+			ZJC.ZJC_FUNCAO 	AS FUNCAO
+		FROM %Table:ZJC% ZJC
+		WHERE
+			ZJC.ZJC_SOPER != 'DESCONSIDERAR' AND
+			ZJC.%Notdel%
+
+	EndSql
+
+	//MemoWrite('C:\TEMP\SFGN002A.sql', GetLastQuery()[2])
+
+	dbSelectArea(cAliTMP)
+
+	(cAliTMP)->(DbGoTop())
+
+	While .not. (cAliTMP)->(Eof())	
+		
+		If p_oReport:Cancel()
+			Exit
+		EndIf
+		
+		If (nPos := aScan(aRet, {|x| x[2] == AllTrim((cAliTMP)->FUNCAO)})) > 0
+			aDel(aRet, nPos)
+			aSize(aRet, Len(aRet) -1)
+		EndIf
+		
+		(cAliTMP)->(DbSkip())	
+		
+	Enddo
+
+Return aRet
+
+

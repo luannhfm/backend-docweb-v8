@@ -1,0 +1,268 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "APWIZARD.CH"
+#INCLUDE "TBICONN.CH"
+#INCLUDE "TOPCONN.CH"   
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH" 
+
+#DEFINE CRLF chr(13)+chr(10)   
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <SF7322X>
+   #CONTROLE_DN - Rotina de IMPORTACAO das Informacoes do DN 
+   Rotina das Importacoes de Informacoes Provindas do DN para Tabelas do 
+   Protheus. Le arquivos TXT, provindos do DN, A Saber:
+    Tabela Propria: 
+      ZCF - Produtos do DN
+
+    Tabela SX5: 
+      XS  - Solução
+      XL  - Linha de Produtos
+      XF  - Familia de Produtos
+      XC  - Categoria de Produtos
+      XE  - Entidade
+      XU  - Unidades da Entidade
+   
+@author Antonio Dantas 
+@since 30/09/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/        
+User Function SF7322X()
+
+Local cEstat := U_SFGN001A(ProcName(0), "SF7322X")
+Local 	_cOper			:= ""   
+Local 	_cOperCab		:= "" 
+Local 	_cTitulo		:= "Importação de arquivos do DN"
+Local 	_aOpcoes		:=	{"ZCF - Produtos do DN"			,;
+							 "XS  - Solução"				,;
+							 "XL  - Linha de Produtos"		,;
+							 "XF  - Familia de Produtos"	,;
+							 "XC  - Categoria de Produtos"	,;
+							 "XE  - Entidade"				,;
+							 "XU  - Unidades da Entidade"	 }
+//--							 
+Private _oDlgSX5		:= Nil  
+Private _oCBoxSX5		:= Nil  
+Private _oBtnOK			:= Nil 
+Private _SayCab			:= Nil 
+Private _oCBoxCAB   	:= Nil
+//+------------------------------------------------------------------+
+//| Interface onde o operador seleciona a TABELA que sera Editada    |
+//+------------------------------------------------------------------+
+_oDlgSX5	:= MSDialog():New( 170,230,480,820,_cTitulo,,,.F.,,,,,,.T.,,,.T. )
+_oCBoxSX5	:= TComboBox():New( 060,100,{|u| If(PCount()>0,_cOper:=u,_cOper)},_aOpcoes,100,010,_oDlgSX5,,,,CLR_BLACK,CLR_WHITE,.T.,,"",,,,,,,_cOper )
+_SayCab		:= Tsay():New(082,085,{||"A Primeira Linha é Cabeçalho: "}, _oDlgSX5,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,080,008)
+_oCBoxCAB	:= TComboBox():New(080,160,{|u| If(PCount()>0,_cOperCab:=u,_cOperCab)},{"Sim","Não"},040,010,_oDlgSX5,,,,CLR_BLACK,CLR_WHITE,.T.,,"",,,,,,,_cOperCab)
+//-- 
+_oBtnESC	:= TButton():New( 110,180,"FECHAR"	,_oDlgSX5	,{|| _oDlgSX5:End() } 							,037,012,,,,.T.,,"",,,,.F. )
+_oBtnOK		:= TButton():New( 110,220,"OK"		,_oDlgSX5	,{|| u_fPrepImp(_cOper,_aOpcoes,_cOperCab) }	,037,012,,,,.T.,,"",,,,.F. )
+//-- 
+_oDlgSX5:Activate(,,,.T.)
+//-- 
+Return NIL 
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fPrepImp>
+   Funcao de Preparacao para Importacao 
+   
+@author Antonio Dantas 
+@since 30/09/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/     
+User Function fPrepImp(_cOper,_aOpcoes,_cOperCab)
+
+Local cEstat := U_SFGN001A(ProcName(0), "SF7322X")
+Local _lNotFirst	:= Iif(Upper(_cOperCab)=="SIM",.t.,.f.) 
+Local _nOper		:= aScan(_aOpcoes,{|X| AllTrim(X) == _cOper})
+Local _cTableX		:= Alltrim(Substr(_cOper,1,3))
+Processa({|| fLerTXT(_cTableX,_lNotFirst,_aOpcoes,_nOper) },"Processando...")
+Return NIL 
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fLerTXT>
+   Funcao de IMPORTACAO das informacoes dos Arquivos TXT do DN.   
+   
+@author Antonio Dantas 
+@since 30/09/2015
+@version<1.00>
+@receive
+<   _cTabela (c) - Alias da Tabela que recebera as Informacoes Importadas 
+  _lNotFirst (c) - Indica se o Primeiro Registro do Arquivo que sera lido
+                   e Cabecalho 
+    _aOpcoes (a) - Array com os Alias das tabelas previstas na importacao.
+      _nOper (n) - Qual o Opcao de Importacao (Posicao no Array) 
+>
+@return
+<    _lRetOK (l) - (.t.) - Importacao Encerrada com Sucesso
+                   (.f.) - Importacao nao foi concluida 
+>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/     
+Static Function fLerTXT(_cTabela,_lNotFirst,_aOpcoes,_nOper)
+
+Local cEstat := U_SFGN001A(ProcName(0), "SF7322X")
+Local _cAlias 		:= Iif(_cTabela == "ZCF",_cTabela,"SX5")
+Local _lRetOK		:= .t.  
+Local _cArqRet 		:= cGetFile('Arquivo |*.*','LÃªr Arquivo',1,'C:\',.F.,GETF_LOCALHARD)
+Local _nTotLIN 		:= 0
+Local _cTexto 		:= ""
+Local _nCtaREG		:= 0
+Local _aColsTXT		:= {}   
+Local _cChave 		:= ""
+Local _lFound 		:= .t.  
+Local _nH_Arq		:= 0 
+Local _nAtualiza	:= 0  
+Local _nNovos		:= 0
+Local _cMensagem	:= 0
+//-- 
+If _cArqRet == ""
+	Aviso(FunName()+"/"+ProcName(),"Nome do Arquivo de Retorno não Foi Informado!",{"OK"})
+	_lRetOK := .f.
+Endif  
+//+-----------------------------------------------------------------------+
+//| Trata caso a caso os Layout's da Remessa                              |
+//+-----------------------------------------------------------------------+  
+If _lRetOK
+	_lRetOK		:= .f.
+	//+-----------------------------------------------------------------------+
+	//| Abre o Arquivo de DESTINO das Informacoes importadas.                 |
+	//+-----------------------------------------------------------------------+
+	dbSelectArea(_cAlias)			//--
+	(_cAlias)->(dbSetOrder(1))		//--  
+	//+-----------------------------------------------------------------------+
+	//| Abre o Arquivos TXT com as informacoes do DN                          |
+	//+-----------------------------------------------------------------------+
+	_nH_Arq	:= fOpen(_cArqRet,68) 
+	If _nH_Arq = -1
+		Aviso(FunName()+"/"+ProcName(),"Não foi Possivel Abrir o Arquivo de Retorno!",{"OK"})
+		_lRetOK := .f.
+	EndIf         
+	//-- Seleciona o Arquivo TXT       
+	FT_FUse(_cArqRet)
+	//-- Manda o Ponteiro para topo 
+	FT_FGOTOP()
+	//-- Conta o Numero de Linhas 	
+	_nTotLIN := FT_FLASTREC()
+	_nTotLIN := Iif( _lNotFirst,_nTotLIN-1,_nTotLIN)
+	//-- Inicializa o Termometro 	
+	ProcRegua(_nTotLIN)
+	_nAtualiza	:= 0  
+	_nNovos		:= 0
+	//-- Loop de Leitura  
+	Do While !FT_FEof()
+		//-- Despreza a linha de Cabecalho 	   	
+   		If _lNotFirst
+			//-- Segue para Proxima Linha 
+			FT_FSkip()
+			_lNotFirst := .f. 
+   		Endif  
+		//-- Implementa Termometro
+		_nCtaREG++
+		IncProc("Total de Registros:"+Alltrim(Transform(_nTotLIN,"@E 999,999,999"))+"|  Lidos:"+Alltrim(Transform(_nCtaREG,"@E 999,999,999")))   
+		_cTexto 	:= FT_FReadln()
+		If !Empty(Alltrim(_cTexto))
+			_aColsTXT 	:= StrTokArr(_cTexto,";")
+			_cChave 	:= _aColsTXT[1]
+			If _cAlias != _cTabela 	
+				_lFound := (SX5->(dbSeek(FwxFilial("SX5")+_cTabela+_cChave))) 
+			Else
+				_lFound := (ZCF->(dbSeek(FwxFilial("ZCF")+_cChave))) 
+			Endif 
+			(_cAlias)->(RecLock(_cAlias,!_lFound))
+			//-- Implementa Contadores para registros NOVOS incluidos e ja existentes MODIFICADOS. 
+			If _cAlias == "ZCF"			
+				Replace ZCF->ZCF_FILIAL With FwxFilial(_cAlias) 
+				Replace ZCF->ZCF_PRODUT With _aColsTXT[01]
+				Replace ZCF->ZCF_DESCRI With fMakeTXT(_aColsTXT[02])
+				Replace ZCF->ZCF_SOLUCA With _aColsTXT[03]
+				Replace ZCF->ZCF_DESCXS With fMakeTXT(_aColsTXT[04])
+				Replace ZCF->ZCF_LINHA 	With _aColsTXT[05]
+				Replace ZCF->ZCF_DESCXL With fMakeTXT(_aColsTXT[06])
+				Replace ZCF->ZCF_FAMILI With _aColsTXT[07]
+				Replace ZCF->ZCF_DESCXF With fMakeTXT(_aColsTXT[08])
+				Replace ZCF->ZCF_CATEGO With _aColsTXT[09]
+				Replace ZCF->ZCF_DESCXC With fMakeTXT(_aColsTXT[10])
+				Replace ZCF->ZCF_ENTIDA With _aColsTXT[11]
+			Else
+				Replace SX5->X5_FILIAL With FwxFilial(_cAlias)
+				Replace SX5->X5_TABELA With _cTabela
+				Replace SX5->X5_CHAVE With _aColsTXT[01]
+				Replace SX5->X5_DESCRI With fMakeTXT(_aColsTXT[02])
+				Replace SX5->X5_DESCSPA With fMakeTXT(_aColsTXT[02])
+				Replace SX5->X5_DESCENG With fMakeTXT(_aColsTXT[02])
+			Endif 
+			(_cAlias)->(MsUnLock())
+			(_cAlias)->(dbCommit())
+			If _lFound 
+				_nAtualiza++  
+			Else
+				_nNovos++
+			Endif 
+			_lRetOK := .t.
+		Endif		//-- !Empty(Alltrim(_cTexto))
+		//-- Segue para Proxima Linha 
+		FT_FSkip()
+	EndDo
+	If _lRetOK
+		fClose(_nH_Arq)   
+	Else
+		Aviso(FunName()+"/"+ProcName(),"Não existem registros aptos para retorno!",{"OK"})
+	Endif 
+	If _nAtualiza > 0 .Or. _nNovos > 0 
+		_cMensagem := "Importação das informações de ["+Alltrim(_aOpcoes[_nOper])+"] encerrada com sucesso, sendo:"+CRLF
+		If _nAtualiza > 0   
+			_cMensagem += "=> "+Alltrim(Str(_nAtualiza))+" registros já existentes MODIFICADOS.  "+CRLF
+		Endif 
+		If _nNovos > 0 
+			_cMensagem += "=> "+Alltrim(Str(_nNovos))+" registros novos INCLUIDOS. "+CRLF
+		Endif 
+		Aviso(FunName()+"/"+ProcName(),_cMensagem,{"OK"},3)
+	Endif 
+Endif 
+Return _lRetOK
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fMakeTXT>
+   Implementa correcoes basicas e de formado nas informacoes importadas. 
+   
+@author Antonio Dantas 
+@since 30/09/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/     
+Static Function fMakeTXT(_cString)
+
+Local cEstat := U_SFGN001A(ProcName(0), "SF7322X")
+Local _cNewStrin	:= ""
+_cNewStrin	:= AllTrim(_cString)
+_cNewStrin	:= Upper(_cNewStrin)
+_cNewStrin	:= OemToAnsi(_cNewStrin)
+_cNewStrin	:= StrTran(_cNewStrin,'"','')
+_cNewStrin	:= LTrim(_cNewStrin)
+Return _cNewStrin

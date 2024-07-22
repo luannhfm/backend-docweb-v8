@@ -1,0 +1,196 @@
+#include 'TOTVS.CH'
+
+Static scLog := ""
+Static snTit := 0
+Static snVal := 0
+Static snErr := 0
+Static snBxa := 0
+Static slDIF := SuperGetMv("MV_CBBXDIF",.T.,"S") == "N" //Nao permitir Baixa CNAB a Receber com Valor Diferente
+
+/*/{Protheus.doc} 200GEMBX
+Ponto de entrada FINA200 - Baixas a receber comunicacao bancaria
+LEITURA DO ARQUIVO DE RETORNO DE CANB A RECEBER
+@type function
+@version 12.1.33
+@author Edmar Tinti
+@since 07/11/2022
+@return array, titulos tratados para a baixa
+@history 07/11/2022, Vitor Gabriel-J2A, tratamento para baixar os titulos da FIEMT.
+/*/
+User Function 200GEMBX()
+	Local cQry, cNum
+	Local lRet := .F.
+	Local aRet := ParamIXB[1] //{cNumTit, dBaixa, cTipo, cNsNum, nDespes, nDescont, nAbatim, nValRec, nJuros, nMulta, nOutrDesp, nValCc, dDataCred, cOcorr, cMotBan, xBuffer,dDtVc,{}}
+	Local nDes := aRet[6] + aRet[7]  //nDescont + nAbatim
+	Local nVal := aRet[8]            //nValRec
+	Local nJur := aRet[9]            //nJuros
+	Local nMul := aRet[10]           //nMulta
+	Local cBco := MV_PAR06
+	Local cAge := MV_PAR07
+	Local cCta := MV_PAR08
+	If Empty(aRet[1]) .And. !Empty(aRet[4]) //cNumTit + cNsNum
+		//Pesquisa pelo Nosso Numero com E1_NUMBCO
+		cQry := GetNextAlias()
+		cNum := Right(aRet[4],TamSX3("E1_NUMBCO")[1])
+		BeginSQL ALIAS cQry
+			SELECT
+				E1_FILIAL,
+				E1_IDCNAB,
+				E1_PREFIXO,
+				E1_NUM,
+				E1_PARCELA,
+				E1_TIPO
+			FROM
+				%Table:SE1%
+			WHERE
+				%NotDel%
+				AND E1_NUMBCO = %Exp:cNum%
+		EndSQL
+		If !(cQry)->(Eof())
+			If !Empty((cQry)->E1_IDCNAB)
+				cNumTit := (cQry)->E1_IDCNAB
+				SE1->(DbSetOrder(19))
+				lRet := SE1->(MsSeek(cNumTit))
+			Else
+				cNumTit := (cQry)->(E1_PREFIXO + E1_NUM + E1_PARCELA)
+				SE1->(DbSetOrder(1))
+				lRet := SE1->(MsSeek((cQry)->E1_FILIAL + cNumTit + (cQry)->E1_TIPO))
+			Endif
+			cTipo   := (cQry)->E1_TIPO
+			aRet[3] := cTipo
+			aRet[1] := cNumTit
+		Endif
+		(cQry)->(dbCloseArea())
+	Else
+		//Pesquisa pelo ID
+		cNum := Right(aRet[1],TamSX3("E1_IDCNAB")[1])
+		SE1->(DbSetOrder(19))
+		lRet := SE1->(MsSeek(cNum))
+		If !lRet
+			//Pesquisa pelo Titulo
+			cQry := GetNextAlias()
+			cNum := PadR(aRet[1], Len(SE1->(E1_PREFIXO + E1_NUM + E1_PARCELA)), " ")
+			BeginSQL ALIAS cQry
+                SELECT
+                    E1_FILIAL,
+                    E1_IDCNAB,
+                    E1_PREFIXO,
+                    E1_NUM,
+                    E1_PARCELA,
+                    E1_TIPO
+                FROM
+                    %Table:SE1%
+                WHERE
+                    %NotDel%
+                    AND E1_PREFIXO || E1_NUM || E1_PARCELA = %Exp:cNum%
+			EndSQL
+			If !(cQry)->(Eof())
+				If !Empty((cQry)->E1_IDCNAB)
+					cNumTit := (cQry)->E1_IDCNAB
+					SE1->(DbSetOrder(19))
+					lRet := SE1->(MsSeek(cNumTit))
+				Else
+					cNumTit := (cQry)->(E1_PREFIXO + E1_NUM + E1_PARCELA)
+					SE1->(DbSetOrder(1))
+					lRet := SE1->(MsSeek((cQry)->E1_FILIAL + cNumTit + (cQry)->E1_TIPO))
+				Endif
+				cTipo   := (cQry)->E1_TIPO
+				aRet[3] := cTipo
+				aRet[1] := cNumTit
+			Endif
+			(cQry)->(dbCloseArea())
+		Endif
+	Endif
+//Log de Resultado da Leitura do Arquivo de CNAB
+	If !lRet //Nao Achou o Titulo
+		cNum := ""
+		If !Empty(aRet[4])
+			cNum += "Nro: " + Trim(aRet[4]) + "  "
+		Endif
+		If !Empty(aRet[1]) .And. Len(Trim(aRet[1])) <= TamSX3("E1_IDCNAB")[1]
+			cNum += "ID: " + Trim(aRet[1])
+		Endif
+		scLog += "NAO ACHOU -> " + cNum + CRLF
+		cNumTit := ""
+	Else //Achou o Titulo
+		cNum := Trim(SE1->E1_FILIAL + SE1->E1_PREFIXO + SE1->E1_NUM)
+		If (SE1->E1_PORTADO != cBco .Or. SE1->E1_CONTA != cCta .Or. SE1->E1_AGEDEP != cAge) .And. SE1->E1_SALDO > 0 .And. nVal > 0
+			scLog += "PORTADOR " + AllTrim(SE1->E1_PORTADO + SE1->E1_CONTA + SE1->E1_AGEDEP) + " -> " + cNum + CRLF
+			cNumTit := ""
+		ElseIf (Left(cFilAnt,2) != Left(SE1->E1_FILIAL,2)) .Or. (MV_PAR13 == 1 .And. cFilAnt != SE1->E1_FILIAL)
+			scLog += "FILIAL " + cFilAnt + " -> " + cNum + CRLF
+			cNumTit := ""
+		ElseIf SE1->E1_SALDO == 0
+			scLog += "JA BAIXADO -> " + cNum + CRLF
+			cNumTit := ""
+		ElseIf slDIF //Baixa CNAB a Receber com Valor Diferente
+			If nVal > SE1->E1_SALDO
+				nJur += SE1->E1_JUROS
+				nMul += SE1->E1_MULTA
+				If nVal != SE1->E1_SALDO + ((nJur+nMul)-(nDes))
+					scLog += "VALOR MV_CBBXDIF -> " + cNum + " " + cValToChar(nVal) + CRLF
+					cNumTit := ""
+				Endif
+			Endif
+		Endif
+		If !Empty(cNumTit) .And. nVal > 0
+			snBxa += 1
+		Endif
+	Endif
+//Totais
+	If nVal > 0
+		snTit += 1
+		snVal += nVal
+		if Empty(cNumTit)
+			snErr += 1
+		Endif
+	Endif
+Return(aRet)
+
+/*/{Protheus.doc} F200IMP
+Finalizacao do CNAB Mostrar Log de Resultado
+@type function
+@version 12.1.33
+@author Edmar Tinti
+@since 07/11/2022
+/*/
+User Function F200IMP()
+	Local cKey := ""
+	If !Empty(scLog)
+		scLog += Replicate("-",90) + CRLF
+	Endif
+	scLog += "Erros: " + cValToChar(snErr) + CRLF
+	scLog += "Baixa: " + cValToChar(snBxa) + CRLF
+	scLog += "Quant: " + cValToChar(snTit) + CRLF
+	scLog += "Valor: " + cValToChar(snVal) + CRLF
+	If IsBlind()
+		ConOut(scLog)
+	Else
+		//Limpar Log para nao vir lixo - Bug
+		AutoGRLog("")
+		fErase(NomeAutoLog())
+		AutoGRLog(scLog)
+		MostraErro()
+		DbSelectArea("FI0")
+		DbSetOrder(1)
+		If !Eof() .And. snErr > 0 .And. Trim(FI0->FI0_ARQ)$(Trim(MV_PAR04))
+			If MsgYesNo("Arquivo:" + CRLF + Trim(FI0->FI0_ARQ), "LIMPAR LOG PARA REPROCESSAR?")
+				cKey := FI0->FI0_FILIAL + FI0->FI0_IDARQ
+				MsSeek(cKey)
+				While !Eof() .And. FI0->FI0_FILIAL + FI0->FI0_IDARQ == cKey
+					If Trim(FI0->FI0_ARQ)$(Trim(MV_PAR04))
+						RecLock("FI0",.F.)
+						DbDelete()
+						MsUnlock()
+					Endif
+					DbSkip()
+				End
+			Endif
+		Endif
+	Endif
+	scLog := ""
+	snTit := 0
+	snVal := 0
+	snErr := 0
+	snBxa := 0
+Return(Nil)

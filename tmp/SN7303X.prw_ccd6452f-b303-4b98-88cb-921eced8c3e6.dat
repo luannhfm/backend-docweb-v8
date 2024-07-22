@@ -1,0 +1,192 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"  
+#INCLUDE "PARMTYPE.CH"     
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"    
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <SN7303X>
+   Browser MVC para Manutecao do Cadastro de Liberadores da Viabilidade de 
+   Atendimento [ZCH-Cadastros de Liberacoes de Viabilidade]
+
+@author Antonio Dantas 
+@since 19/10/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/                                                                       
+User Function SN7303X()
+Local _oBrowse 		:= FWMBrowse():New()
+Local _cFilderD		:= ""
+Local _cMsgDesc		:= ""
+//Salvando as variáveis quando vindo de outra rotina.
+Local _aSlvRot		:= IIF(Type("aRotina")   != "U", aRotina, {} )
+Local _cSlvCad		:= IIF(Type("cCadastro") != "U"	, cCadastro, "" )
+Private aRotina 	:= MenuDef() 
+DbSelectArea("ZCH")                                                                                  	
+DbSetOrder(1)
+ZCH->(DbGoTop())
+//-- Define o Alias
+_oBrowse:SetAlias("ZCH")
+//-- Descricao
+If (FunName() == "FATA300")
+	_cMsgDesc := " ( VIABILIDADE: "+ZCG->ZCG_CODIGO+" OPORTUNIDADE: "+AD1->AD1_NROPOR+" - "+AllTrim(AD1->AD1_DESCRI)+" )"
+ElseIF (FunName() == "SN7301X")
+	_cMsgDesc := " ( VIABILIDADE: "+ZCG->ZCG_CODIGO+" )"
+EndIf
+_oBrowse:SetDescription("Liberadores de Viabilidade"+_cMsgDesc)
+//-- Define a Legenda conforme o STATUS
+_oBrowse:AddLegend("ZCH_TOPASS == '0'"		,"BR_LARANJA"	,"Em Aprovação" ) 
+_oBrowse:AddLegend("ZCH_TOPASS == '1'"		,"ENABLE"		,"Aprovada" 	)
+_oBrowse:AddLegend("ZCH_TOPASS == '2'"		,"DISABLE"		,"Rejeitada" 	)
+_cFilderD	:= "ZCH_FILIAL = '"+FwxFilial("ZCH")+"' .AND. ZCH_VIABIL = '"+ZCG->ZCG_CODIGO+"'"
+_oBrowse:lLocate	:= .T.
+_oBrowse:oBrowseUI:lDetails	:= .F.	//PARA NÃO APRESENTAR OS DETALHES (FICA VISUALMENTE MELHOR)
+_oBrowse:SetFilterDefault(_cFilderD)
+//--
+_oBrowse:SetChgAll(.F.) //INDICA SE O USUÁRIO TEM PERMISSÃO PARA ALTERAR REGISTROS DE OUTRAS FILIAIS
+_oBrowse:SetSeeAll(.F.) //INDICA SE O USUÁRIO TEM PERMISSÃO PARA VISUALIZAR REGISTROS DE OUTRAS FILIAIS
+//-- Ativa o browse
+_oBrowse:Activate()
+aRotina		:= aClone(_aSlvRot)
+cCadastro	:= _cSlvCad
+Return Nil
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <MenuDef>
+   Responsavel pela criacao dos botoes, alterar, incluir, excluir e demais. 
+
+@author Antonio Dantas 
+@since 19/10/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/                                                                       
+Static Function MenuDef()
+Local _aRotina 	:= {}
+
+If ZCG->ZCG_STATUS == "1" .Or. (RetCodUsr() $ SUPERGetMV("MV_XALTLBV",.F.,"") .And. ZCG->ZCG_STATUS $ "2#4") 
+	ADD OPTION _aRotina TITLE "Pesquisar"	ACTION "PESQBRW"       	OPERATION 1 ACCESS 0
+	ADD OPTION _aRotina TITLE "Visualizar"	ACTION "VIEWDEF.SN7303X"	OPERATION 2 ACCESS 0
+	ADD OPTION _aRotina TITLE "Incluir"	ACTION "VIEWDEF.SN7303X"	OPERATION 3 ACCESS 0
+	ADD OPTION _aRotina TITLE "Alterar"	ACTION "VIEWDEF.SN7303X" 	OPERATION 4 ACCESS 0
+	ADD OPTION _aRotina TITLE "Excluir"	ACTION "VIEWDEF.SN7303X" 	OPERATION 5 ACCESS 0
+	ADD OPTION _aRotina TITLE "Imprimir"	ACTION "VIEWDEF.SN7303X" 	OPERATION 8 ACCESS 0
+Else
+	ADD OPTION _aRotina TITLE "Pesquisar"	ACTION "PESQBRW"       	OPERATION 1 ACCESS 0
+	ADD OPTION _aRotina TITLE "Visualizar"	ACTION "VIEWDEF.SN7303X"	OPERATION 2 ACCESS 0
+	ADD OPTION _aRotina TITLE "Imprimir"	ACTION "VIEWDEF.SN7303X" 	OPERATION 8 ACCESS 0
+Endif 
+Return _aRotina
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <ModelDef>
+   Contem  a  construcao e a definicao do Model, lembrando que o Modelo de
+   dados (Model) contem as regras de negocio.
+
+@author Antonio Dantas 
+@since 19/10/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function ModelDef()
+Local _oModel	:= Nil 
+Local _oStZCH	:= FWFormStruct(1,"ZCH")
+//-- Objeto de modelo de dados
+_oModel := MPFormModel():New("SN7303XX")
+//-- A  estrutura  do  modelo  de  dados  (Model) 
+_oModel:AddFields("ZCHMASTER",/*cOwner*/,_oStZCH)
+//-- Chave Primaria
+_oModel:SetPrimaryKey({"ZCH_FILIAL","ZCH_VIABIL","ZCH_APROV"})
+//VALIDANDO A ATIVAÇÃO DO MODELO.
+_oModel:SetVldActivate( {|_oModel| fVldActivate(_oModel) })
+Return _oModel
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <ViewDef>
+   Contem a construcao e a definicao da View, ou seja, contrucao da interface
+
+@author Antonio Dantas 
+@since 19/10/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function ViewDef()
+Local _oModel 		:= FWLoadModel("SN7303X")
+Local _oStZCHV		:= FWFormStruct(2,"ZCH") 
+Local _oView   	:= FWFormView():New()
+//Ajustando a estrutura do cadastro de liberadores.
+_oStZCHV:SetProperty("ZCH_TOPASS"	,MVC_VIEW_CANCHANGE	,.F.)
+_oStZCHV:SetProperty("ZCH_DATA"		,MVC_VIEW_CANCHANGE	,.F.)
+_oStZCHV:SetProperty("ZCH_HORA"		,MVC_VIEW_CANCHANGE	,.F.)
+_oStZCHV:SetProperty("ZCH_OBS"		,MVC_VIEW_CANCHANGE	,.F.)
+//-- Defino modelo da view
+_oView:SetModel(_oModel)
+//-- Mesma regra do modeldef
+_oView:AddField("VW_ZCH",_oStZCHV,"ZCHMASTER")
+//-- Crio a tela
+_oView:CreateHorizontalBox("LIBERAR",100)
+//-- Defino owner da tela
+_oView:SetOwnerView("VW_ZCH","LIBERAR")
+//Fecha a tela após a confirmação.
+_oView:bCloseOnOk	:= {|| .T. }
+Return _oView
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldActivate>
+   Valida a Tentetiva de Aprovacao/Reprovacao
+
+@author Fabio Oliveira
+@since 28/10/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function fVldActivate(_oModel)
+Local _lRet 		:= .T.
+Local _nOpc 		:= _oModel:GetOperation()
+Local _nControl		:= _oModel:aControls[04]
+//	ALTERAÇÃO	ou	EXCLUSÃO
+IF ( _nOpc == 04 .Or. _nOpc == 05 ) .AND. ZCH->ZCH_TOPASS != "0"
+	_lRet	:= .F.
+	_cMsg	:= "Esta lançamento já se encontra Aprovado ou Rejeitado, não podendo sofre mais interações!"
+EndIf
+//	ALTERAÇÃO	ou	EXCLUSÃO
+IF ( _nOpc == 04 .Or. _nOpc == 05 ) .AND. ZCG->ZCG_STATUS != "1" .AND. !(RetCodUsr() $ SUPERGetMV("MV_XALTLBV",.F.,"") .And. ZCG->ZCG_STATUS $ "2#4")
+	_lRet	:= .F.
+	_cMsg	:= "Viabilidade diferente de [Em Elaboração], não podendo sofre mais interações!"
+EndIf
+//COPIA: Modifica o Controle de APROVACAO/REPROVACAO
+If _nOpc == 03 .AND. _nControl == 08
+	M->ZCH_TOPASS := "0"
+EndIf
+If !_lRet
+	Help( , , FunName()+"/"+ProcName(),, _cMsg, 1, 0 )
+EndIF
+Return(_lRet)

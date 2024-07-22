@@ -1,0 +1,147 @@
+#include "protheus.ch"
+
+/*/{Protheus.doc} FM73R01F
+Relatório de atividades registradas
+@type function
+@version 12.1.27
+@author Franklin de Brito de Oliveira
+@since 16/03/2022
+/*/
+User Function FM73R01F()
+Local oReport
+    Pergunte("FM73R01F",.F.)
+    oReport := ReportDef()
+    oReport:PrintDialog()
+Return NIL
+
+/*/{Protheus.doc} ReportDef
+Defição do relatóro, sessões e céludas
+@type function
+@version 12.1.27
+@author Franklin de Brito de Oliveira
+@since 16/03/2022
+@return object, Objeto tReport
+/*/
+Static Function ReportDef()
+Local oReport
+Local oSection
+Local lLandscape := .T. //Aponta a orientação de página do relatório como paisagem
+local lLineBreak := .T. //Se verdadeiro, imprime em uma ou mais linhas
+    oReport := TReport():New("FM73R01F", "Atividades registradas", "FM73R01F", {|oReport| PrintReport(oReport)}, "Relatorio de atividades registradas", lLandscape)
+    oReport:HideParamPage()
+    oSection := TRSection():New(oReport, "Atividades", {"AOF"}, {"Código", "Proprietário+Data Inic.+Hora Início", "Entidade+Referente a+Data Inic.+Hora Início"})
+    oSection:SetLineBreak(lLineBreak)
+    TRCell():New(oSection, "AOF_FILIAL", "AOF")
+    TRCell():New(oSection, "AOF_CODIGO", "AOF")
+    TRCell():New(oSection, "AOF_CODUSR", "AOF")
+    TRCell():New(oSection, "AOF_USRDES", "AOF")
+    TRCell():New(oSection, "AOF_TIPO", "AOF")
+    TRCell():New(oSection, "AOF_STATUS", "AOF")
+    TRCell():New(oSection, "AOF_PRIORI", "AOF")
+    TRCell():New(oSection, "AOF_DTINIC", "AOF")
+    TRCell():New(oSection, "AOF_DESTIN", "AOF")
+    TRCell():New(oSection, "AOF_ASSUNT", "AOF")
+    TRCell():New(oSection, "AOF_LOCAL", "AOF")
+    TRCell():New(oSection, "AOF_ENTIDA", "AOF")
+    TRCell():New(oSection, "AOF_DESCEN", "AOF")
+    TRCell():New(oSection, "AOF_DESCRE", "AOF")
+Return oReport
+
+/*/{Protheus.doc} PrintReport
+Função que executa a consulta e gera o relatório
+@type function
+@version 12.1.27
+@author Franklin de Brito de Oliveira
+@since 16/03/2022
+@param oReport, object, objeto tReport
+/*/
+Static Function PrintReport(oReport)
+local aOrdem := {"AOF_FILIAL,AOF_CODIGO", "AOF_FILIAL,AOF_CODUSR,AOF_DTINIC,AOF_HRINIC", "AOF_FILIAL,AOF_ENTIDA,AOF_CHAVE,AOF_DTINIC,AOF_HRINIC"}
+local cAliasAOF := GetNextAlias()
+local cOrdem := ""
+Local cPart := ""
+Local oSection := oReport:Section(1)
+    cOrdem := "%" + aOrdem[oReport:GetOrder()] + "%"
+    //Transforma parametros do tipo Range em expressao SQL para ser utilizada na query 	
+    MakeSqlExpr("FM73R01F")
+    oSection:BeginQuery()	
+    /* Entidade */
+    If Empty(MV_PAR02)
+        cPart += " "
+    else
+        cPart += " AND AOF_ENTIDA BETWEEN '" + MV_PAR01 + "' AND '" + MV_PAR02 + "' "
+    EndIf
+    /* Vendedor */
+    If Empty(MV_PAR04)
+        cPart += " "
+    else
+        cPart += " AND AOF_CODUSR BETWEEN '" + MV_PAR03 + "' AND '" + MV_PAR04 + "' "
+    EndIf
+    /* Tipo de atividade */
+    cPart += " AND AOF_TIPO = '" + cValToChar(MV_PAR05) + "'  "
+    /* Status */
+    /* Data de inicio */
+    If Empty(MV_PAR08)
+        cPart += " "
+    else
+        cPart += " AND AOF_DTINIC BETWEEN '" + DtoS(MV_PAR07) + "' AND '" + DtoS(MV_PAR08) + "' "
+    EndIf
+    cPart := "%" + cPart + "%"
+    BeginSql alias cAliasAOF
+        SELECT 
+            AOF_FILIAL, AOF_CODIGO, AOF_CODUSR, AOF_TIPO, AOF_STATUS, AOF_PRIORI, AOF_DTINIC, AOF_DESTIN, AOF_ASSUNT, 
+            AOF_LOCAL, AOF_ENTIDA, AOF_CHAVE
+        FROM 
+            %table:AOF% AOF
+        WHERE 
+            AOF.%notDel% 
+            AND AOF_FILIAL = %xfilial:AOF% 
+            %exp:cPart%
+        ORDER BY 
+            %exp:cOrdem%
+    EndSql
+    /*	Prepara relatorio para executar a query gerada pelo Embedded SQL passando como
+        parametro a pergunta ou vetor com perguntas do tipo Range que foram alterados
+        pela funcao MakeSqlExpr para serem adicionados a query	*/	
+    oSection:EndQuery(MV_PAR06)
+    oSection:Cell("AOF_USRDES"):SetBlock({|| USRRETNAME((cAliasAOF)->AOF_CODUSR)})
+    oSection:Cell("AOF_DESCEN"):SetBlock({|| POSICIONE("SX2", 1, ((cAliasAOF)->AOF_ENTIDA), "X2_NOME")})
+    oSection:Cell("AOF_DESCRE"):SetBlock({|| fGetDsRe((cAliasAOF)->AOF_ENTIDA, (cAliasAOF)->AOF_CHAVE)})
+	oSection:Print()
+    (cAliasAOF)->(dbCloseArea())
+Return NIL
+
+/*/{Protheus.doc} nomeStaticFunction
+Função para retornar a descrição do registro
+@type Function
+@author Franklin de Brito de Oliveira
+@since 16/03/2022
+@param cAlias, character, Alias de pesquisa
+@param cAlias, character, chave de pesquisa
+@return character, descrição do registro pesquisado
+/*/
+Static Function fGetDsRe(cAlias, cChave)
+Local aArea    := {}
+Local cDisplay := ""
+Local cReturn     := ""
+
+Default cAlias := ""
+Default cChave := ""
+
+If !Empty(cAlias) .AND. !Empty(cChave)
+
+	aArea    := GetArea()
+	cDisplay := AllTrim(FwSX2Util():GetSX2Data(cAlias, {"X2_DISPLAY"})[1,2])    //Campos que serão apresentados nos detalhes do browse.
+	
+	dbSelectArea(cAlias)
+	(cAlias)->(DbSetOrder(1))
+	
+	If (cAlias)->(Dbseek(xFilial(cAlias)+AllTrim(cChave)))
+		cReturn :=  (cAlias)->&(cDisplay)
+	EndIf
+
+	RestArea(aArea)
+
+EndIf
+
+Return cReturn

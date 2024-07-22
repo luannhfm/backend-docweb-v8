@@ -1,0 +1,335 @@
+#Include 'Protheus.ch'
+#INCLUDE "TOPCONN.CH"
+
+User Function SF06A69X()
+	Private cCodigo         := ""
+	Private cUsuario        := "46370"
+	Private cAuthorization  := "D5V7QPBINELSKP1U4XGXJBBV99UNO1GDWF6ZGG7QEYNX4O1M95"
+	Private cUrl	        := "https://sandbox-v2.socioindustria.com.br/v1/integracao"
+	Private cToken          := ""
+	Private cDataExpiracao  := ""
+	Private cResult         := ""
+	Private cErro	        := ""
+	Private cHTTPCode       := ""
+	Private lRet            := .F.
+	Private lTela			:= !isBlind()
+	Private aLog			:= {}
+
+
+	Conecta() //Busca dados para conexão do WebService
+	If lTela
+		Processa({|| lRet := Autentica()}, "Conectando...") //Faz conexão com WebService
+	else
+		lRet := Autentica()
+	EndIf
+
+	If lRet
+		If lTela
+			Processa({|| Grava()}, "Buscando Informação de Baixas a Receber...") //Baixas a Receber
+		else
+			Grava()
+		EndIf
+	EndIf
+
+	//Envia Email de Log
+	EnvMail()
+
+
+Return
+
+//========================================================
+Static Function Conecta()
+
+	Local aArea		:= GetArea()
+	Local cDesFunc	:= "SOCIOINDUSTRIA"
+
+	DbSelectArea("ZDK")
+	DbSetOrder(2)	//ZDK_FILIAL+ZDK_INTEGR
+	If ZDK->( DbSeek(xFilial("ZDK") + cDesFunc) )
+		cCodigo := AllTrim(ZDK->ZDK_CODIGO)
+		cUsuario := AllTrim(ZDK->ZDK_USUARI)
+		cAuthorization := AllTrim(ZDK->ZDK_SENHA)
+		cUrl	:= Lower(AllTrim(ZDK->ZDK_URL))
+		cToken := AllTrim(ZDK->ZDK_TOKEN)
+		cDataExpiracao := AllTrim(ZDK->ZDK_DTEXPI)
+		cResult := ""
+		cErro	:= ""
+		cHTTPCode := ""
+	EndIf
+
+	RestArea(aArea)
+
+Return
+
+//========================================================
+Static Function Autentica()
+	Local aHeaders 		:= {}
+	Local cDataUTC 		:= ""
+	Local cPath 		:= "/autenticacao"
+	Local cRet			:= ""
+	Local lRet			:= .T.
+	Local oRestClient 	:= FWRest():New(cUrl)
+	Local oJson
+	Local cDesFunc	    := "SOCIOINDUSTRIA"
+
+	cDataUTC := FWTimeStamp(6)	//6 - Formato UTC aaaa-mm-ddThh:mm:ssZ (Transforma a data atual em uma data e hora GMT 0)
+	If Empty(cToken) .Or. cDataUTC > cDataExpiracao
+		aAdd( aHeaders, "Accept: application/json" )
+		aAdd( aHeaders, "usuario: " + cUsuario )
+		aAdd( aHeaders, "Authorization: " + cAuthorization )
+		oRestClient:setPath(cPath)
+		If oRestClient:Post(aHeaders)
+			oJson := JsonObject():New()
+			cRet := oJson:FromJson(oRestClient:GetResult())
+			If Empty(cRet)
+				cToken := DecodeUtf8(oJson['data']['token'])
+				cDataExpiracao := DecodeUtf8(oJson['data']['dataExpiracao'])
+
+				DbSelectArea("ZDK")
+				DbSetOrder(2)	//ZDK_FILIAL+ZDK_INTEGR
+				ZDK->( DbSeek(xFilial("ZDK") + cDesFunc) )
+
+				RecLock("ZDK", .F.)
+				ZDK->ZDK_FILIAL :=  xFilial("ZDK")
+				ZDK->ZDK_CODIGO :=  cCodigo
+				ZDK->ZDK_TOKEN  :=  cToken
+				ZDK->ZDK_DTEXPI :=  cDataExpiracao
+				ZDK->(MsUnLock())
+
+				Conout("[AMBIENTE] PREPARANDO AMBIENTE [HORA] " + Time() )
+				Conout("[INICIO] - WEBSERVICE DE INTEGRACAO FINANCEIRA ")
+				Conout("[DATA] " + DtoC(dDataBase) + "[HORA] " + Time() )
+
+			Else
+				Conout("Falha ao popular JsonObject. Erro: " + cRet)
+				lRet := .F.
+			EndIf
+			FreeObj(oJson)
+		Else
+			Conout(oRestClient:GetLastError())
+			lRet := .F.
+		EndIf
+	EndIf
+	FreeObj(oRestClient)
+
+	Conout("[FIM] - WEBSERVICE DE INTEGRACAO FINANCEIRA ")
+	Conout("[DATA] " + DtoC(dDataBase) + "[HORA] " + Time() )
+
+Return(lRet)
+
+//========================================================
+Static Function Grava()
+
+	Local aHeaders 		:= {}
+	Local cPath 		:= "/fiemt/movimentacoes-financeiras
+	Local oRestClient 	:= FWRest():New(cUrl)
+	Local cResult		:= ""
+	Local cErro			:= ""
+	Local oJsonA
+	Local oJsonB
+	Local array			:= {}
+	Local cData			:= SubStr(DtoS(dDataBase),1,4) + "-" + SubStr(DtoS(dDataBase),5,2) + "-" + SubStr(DtoS(dDataBase),7,2)
+
+	aAdd( aHeaders, "Accept: application/json" )
+	aAdd( aHeaders, "Authorization: " + cToken )
+	oRestClient:SetPath( cPath + "?dataInicio="+cData+"&dataFim=" + cData + "")
+	If oRestClient:Get(aHeaders)
+		cResult := DecodeUTF8( oRestClient:GetResult() )
+		oJsonA := JsonObject():New()
+		oJsonA:fromJson(cResult)
+
+		array:= oJsonA:GetNames()
+
+		oJsonB := JsonObject():new()
+		oJsonB := oJsonA:GetJsonObject(ARRAY[1])
+
+		If lTela
+			Processa({|| PrintJson(oJsonB)}, "Listando Títulos ...")
+		else
+			PrintJson(oJsonB)
+		EndIf
+
+		FreeObj(oJsonA)
+		FreeObj(oJsonB)
+		FreeObj(oRestClient)
+
+	else
+		cResult := DecodeUTF8( AllTrim(oRestClient:GetResult()) )
+		cErro := DecodeUTF8( AllTrim(oRestClient:GetLastError()) )
+		FreeObj(oRestClient)
+	EndIf
+RETURN
+
+//====================
+Static function PrintJson(jsonObj)
+
+	local names
+	local lenJson
+
+	Private _lStPag := ""
+	Private _nVlPg  := ""
+	Private _cParcel	:= .F.
+	Private _nVlPar := ""
+	Private _cId	:= 0
+	Private _cDtPg	:= ""
+
+	lenJson := len(jsonObj)
+
+	names := jsonObj:GetNames()
+
+	If lTela
+		Processa({|| Cabec(jsonObj[names[2]])}, "Reunindo informações do cliente")
+	else
+		Cabec(jsonObj[names[2]])
+	EndIf
+
+return
+
+//======================================
+Static Function Cabec(jsonObj)
+
+	Local x
+	Local names
+	local cQuery := ""
+
+	For x := 1 to len(jsonObj)
+
+		names := jsonObj[x]:GetNames()
+
+		_lStPag := Iif(cvaltochar(jsonObj[x][names[1]]) == ".T.", .T., .F.)
+		_nVlPg  := jsonObj[x][names[2]]
+		_cParcel	:= cvaltochar(jsonObj[x][names[3]])
+		_nVlPar := jsonObj[x][names[4]]
+		_cId	:= cvaltochar(jsonObj[x][names[5]])
+		_cDtPg	:= StrTran(cvaltochar(jsonObj[x][names[6]]), "-","")
+
+		If _lStPag
+
+			cQuery := " SELECT R_E_C_N_O_ AS RECNO FROM " + RetSqlTab("SE1")
+			cQuery += " WHERE E1_NRDOC = '" + _cId + "' "
+			cQuery += " AND D_E_L_E_T_ = ' ' "
+
+			If Select("TMP")>0
+				TMP->(DbCloseArea())
+			Endif
+
+			TCQuery cQuery New Alias "TMP"
+
+			If !Empty(TMP->RECNO)
+				SE1->(dbGoto(TMP->RECNO))
+
+				If lTela
+					Processa({|| U_SF06A67X(SE1->E1_PREFIXO,SE1->E1_NUM,SE1->E1_TIPO,SE1->E1_PARCELA,SE1->E1_SALDO,lTela)}, "Baixando Parcelas ...")
+				else
+					U_SF06A67X(SE1->E1_PREFIXO,SE1->E1_NUM,SE1->E1_TIPO,SE1->E1_PARCELA,SE1->E1_SALDO,lTela)
+				EndIf
+
+			else
+				Conout ("Título não encontrado")
+			EndIf
+		else
+			Conout("Parcela em aberto")
+		EndIF
+
+	Next x
+
+Return
+
+//========================================================================
+
+Static Function EnvMail()
+
+	Local oServer
+	Local oMessage
+	Local cMsg 		:= ""
+	Local nErro 	:= 0
+	Local cServer 	:= GetMv("MV_XRELSRV")
+	Local cConta	:= GetMv("MV_RELACNT")
+	Local cSenha	:= GetMv("MV_RELPSW")
+	local lUseSSL	:= GetMv("MV_RELSSL",,.F.)
+	Local x			:= 0
+
+	// //Texto padrão do Email
+	cMsg := '<!DOCTYPE html>'
+	cMsg += '<html>'
+	cMsg += '<head>'
+	cMsg += '<meta charset="UTF-8"/>'
+	cMsg += '<title>LOG INTEGRAÇÃO SOCIO INDUSTRIA (DATA: ' + DtoC(dDatabase) +')</title>'
+	cMsg += '</head>'
+	cMsg += '<body>'
+	cMsg += '<p>Resultado da Integração de Contas a Receber Socio Industria</p>'
+
+	If Empty(aLog)
+		cMsg += '<p>Sem Movimentação para a data de ' + DtoC(dDatabase)  + ' </p>'
+	else
+		For x := 1 to Len(aLog)
+			cMsg += '<p>' + aLog[x] + '</p>'
+		Next x
+	EndIf
+
+	cMsg += '</body>'
+	cMsg += '</html>'
+
+	//Cria a conexão com o server STMP ( Envio de e-mail )
+	oServer := TMailManager():New()
+	oServer:Init( "", cServer, cConta, cSenha, 0, 587 )
+	oServer:SetUseSSL( lUseSSL )
+	oServer:SetUseTLS( .T. )
+
+	//seta um tempo de time out com servidor de 2min
+	nErro:= oServer:SetSmtpTimeOut( 120 )
+	If nErro <> 0
+		Help(,,"Falha ao setar o time out",, oServer:GetErrorString( nErro ), 1, 0,,,,,, {"Verifique"})
+		oServer:SMTPDisconnect()
+		//oDlg:End()
+		Return
+	EndIf
+
+	//realiza a conexão SMTP
+	nErro:= oServer:SmtpConnect()
+	If nErro <> 0
+		Help(,,"Falha ao conectar",, oServer:GetErrorString( nErro ), 1, 0,,,,,, {"Verifique"})
+		oServer:SMTPDisconnect()
+		//oDlg:End()
+		Return
+	EndIf
+
+	// authenticate on the SMTP server (if needed)
+	nErro := oServer:SmtpAuth( cConta, cSenha )
+	if nErro <> 0
+		Help(,,"Usuário não autenticado",, oServer:GetErrorString( nErro ), 1, 0,,,,,, {"Verifique"})
+		oServer:SMTPDisconnect()
+		//oDlg:End()
+		Return
+	endif
+
+	//Apos a conexão, cria o objeto da mensagem
+	oMessage := TMailMessage():New()
+
+	//Limpa o objeto
+	oMessage:Clear()
+
+	//Popula com os dados de envio
+	oMessage:cFrom              := cConta
+	oMessage:cTo                := "renata.lima@sfiemt.ind.br;franklin.oliveira@sfiemt.ind.br"
+	oMessage:cCc                := "daniel.castro@totvs.com.br"
+	oMessage:cBcc               := ""
+	oMessage:cSubject           := 'LOG INTEGRAÇÃO SOCIO INDUSTRIA ('+ DtoC(dDatabase) +')'
+	oMessage:cBody              := cMsg
+
+	//Envia o e-mail
+	nErro:= oMessage:Send( oServer )
+	If nErro <> 0
+		Help(,,"Erro ao enviar o e-mail",, oServer:GetErrorString( nErro ), 1, 0,,,,,, {"Verifique"})
+	else
+		MsgInfo( "E-mail enviado com sucesso!","OK" )
+	EndIf
+
+	//Desconecta do servidor
+	nErro:= oServer:SmtpDisconnect()
+	If nErro <> 0
+		Help(,,"Erro ao disconectar do servidor SMTP",, oServer:GetErrorString( nErro ), 1, 0,,,,,, {"Verifique"})
+	EndIf
+
+Return
+

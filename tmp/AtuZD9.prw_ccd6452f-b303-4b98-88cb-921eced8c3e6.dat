@@ -1,0 +1,311 @@
+#Include "Protheus.ch"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ ATUZD9      ºAutor  ³DOIT        º Data ³  02/09/2014      º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³  Função para atualizar dados da árvore de planejamento     º±±
+±±º             do PCO                                                    º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP                                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+User Function AtuZD9()
+
+Local cAliasCnt  := GetNextAlias()  
+Local cQuery2    := ""  
+Local nTot		  := 0
+
+Private _aFolha  := Array(1,4)
+
+//Testar estruturas Anteriores                            
+cQuery2 := "SELECT count(*) AS TOTAL"
+cQuery2 += " FROM " + RetSqlName("ZD9")
+cQuery2 += " WHERE D_E_L_E_T_ <> '*' "
+cQuery2 += "    AND ZD9_CODIGO = '" + ZD8->ZD8_CODIGO + "'"
+cQuery2 += "    AND ZD9_VERSAO = '" + ZD8->ZD8_VERSAO + "'"
+
+dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery2),cAliasCnt,.T.,.F.)  
+
+nTot := (cAliasCnt)->TOTAL
+
+(cAliasCnt)->(dbCloseArea())
+
+If nTot > 0
+
+	If MsgYesNo("Planejamento " + Alltrim(ZD8->ZD8_CODIGO) + " Versão: " + Alltrim(ZD8->ZD8_VERSAO) + " já possui estrutura carregada!" + CHR(13) + CHR(10) +;
+					"Deseja deletar e prosseguir com a importação?" ) 
+				  
+					U_DelEstr(ZD8->ZD8_CODIGO,ZD8->ZD8_VERSAO)
+					
+					//U_GrvZD9()
+					 Processa({||U_GrvZD9()},"Gravando Estrutura","Processando aguarde...", .F.) 
+	Else
+
+		Return
+		
+   Endif
+   
+Else 
+
+					 Processa({||U_GrvZD9()},"Gravando Estrutura","Processando aguarde...", .F.) 
+	
+Endif
+
+					 Processa({||fDelAst()},"Deletando temporários","Processando aguarde...", .F.) 
+
+
+Return
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+User Function GrvZD9()
+
+Local nCta       := 0 
+Local cQuery1    := ""         
+Local cAliasZZX  := GetNextAlias() 
+Local _nTPs       := 0     
+Local _lNoRec    := .F.
+Local _lNoDes    := .F.
+Local	_lGrvCta   := .F.
+Local _lMudouChv := .F.
+Local _lFirst    := .T.
+
+// Selecionando os dados de Atualização
+/*
+cQuery1 := "SELECT DISTINCT ZZX_CUSTO, AKD_CO AS CONTA, ZZX_FILAUX, ZZX_DCUSTO, ZZX_ITEM, ZZX_DITEM"
+cQuery1 += " FROM " + RetSqlName("AKD") + " AKD ," + RetSqlName("ZZX") + " ZZX "   
+cQuery1 += " WHERE AKD.D_E_L_E_T_ <> '*'  AND ZZX.D_E_L_E_T_ <> '*' "
+cQuery1 += "   AND AKD_OPER = ZZX_FILAUX "
+cQuery1 += "   AND AKD_CC = ZZX_CUSTO "
+cQuery1 += "   AND (AKD_ITCTB = '14' || SUBSTR(ZZX_ITEM,3,18) OR AKD_ITCTB = '13' || SUBSTR(ZZX_ITEM,3,18)) "
+cQuery1 += "   AND AKD_STATUS = '1'"
+//cQuery1 += "   AND rownum < 30"                   // Somente para uso na validação
+cQuery1 += " GROUP BY ZZX_CUSTO, AKD_CO, ZZX_FILAUX, ZZX_DCUSTO, ZZX_ITEM, ZZX_DITEM"
+cQuery1 += " ORDER BY ZZX_CUSTO, ZZX_ITEM"
+*/
+
+cQuery1 := " SELECT DISTINCT ZZX_CUSTO,AKD_CO AS CONTA,ZZX_FILAUX,ZZX_DCUSTO,ZZX_ITEM,ZZX_DITEM "
+cQuery1 += " FROM "+RetSqlName("ZZX")+" ZZX "
+cQuery1 += " 	LEFT JOIN "+RetSqlName("AKD")+" AKD "
+cQuery1 += " 		ON AKD.D_E_L_E_T_ <> '*' "
+cQuery1 += " 		AND AKD_CC = ZZX_CUSTO "
+cQuery1 += " 		AND (AKD_ITCTB = '14' || SUBSTR(ZZX_ITEM,3,18) OR AKD_ITCTB = '13' || SUBSTR(ZZX_ITEM,3,18)) "
+cQuery1 += " 		AND AKD_STATUS = '1' "
+cQuery1 += " 		AND AKD_OPER = ZZX_FILAUX "
+cQuery1 += " WHERE ZZX.D_E_L_E_T_ <> '*' "
+cQuery1 += " GROUP BY ZZX_CUSTO, AKD_CO, ZZX_FILAUX, ZZX_DCUSTO, ZZX_ITEM, ZZX_DITEM "
+cQuery1 += " ORDER BY  ZZX_CUSTO, ZZX_ITEM "
+                                       
+/*
+SELECT DISTINCT ZZX_CUSTO, AKD_CO, ZZX_FILAUX, ZZX_DCUSTO, ZZX_ITEM, ZZX_DITEM
+FROM p11_hml4.AKD010 AKD, p11_hml4.ZZX010 ZZX
+WHERE AKD.D_E_L_E_T_ <> '*'  AND ZZX.D_E_L_E_T_ <> '*' 
+   AND AKD_OPER = ZZX_FILAUX 
+   AND AKD_CC = ZZX_CUSTO
+   AND AKD_ITCTB = '14' || SUBSTR(ZZX_ITEM,3,18)
+   AND AKD_STATUS = '1'
+GROUP BY ZZX_CUSTO, AKD_CO, ZZX_FILAUX, ZZX_DCUSTO, ZZX_ITEM, ZZX_DITEM
+ORDER BY ZZX_CUSTO
+*/
+
+cQuery1 := ChangeQuery(cQuery1)
+
+If Select(cAliasZZX) > 0
+	dbSelectArea(cAliasZZX)
+	cAliasZZX->(dbCloseArea())
+Endif
+
+dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery1),cAliasZZX,.T.,.F.)
+
+DBSelectArea(cAliasZZX)
+
+(cAliasZZX)->(DbGoTop())
+
+DBSelectArea("SZ8") 
+
+ProcRegua((cAliasZZX)->(Reccount()))
+
+While (cAliasZZX)->(!EOF()) 
+
+	_nTPs    := 0    
+	_lNoRec := .F.
+	_lNoDes := .F.              
+	
+	// Para verificar se o CENTRO de CUSTO + ITEM CONTABIL mudam
+	_cChvUOCR := (cAliasZZX)->ZZX_CUSTO + (cAliasZZX)->ZZX_ITEM
+		
+	//Verificar Conta DESPESA ou RECEITA
+	DO CASE
+		CASE Left((cAliasZZX)->CONTA,1) == '3' //Despesa   
+			_lNoDes := .T.                                     
+		CASE Left((cAliasZZX)->CONTA,1) == '4' //Receita  
+			_lNoRec := .T.
+	ENDCASE      
+		
+	// Atualização da Amarração UO ( Centro de Custo )  x CR ( Item Contabil )	
+	For _nTPs := 1 TO 3  
+	
+		_lGrvCta := .F.                   
+	                     
+		If _lNoRec .AND. _nTPs == 1  
+			_lGrvCta := .T.
+		Elseif _lNoDes .AND. _nTPs == 2
+			_lGrvCta := .T.  
+		Endif
+		
+		If !_lFirst      
+			If !_lMudouChv .AND. !_lGrvCta
+			     Loop
+			Endif
+		Endif
+
+		RecLock("ZD9",.T.)
+			ZD9->ZD9_FILIAL    := (cAliasZZX)->ZZX_FILAUX
+			ZD9->ZD9_CODIGO    := ZD8->ZD8_CODIGO
+			ZD9->ZD9_VERSAO    := ZD8->ZD8_VERSAO
+			ZD9->ZD9_TIPO	    := StrZero(_nTPs,1)	
+			ZD9->ZD9_CUSTO     := (cAliasZZX)->ZZX_CUSTO
+			ZD9->ZD9_DCUSTO    := (cAliasZZX)->ZZX_DCUSTO
+			ZD9->ZD9_ITCTB     := (cAliasZZX)->ZZX_ITEM
+			ZD9->ZD9_DITCTB    := (cAliasZZX)->ZZX_DITEM
+			ZD9->ZD9_CONTA     := If(_lGrvCta, (cAliasZZX)->CONTA, "*")
+			ZD9->ZD9_DCONTA    := If(_lGrvCta, Posicione("CT1", 1, xFilial("CT1")+(cAliasZZX)->CONTA, "CT1_DESC01"), "" )   //CT1_FILIAL+CT1_CONTA
+		MsUnLock()   
+		
+		If _nTPs == 3 // Folha de Pagamento  
+			If Ascan( _aFolha, {|x| x[01] == ZD9->ZD9_CUSTO+ZD9->ZD9_ITCTB }) == 0  
+				If _aFolha[1][1] == Nil  
+					_aFolha[1][1]:= ZD9->ZD9_CUSTO+ZD9->ZD9_ITCTB
+					_aFolha[1][2]:= ZD9->ZD9_FILIAL
+					_aFolha[1][3]:= ZD9->ZD9_CUSTO					
+					_aFolha[1][4]:= ZD9->ZD9_ITCTB
+				Else                                                                                              
+					AADD(_aFolha, {ZD9->ZD9_CUSTO+ZD9->ZD9_ITCTB, ZD9->ZD9_FILIAL, ZD9->ZD9_CUSTO, ZD9->ZD9_ITCTB})
+				Endif
+			Endif
+		Endif
+	Next
+		
+	nCta++ //Contador de registros
+	
+	(cAliasZZX)->(dbSkip()) 
+	_lFirst := .F.
+	IncProc()
+	
+	//Verifico se muda UO e CR
+	If _cChvUOCR <> (cAliasZZX)->ZZX_CUSTO + (cAliasZZX)->ZZX_ITEM
+		_lMudouChv := .T.
+	Else 
+ 		_lMudouChv := .F.	
+	Endif
+
+EndDo  
+   
+	Processa({||U_CarregaFolha()},"Gravando Folha","Processando aguarde...", .F.) 
+
+	Aviso("Quantidade Atualizados", "A rotina atualizou " + strzero(nCta,4) + " registros", {"Ok"}, 1)
+
+(cAliasZZX)->(dbCloseArea())
+
+Return
+
+/////////////////////////////////////////////////////////////////////////////         
+User Function CarregaFolha() 
+
+Local _n := 0
+
+	ProcRegua(Len(_aFolha))
+
+	For _n:= 1 TO Len(_aFolha)
+		U_AtuZDA(_aFolha[_n][2], _aFolha[_n][3], _aFolha[_n][4])
+		IncProc()
+	Next   
+	
+Return
+
+///////////////////////////////////////////////////////////////////////////// 
+User Function DelEstr( cCodigo, cVersao )
+
+Local _cQryDel   := ""  
+Local _nQueryRet := 0
+
+_cQryDel := "DELETE"
+_cQryDel += " FROM " + RetSqlName("ZD9")
+_cQryDel += " WHERE ZD9_CODIGO = '" + cCodigo + "' AND "
+_cQryDel += " ZD9_VERSAO = '" + cVersao + "'"
+
+nQueryRet := tcSQLexec(_cQryDel)
+
+   If _nQueryRet < 0
+      MsgStop("ERRO NA QUERY DE DELEÇÃO DA ZD9: " + chr(10) + TCSQLError())  
+      Return 
+   Endif 
+   
+_cQryDel := "DELETE"
+_cQryDel += " FROM " + RetSqlName("ZDA")
+_cQryDel += " WHERE ZDA_CODIGO = '" + cCodigo + "' AND "
+_cQryDel += " ZDA_VERSAO = '" + cVersao + "'"
+
+nQueryRet := tcSQLexec(_cQryDel)
+
+   If _nQueryRet < 0
+      MsgStop("ERRO NA QUERY DE DELEÇÃO DA ZDA: " + chr(10) + TCSQLError())  
+      Return 
+   Endif   
+
+Return
+/////////////////////////////////////////////////////////////////////////////
+
+Static Function fDelAst()
+
+Local cQryAst  
+Local cAliasAst	:= GetNextAlias()
+Local	_cQryDel
+Local nQueryRet
+
+cQryAst := " SELECT ZD9_CUSTO, ZD9_ITCTB, ZD9_TIPO "
+cQryAst += " FROM "+RetSqlName("ZD9")+" ZD91 "
+cQryAst += " WHERE ZD91.D_E_L_E_T_ <> '*' "
+cQryAst += " 	AND ZD9_CODIGO = '" + ZD8->ZD8_CODIGO + "'"
+cQryAst += " 	AND ZD9_VERSAO = '" + ZD8->ZD8_VERSAO + "'"
+cQryAst += " 	AND ZD9_CONTA = '*' "
+cQryAst += " 	AND ZD9_TIPO <> '3' "
+cQryAst += " 	AND ZD9_CUSTO||ZD9_ITCTB IN (SELECT DISTINCT(ZD9_CUSTO||ZD9_ITCTB ) "
+cQryAst += " FROM "+RetSqlName("ZD9")+" ZD92 "
+cQryAst += " WHERE ZD92.D_E_L_E_T_ <> '*' "
+cQryAst += " 	AND TRIM(ZD9_CONTA) <> '*' "
+cQryAst += " 	AND ZD92.ZD9_CUSTO = ZD91.ZD9_CUSTO "
+cQryAst += " 	AND ZD92.ZD9_ITCTB = ZD91.ZD9_ITCTB "
+cQryAst += " 	AND ZD92.ZD9_CODIGO = '" + ZD8->ZD8_CODIGO + "' "
+cQryAst += " 	AND ZD92.ZD9_VERSAO = '" + ZD8->ZD8_VERSAO + "' "
+cQryAst += " 	AND ZD92.ZD9_TIPO = ZD91.ZD9_TIPO) "
+cQryAst += " ORDER BY 1,2 "
+
+dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQryAst),cAliasAst,.T.,.F.)
+
+DBSelectArea(cAliasAst)
+ProcRegua(Contar(cAliasAst,"!Eof()"))
+(cAliasAst)->(DbGoTop())
+
+While (cAliasAst)->(!EOF()) 
+
+	IncProc()	
+	_cQryDel := "DELETE "
+	_cQryDel += " FROM " + RetSqlName("ZD9")
+	_cQryDel += " WHERE ZD9_CODIGO = '" + ZD8->ZD8_CODIGO + "'"
+	_cQryDel += " 	AND ZD9_VERSAO = '" + ZD8->ZD8_VERSAO + "'"
+	_cQryDel += " 	AND ZD9_CUSTO = '" + (cAliasAst)->ZD9_CUSTO + "'"
+	_cQryDel += " 	AND ZD9_ITCTB = '" + (cAliasAst)->ZD9_ITCTB + "'"	
+	_cQryDel += " 	AND ZD9_TIPO = '" + (cAliasAst)->ZD9_TIPO + "'"		
+	_cQryDel += " 	AND ZD9_CONTA = '*' "
+	
+	nQueryRet := tcSQLexec(_cQryDel)	
+
+	(cAliasAst)->(dbSkip())
+EndDo
+
+Return()

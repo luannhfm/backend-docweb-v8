@@ -1,0 +1,268 @@
+#INCLUDE "TOTVS.ch" 
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³MTA110CP  ºAutor  ³Bruna Paola         º Data ³  19/03/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Ponto de Entrada para adicionar query na função Mata110    º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ CNI                                                        º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function MTA110CP () 
+
+Local cProd 	:= PARAMIXB[1]  // Produto
+Local dHoje 	:= PARAMIXB[2]  // Data 
+Local nQuant	:= PARAMIXB[3]  // Quantidade
+Local cQuery	:= ""   
+Local cFilEmp	:= CFILANT // Empresa/Unidade/Filial - Mascara = EEUUFFFF
+Local cEmp  	:= SubStr(cFilEmp,1,2) // Empresa
+Local cUnid 	:= SubStr(cFilEmp,3,2) // Unidade
+Local cFil  	:= SubStr(cFilEmp,5,4) // Filial
+Local lCN1cp  	:= FWModeAccess("CN1") == "C"
+Local _nPosCt	:= aScan(aHeader, {|x| Alltrim(x[2]) == "C1_XCONTPR"})
+Local _cContr 	:= aCols[len(aCols)][_nPosCt]
+
+If fValLin(cProd, nQuant, _cContr)
+
+	//Walmir Junior 27/01/2016
+	//Adição de critérios na query anterior para evitar que a validação impeça a inserção de produto
+	//que possua Ata de Registro de Preços.
+	cQuery := " AND 1 = 2 "
+	
+	cQuery += " UNION " 
+	cQuery += " SELECT CNB.CNB_SLDMED, CN9.CN9_NUMERO, CNA.CNA_FORNEC, CNB.CNB_VLUNIT, CNA.CNA_SALDO "
+	cQuery += " FROM "+RetSQLName("CNB")+" CNB, "+RetSQLName("CN9")+" CN9, "+RetSQLName("CNA")+" CNA, "+RetSQLName("CN1")+" CN1 , "+RetSQLName("PB1")+" PB1 , "+RetSQLName("PA9")+" PA9 "
+	cQuery += " WHERE  CN9.CN9_FILIAL   <>   '"+xFilial("CN9")+"'	AND "
+	cQuery += "			CNB.CNB_FILIAL  <>   '"+xFilial("CNB")+"'    AND   "
+	cQuery += "			CNA.CNA_FILIAL  <>   '"+xFilial("CNA")+"'	AND   "
+	
+	//Tratamento para compartilhamento das tabelas
+	If !lCN1cp
+		cQuery += "			CN1.CN1_FILIAL  <>   '"+xFilial("CN1")+"'	AND   "
+	Else
+		cQuery += "			CN1.CN1_FILIAL  =   '"+xFilial("CN1")+"'	AND   "
+	Endif
+	 
+	cQuery += " 		CNB.CNB_FILIAL = CN9.CN9_FILIAL "
+	cQuery += " 		AND CNB.CNB_FILIAL = CNA.CNA_FILIAL AND"
+	
+	If !lCN1cp
+		cQuery += "  		CNB.CNB_FILIAL = CN1.CN1_FILIAL AND "
+	Endif
+	
+	cQuery += " 		CNB.CNB_CONTRA	=	CN9.CN9_NUMERO	AND "
+	cQuery += "         CNB.CNB_REVISA	=	CN9.CN9_REVISA	AND "
+	cQuery += " 		CNB.CNB_CONTRA	=	CNA.CNA_CONTRA	AND "
+	cQuery += " 		CNB.CNB_REVISA	=	CNA.CNA_REVISA	AND " 
+	cQuery += " 		CNB.CNB_NUMERO	=	CNA.CNA_NUMERO	AND "
+	cQuery += "			CN9.CN9_TPCTO	=	CN1.CN1_CODIGO	AND "
+	cQuery += " 		CN1.CN1_MEDEVE	=	'1'				AND "
+	cQuery += " 		CN1.CN1_ESPCTR	=	'1'				AND "
+	cQuery += " 		CNB.CNB_PRODUT	= '"+cProd+"' AND " 
+	cQuery += "			CN9.CN9_DTFIM	>= '"+DTOS(dHoje)+"' AND "
+	cQuery += "			CN9.CN9_SITUAC	=	'05'					AND "
+	cQuery += "			CN9.CN9_XREGP	=	'1'			   			AND " 
+	cQuery += " 		CN9.CN9_FILIAL = PB1.PB1_FILCN9  AND "
+	cQuery += "			CNB.CNB_VLUNIT * "+ValToSQL(nQuant)+" <= CNA.CNA_SALDO	AND "
+	cQuery += "			PB1.PB1_NUMERO = CN9.CN9_NUMERO     AND "
+	cQuery += "			PB1.PB1_REVISA = CN9.CN9_REVISA     AND " 
+	cQuery += "			PB1.PB1_EMP = '"+cEmp+"' AND "
+	cQuery += " 		PB1.PB1_UNID = '"+cUnid+"' AND "
+	cQuery += "			PB1.PB1_FIL = '"+cFil+"' AND " 
+	cQuery += " 		PA9.PA9_NUMERO = PB1.PB1_NUMERO "
+	cQuery += "		    AND PA9.PA9_REVISA = PB1.PB1_REVISA "
+	cQuery += "		    AND PA9.PA9_FILCN9 = PB1.PB1_FILCN9 AND"
+	cQuery += "			CNB.CNB_SLDMED > '0' AND  "
+	cQuery += "			CNB.D_E_L_E_T_ = ' ' AND "
+	cQuery += "			CNA.D_E_L_E_T_ = ' ' AND " 
+	cQuery += "			PB1.D_E_L_E_T_ = ' ' AND " 
+	cQuery += "			CN9.D_E_L_E_T_ = ' ' AND "
+	cQuery += "			PA9.D_E_L_E_T_ = ' ' " 
+	
+	//Wamir Junior 27/01/2016
+	//Adição de critérios na query anterior para evitar que a validação impeça a inserção de produto
+	//que possua Ata de Registro de Preços.
+	cQuery += " AND 1 = 2 "
+	
+	//cQuery += "			ORDER BY CN9.CN9_NUMERO "
+	
+	cQuery := '%' + cQuery + '%'
+
+Else
+
+	cQuery += " UNION " 
+	cQuery += " SELECT CNB.CNB_SLDMED, CN9.CN9_NUMERO, CNA.CNA_FORNEC, CNB.CNB_VLUNIT, CNA.CNA_SALDO "
+	cQuery += " FROM "+RetSQLName("CNB")+" CNB, "+RetSQLName("CN9")+" CN9, "+RetSQLName("CNA")+" CNA, "+RetSQLName("CN1")+" CN1 , "+RetSQLName("PB1")+" PB1 , "+RetSQLName("PA9")+" PA9 "
+	cQuery += " WHERE  CN9.CN9_FILIAL   <>   '"+xFilial("CN9")+"'	AND "
+	cQuery += "			CNB.CNB_FILIAL  <>   '"+xFilial("CNB")+"'    AND   "
+	cQuery += "			CNA.CNA_FILIAL  <>   '"+xFilial("CNA")+"'	AND   "
+	
+	//Tratamento para compartilhamento das tabelas
+	If !lCN1cp
+		cQuery += "			CN1.CN1_FILIAL  <>   '"+xFilial("CN1")+"'	AND   "
+	Else
+		cQuery += "			CN1.CN1_FILIAL  =   '"+xFilial("CN1")+"'	AND   "
+	Endif
+	 
+	cQuery += " 		CNB.CNB_FILIAL = CN9.CN9_FILIAL "
+	cQuery += " 		AND CNB.CNB_FILIAL = CNA.CNA_FILIAL AND"
+	
+	If !lCN1cp
+		cQuery += "  		CNB.CNB_FILIAL = CN1.CN1_FILIAL AND "
+	Endif
+	
+	cQuery += " 		CNB.CNB_CONTRA	=	CN9.CN9_NUMERO	AND "
+	cQuery += "         CNB.CNB_REVISA	=	CN9.CN9_REVISA	AND "
+	cQuery += " 		CNB.CNB_CONTRA	=	CNA.CNA_CONTRA	AND "
+	cQuery += " 		CNB.CNB_REVISA	=	CNA.CNA_REVISA	AND " 
+	cQuery += " 		CNB.CNB_NUMERO	=	CNA.CNA_NUMERO	AND "
+	cQuery += "			CN9.CN9_TPCTO	=	CN1.CN1_CODIGO	AND "
+	cQuery += " 		CN1.CN1_MEDEVE	=	'1'				AND "
+	cQuery += " 		CN1.CN1_ESPCTR	=	'1'				AND "
+	cQuery += " 		CNB.CNB_PRODUT	= '"+cProd+"' AND " 
+	cQuery += "			CN9.CN9_DTFIM	>= '"+DTOS(dHoje)+"' AND "
+	cQuery += "			CN9.CN9_SITUAC	=	'05'					AND "
+	cQuery += "			CN9.CN9_XREGP	=	'1'			   			AND " 
+	cQuery += " 		CN9.CN9_FILIAL = PB1.PB1_FILCN9  AND "
+	cQuery += "			CNB.CNB_VLUNIT * "+ValToSQL(nQuant)+" <= CNA.CNA_SALDO	AND "
+	cQuery += "			PB1.PB1_NUMERO = CN9.CN9_NUMERO     AND "
+	cQuery += "			PB1.PB1_REVISA = CN9.CN9_REVISA     AND " 
+	cQuery += "			PB1.PB1_EMP = '"+cEmp+"' AND "
+	cQuery += " 		PB1.PB1_UNID = '"+cUnid+"' AND "
+	cQuery += "			PB1.PB1_FIL = '"+cFil+"' AND " 
+	cQuery += " 		PA9.PA9_NUMERO = PB1.PB1_NUMERO "
+	cQuery += "		    AND PA9.PA9_REVISA = PB1.PB1_REVISA "
+	cQuery += "		    AND PA9.PA9_FILCN9 = PB1.PB1_FILCN9 AND"
+	cQuery += "			CNB.CNB_SLDMED > '0' AND  "
+	cQuery += "			CNB.D_E_L_E_T_ = ' ' AND "
+	cQuery += "			CNA.D_E_L_E_T_ = ' ' AND " 
+	cQuery += "			PB1.D_E_L_E_T_ = ' ' AND " 
+	cQuery += "			CN9.D_E_L_E_T_ = ' ' AND "
+	cQuery += "			PA9.D_E_L_E_T_ = ' ' " 
+	
+	//cQuery += "			ORDER BY CN9.CN9_NUMERO "
+	
+	cQuery := '%' + cQuery + '%'
+
+EndIf
+
+Return cQuery
+
+Static Function fValLin(_cProd, _nQuant,  _cContr)
+Local _lRet := .T.
+Local _cTMP  	:= GetNextAlias() 
+Local _cEmp  	:= SubStr(CFILANT,1,2) // Empresa
+Local _cUnid 	:= SubStr(CFILANT,3,2) // Unidade
+Local _cFil  	:= SubStr(CFILANT,5,4) // Filial
+
+// Autor....: Walmir Junior
+// Data.....: 27/01/2016
+// Descrição: Alertar o usuário quanto a existencia de ARP.
+If _lRet
+		BeginSQL Alias _cTMP    
+		    
+		    //%NoParser%
+			SELECT CNB.CNB_SLDMED, CN9.CN9_NUMERO, CNA.CNA_FORNEC, CNB.CNB_VLUNIT, CNA.CNA_SALDO
+			FROM %Table:CNB% CNB, %Table:CN9% CN9, %Table:CNA% CNA, %Table:CN1% CN1, %Table:PB1% PB1 , %Table:PA9% PA9 
+			WHERE CN9.CN9_FILIAL = %xFilial:CN9% AND
+			CNB.CNB_FILIAL = %xFilial:CNB% AND
+			CNA.CNA_FILIAL = %xFilial:CNA% AND
+			CN1.CN1_FILIAL = %xFilial:CN1% AND 
+			CNB.CNB_CONTRA = CN9.CN9_NUMERO AND
+			CNB.CNB_REVISA = CN9.CN9_REVISA AND
+			CNB.CNB_CONTRA = CNA.CNA_CONTRA AND
+			CNB.CNB_REVISA = CNA.CNA_REVISA AND
+			CNB.CNB_NUMERO = CNA.CNA_NUMERO AND
+			CN9.CN9_TPCTO = CN1.CN1_CODIGO AND
+				CN9.CN9_FILIAL = PB1.PB1_FILCN9 AND 
+				PB1.PB1_NUMERO = CN9.CN9_NUMERO AND
+				PB1.PB1_REVISA = CN9.CN9_REVISA AND 
+				PA9.PA9_NUMERO = PB1.PB1_NUMERO AND 
+				PA9.PA9_REVISA = PB1.PB1_REVISA AND
+				PA9.PA9_FILCN9 = PB1.PB1_FILCN9 AND
+			CN1.CN1_MEDEVE = '1' AND
+			CN1.CN1_ESPCTR = '1' AND
+			CNB.CNB_PRODUT = %Exp:_cProd% AND
+			CN9.CN9_DTFIM >= %Exp:Date()% AND
+			CN9.CN9_SITUAC = '05' AND 
+			CN9.CN9_XREGP = '1' AND
+			%Exp:_nQuant% <= (CNB.CNB_QUANT - CNB.CNB_QTDMED) AND 
+			CNB.CNB_SLDMED > '0' AND
+			CNB.%NotDel% AND
+			CNA.%NotDel% AND 
+			CN9.%NotDel% AND
+				PB1.%NotDel% AND
+				PA9.%NotDel%
+			
+			UNION
+					
+			SELECT CNB.CNB_SLDMED, CN9.CN9_NUMERO, CNA.CNA_FORNEC, CNB.CNB_VLUNIT, CNA.CNA_SALDO
+			FROM %Table:CNB% CNB, %Table:CN9% CN9, %Table:CNA% CNA, %Table:CN1% CN1 , %Table:PB1% PB1 , %Table:PA9% PA9 
+			WHERE  CN9.CN9_FILIAL   <>   %xFilial:CN9%	AND
+			CNB.CNB_FILIAL  <>   %xFilial:CNB%    AND
+			CNA.CNA_FILIAL  <>   %xFilial:CNA%	AND
+
+			//Tratamento para compartilhamento das tabelas
+			/*If !lCN1cp
+				cQuery += "			CN1.CN1_FILIAL  <>   '"+xFilial("CN1")+"'	AND   "
+			Else
+				cQuery += "			CN1.CN1_FILIAL  =   '"+xFilial("CN1")+"'	AND   "
+			Endif*/
+ 
+			CNB.CNB_FILIAL = CN9.CN9_FILIAL AND 
+			CNB.CNB_FILIAL = CNA.CNA_FILIAL AND
+
+			/*If !lCN1cp
+					cQuery += "  		CNB.CNB_FILIAL = CN1.CN1_FILIAL AND "
+			Endif*/
+
+			CNB.CNB_CONTRA	=	CN9.CN9_NUMERO	AND 
+			CNB.CNB_REVISA	=	CN9.CN9_REVISA	AND 
+			CNB.CNB_CONTRA	=	CNA.CNA_CONTRA	AND 
+			CNB.CNB_REVISA	=	CNA.CNA_REVISA	AND 
+			CNB.CNB_NUMERO	=	CNA.CNA_NUMERO	AND 
+			CN9.CN9_TPCTO	=	CN1.CN1_CODIGO	AND 
+			CN1.CN1_MEDEVE	=	'1'				AND 
+			CN1.CN1_ESPCTR	=	'1'				AND 
+			CNB.CNB_PRODUT	= %Exp:_cProd% AND 
+			CN9.CN9_DTFIM	>= %Exp:Date()% AND
+			CN9.CN9_SITUAC	=	'05'					AND
+			CN9.CN9_XREGP	=	'1'			   			AND 
+			CN9.CN9_FILIAL = PB1.PB1_FILCN9  AND 
+			CNB.CNB_VLUNIT * %Exp:_nQuant% <= CNA.CNA_SALDO	AND 
+			PB1.PB1_NUMERO = CN9.CN9_NUMERO     AND
+			PB1.PB1_REVISA = CN9.CN9_REVISA     AND 
+			PB1.PB1_EMP		= %Exp:_cEmp% AND 
+			PB1.PB1_UNID	= %Exp:_cUnid% AND 
+			PB1.PB1_FIL		= %Exp:_cFil% AND 
+			PA9.PA9_NUMERO = PB1.PB1_NUMERO AND 
+			PA9.PA9_REVISA = PB1.PB1_REVISA AND
+			PA9.PA9_FILCN9 = PB1.PB1_FILCN9 AND
+			CNB.CNB_SLDMED > '0' AND
+			CNB.D_E_L_E_T_ = ' ' AND
+			CNA.D_E_L_E_T_ = ' ' AND
+			PB1.D_E_L_E_T_ = ' ' AND
+			CN9.D_E_L_E_T_ = ' ' AND
+			PA9.D_E_L_E_T_ = ' '						
+		 
+		EndSQL       
+	
+		If(_cTMP)->(!EOF()) .And. Empty(_cContr)
+			If Aviso("[MTA110CP] Atenção!","Existe ATA de Registro de Preços vigente para este produto. Deseja continuar sem informar o Contr. Preco?", {"SIM", "Não"}) == 1
+				(_cTMP)->(dbCloseArea())
+			Else
+				_lRet  	:= .F.
+				(_cTMP)->(dbCloseArea())
+			EndIf				
+		EndIf		
+	
+EndIf
+
+Return _lRet

@@ -1,0 +1,548 @@
+#include 'protheus.ch'
+#include 'parmtype.ch'
+
+/*/{Protheus.doc} SF69A02X
+funcao para integrar o cliente o SMais
+@author MainLegion
+@since 15/10/2019
+
+@return return, return_description
+/*/
+User Function SF69A02X()
+	Local _aClientes := {} // clientes que serão integrados para o SMais
+	Local _cPrdInt := GetMv("MV_XPRDINT") // Produtos que devem integrar no SMAIS
+	Local _nx := 0
+
+	If Empty(_cPrdInt)
+		_cPrdInt := ""
+	EndIf
+
+	dbSelectArea("CNB")
+	CNB->(dbSetOrder(1)) // CNB_FILIAL+CNB_CONTRA+CNB_REVISA+CNB_NUMERO+CNB_ITEM
+
+	dbSelectArea("CNA")
+	CNA->(dbSetOrder(1))// CNA_FILIAL+CNA_CONTRA+CNA_REVISA+CNA_NUMERO
+	If CNA->(dbSeek(xFilial("CNA")+ CN9->CN9_NUMERO + CN9->CN9_REVISA ))
+		while !CNA->(Eof()) .AND. CNA->(CNA_FILIAL + CNA_CONTRA + CNA_REVISA) == CN9->(CN9_FILIAL + CN9_NUMERO + CN9_REVISA)
+
+			CNB->(dbGoTop())
+			If CNB->(dbSeek( xFilial("CNB") + CN9->CN9_NUMERO + CN9->CN9_REVISA + CNA->CNA_NUMERO ))
+				while !CNA->(Eof()) .AND. xFilial("CNB") + CN9->CN9_NUMERO + CN9->CN9_REVISA + CNA->CNA_NUMERO == ;
+				CNB->(CNB_FILIAL+CNB_CONTRA+CNB_REVISA+CNB_NUMERO)
+
+					If AllTrim(CNB->CNB_PRODUT) $ _cPrdInt .OR. _cPrdInt = "*"
+						If aScan(_aClientes, {|x,y| x[1] + x[2] = CNA->(CNA_CLIENT + CNA_LOJACL) } ) = 0
+							Aadd(_aClientes, {CNA->CNA_CLIENT, CNA->CNA_LOJACL} )
+						EndIf
+						Exit
+					EndIf
+
+					CNA->(dbSkip())
+				End
+
+			EndIf
+
+			CNA->(dbSkip())
+		End
+	EndIf
+
+	//Aviso( "VarInfo", VarInfo("_aClientes", _aClientes , , .F. ) ,{"ok"} ,4,,,, .T.)
+
+	If !Empty(_aClientes)
+		dbSelectArea("SA1")
+		SA1->(dbSetOrder(1))
+
+		dbSelectArea("Z06")
+		Z06->(dbSetOrder(1))
+
+		// efetua a integração
+		For _nx:= 1 to Len(_aClientes)
+			If SA1->(dbSeek(xFilial("SA1") + _aClientes[_nx,1] + _aClientes[_nx,2] ))
+				_lFound := Z06->(dbSeek(xFilial("Z06") + SA1->(A1_COD + A1_LOJA) ))
+				If (_lFound .AND. (Empty(Z06->Z06_CODSMA) .OR. Empty(Z06->Z06_CODUNI))) .OR. !_lFound
+					If fIntegra(_aClientes[_nx,1], _aClientes[_nx,2])
+						MsgInfo(_aClientes[_nx,1] + "/" + _aClientes[_nx,2] + CRLF +;
+						"Cliente integrado com sucesso.")
+					EndIF
+				EndIf
+			EndIf
+		Next
+	EndIf
+
+Return
+
+/*/{Protheus.doc} fIntegra
+@author MainLegion
+@since 15/10/2019
+@param _cCliente, , descricao
+@param _cLoja, , descricao
+@return return, return_description
+/*/
+Static Function fIntegra(_cCliente, _cLoja)
+	Local _aDataEmp := {}
+	Local _aDataUni := {}
+	Local _cXmlRet := ""
+	Local _lRet := .T.
+	Local _lIntEmp := .F.
+	Local _lIntUni := .F.
+	Local _lFoundZ06 := .F.
+	// Parametro para os dados de integração do SMAIS
+	// tipo caracter - utilizar um formato de array
+	// {'chave de acesso', 'codigo da empresa','responsavel','codigo usuario'}
+	Local _aAcessInt := &(GetMV("MV_XSMAISI" ,, '{"a7d1a12b1624073","521396","304650","415641"}'))
+
+	dbSelectArea("SA1")
+	SA1->(dbSetOrder(1))
+	If SA1->(dbSeek(xFilial("SA1") + _cCliente + _cLoja ))
+		// Informações referente a empresa
+		Aadd(_aDataEmp, {"nomeAbreviado",SA1->A1_NREDUZ} )
+		Aadd(_aDataEmp, {"razaoSocial",SA1->A1_NOME} )
+		Aadd(_aDataEmp, {"cnpjCeiCpf",Iif(SA1->A1_PESSOA=="F","CPF","CNPJ") } )
+		If SA1->A1_PESSOA=="F"
+			Aadd(_aDataEmp, {"numeroCpf" ,SA1->A1_CGC} )
+		Else
+			Aadd(_aDataEmp, {"numeroCnpj",SA1->A1_CGC} )
+		EndIf
+		
+		Aadd(_aDataEmp, {"inscricaoEstadual"  , SA1->A1_INSCR 	 } )
+		Aadd(_aDataEmp, {"inscricaoMunicipal" , SA1->A1_INSCRM	 } )
+		Aadd(_aDataEmp, {"tipoCnae"           , SA1->A1_CNAE  	 } )
+		Aadd(_aDataEmp, {"telefoneCat"        , SA1->A1_TEL   	 } )
+		
+		Aadd(_aDataEmp, {"endereco"} )
+		Aadd(_aDataEmp, {"endereco"           , SA1->A1_ENDCOB	 } )
+		Aadd(_aDataEmp, {"bairro"             , SA1->A1_BAIRROC	 } )
+		Aadd(_aDataEmp, {"cep"                , SA1->A1_CEPC  	 } )
+		Aadd(_aDataEmp, {"estado"             , SA1->A1_ESTC  	 } )
+		Aadd(_aDataEmp, {"cidade"             , SA1->A1_MUNC  	 } )
+		Aadd(_aDataEmp, {"/endereco"} )
+		
+		Aadd(_aDataEmp, {"enderecoCobranca"} )
+		Aadd(_aDataEmp, {"bairro"             , SA1->A1_BAIRRO	 } )
+		Aadd(_aDataEmp, {"cep"                , SA1->A1_CEP   	 } )
+		Aadd(_aDataEmp, {"codigoMunicipio"    , SA1->A1_COD_MUN	 } )
+		Aadd(_aDataEmp, {"complemento"        , SA1->A1_COMPLEM	 } )
+		Aadd(_aDataEmp, {"endereco"           , SA1->A1_END   	 } )
+		Aadd(_aDataEmp, {"estado"             , SA1->A1_EST   	 } )
+		Aadd(_aDataEmp, {"cidade"             , SA1->A1_MUN   	 } )
+		Aadd(_aDataEmp, {"/enderecoCobranca"} )
+
+		// Informaçoes referente a unidade
+		Aadd(_aDataUni, {"nome"         ,SA1->A1_NREDUZ} )
+		Aadd(_aDataUni, {"razaoSocial"  ,SA1->A1_NOME  } )
+		Aadd(_aDataUni, {"cnpj_cei"     ,Iif(SA1->A1_PESSOA=="F","CPF","CNPJ")} )
+		Aadd(_aDataUni, {"codigoCnpjCei",SA1->A1_CGC  } )
+		Aadd(_aDataUni, {"bairro"            , SA1->A1_BAIRRO	 } )
+		Aadd(_aDataUni, {"bairroCobranca"    , SA1->A1_BAIRROC	 } )
+		Aadd(_aDataUni, {"cep"               , SA1->A1_CEP    	 } )
+		Aadd(_aDataUni, {"cepCobranca"       , SA1->A1_CEPC   	 } )
+		Aadd(_aDataUni, {"codigoCnae"        , SA1->A1_CNAE   	 } )
+		Aadd(_aDataUni, {"codigoMunicipio"   , SA1->A1_COD_MUN	 } )
+		Aadd(_aDataUni, {"complemento"       , SA1->A1_COMPLEM	 } )
+		Aadd(_aDataUni, {"endereco"          , SA1->A1_END    	 } )
+		Aadd(_aDataUni, {"enderecoCobranca"  , SA1->A1_ENDCOB	 } )
+		Aadd(_aDataUni, {"estado"            , SA1->A1_EST    	 } )
+		Aadd(_aDataUni, {"estadoCobranca"    , SA1->A1_ESTC   	 } )
+		Aadd(_aDataUni, {"inscricaoEstadual" , SA1->A1_INSCR  	 } )
+		Aadd(_aDataUni, {"inscricaoMunicipal", SA1->A1_INSCRM	 } )
+		Aadd(_aDataUni, {"cidade"            , SA1->A1_MUN    	 } )
+		Aadd(_aDataUni, {"telefoneCat"       , SA1->A1_TEL    	 } )
+		
+	EndIf
+
+	dbSelectArea("Z06")
+	Z06->(dbSetOrder(1))
+	If Z06->(dbSeek(xFilial("Z06") + _cCliente + _cLoja))
+		_lFoundZ06 := .T.
+		_lIntEmp := Empty(Z06->Z06_CODSMA)
+		_lIntUni := Empty(Z06->Z06_CODUNI)
+	Else
+		_lFoundZ06 := .F.
+		_lIntEmp := .T.
+		_lIntUni := .T.
+	EndIf
+
+	If _lIntEmp
+		_oXmlRetEmp := fIntEmpresa(_aAcessInt[1], _aAcessInt[2], _aAcessInt[3], _aAcessInt[4],_aDataEmp, @_cXmlRet)
+
+		If Type("_oXmlRetEmp:_SOAP_ENVELOPE:_SOAP_BODY:_NS2_INCLUIREMPRESARESPONSE:_EMPRESARETORNO:_CODIGO:TEXT") == "C"
+			_cCodSoc := _oXmlRetEmp:_SOAP_ENVELOPE:_SOAP_BODY:_NS2_INCLUIREMPRESARESPONSE:_EMPRESARETORNO:_CODIGO:TEXT
+
+			RecLock("Z06", !_lFoundZ06 )
+			Z06->Z06_FILIAL := xFilial("Z06")
+			Z06->Z06_CODCLI := SA1->A1_COD
+			Z06->Z06_LOJCLI := SA1->A1_LOJA
+			Z06->Z06_CODSMA := _cCodSoc
+			Z06->(MsUnlock())
+
+			/*
+			SA1->(dbSetOrder(1))
+			If SA1->(dbSeek(xFilial("SA1") + _cCliente + _cLoja ))
+			RecLock("SA1" ,  .F. )
+			SA1->A1_XCODSOC := _cCodSoc
+			SA1->(MsUnlock())
+			EndIf
+			*/
+
+		Else
+			_lIntUni := .F.
+			_lRet := .F.
+			If Type("_oXmlRetEmp:_SOAP_ENVELOPE:_SOAP_BODY:_SOAP_FAULT:_FAULTSTRING:TEXT") == "C"
+				Aviso( "Erro ao integrar empresa SMAIS", _oXmlRetEmp:_SOAP_ENVELOPE:_SOAP_BODY:_SOAP_FAULT:_FAULTSTRING:TEXT ,{"Ok"} ,4,,,, .T.)
+			ElseIf Type("_oXmlRetEmp:_SOAP_ENVELOPE:_SOAP_BODY:_NS2_INCLUIREMPRESARESPONSE:_EMPRESARETORNO:_INFORMACAOGERAL:_MENSAGEMOPERACAODETALHELIST:_MENSAGEM:TEXT") == "C"
+				Aviso( "Erro ao integrar empresa SMAIS", _oXmlRetEmp:_SOAP_ENVELOPE:_SOAP_BODY:_NS2_INCLUIREMPRESARESPONSE:_EMPRESARETORNO:_INFORMACAOGERAL:_MENSAGEMOPERACAODETALHELIST:_MENSAGEM:TEXT ,{"Ok"} ,4,,,, .T.)
+			Else
+				If Aviso( "Erro ao integrar empresa SMAIS", _cXmlRet ,{"Ok", "Mostrar OBJ"} ,4,,,, .T.) = 2
+					Aviso( "VarInfo", VarInfo("_oXmlRetEmp", _oXmlRetEmp , , .F. ) ,{"ok"} ,4,,,, .T.)
+				EndIf
+			EndIf
+		EndIf
+	Else
+		_cCodSoc := Z06->Z06_CODSMA
+	EndIf
+
+	If _lIntUni .AND. !Empty(_cCodSoc)
+		Aadd(_aDataUni, {"codigoEmpresa", _cCodSoc } )
+
+		_oXmlRetUni := fIntUnidade(_aAcessInt[1], _aAcessInt[2], _aAcessInt[3], _aAcessInt[4],_aDataUni, @_cXmlRet)
+		If Type("_oXmlRetUni:_SOAP_ENVELOPE:_SOAP_BODY:_NS2_INCLUIRUNIDADERESPONSE:_UNIDADERETORNO:_CODIGO:TEXT") == "C"
+			_cCodUni := _oXmlRetUni:_SOAP_ENVELOPE:_SOAP_BODY:_NS2_INCLUIRUNIDADERESPONSE:_UNIDADERETORNO:_CODIGO:TEXT
+			RecLock("Z06" ,  .F. )
+			Z06->Z06_CODUNI := _cCodUni
+			Z06->(MsUnlock())
+		Else
+			_lRet := .F.
+			If Type("_oXmlRetUni:_SOAP_ENVELOPE:_SOAP_BODY:_SOAP_FAULT:_FAULTSTRING:TEXT") == "C"
+				Aviso( "Erro ao integrar unidade SMAIS", _oXmlRetUni:_SOAP_ENVELOPE:_SOAP_BODY:_SOAP_FAULT:_FAULTSTRING:TEXT ,{"Ok"} ,4,,,, .T.)
+			ElseIf Type("_oXmlRetUni:_SOAP_ENVELOPE:_SOAP_BODY:_NS2_INCLUIRUNIDADERESPONSE:_UNIDADERETORNO:_INFORMACAOGERAL:_MENSAGEMOPERACAODETALHELIST:_MENSAGEM:TEXT") == "C"
+				Aviso( "Erro ao integrar unidade SMAIS", _oXmlRetUni:_SOAP_ENVELOPE:_SOAP_BODY:_NS2_INCLUIRUNIDADERESPONSE:_UNIDADERETORNO:_INFORMACAOGERAL:_MENSAGEMOPERACAODETALHELIST:_MENSAGEM:TEXT ,{"Ok"} ,4,,,, .T.)
+			Else
+				If Aviso( "Erro ao integrar unidade SMAIS", _cXmlRet ,{"Ok", "Mostrar OBJ"} ,4,,,, .T.) = 2
+					Aviso( "VarInfo", VarInfo("_oXmlRetUni", _oXmlRetUni , , .F. ) ,{"ok"} ,4,,,, .T.)
+				EndIf
+			EndIf
+		EndIF
+	EndIf
+
+Return(_lRet)
+
+/*/{Protheus.doc} fIntEmpresa
+gera o corpo do xml para inclusao de empresa
+@author MainLegion
+@since 14/10/2019
+@param _cChaveAc, , descricao
+@param _cEmpPrinc, , descricao
+@param _cResp, , descricao
+@param _cUser, , descricao
+@return return, return_description
+/*/
+Static Function fIntEmpresa(_cChaveAc, _cEmpPrinc, _cResp, _cUser, _aData, _cXMLPostRet)
+	Local _cXml := ""
+	Local _nz := 0
+	Local _ny := 0
+	Local _na := 0
+	Local _aSubsXML := {}
+	Local _oXML
+	Local _cMsg:=_cErr:=""
+	Local _cUrl := "https://ws1.soc.com.br/WSSoc/EmpresaWs?wsdl"
+
+	Aadd(_aSubsXML, {"<" , "&lt;"  } )
+	Aadd(_aSubsXML, {">" , "&gt;"  } )
+	Aadd(_aSubsXML, {"&" , "&amp;" } )
+	Aadd(_aSubsXML, {"'" , "&apos;"} )
+	Aadd(_aSubsXML, {'"' , "&quot;"} )
+	// retirada de caracteres especiais do xml
+	For _ny:= 1 to Len(_aData)
+		If Len(_aData[_nY]) > 1
+			For _na:= 1 to Len(_aSubsXML)
+				_aData[_ny,2] := StrTran(_aData[_ny,2], _aSubsXML[_na,1], _aSubsXML[_na,2] )
+			Next
+		EndIf
+	Next
+
+	_cXml += '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ser="http://services.soc.age.com/">'+CRLF
+	_cXml += U_fGerXMLHead(_cEmpPrinc,_cChaveAc)
+
+	_cXml += '   <soapenv:Body>'+CRLF
+	_cXml += '      <ser:incluirEmpresa>'+CRLF
+	_cXml += '         <IncluirEmpresaWsVo>'+CRLF
+	_cXml += '            <identificacaoWsVo>'+CRLF
+	_cXml += '               <chaveAcesso>'+ _cChaveAc +'</chaveAcesso>'+CRLF
+	_cXml += '               <codigoEmpresaPrincipal>'+ _cEmpPrinc +'</codigoEmpresaPrincipal>'+CRLF
+	_cXml += '               <codigoResponsavel>'+ _cResp +'</codigoResponsavel>'+CRLF
+	//_cXml += '               <homologacao>?</homologacao>'+CRLF
+	_cXml += '               <codigoUsuario>'+ _cUser +'</codigoUsuario>'+CRLF
+	_cXml += '            </identificacaoWsVo>'+CRLF
+	_cXml += '            <dadosEmpresaWsVo>'+CRLF
+
+	For _nz:= 1 to Len(_aData)
+		If Len(_aData[_nz]) = 1
+			_cXml += '           <'+ _aData[_nz,1] +'>'+CRLF
+		ElseIf Len(_aData[_nz]) = 2
+			_cXml += '               <'+ _aData[_nz,1] +'>'+ AllTrim(_aData[_nz,2]) +'</'+ _aData[_nz,1] +'>'+CRLF
+		EndIf
+	Next
+
+	//_cXml += '               <nomeAbreviado>AA_J2A_CONSULTORIA</nomeAbreviado>'+CRLF
+	//_cXml += '               <razaoSocial>AA_J2A_CONSULTORIA</razaoSocial>'+CRLF
+	//_cXml += '               <cabecalho>?</cabecalho>'+CRLF
+	//_cXml += '               <webSite>?</webSite>'+CRLF
+	//_cXml += '               <codigoSubGrupo>?</codigoSubGrupo>'+CRLF
+	//_cXml += '               <cnpjCeiCpf>CPF</cnpjCeiCpf>'+CRLF
+	//_cXml += '               <numeroCnpj>?</numeroCnpj>'+CRLF
+	//_cXml += '               <numeroCpf>90884061035</numeroCpf>'+CRLF
+	//_cXml += '               <numeroCei>?</numeroCei>'+CRLF
+	//_cXml += '               <inscricaoEstadual>?</inscricaoEstadual>'+CRLF
+	//_cXml += '               <inscricaoMunicipal>?</inscricaoMunicipal>'+CRLF
+	//_cXml += '               <registroANS>?</registroANS>'+CRLF
+	//_cXml += '               <observacao>?</observacao>'+CRLF
+	//_cXml += '               <descricao>?</descricao>'+CRLF
+	//_cXml += '               <tipoEmail>?</tipoEmail>'+CRLF
+	//_cXml += '               <telefoneCat>?</telefoneCat>'+CRLF
+	//_cXml += '               <codigoCliente>?</codigoCliente>'+CRLF
+	//_cXml += '               <endereco>'+CRLF
+	//_cXml += '                  <bairro>?</bairro>'+CRLF
+	//_cXml += '                  <cep>?</cep>'+CRLF
+	//_cXml += '                  <cidade>?</cidade>'+CRLF
+	//_cXml += '                  <codigoMunicipio>?</codigoMunicipio>'+CRLF
+	//_cXml += '                  <complemento>?</complemento>'+CRLF
+	//_cXml += '                  <endereco>?</endereco>'+CRLF
+	//_cXml += '                  <estado>?</estado>'+CRLF
+	//_cXml += '                  <numero>?</numero>'+CRLF
+	//_cXml += '               </endereco>'+CRLF
+	//_cXml += '               <enderecoCobranca>'+CRLF
+	//_cXml += '                  <bairro>?</bairro>'+CRLF
+	//_cXml += '                  <cep>?</cep>'+CRLF
+	//_cXml += '                  <cidade>?</cidade>'+CRLF
+	//_cXml += '                  <codigoMunicipio>?</codigoMunicipio>'+CRLF
+	//_cXml += '                  <complemento>?</complemento>'+CRLF
+	//_cXml += '                  <endereco>?</endereco>'+CRLF
+	//_cXml += '                  <estado>?</estado>'+CRLF
+	//_cXml += '                  <numero>?</numero>'+CRLF
+	//_cXml += '               </enderecoCobranca>'+CRLF
+	//_cXml += '               <tipoCnae>CNAE</tipoCnae>'+CRLF
+	//_cXml += '               <codigoCnae>9511800</codigoCnae>'+CRLF
+	//_cXml += '               <descricaoCnae>REPARACAO E MANUTENCAO DE COMPUTADORES E DE EQUIPAMENTOS PERIFERICOS</descricaoCnae>'+CRLF
+	//_cXml += '               <grauRisco>?</grauRisco>'+CRLF
+	//_cXml += '               <tipoDimensionamentoCipa>?</tipoDimensionamentoCipa>'+CRLF
+	//_cXml += '               <tipoControleCipa>?</tipoControleCipa>'+CRLF
+	//_cXml += '               <usarLogoNoRelatorio>?</usarLogoNoRelatorio>'+CRLF
+	//_cXml += '               <usarLogoNoMenu>?</usarLogoNoMenu>'+CRLF
+	//_cXml += '               <tipoEmpresa>?</tipoEmpresa>'+CRLF
+	//_cXml += '               <possuiSesmtProprio>?</possuiSesmtProprio>'+CRLF
+	//_cXml += '               <tipoCliente>?</tipoCliente>'+CRLF
+	//_cXml += '               <cnaesSecundarios>'+CRLF
+	//_cXml += '                  <!--Zero or more repetitions:-->'+CRLF
+	//_cXml += '                  <codigoCnaeSecundario>?</codigoCnaeSecundario>'+CRLF
+	//_cXml += '               </cnaesSecundarios>'+CRLF
+	_cXml += '            </dadosEmpresaWsVo>'+CRLF
+	//_cXml += '            <campoString01>?</campoString01>'+CRLF
+	//_cXml += '            <campoString02>?</campoString02>'+CRLF
+	//_cXml += '            <campoString03>?</campoString03>'+CRLF
+	//_cXml += '            <campoString04>?</campoString04>'+CRLF
+	//_cXml += '            <campoString05>?</campoString05>'+CRLF
+	_cXml += '         </IncluirEmpresaWsVo>'+CRLF
+	_cXml += '      </ser:incluirEmpresa>'+CRLF
+	_cXml += '   </soapenv:Body>'+CRLF
+	_cXml += '</soapenv:Envelope>'+CRLF
+
+	//Aviso( "XML", _cXml ,{"ok"} ,4,,,, .T.)
+
+	_cXMLPostRet := Httppost(_cUrl,"",_cXml,120,,)
+
+	_oXML := XMLParser(_cXMLPostRet,"_",@_cMsg,@_cErr)
+
+	//Aviso( "Titulo", _cXMLPostRet ,{"ok"} ,4,,,, .T.)
+	//Aviso( "VarInfo", VarInfo("_oXML", _oXML , , .F. ) ,{"ok"} ,4,,,, .T.)
+
+Return(_oXML)
+
+/*/{Protheus.doc} fIntUnidade
+gera o corpo do xml para inclusao de empresa
+@author MainLegion
+@since 14/10/2019
+@param _cChaveAc, , descricao
+@param _cEmpPrinc, , descricao
+@param _cResp, , descricao
+@param _cUser, , descricao
+@return return, return_description
+/*/
+Static Function fIntUnidade(_cChaveAc, _cEmpPrinc, _cResp, _cUser, _aData, _cXMLPostRet)
+	Local _cXml := ""
+	Local _aSubsXML := {}
+	Local _oXML
+	Local _cMsg:=_cErr:=""
+	Local _cUrl := "https://ws1.soc.com.br/WSSoc/services/UnidadeWs?wsdl"
+
+	Aadd(_aSubsXML, {"<" , "&lt;"  } )
+	Aadd(_aSubsXML, {">" , "&gt;"  } )
+	Aadd(_aSubsXML, {"&" , "&amp;" } )
+	Aadd(_aSubsXML, {"'" , "&apos;"} )
+	Aadd(_aSubsXML, {'"' , "&quot;"} )
+	// retirada de caracteres especiais do xml
+	For _ny:= 1 to Len(_aData)
+		If Len(_aData[_nY]) > 1
+			For _na:= 1 to Len(_aSubsXML)
+				_aData[_ny,2] := StrTran(_aData[_ny,2], _aSubsXML[_na,1], _aSubsXML[_na,2] )
+			Next
+		EndIf
+	Next
+
+	_cXml += '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ser="http://services.soc.age.com/">'+CRLF
+	_cXml += U_fGerXMLHead(_cEmpPrinc,_cChaveAc)
+
+	_cXml += '   <soapenv:Body>'+CRLF
+	_cXml += '      <ser:incluirUnidade>'+CRLF
+	_cXml += '         <unidade>'+CRLF
+	_cXml += '            <identificacaoWsVo>'+CRLF
+	_cXml += '               <chaveAcesso>'+ _cChaveAc +'</chaveAcesso>'+CRLF
+	_cXml += '               <codigoEmpresaPrincipal>'+ _cEmpPrinc +'</codigoEmpresaPrincipal>'+CRLF
+	_cXml += '               <codigoResponsavel>'+ _cResp +'</codigoResponsavel>'+CRLF
+	//_cXml += '               <homologacao>?</homologacao>'+CRLF
+	_cXml += '               <codigoUsuario>'+ _cUser +'</codigoUsuario>'+CRLF
+	_cXml += '            </identificacaoWsVo>'+CRLF
+
+	For _nz:= 1 to Len(_aData)
+		If Len(_aData[_nz]) = 1
+			_cXml += '           <'+ _aData[_nz,1] +'>'+CRLF
+		ElseIf Len(_aData[_nz]) = 2
+			_cXml += '               <'+ _aData[_nz,1] +'>'+ AllTrim(_aData[_nz,2]) +'</'+ _aData[_nz,1] +'>'+CRLF
+		EndIf
+	Next
+
+	//_cXml += '            <ativo>?</ativo>'+CRLF
+	//_cXml += '            <bairro>?</bairro>'+CRLF
+	//_cXml += '            <bairroCobranca>?</bairroCobranca>'+CRLF
+	//_cXml += '            <cep>?</cep>'+CRLF
+	//_cXml += '            <cepCobranca>?</cepCobranca>'+CRLF
+	//_cXml += '            <cidade>?</cidade>'+CRLF
+	//_cXml += '            <cidadeCobranca>?</cidadeCobranca>'+CRLF
+	//_cXml += '            <cnpj_cei>?</cnpj_cei>'+CRLF
+	//_cXml += '            <codigo>?</codigo>'+CRLF
+	//_cXml += '            <codigoArquivo>?</codigoArquivo>'+CRLF
+	//_cXml += '            <codigoCnae>9511800</codigoCnae>'+CRLF
+	//_cXml += '            <codigoCnpjCei>?</codigoCnpjCei>'+CRLF
+	//_cXml += '            <codigoEmpresa>709703</codigoEmpresa>'+CRLF
+	//_cXml += '            <codigoMunicipio>?</codigoMunicipio>'+CRLF
+	//_cXml += '            <codigoMunicipioCobranca>?</codigoMunicipioCobranca>'+CRLF
+	//_cXml += '            <codigoRh>?</codigoRh>'+CRLF
+	//_cXml += '            <complemento>?</complemento>'+CRLF
+	//_cXml += '            <complementoCobranca>?</complementoCobranca>'+CRLF
+	//_cXml += '            <dataAssinaturaContrato>?</dataAssinaturaContrato>'+CRLF
+	//_cXml += '            <descricaoCnae>REPARACAO E MANUTENCAO DE COMPUTADORES E DE EQUIPAMENTOS PERIFERICOS</descricaoCnae>'+CRLF
+	//_cXml += '            <endereco>?</endereco>'+CRLF
+	//_cXml += '            <enderecoCobranca>?</enderecoCobranca>'+CRLF
+	//_cXml += '            <estado>?</estado>'+CRLF
+	//_cXml += '            <estadoCobranca>?</estadoCobranca>'+CRLF
+	//_cXml += '            <grauRisco>?</grauRisco>'+CRLF
+	//_cXml += '            <inscricaoEstadual>?</inscricaoEstadual>'+CRLF
+	//_cXml += '            <inscricaoMunicipal>?</inscricaoMunicipal>'+CRLF
+	//_cXml += '            <nome>AA_J2A_CONSULTORIA</nome>'+CRLF
+	//_cXml += '            <numero>?</numero>'+CRLF
+	//_cXml += '            <numeroCobranca>?</numeroCobranca>'+CRLF
+	//_cXml += '            <observacaoASO>?</observacaoASO>'+CRLF
+	//_cXml += '            <observacaoContrato>?</observacaoContrato>'+CRLF
+	//_cXml += '            <observacaoPPP>?</observacaoPPP>'+CRLF
+	//_cXml += '            <percentualCalculoBrigada>?</percentualCalculoBrigada>'+CRLF
+	//_cXml += '            <razaoSocial>AA_J2A_CONSULTORIA</razaoSocial>'+CRLF
+	//_cXml += '            <telefoneCat>?</telefoneCat>'+CRLF
+	//_cXml += '            <tipoBusca>?</tipoBusca>'+CRLF
+	//_cXml += '            <tipoCnae>CNAE</tipoCnae>'+CRLF
+	//_cXml += '            <tipoBuscaEmpresa>?</tipoBuscaEmpresa>'+CRLF
+	//_cXml += '            <unidadeContratante>?</unidadeContratante>'+CRLF
+	//_cXml += '            <campoString01>?</campoString01>'+CRLF
+	//_cXml += '            <tipoEmpresa>?</tipoEmpresa>'+CRLF
+	//_cXml += '            <possuiSesmtProprio>?</possuiSesmtProprio>'+CRLF
+	//_cXml += '            <tipoCliente>?</tipoCliente>'+CRLF
+	//_cXml += '            <cnaesSecundarios>'+CRLF
+	//_cXml += '               <!--Zero or more repetitions:-->'+CRLF
+	//_cXml += '               <codigoCnaeSecundario>?</codigoCnaeSecundario>'+CRLF
+	//_cXml += '            </cnaesSecundarios>'+CRLF
+	//_cXml += '            <avisosServico>'+CRLF
+	//_cXml += '               <!--Zero or more repetitions:-->'+CRLF
+	//_cXml += '               <aviso>?</aviso>'+CRLF
+	//_cXml += '            </avisosServico>'+CRLF
+	//_cXml += '            <unidadeEsocialWsVo>'+CRLF
+	//_cXml += '               <esocial>?</esocial>'+CRLF
+	//_cXml += '               <nomeAmbienteTrabalho>?</nomeAmbienteTrabalho>'+CRLF
+	//_cXml += '               <descricaoLocal>?</descricaoLocal>'+CRLF
+	//_cXml += '               <localAmbiente>?</localAmbiente>'+CRLF
+	//_cXml += '               <tipoInscricao>?</tipoInscricao>'+CRLF
+	//_cXml += '               <numeroInscricao>?</numeroInscricao>'+CRLF
+	//_cXml += '               <dataInicio>?</dataInicio>'+CRLF
+	//_cXml += '               <dataFim>?</dataFim>'+CRLF
+	//_cXml += '               <codigoAmbienteTrabalho>?</codigoAmbienteTrabalho>'+CRLF
+	//_cXml += '               <codigoLotacaoTributaria>?</codigoLotacaoTributaria>'+CRLF
+	//_cXml += '               <considerarEsocial>?</considerarEsocial>'+CRLF
+	//_cXml += '            </unidadeEsocialWsVo>'+CRLF
+	_cXml += '         </unidade>'+CRLF
+	_cXml += '      </ser:incluirUnidade>'+CRLF
+	_cXml += '   </soapenv:Body>'+CRLF
+	_cXml += '</soapenv:Envelope>'+CRLF
+
+	//Aviso( "XML", _cXml ,{"ok"} ,4,,,, .T.)
+
+	_cXMLPostRet := Httppost(_cUrl,"",_cXml,120,,)
+
+	_oXML := XMLParser(_cXMLPostRet,"_",@_cMsg,@_cErr)
+
+	//Aviso( "Titulo", _cXMLPostRet ,{"ok"} ,4,,,, .T.)
+	//Aviso( "VarInfo", VarInfo("_oXML", _oXML , , .F. ) ,{"ok"} ,4,,,, .T.)
+
+Return(_oXML)
+
+/*/{Protheus.doc} fGerXMLHead
+gera xml para o header
+@author MainLegion
+@since 10/10/2019
+@return return, return_description
+/*/
+User Function fGerXMLHead(_cUser, _cPassword)
+	Local _cXml := ''
+	Local _cNonce := fGerStrRand(16,.F.)
+	Local _cCreated := FwTimeStamp(6)
+
+	_cXml += '<soapenv:Header>'+CRLF
+	_cXml += '<wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd" '+CRLF
+	_cXml += 'xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">'+CRLF
+	_cXml += '<wsu:Timestamp wsu:Id="TS-32E6B34377D7E4A58614607283662392">'+CRLF
+	_cXml += '<wsu:Created>' + _cCreated + '</wsu:Created>'+CRLF
+	_cXml += '<wsu:Expires>' + FwTimeStamp(6,,IncTime(Time(),0,1,0)) + '</wsu:Expires>'+CRLF
+	_cXml += '</wsu:Timestamp>'+CRLF
+	_cXml += '<wsse:UsernameToken>'+CRLF
+
+	_cXml += '<wsse:Username>'+_cUser+'</wsse:Username>'+CRLF
+	_cXml += '<wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest">'+;
+	Encode64(SHA1(_cNonce + _cCreated + _cPassword,1));
+	+'</wsse:Password>'+CRLF
+
+	_cXml += '<wsse:Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary">'+ Encode64(_cNonce) +'</wsse:Nonce>'+CRLF
+	_cXml += '<wsu:Created>' + _cCreated + '</wsu:Created>'+CRLF
+	_cXml += '</wsse:UsernameToken>'+CRLF
+	_cXml += '</wsse:Security>'+CRLF
+	_cXml += '</soapenv:Header>'+CRLF
+
+Return(_cXml)
+
+/*/{Protheus.doc} fGerStrRand
+@author MainLegion
+@since 07/10/2019
+@return return, return_description
+/*/
+Static Function fGerStrRand(_nQtdChar, _lEncode)
+	Local _cString := "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz"
+	Local _cRet := ""
+	Local _nx := 0
+	Default _lEncode := .F.
+
+	For _nx:= 1 to _nQtdChar
+		_cRet += SubStr(_cString, Randomize(1, Len(_cString) ) , 1 )
+	Next
+
+	If _lEncode
+		_cRet := Encode64(_cRet)
+	EndIf
+
+Return(_cRet)
+
+

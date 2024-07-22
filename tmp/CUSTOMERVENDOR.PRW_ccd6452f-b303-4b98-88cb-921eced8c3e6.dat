@@ -1,0 +1,179 @@
+#INCLUDE "TOTVS.ch"
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "FWMVCDEF.ch"
+
+/*/{Protheus.doc} Substituição do ponto de entrada MT20FOPOS por CUSTOMERVENDOR - 12.1.17
+Ponto de Entrada executado após a gravação - Cadastro de Fornecedores, dentro da Transação.
+
+@author Paulo Schwind
+@since 03/04/2019
+@version 1.0
+
+/*/
+
+User Function CUSTOMERVENDOR()
+Local _aArea 	:= GetArea()
+Local aParam     := PARAMIXB
+Local xRet       := .T.
+Local oObj       := ""
+Local cIdPonto   := ""
+Local cIdModel   := ""
+Local _nOpcA 	
+Local _cCodFor  := SA2->(A2_COD)
+Local _cPessoa	:= SA2->(A2_TIPO)
+Local _cClvl	:= ""
+
+Local lIsGrid    := .F.
+Local nLinha     := 0
+Local nQtdLinhas := 0
+Local cMsg       := ""
+
+If (aParam <> NIL)
+    oObj := aParam[1]
+    cIdPonto := aParam[2]
+    cIdModel := aParam[3]
+    lIsGrid  := (Len(aParam) > 3)
+
+    _nOpcA := oObj:GetOperation() 
+
+    If (cIdPonto =="MODELCOMMITTTS")
+	
+		If _cPessoa == "F"
+			
+			If _nOpcA <> 5 .And. .Not. Empty(SA2->A2_CODFUNC) .And. Empty(SA2->A2_NIT)
+				ShowHelpDlg( "AJUDA", { "Para este fornecedor, o Campo NIT é Obrigatorio" , "AÇÃO NÃO PERMITIDA"  }, 5, { "Informe o NIT do Fornecedor" } , 5 )
+				RestArea(_aArea)
+				Return( Nil )
+			EndIf
+			
+			_cClvl := "FF"+_cCodFor
+			
+		ElseIf _cPessoa == "J"
+			_cClvl := "FJ"+_cCodFor
+		Else
+		 	_cClvl := "FX"+_cCodFor
+		EndIf
+			
+		If _nOpcA == 3 //Incluir
+
+			If RecLock("SA2",.F.)
+				SA2->A2_CLVL := _cClvl
+				SA2->(MsUnlock())
+			EndIf
+		   
+			fIncCTH(_cClvl)
+			
+		ElseIf _nOpcA == 4 //Alterar
+
+			If RecLock("SA2",.F.)
+				SA2->A2_CLVL := _cClvl
+				SA2->(MsUnlock())
+			EndIf
+			
+			fAltCTH(_cClvl)
+			
+		ElseIf _nOpcA == 5 //Deletar
+			
+			fDelCTH(_cClvl)
+		EndIf
+	ElseIf (cIdPonto =="BUTTONBAR")
+            xRet := {{"Docente x Fornecedor", "DOCENTES", {|| U_SF69C03X(oObj) }},;
+						{"Horas Medidas", "DOCENTES", {|| U_SF69A12X(oObj) }}}
+	Endif
+
+RestArea(_aArea)
+Endif	
+Return( xRet )
+
+
+/** {Protheus.doc} fIncCTH
+Funcao para incluir classe valor do fornecedor
+
+@param: 	<Nil>
+@author: 	Jose Leite de Barros Neto
+@since: 	27/06/2014
+@Uso: 		SFIEMT
+*/
+Static Function fIncCTH(pClvl)
+	
+	DbSelectArea("CTH")
+	DbSetOrder(1) //CTH_FILIAL+CTH_CLVL
+	If .Not. DbSeek(xFilial("CTH")+pClvl)
+		
+		If RecLock("CTH",.T.)
+			Replace CTH_FILIAL	WITH xFilial("CTH")
+			Replace CTH_CLVL 	WITH pClvl 						//Codigo Classe de Valor
+			Replace CTH_CLASSE	WITH "2"							//Classe - 2= Analitico
+			Replace CTH_DESC01	WITH AllTrim(SA2->(A2_NOME))	//Descricao - Nome do Fornecedor
+			Replace CTH_DTEXIS  WITH CTOD("01/01/80")			//Data Inicio Existencia
+			Replace CTH_BLOQ	WITH AllTrim(SA2->(A2_MSBLQL))
+			CTH->(MsUnlock())
+		EndIf
+		
+	EndIf
+		
+Return( Nil )
+
+/** {Protheus.doc} fAltCTH
+Funcao para alterar a Classe Valor do Fornecedor
+
+@param: 	<Nil>
+@author: 	Jose Leite de Barros Neto
+@since: 	27/06/2014
+@Uso: 		SFIEMT
+*/
+Static Function fAltCTH(pClvl)
+
+	DbSelectArea("CTH")
+	DbSetOrder(1) //CTH_FILIAL+CTH_CLVL
+	If DbSeek(xFilial("CTH")+pClvl)
+		
+		If RecLock("CTH",.F.)
+		
+			If SA2->(A2_MSBLQL) == "1"
+				Replace CTH_BLOQ	WITH "1" //"1" - Bloqueado
+			ElseIf SA2->(A2_MSBLQL) == "2"
+				Replace CTH_BLOQ	WITH "2" //"2" - Nao Bloqueado
+			EndIf
+			
+			SA2->(MsUnlock())
+		EndIf
+		
+	Else
+		If AllTrim(SA2->A2_CLVL) == AllTrim(pClvl)
+			If RecLock("CTH",.T.)
+				Replace CTH_FILIAL	WITH xFilial("CTH")
+				Replace CTH_CLVL 	WITH pClvl 						//Codigo Classe de Valor
+				Replace CTH_CLASSE	WITH "2"						//Classe - 2= Analitico
+				Replace CTH_DESC01	WITH AllTrim(SA2->(A2_NOME))	//Descricao - Nome do Fornecedor
+				Replace CTH_DTEXIS  WITH CTOD("01/01/80")			//Data Inicio Existencia
+				Replace CTH_BLOQ	WITH AllTrim(SA2->(A2_MSBLQL))
+				CTH->(MsUnlock())
+			EndIf
+		EndIf
+	EndIf
+
+Return( Nil )
+
+/** {Protheus.doc} fDelCTH
+Funcao para Deletar a Classe Valor do Fornecedor
+
+@param: 	<Nil>
+@author: 	Jose Leite de Barros Neto
+@since: 	27/06/2014
+@Uso: 		SFIEMT
+*/
+Static Function fDelCTH(pClvl)
+
+	//Deletar a Classe Valor para Fornecedor
+	DbSelectArea("CTH")
+	DbSetOrder(1) //CTH_FILIAL+CTH_CLVL
+	If DbSeek(xFilial("CTH")+pClvl)
+		If RecLock("CTH",.F.)
+			dbDelete()
+			CTH->(MsUnlock())
+		Endif
+	EndIf
+	
+Return( Nil )
+

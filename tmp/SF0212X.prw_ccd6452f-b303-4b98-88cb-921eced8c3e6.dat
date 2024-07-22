@@ -1,0 +1,161 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} SF0211X
+	Customização Estoque de Vacinas.
+	Função para apresentar tela com informações de saldo de contrato e saldo de saída. 
+	
+@author Walmir Junior
+@since 11/03/2016
+@version 1.00
+    
+/*/
+/*---------------------------------------------------------------------------------------/
+Modificações:
+Franklin B. Oliveira                                                            07/04/2017
+	Adicionado as informações de Alteração de doses.
+Franklin B. Oliveira                                                            17/05/2017
+	Removido filtro na ADZ, para ser possível visualizar todos os itens da proposta,
+	não apenas o relacionado a unidade executora.
+
+Paulo Schwind																	26/06/2019
+    Adicionado ADY.ADY_XCONTR = CN9.CN9_NUMERO AND  
+    para trazer somente os itens da proposta que geraram contrato	
+/---------------------------------------------------------------------------------------*/
+User Function SF0212X(_cChvCN9, _cChvSA1, _cQtdSol)
+Local _oDlg
+Local _oGetDados
+Local _oGetDadSL
+Local _nSaldIni := 0
+Local _cClient	:= ""
+Local _aAreaSA1 := SA1->(GetArea())
+Local _cQuery   := ''
+
+Private _aHeader := {}
+Private _aHeadSL := {}
+Private _aCols := {}
+Private _aColsSL := {}
+Private _cTMPerd	:= SuperGetMV("MV_XTMPERD",,"")
+Private _cB1Tip		:= "IM"
+
+If !Empty(_cChvCN9)
+	AADD(_aHeader,{ OemToAnsi("Filial")		,"ADZ_FILIAL",	"", 08, 0, "", "", "C", "", ""} )
+	AADD(_aHeader,{ OemToAnsi("Produto")	,"ADZ_PRODUT",	"", 15, 0, "", "", "C", "", ""} )
+	AADD(_aHeader,{ OemToAnsi("Descrição")	,"ADZ_DESCRI",	"", 50, 0, "", "", "C", "", ""} )
+	AADD(_aHeader,{ OemToAnsi("Quantidade")	,"ADZ_QTDVEN",	"", 08, 2, "", "", "N", "", ""} )
+	AADD(_aHeader,{ OemToAnsi("Tp Altera.")	," ",	"", 15, 0, "", "", "C", "", ""} )
+	AADD(_aHeader,{ OemToAnsi("Qtd Alter.")	,"ADZ_XQTDDO",	"", 08, 2, "", "", "N", "", ""} )
+	
+	If Empty(_cQtdSol)
+		AADD(_aHeadSL,{ OemToAnsi("Filial")			,"D3_FILIAL", "",8,0,"","","C","",""} )
+		AADD(_aHeadSL,{ OemToAnsi("Produto")		,"D3_COD", "",15,0,"","","C","",""} )
+		AADD(_aHeadSL,{ OemToAnsi("Quant Saída")	,"D3_SUMQTD", "",8,2,"","","N","",""} )
+		AADD(_aHeadSL,{ OemToAnsi("Saldo Restante")	,"D3_SALDO", "",8,2,"","","N","",""} )
+	Else
+		AADD(_aHeadSL,{ OemToAnsi("Filial"),"D3_FILIAL",   	"",8,0,"","","C","",""} )
+		AADD(_aHeadSL,{ OemToAnsi("Produto"),"D3_COD",   	"",15,0,"","","C","",""} )
+		AADD(_aHeadSL,{ OemToAnsi("Quant Saída"),"D3_SUMQTD","",8,2,"","","N","",""} )
+		AADD(_aHeadSL,{ OemToAnsi("Quant Solicitada"),"D3_SUMQTD","",8,2,"","","N","",""} )
+		AADD(_aHeadSL,{ OemToAnsi("Saldo Restante"),"D3_SALDO","",8,2,"","","N","",""} )		
+	EndIf
+
+	BeginSQL Alias "ADZTMP"
+		SELECT ADZ_FILIAL, ADZ_PRODUT, ADZ_DESCRI, ADZ_QTDVEN, ADZ_XQTDDO, ADZ_TPALDO
+		FROM %Table:ADZ% ADZ INNER JOIN
+		%Table:SB1% SB1 ON SB1.B1_FILIAL  = %Exp:xFilial("SB1")% AND SB1.B1_COD	  = ADZ.ADZ_PRODUT INNER JOIN
+		%Table:ADY% ADY ON ADY.ADY_FILIAL = ADZ.ADZ_FILIAL AND ADY.ADY_PROPOS = ADZ.ADZ_PROPOS AND ADY.ADY_PREVIS = ADZ.ADZ_REVISA INNER JOIN
+		%Table:AD1% AD1 ON AD1.AD1_FILIAL = ADZ.ADZ_FILIAL AND AD1.AD1_NROPOR = ADY.ADY_OPORTU AND AD1.AD1_REVISA = ADY.ADY_REVISA INNER JOIN
+		%Table:CN9% CN9 ON CN9.CN9_FILIAL = AD1.AD1_FILIAL AND CN9.CN9_XOPORT = AD1.AD1_NROPOR AND CN9.CN9_XREVOP = AD1.AD1_REVISA
+		WHERE 
+		CN9.%NotDel% AND
+		AD1.%NotDel% AND 
+		ADY.%NotDel% AND
+		SB1.%NotDel% AND SB1.B1_TIPO = %Exp:_cB1Tip% AND
+		ADZ.%NotDel% AND 
+		//ADZ.ADZ_XUNEXE = %Exp:xFilial("ADZ")% AND
+		ADY.ADY_XCONTR = CN9.CN9_NUMERO AND  	
+		CN9_FILIAL = %Exp:SubStr(_cChvCN9,1,8)% AND
+		CN9_NUMERO = %Exp:SubStr(_cChvCN9,9,15)% AND
+		CN9_REVISA = %Exp:SubStr(_cChvCN9,24,Len(_cChvCN9))% 
+	EndSQL
+
+	//Saldo de movimentação de contrato, soma de todas as requisições subtraida a soma de todas as devoluções.
+    
+	BeginSQL Alias "SD3TEMP"
+		SELECT D3_FILIAL, D3_COD, (SUM(D3_QUANT) - (		
+		SELECT Coalesce(SUM(SD3X.D3_QUANT),0)
+		FROM %Table:SD3% SD3X INNER JOIN
+		%Table:SF5% SF5X ON SF5X.F5_CODIGO = SD3X.D3_TM AND SF5X.F5_TIPO =  %Exp:"D"%
+		WHERE
+		SD3X.%NotDel% AND SD3X.D3_FILIAL = %Exp:xFilial("SD3")% AND
+		SF5X.%NotDel% AND
+		SD3X.D3_XFILCN9 = %Exp:SubStr(_cChvCN9,1,8)% AND 
+		SD3X.D3_XNUMCN9 = %Exp:SubStr(_cChvCN9,9,15)% AND
+		SD3X.D3_XREVCN9 = %Exp:SubStr(_cChvCN9,24,Len(_cChvCN9))% AND
+		SD3X.D3_ESTORNO = %Exp:" "%) ) AS D3_SUMQTD
+		FROM %Table:SD3% SD3 INNER JOIN
+		%Table:SF5% SF5 ON SF5.F5_CODIGO = SD3.D3_TM AND SF5.F5_TIPO =  %Exp:"R"% AND SF5.F5_CODIGO <> %Exp:_cTMPerd% 
+		WHERE
+		SD3.%NotDel% AND SD3.D3_FILIAL = %Exp:xFilial("SD3")% AND
+		SF5.%NotDel% AND
+		D3_XFILCN9 = %Exp:SubStr(_cChvCN9,1,8)% AND
+		D3_XNUMCN9 = %Exp:SubStr(_cChvCN9,9,15)% AND
+		D3_XREVCN9 = %Exp:SubStr(_cChvCN9,24,Len(_cChvCN9))% AND
+		D3_ESTORNO = %Exp:" "%
+		Group By D3_FILIAL, D3_COD
+	EndSQL
+	
+	While ADZTMP->(!Eof())
+		_nSaldIni := Iif(_nSaldIni == 0, ADZTMP->ADZ_QTDVEN , _nSaldIni + ADZTMP->ADZ_QTDVEN)
+		Aadd(_aCols, {ADZTMP->ADZ_FILIAL, ADZTMP->ADZ_PRODUT, ADZTMP->ADZ_DESCRI, ADZTMP->ADZ_QTDVEN, ;
+			 iif(ADZTMP->ADZ_TPALDO == '1', 'Aditivo', iif(ADZTMP->ADZ_TPALDO == '2', 'Redução', '')), ADZTMP->ADZ_XQTDDO,.F. })
+		ADZTMP->(DBSkip())
+	EndDo
+	If SD3TEMP->(Eof())
+		Aadd(_aColsSL, {"", "", 0, _cQtdSol, 0, .F. })
+	EndIf	
+	
+	While SD3TEMP->(!Eof())
+		If Empty(_cQtdSol)
+			Aadd(_aColsSL, {SD3TEMP->D3_FILIAL, SD3TEMP->D3_COD, SD3TEMP->D3_SUMQTD, (_nSaldIni  - (SD3TEMP->D3_SUMQTD)), .F. })
+		Else
+			Aadd(_aColsSL, {SD3TEMP->D3_FILIAL, SD3TEMP->D3_COD, SD3TEMP->D3_SUMQTD, _cQtdSol, (_nSaldIni  - (SD3TEMP->D3_SUMQTD + _cQtdSol)), .F. })
+		EndIf
+		SD3TEMP->(DBSkip())
+	EndDo
+	
+	If !Empty(_cChvSA1)
+		DBSelectArea("SA1")
+		DBSetOrder(1)
+		If SA1->(DBSeek(_cChvSA1))
+			_cClient := AllTrim(SA1->A1_NOME) + ', CNPJ: ' + Transform(AllTrim(SA1->A1_CGC), PesqPict( "SA1", "A1_CGC"))
+		EndIf
+		RestArea(_aAreaSA1)
+	EndIf
+	
+	DEFINE MsDialog _oDlg Title "Saldo Contrato" From 0,0 To 430,700 PIXEL
+	
+	@ 08,05		SAY "Filial Contrato:  "	SIZE 70,7 OF _oDlg PIXEL
+	@ 08,40		SAY SubStr(_cChvCN9,1,8)	SIZE 70,7 OF _oDlg PIXEL
+	@ 08,80		SAY "Num Contrato: " 		SIZE 70,7 OF _oDlg PIXEL
+	@ 08,115	SAY SubStr(_cChvCN9,9,15)	SIZE 70,7 OF _oDlg PIXEL
+	@ 08,180	SAY "Revisão: " 			SIZE 70,7 OF _oDlg PIXEL
+	@ 08,205	SAY SubStr(_cChvCN9,24,Len(_cChvCN9))	SIZE 70,7 OF _oDlg PIXEL
+		
+	@ 18,05		SAY "Cliente:  "			SIZE 70,7 OF _oDlg PIXEL
+	@ 18,30		SAY _cClient				SIZE 300,7 OF _oDlg PIXEL
+	
+	@ 30,150	SAY "Saldo do Contrato  "			SIZE 70,7 OF _oDlg PIXEL
+	_oGetDados := MsNewGetDados():New(40,05,110,350,4,,,,,,,,,,_oDlg,_aHeader,_aCols)
+	
+	@ 120,150 SAY "Saldo Baixado " SIZE 70,7 OF _oDlg PIXEL
+	_oGetDadSL := MsNewGetDados():New(130,05,200,350,4,,,,,,,,,,_oDlg,_aHeadSL,_aColsSL)
+	
+	@ 202, 310 BUTTON OemToAnsi("Ok")   SIZE 40 ,11  FONT _oDlg:oFont ACTION (_oDlg:End())  OF _oDlg PIXEL
+	
+	ACTIVATE MSDIALOG _oDlg CENTERED
+	
+	ADZTMP->(DBCloseArea())
+	SD3TEMP->(DBCloseArea())
+EndIf
+Return
+

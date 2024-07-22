@@ -1,0 +1,189 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "rwmake.CH"
+#INCLUDE "Topconn.CH"
+
+/*/{Protheus.doc} SF73M02J
+Função para realizar carga no cadastro de produtos
+			     	
+@author 	José Leite de Barros Neto
+@since 		28/03/2014
+@version 	1.0		
+
+@return Nil, Nulo
+
+@example
+
+@see 
+    
+/*/
+User Function SF73M02J( pPATHIMP03 )
+
+	Local 	_lRet	:= .F.
+
+	Private lMsErroAuto := .F.
+
+	Processa({ |lEnd| _lRet := IMPSB1() },"GERANDO REGISTROS")
+
+	If Empty( pPATHIMP03 )
+		MemoWrite( "C:\plog\csv\clientes_"+cFilAnt+".TXT", _cMemo ) //+CHR(13)+CHR(10)
+		MsgBox("FIM DA IMPORTACAO")
+	EndIf
+
+Return( _lRet )
+
+/** {Protheus.doc} IMPSB1
+Funcao que realiza a importacao do cliente
+
+@param: 	_aEstrut, Array com a estrutura dos campos
+@author: 	Jose Leite de Barros Neto
+@since: 	28/03/2014
+@Uso: 		SFIEMT
+*/
+Static Function IMPSB1()
+	
+	Local _lRet 		:= .F.
+	Local cDBSql		:= "MSSQL/odbc_sige"
+	Local cSrvSql   	:= "2unt_almir"
+	Local nHndSql		:= 0
+	Local nHErp 		:= AdvConnection()
+	Local _nContador 	:= 0
+	Local _cQuery		:= ""
+	Local _cQuery2	:= ""
+	Local _cCodigo 	:= ""
+	Local _cXIdEsb	:= ""
+	Local _cDesc		:= ""
+	Local _cTipo		:= ""
+	Local _cUndM		:= ""
+	Local _cContaC	:= ""
+	Local _cGrupo		:= ""
+	Local _cLocPad	:= ""
+	Local _cGarant	:= ""
+	Local _cXPrdVen 	:= "S" 
+	Local _cXPrdFil 	:= SubStr(cFilAnt,0,2)
+	
+	Private lMsErroAuto := .F.
+	
+	//Conecta no NetPlan
+	nHndSql := TcLink(cDBSql,cSrvSql,7890)
+	conout("Conectando ao Banco Sige")
+	
+	If nHndSql < 0
+		UserException("Erro ("+str(nHndSql,4)+") ao conectar com "+cDBSql+" em "+cSrvSql)
+	Endif
+	
+	If !TCSetConn(nHndSql)
+		conout("Houve problema na troca de conexao para o Ambiente, contate o Administrador")
+		conout("Processo Finalizado")
+	EndIf
+
+	conout("MSSQL Server conectado - Handler"+str(nHndSql,4))
+	
+	If Select("TMP") > 0
+		DbSelectarea("TMP")
+		DbCloseArea()
+	Endif
+		
+	_cQuery := " SELECT * 					"
+	_cQuery += " FROM  VISAO_PRODUTO_CRM 	"
+				
+	TCQUERY _cQuery NEW ALIAS "TMP"
+
+	If (TCSQLExec(_cQuery) < 0)
+    	Return MsgStop("TCSQLError() " + TCSQLError())
+	EndIf
+	
+	While .Not. TMP->( EOF() )
+		
+		//B1_COD
+		_cCodigo := ""
+		
+		//B1_XIDESB
+		_cXIdEsb := AllTrim(cValToChar(TMP->B1_XIDESB))
+		
+		//B1_DESC
+		_cDesc := AllTrim(TMP->B1_DESC)
+				
+		//B1_TIPO
+		_cTipo := AllTrim(TMP->B1_TIPO)
+		
+		//B1_UM
+		_cUndM := AllTrim(TMP->B1_UNIDADE)
+		
+		//B1_CONTA
+		_cContaC := AllTrim(TMP->B1_CONTA)
+		
+		//B1_GRUPO
+		_cGrupo := AllTrim(TMP->B1_GRUPO)
+		
+		//B1_LOCPAD
+		_cLocPad := "01"
+		
+		//B1_GARANT
+		_cGarant := "2"
+		
+		tcSetConn(nHErp)
+		
+		If Select("TRA") > 0
+			DbSelectarea("TRA")
+			DbCloseArea()
+		Endif
+		
+		_cQuery2 := " SELECT * 			"
+		_cQuery2 += "  FROM "+ RETSQLNAME("SB1")
+		_cQuery2 += " WHERE	B1_XIDESB 		= '"+_cXIdEsb+"'	"
+		_cQuery2 += "      	AND D_E_L_E_T_ <> '*'			"
+		
+		TCQUERY _cQuery2 NEW ALIAS "TRA"
+		
+		If .NOT. EMPTY(TRA->(B1_COD))
+			tcSetConn(nHndSql)
+			TMP->(DbSkip())
+		EndIf
+		
+		_nOpc		:= 3
+		_cCodigo	:= GetSX8Num("SB1","B1_COD")
+		_cXOrigem	:= "CARGA INICIAL - "+DtoC(dDataBase)
+		
+		_aProduto := {}
+		
+		aAdd( _aProduto ,{"B1_COD"   	,_cCodigo	,Nil}) // Codigo
+		aAdd( _aProduto ,{"B1_XIDESB"  	,_cXIdEsb	,Nil}) // ID SIGE/STT
+		aAdd( _aProduto ,{"B1_DESC"  	,_cDesc	,Nil}) // Descricao
+		aAdd( _aProduto ,{"B1_TIPO"  	,_cTipo	,Nil}) // Tipo
+		aAdd( _aProduto ,{"B1_UM"  		,_cUndM	,Nil}) // Unidade de Medida
+		aAdd( _aProduto ,{"B1_CONTA" 	,_cContaC	,Nil}) // Conta Contabil
+		aAdd( _aProduto ,{"B1_GRUPO" 	,_cGrupo	,Nil}) // Grupo de Produtos
+		aAdd( _aProduto ,{"B1_LOCPAD" 	,_cLocPad	,Nil}) // Local Padrao
+		aAdd( _aProduto ,{"B1_GARANT"  	,_cGarant	,Nil}) // Garantia
+		aAdd( _aProduto ,{"B1_MSBLQL"  	,"1"		,Nil}) // Bloqueio de Tela
+		aAdd( _aProduto ,{"B1_XPRDVEN" 	,_cXPrdVen	,Nil}) // Produto de Venda?
+		aAdd( _aProduto ,{"B1_XPRDFIL" 	,_cXPrdFil	,Nil}) // Produto vinculado a empresa
+		aAdd( _aProduto ,{"B1_XORIGEM" 	,_cXOrigem	,Nil}) // Origem da Informacao
+		
+		lMsErroAuto := .F.
+		
+		Begin Transaction
+
+			MSExecAuto({|x,y| Mata010(x,y)},_aProduto,_nOpc) //3- Inclusão, 4- Alteração, 5- Exclusão
+			
+			If lMsErroAuto
+				MostraErro()
+				MostraErro("C:\plog\log\", "Produto_"+_cCodigo+".LOG")
+				RollBackSx8()
+				DisarmTransaction()
+			Else
+				ConfirmSx8()
+			EndIf
+		
+		End Transaction
+		
+		_nContador++
+		
+		TMP->(DbSkip())
+	End
+
+	If _nContador > 0
+		_lRet := .T.
+	EndIf
+	
+Return( _lRet )

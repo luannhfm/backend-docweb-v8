@@ -1,0 +1,146 @@
+#Include "RWMAKE.CH"
+#Include "Protheus.ch"
+#Include "TopConn.ch"
+
+/*/
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ DTFINR08 º Autor ³ DO.IT MG           º Data ³  17/07/14   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDescricao ³ Fonte de baixa sem movimentação bancária e geração de      º±±
+±±º          ³ título do pagamento em cartão de crédito                   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP6 IDE                                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+/*/
+
+User Function DTFINR08()
+
+Local aArray    := {}
+Local aDados 	 := {}
+Local aArea     := {}
+Local aParcela	 := {}
+Local aRet		 := {}
+Local cNumero   := SPACE(Len("E1_NUM"))
+Local cPrefixo	 := ""
+Local cTipoOri  := ""
+Local cParOri	 := ""
+Local cPrefixo  := ""
+Local cParcela	 := ""
+Local cTipo		 := ""
+Local nX
+Local lErro		 := .F.
+Local lExecOk   := .T.
+Local cFilialTit:= ""
+Local cNum		 := ""
+Local cHistBx	 := ""
+PRIVATE lMsErroAuto := .F.
+
+
+
+aArea := GetArea()
+
+dbSelectArea("SE1")
+
+
+cFilialTit := SE1->E1_FILIAL
+cNumOri    := SE1->E1_NUM
+cPrefixo	  := SE1->E1_PREFIXO
+cTipoOri	  := SE1->E1_TIPO 
+cParOri	  := SE1->E1_PARCELA
+cHistBx	  := SE1->E1_HISTBX
+
+If cHistBx <> " "
+	aDados := Separa(cHistBx," ",.F.)
+	
+	cPrf 	 	  := aDados[1]
+	cNumero    := aDados[2]
+	cParcela   := aDados[3]
+	cTipo      := aDados[4]
+	
+	cNumero := Verifica(cNumero)
+	aParcela := Separa(cParcela,";",.F.)
+	
+	Begin Transaction
+	
+	For nX := 1 To Len(aParcela)
+		cParAtu := aParcela[nX]
+		
+		If MSSeek(cFilialTit+cPrf+cNumero+cParAtu+cTipo)
+			
+			If SE1->E1_BAIXA <> ctod('//')
+				MsgInfo("Não pode baixar o título, pois o título"+cPrf+"|"+cNumero+"|"+cParAtu+"já foi baixado.")
+				lExecOk := .F.
+				DisarmTransaction()
+				
+				Return lExecOk
+			Else
+				aArray := { { "E1_FILIAL" 	, xFilial("SE1")    , NIL },;
+				{ "E1_PREFIXO" , cPrf 	           , NIL },;
+				{ "E1_NUM"      , cNumero          , NIL },;
+				{ "E1_PARCELA"	 , cParAtu			  , NIL },;
+				{ "E1_TIPO"     , cTipo            , NIL }}
+				
+				MsExecAuto( { |x,y| FINA040(x,y)} , aArray, 5)  // 5 - Exclusão
+				
+				If lMsErroAuto
+					
+					MostraErro()
+					lExecOk := .F.
+					DisarmTransaction()
+					Conout("Não foi possível cancelar a baixa do título!")
+					Return (lExecOk)
+				Else  
+					If MSSeek(cFilialTit+cPrefixo+cNumOri+cParOri+cTipoOri)
+						SE1->E1_HISTBX := "" 
+					EndIf
+					Conout("Título excluído com sucesso!")
+					
+				EndIf
+			EndIf
+		Else
+			// Exclusão do título da operadora no contas a receber
+			aArray := { { "E1_FILIAL" 	, xFilial("SE1")    , NIL },;
+			{ "E1_PREFIXO" , cPrefixo 	           , NIL },;
+			{ "E1_NUM"      , cNumOri		          , NIL },;
+			{ "E1_PARCELA"	 , cParOri			  , NIL },;
+			{ "E1_TIPO"     , cTipoOri            , NIL }}
+			
+			MsExecAuto( { |x,y| FINA040(x,y)} , aArray, 5)  // 5 - Exclusão
+			
+			If lMsErroAuto
+				
+				MostraErro()
+				lExecOk := .F.
+				DisarmTransaction()
+				Return (lExecOk)
+			Else
+				Conout("Título excluído com sucesso!")
+			EndIf
+		EndIf
+	Next nX
+	
+
+End Transaction
+
+EndIf
+
+RestArea(aArea)
+
+Return (lExecOk)
+
+Static Function Verifica(cNum)
+
+Local cTam := ""
+cTam := TamSX3("E1_NUM")[1]
+
+If Len(cNum) < cTam
+	cNum := cNum + SPACE(cTam - Len(cNum))
+EndIf
+
+Return (cNum)
+
+

@@ -1,0 +1,399 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} SF06R16X
+Relatorio de declaracao de quitacao anual de debitos
+Feito com a integracao do protheus com word
+@author j2a.caiolima
+@since 31/07/2017
+/*/
+User Function SF06R16X()
+	Local _aSays := {}
+	Local _aBtn := {}
+	Local _nOpca := 0
+	Local _cPerg := "SF06R16X"
+	Local _cTitulo := 'Declaração de quitação anual de débitos'
+	
+	AjustaSX1(_cPerg)
+	Pergunte(_cPerg, .F.)
+	
+	Aadd(_aSays, "Essa função tem o intuito de gerar no word a " )
+	Aadd(_aSays, _cTitulo )
+	Aadd(_aSays, "Conforme definição dos parametros." )
+	
+	Aadd(_aBtn , {5, .T.,  {|| Pergunte(_cPerg, .T.) }} )
+	Aadd(_aBtn , {1, .T.,  {|| _nOpca := 1, FechaBatch() }} )
+	Aadd(_aBtn , {2, .T.,  {|| FechaBatch() }} )
+	
+	FormBatch(_cTitulo, _aSays, _aBtn ,, /*Altura*/ , /*Largura*/ )
+	
+	If _nOpca == 1
+		FwMsgRun(, {|| fIntWord() }, _cTitulo, "Gerando declaração, aguarde..." )
+	EndIf
+	
+Return
+
+/*/{Protheus.doc} fIntWord
+Funcao responsavel por efetuar a integração 
+@author j2a.caiolima
+@since 31/07/2017
+/*/
+Static Function fIntWord()
+	Local _cPic := TM(999.99, 14,2)
+	Local _cPathDot := "D:\DESENVOLVIMENTO\J2A_WALMIR\declaracao_quitacao_anual.dotm"
+	Local _cDot := "declaracao_quitacao_anual.dotm"
+	Local _cL01 := "01_fiemt.png"
+	Local _cL02 := "02_sesi.png"
+	Local _cL03 := "03_senai.png"
+	Local _cL04 := "04_iel.png"
+	Local _cL05 := "05_condominio.png"
+	Local _cDir := "dotResource"
+	Local _cDirDot := "system\dot"
+	Local _cDirSrv := "logomarcas"
+	Local _cDirSav := "K:\UTIL"
+	Local _cLogo := ""
+	Local _hWord
+	Local _cATitulos
+	Local _cIniName := GetRemoteIniName()
+	Local lUnix := IsSrvUnix()
+	Local _cB := IIf(lUnix,"/","\") // barra a ser utilizada
+	Local _nPBar := Rat( _cB, _cIniName )
+	Local _cPathRmt := SubStr(_cIniName, 1, _nPBar - 1)
+	Local _cAgrup := ""
+	//Alterado o agrupamento, desconsiderando a loja do cliente. Franklin B. Oliveira 14/03/2018; Suporte 263509
+	//Local _bAgrup := {|| (_cATitulos)->E1_FILIAL + (_cATitulos)->A1_COD + (_cATitulos)->A1_LOJA }
+	Local _bAgrup := {|| (_cATitulos)->E1_FILIAL + (_cATitulos)->A1_COD }
+	
+	If !ExistDir(_cPathRmt + _cB + _cDir)
+		MakeDir(_cPathRmt + _cB + _cDir)
+	EndIf
+	
+	If !ExistDir(_cDirSav)
+		If MsgYesNo("O diretório padrão para salvar o arquivo não existe ("+_cDirSav+")"+CRLF + ;
+				"Deseja selecionar outro?")
+			If Empty(_cDirSav := cGetFile("","Selecione o diretório",2,"",.T.,128+16,.F.))
+				Return
+			EndIf
+		Else
+			Return
+		EndIf
+	EndIf
+	
+	// copia os arqivos necessários para a integração
+	CpyS2T(_cB + _cDirDot    + _cB + _cDot     , _cDirSav)
+
+	Do Case
+	Case "01MT" $ cFilAnt
+		CpyS2T(_cB + _cDirSrv + _cB + _cL01     , _cDirSav)
+		_cLogo := _cDirSav + _cB + _cL01
+			
+	Case "02MT" $ cFilAnt		
+		CpyS2T(_cB + _cDirSrv + _cB + _cL02     , _cDirSav)
+		_cLogo := _cDirSav + _cB + _cL02
+			
+	Case "03MT" $ cFilAnt
+		CpyS2T(_cB + _cDirSrv + _cB + _cL03     , _cDirSav)
+		_cLogo := _cDirSav + _cB + _cL03
+			
+	Case "04MT" $ cFilAnt
+		CpyS2T(_cB + _cDirSrv + _cB + _cL04     , _cDirSav)
+		_cLogo := _cDirSav + _cB + _cL04
+			
+	Case "05MT" $ cFilAnt
+		CpyS2T(_cB + _cDirSrv + _cB + _cL05     , _cDirSav)
+		_cLogo := _cDirSav + _cB + _cL05
+			
+	EndCase
+	
+	/* Walmir Junior - 21/02/2018 - Linha para testar o relatório em ambiente de Desenvolvimento ->  _cDot := _cPathDot*/ 
+	_cDot := _cDirSav + _cB + _cDot
+	// Walmir Junior - 21/02/2018 - Descomentada a linha acima e comentada abaixo (Não estava encontrando o .dotm). 
+	//_cDot := "K:\UTIL" + _cB + _cDot
+	
+	If !File(_cDot)
+		Alert("Arquivo não localizado: " + _cDot )
+		Return
+	EndIf
+	
+	_cATitulos := fGetAlias()
+	
+	If (_cATitulos)->(!Eof())
+		while ( (_cATitulos)->(!Eof()) )
+			_cAgrup := Eval(_bAgrup)
+			
+			// conecta ao word
+			_hWord := OLE_CreateLink("TMsOleWord97")
+		
+			If !OLE_WordIsOk(_hWord)
+				_hWord := 0
+				OLE_CloseFile(_hWord)
+				OLE_CloseLink(_hWord)
+				_hWord := OLE_CreateLink("TMsOleWord97")
+				If !OLE_WordIsOk(_hWord)
+					Alert("Erro ao criar o link com o Microsoft word.")
+					Return
+				EndIf
+			EndIf
+		
+			OLE_NewFile(_hWord, _cDot)
+		
+			_cCidade := AllTrim(SM0->M0_CIDENT) + ", "
+			_cCidade += StrZero(Day(dDataBase),2) + " de " + MesExtenso(Month(dDataBase)) + " de " + Str(Year(dDataBase),4)
+
+			// 04/04/2019 - Paulo Schwind - Foi adicionado o CNPJ da empresa logada
+			_cCNPJEmp := Transform( SM0->M0_CGC, PesqPict( "SA2", "A2_CGC" ) )
+			OLE_SetDocumentVar(_hWord, "prt_cnpj_emp"     , _cCNPJEmp )
+			//
+			
+			// vencimento de até
+			_cIntervalo := DToC(MV_PAR03) + " até " + DToC(MV_PAR04)
+		
+			_cCgc := StrTran(Transform((_cATitulos)->A1_CGC, PicPes((_cATitulos)->A1_PESSOA)),"%C", "")
+			_cCgcLimp := (_cATitulos)->A1_CGC
+		
+			OLE_SetDocumentVar(_hWord, "prt_cidade_data", _cCidade )
+			OLE_SetDocumentVar(_hWord, "prt_entidade"   , AllTrim(SM0->M0_NOMECOM) )
+			OLE_SetDocumentVar(_hWord, "prt_nome_cli"   , (_cATitulos)->A1_NOME)
+			OLE_SetDocumentVar(_hWord, "prt_a1_cgc"     , _cCgc )
+			OLE_SetDocumentVar(_hWord, "prt_intervalo"  , _cIntervalo )
+		
+			OLE_SetDocumentVar(_hWord, "caminho_img"    , _cLogo )
+		
+			_nCont := 0
+			_nTValor := 0
+			_nTDesc  := 0
+			_nTBaixa := 0
+			while ( (_cATitulos)->(!Eof()) .AND. _cAgrup == Eval(_bAgrup) )
+				_nCont++
+				OLE_SetDocumentVar(_hWord, "prt_e1_num" + cValToChar(_nCont)      , (_cATitulos)->E1_NUM )
+				OLE_SetDocumentVar(_hWord, "prt_e1_tipo" + cValToChar(_nCont)      , (_cATitulos)->E1_TIPO )
+				OLE_SetDocumentVar(_hWord, "prt_e1_vencrea" + cValToChar(_nCont)  , (_cATitulos)->E1_VENCREA )
+				OLE_SetDocumentVar(_hWord, "prt_e1_valor" + cValToChar(_nCont)    , TransForm((_cATitulos)->E1_VALOR,_cPic) )
+				OLE_SetDocumentVar(_hWord, "prt_e1_baixa" + cValToChar(_nCont)    , (_cATitulos)->E5_DATA )
+				OLE_SetDocumentVar(_hWord, "prt_e1_descfin" + cValToChar(_nCont)  , TransForm((_cATitulos)->E1_VALOR * ((_cATitulos)->E1_DESCFIN/100),_cPic) )
+				OLE_SetDocumentVar(_hWord, "prt_e1_pago" + cValToChar(_nCont)     , TransForm((_cATitulos)->E5_VALOR,_cPic) )
+			
+				_nTValor += (_cATitulos)->E1_VALOR
+				_nTDesc  += (_cATitulos)->E1_VALOR * ((_cATitulos)->E1_DESCFIN/100)
+				_nTBaixa += (_cATitulos)->E5_VALOR
+				(_cATitulos)->(dbSkip())
+			End
+		
+			OLE_SetDocumentVar(_hWord, "qtd_itens"  , cValToChar(_nCont) )
+			OLE_SetDocumentVar(_hWord, "t_valor"    , TransForm(_nTValor,_cPic) )
+			OLE_SetDocumentVar(_hWord, "t_desc"     , TransForm(_nTDesc,_cPic) )
+			OLE_SetDocumentVar(_hWord, "t_pago"     , TransForm(_nTBaixa,_cPic) )
+		
+			OLE_ExecuteMacro(_hWord, "mc_logo_emp")
+			OLE_ExecuteMacro(_hWord, "mc_tab_titulos")
+		
+			OLE_UpdateFields(_hWord)
+		
+			_cFile := "quitacao_anual_"
+			_cFile += StrTran(DTOC(dDataBase),"/","-")
+			_cFile += "_" + StrTran(StrTran(StrTran(_cCgcLimp, ".", ""), "-", ""), "/", "")
+			_cFile += ""
+		
+			OLE_SaveAsFile(_hWord, _cDirSav + _cB + _cFile )
+		
+			OLE_CloseFile(_hWord)
+			OLE_CloseLink(_hWord)
+		
+			//_cDirSav //dia_mes_ano_cpf.dot
+			//close
+		End
+		
+		MsgInfo("Documento gerado na pasta: " + _cDirSav)
+		
+	Else
+		Alert("Não foram encontrados titulos com os parametros informados.")
+		Return
+	EndIf
+	
+Return nil
+
+
+/*/{Protheus.doc} fGetAlias
+Executa o sql e retorna o alias com o cliente
+@author j2a.caiolima
+@since 31/07/2017
+@version 1.0
+@return Caractere, alias com os titulos do cliente
+/*/
+Static Function fGetAlias()
+	Local _cAlias := GetNextAlias()
+	Local _cSql := ""
+	
+	_cSql += " SELECT E1_FILIAL, A1_NOME, A1_CGC, A1_COD, A1_LOJA, A1_TIPO,A1_PESSOA, " + CRLF
+	_cSql += " E1_NUM, E1_TIPO, E1_VENCREA, E1_VALOR, E1_BAIXA, E1_DESCFIN, E1_VALLIQ, E5_VALOR, E5_DATA " + CRLF
+	_cSql += " FROM "+RetSQLName("SE1")+" SE1  " + CRLF
+	_cSql+=" INNER JOIN "+ RetSqlName("SE5") +" SE5  " +CRLF
+	_cSql+=" 	ON  E5_FILIAL=E1_FILIAL AND  E5_PREFIXO=E1_PREFIXO AND E5_NUMERO=E1_NUM " +CRLF
+	_cSql+=" 	AND  E5_PARCELA=E1_PARCELA AND  E5_TIPO=E1_TIPO AND  E5_CLIFOR=E1_CLIENTE " +CRLF
+	_cSql+=" 	AND  E5_LOJA=E1_LOJA AND SE5.D_E_L_E_T_<>'*' " +CRLF
+	_cSql+=" 	AND  SE5.E5_SITUACA NOT IN ('C','E','X') AND E5_TIPODOC NOT IN ('RA','ES','TR','TE','CH','EC','DC','JR','MT','M2','J2') "+CRLF
+	//_cSql+=" AND  SE5.E5_DATA BETWEEN '"+Dtos(MV_PAR05)+"' AND '"+Dtos(MV_PAR06)+"' "+CRLF
+	_cSql+=" 	AND SE5.E5_MOTBX NOT IN ('DSD','FAT','LIQ') "+CRLF
+	_cSql += " INNER JOIN "+RetSQLName("SA1")+" SA1 ON SA1.D_E_L_E_T_<>'*' AND A1_COD=E1_CLIENTE AND A1_LOJA=E1_LOJA " + CRLF
+	_cSql += " WHERE SE1.D_E_L_E_T_ <> '*' AND SE5.E5_RECPAG='R' " + CRLF
+	_cSql += " AND E1_FILIAL='"+ xFilial("SE1") +"' " + CRLF
+	//Removido o filtro pela loja do cliente. Franklin B. Oliveira 14/03/2018; Suporte 263509
+	//_cSql += " AND E1_CLIENTE||E1_LOJA BETWEEN '"+ MV_PAR01+MV_PAR02 +"' AND '"+ MV_PAR03+MV_PAR04 +"' " + CRLF
+	_cSql += " AND E1_CLIENTE BETWEEN '"+ MV_PAR01 +"' AND '"+ MV_PAR02 +"' " + CRLF
+	_cSql += " AND E1_VENCREA BETWEEN '"+ DToS(MV_PAR03) +"' AND '"+ DToS(MV_PAR04) +"' " + CRLF
+	//Adicionado filtro pela data da baixa. Franklin B. Oliveira 14/03/2018; Suporte 263509
+	_cSql += " AND E1_BAIXA BETWEEN '"+ DToS(MV_PAR05) +"' AND '"+ DToS(MV_PAR06) +"' " + CRLF
+	
+	//Adicionado o motivo de baixa 'BOL'. Franklin B. Oliveira 14/03/2018; Suporte 263509
+	_cSql += " AND E5_MOTBX IN ('CCO','NOR','MAS','VIS','CHE','MMM', 'BOL', 'CRT') " + CRLF
+	
+	// Busca movimentos apenas que não existem extorno do mesmo
+	_cSql += " AND NOT EXISTS (SELECT * FROM "+RetSQLName("SE5")+" E5X WHERE E5X.E5_FILIAL=SE5.E5_FILIAL AND E5X.E5_PREFIXO=SE5.E5_PREFIXO " + CRLF
+	_cSql += " AND E5X.E5_NUMERO=SE5.E5_NUMERO AND E5X.E5_PARCELA=SE5.E5_PARCELA AND E5X.E5_TIPO=SE5.E5_TIPO " + CRLF
+	_cSql += " AND E5X.E5_CLIFOR=SE5.E5_CLIFOR AND E5X.E5_LOJA=SE5.E5_LOJA AND E5X.E5_VALOR=SE5.E5_VALOR " + CRLF
+	_cSql += " AND E5X.E5_RECPAG='P' AND E5X.E5_SEQ=SE5.E5_SEQ AND E5X.E5_TIPODOC='ES' AND E5X.E5_DOCUMEN=SE5.E5_DOCUMEN) " + CRLF
+	
+	_cSql += " ORDER BY E1_FILIAL, E1_CLIENTE, E1_LOJA, E5_DATA " + CRLF
+	
+	MemoWrite("C:\temp\"+FunName() + "-" + ProcName()+".txt" , _cSql)
+	If Select(_cALias) > 0
+		(_cALias)->(dbClosearea())
+	Endif
+	
+	DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSql)), _cALias, .F., .F.)
+	TcSetField(_cALias, "E1_VENCREA", "D" )
+	TcSetField(_cALias, "E1_BAIXA", "D" )
+	TcSetField(_cALias, "E5_DATA", "D" )
+	
+Return(_cAlias)
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³sx1inv    ºAutor  ³caio renan          º Data ³  05/23/09   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³AJUSTA AS PERGUNTAS                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function AjustaSX1(cPerg)
+
+	Local aHelp01 := {}
+	Local aHelp03 := {}
+	Local aHelp04 := {}
+	Local aHelp05 := {}
+	Local aHelp06 := {}
+	Local _nFil := TamSX3("A1_FILIAL")[1]
+	Local _nCli := TamSX3("A1_COD")[1]
+	Local _nLoj := TamSX3("A1_LOJA")[1]
+//--------------------------------------------------------------------
+
+	//Removido o filtro pela loja do cliente. Franklin B. Oliveira 14/03/2018; Suporte 263509
+	u_SFPUTSX1(cPerg, "01", "Cliente de?"  	   	,"","","mv_ch1","C",_nCli,00,00,"G","","SA1CLI" ,"","","mv_par01","","","","","","","","","","","","","","","","",,"","","")
+	//u_SFPUTSX1(cPerg, "02", "Loja de?"			,"","","mv_ch2","C",_nLoj,00,00,"G","",""    ,"","","mv_par02","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "02", "Cliente até?"     	,"","","mv_ch2","C",_nCli,00,00,"G","","SA1CLI" ,"","","mv_par02","","","","","","","","","","","","","","","","",,"","","")
+	//u_SFPUTSX1(cPerg, "04", "Loja até?"			,"","","mv_ch4","C",_nLoj,00,00,"G","",""    ,"","","mv_par04","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "03", "Vencimento de?"   	,"","","mv_ch3","D",08   ,00,00,"G","",""	 ,"","","mv_par03","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "04", "Vencimento ate?"	,"","","mv_ch4","D",08   ,00,00,"G","",""	 ,"","","mv_par04","","","","","","","","","","","","","","","","",,"","","")
+	//Parâmetro utilizado em filtro pela data da baixa. Franklin B. Oliveira 14/03/2018; Suporte 263509
+	u_SFPUTSX1(cPerg, "05", "Baixa de?"     	,"","","mv_ch5","D",08   ,00,00,"G","",""	 ,"","","mv_par05","","","","","","","","","","","","","","","","",,"","","") 
+	u_SFPUTSX1(cPerg, "06", "Baixa ate?" 		,"","","mv_ch6","D",08   ,00,00,"G","",""	 ,"","","mv_par06","","","","","","","","","","","","","","","","",,"","","")
+
+Return
+
+/* BACKUP DAS MACROS DO WORD
+
+Sub mc_logo_emp()
+'
+' mc_logo_emp Macro
+'
+'
+
+Dim caminhoImg As String
+
+caminhoImg = ActiveDocument.Variables.Item("caminho_img").Value
+' adiciona imagem no cabeçalho
+ActiveDocument.Sections(1).Headers(wdHeaderFooterPrimary).Range.InlineShapes.AddPicture (caminhoImg)
+
+' adiciona imagem a partir de um marcador
+' Selection.GoTo What:=wdGoToBookmark, Name:="logomarca"
+' Selection.InlineShapes.AddPicture (caminhoImg)
+
+End Sub
+
+
+
+
+Sub mc_tab_titulos()
+'
+' mc_tab_titulos Macro
+'
+'
+Dim nItens As Integer
+Dim Campo As String
+
+Selection.GoTo What:=wdGoToBookmark, Name:="tab_titulos"
+
+nItens = Val(ActiveDocument.Variables.Item("qtd_itens").Value)
+
+For nx = 1 To nItens
+    ' Insere uma nova linha
+    Selection.MoveRight Unit:=wdCell
+    
+    ' Insere os campos
+    Campo = "DOCVARIABLE prt_item" & Trim(Str(nx))
+    Selection.Fields.Add Range:=Selection.Range, Type:=wdFieldEmpty, Text:=Campo, PreserveFormatting:=True
+    
+    Selection.MoveRight
+    Campo = "DOCVARIABLE prt_e1_vencrea" & Trim(Str(nx))
+    Selection.Fields.Add Range:=Selection.Range, Type:=wdFieldEmpty, Text:=Campo, PreserveFormatting:=True
+    
+    Selection.MoveRight
+    Campo = "DOCVARIABLE prt_e1_valor" & Trim(Str(nx))
+    Selection.Fields.Add Range:=Selection.Range, Type:=wdFieldEmpty, Text:=Campo, PreserveFormatting:=True
+    
+    Selection.MoveRight
+    Campo = "DOCVARIABLE prt_e1_baixa" & Trim(Str(nx))
+    Selection.Fields.Add Range:=Selection.Range, Type:=wdFieldEmpty, Text:=Campo, PreserveFormatting:=True
+    
+    Selection.MoveRight
+    Campo = "DOCVARIABLE prt_e1_descfin" & Trim(Str(nx))
+    Selection.Fields.Add Range:=Selection.Range, Type:=wdFieldEmpty, Text:=Campo, PreserveFormatting:=True
+    
+    Selection.MoveRight
+    Campo = "DOCVARIABLE prt_e1_pago" & Trim(Str(nx))
+    Selection.Fields.Add Range:=Selection.Range, Type:=wdFieldEmpty, Text:=Campo, PreserveFormatting:=True
+Next
+
+' Insere uma nova linha -> total geral
+Selection.MoveRight Unit:=wdCell
+
+' Insere os campos
+' Campo = ""
+' Selection.Fields.Add Range:=Selection.Range, Type:=wdNone, Text:=Campo, PreserveFormatting:=True
+
+Selection.MoveRight
+Campo = "TOTAL GERAL"
+Selection.InsertAfter Text:=Campo
+' Selection.Fields.Add Range:=Selection.Range, Type:=wdNone, Text:=Campo, PreserveFormatting:=True
+Selection.MoveRight
+
+Selection.MoveRight
+Campo = "DOCVARIABLE t_valor"
+Selection.Fields.Add Range:=Selection.Range, Type:=wdFieldEmpty, Text:=Campo, PreserveFormatting:=True
+
+Selection.MoveRight
+' Campo = ""
+' Selection.Fields.Add Range:=Selection.Range, Type:=wdNone, Text:=Campo, PreserveFormatting:=True
+
+Selection.MoveRight
+Campo = "DOCVARIABLE t_desc"
+Selection.Fields.Add Range:=Selection.Range, Type:=wdFieldEmpty, Text:=Campo, PreserveFormatting:=True
+
+Selection.MoveRight
+Campo = "DOCVARIABLE t_pago"
+Selection.Fields.Add Range:=Selection.Range, Type:=wdFieldEmpty, Text:=Campo, PreserveFormatting:=True
+
+End Sub
+*/

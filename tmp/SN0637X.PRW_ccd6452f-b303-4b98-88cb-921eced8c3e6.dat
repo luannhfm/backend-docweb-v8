@@ -1,0 +1,889 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "APWIZARD.CH"
+#INCLUDE "TBICONN.CH"
+#INCLUDE "TOPCONN.CH"
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<SN0637X>                                                   |
+|307 - Relatório de Pagamentos - Assistência PRONATEC - CR  			   |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<09/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<Nil>                                                          |
+|@return<Nil>                                                              |
++--------------------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function SN0637X()
+Local _oReport    
+Private _lCancel	:= .f.  
+Private _cPerg 		:= FunName()		//-- Define o Grupo de Perguntas   
+Private _cAliasCC	:= GetNextAlias() 
+Private _cAliasIt	:= ""  
+Private _cAliasCV	:= ""
+
+//-- **************************************************************
+//--   Interface de impressao
+//-- **************************************************************
+_oReport := ReportDef()
+If !_lCancel
+	_oReport:PrintDialog()
+Endif	    
+Return
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<ReportDef>                                                 |
+|Relatorio de Assistencia PRONATEC Geral.    							   |
+|                                                                          |
+|@Author<Antonio Dsantas>                                                  |
+|@since<09/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<Nil>                                                          |
+|@return<Nil>                                                              |
++--------------------------------------------------------------------------+
+|Uso        |SENAI										     			   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function ReportDef()
+Local _cTitulo		:= "307 - Relatório de Pagamentos - Assistência PRONATEC - CR"
+Local _aTipoRel		:= { "Sintetico", "Analitico" }
+Local _cSubTit		:= "Detalhes dos Pagamentos Pronatec"  
+Local _oReport		:= Nil
+//--
+Local _oItemCt   	:= Nil
+Local _oSubItem   	:= Nil
+Local _oTotItem		:= Nil
+Local _oAlunos		:= Nil 
+Local _aMv_par 		:= {}
+//--
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Carrega as perguntas relativas aos parametros de Impressao          |
+//|   Mv_par01 - Periodo ATE?                                           |
+//|   Mv_par02 - Data de Pgto DE ?                                      |
+//|   Mv_par03 - Data de Pgto ATE ?                                     |
+//|   Mv_par04 - Codigo da Matricula DE ?                               |
+//|   Mv_par05 - Codigo da Matricula ATE ?                              |
+//|   Mv_par06 - Tipo(s) de Pagamento ?                                 |
+//|   Mv_par07 - Codigo de Evento DE ?                                  |
+//|   Mv_par08 - Codigo de Evento ATE ?                                 |
+//|   Mv_par09 - Codigo da Modalidade DE ?                              |
+//|   Mv_par10 - Codigo da Modalidade ATE ?                             |
+//|   Mv_par11 - Codigo da Area Tecnolog DE ?                           |
+//|   Mv_par12 - Codigo da Area Tecnolog ATE ?                          |
+//|   Mv_par13 - Codigo do Curso DE ?                                   |
+//|   Mv_par14 - Codigo do Curso ATE ?                                  |
+//|   Mv_par15 - Com Seguinte(s) Status ?                               |
+//|   Mv_par16 - Do(s) Turno(s): (Matutino,Verpertino,Diurno,Noturno)   |
+//|   Mv_par17 - Sessao De ?                                            |
+//|   Mv_par18 - Sessao Ate ?                                           |
+//|   Mv_par19 - Item Contabil DE?                                      |
+//|   Mv_par20 - Item Contabil ATE?                                     |
+//|   Mv_par21 - Formato ?                                              |
+//|   Mv_par22 - Convenio DE ?                                          |
+//|   Mv_par23 - Convenio ATE ?                                         |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+xParPerg(_cPerg)
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//|  Monta tela de paramentos para usuario, se cancelar sair                        ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If !Pergunte(_cPerg,.t.)  
+	_lCancel := .T. 
+   Return 
+Endif 
+//-- *********************************************************************
+//--   Seleciona a tabela temporaria que sera referencia 
+//-- *********************************************************************
+_aMv_par	:={	Mv_par01,Mv_par02,Mv_par03,Mv_par04,Mv_par05,Mv_par06,Mv_par07,;
+				Mv_par08,Mv_par09,Mv_par10,Mv_par11,Mv_par12,Mv_par13,Mv_par14,;
+				Mv_par15,Mv_par16,Mv_par17,Mv_par18,Mv_par19,Mv_par20,Mv_par21,;
+				Mv_par22,Mv_par23 }    
+//-- ********************************************************************
+//--    Executa a Consulta DISTINCT para os CONVENIO do ITEM CONTABIL 
+//-- ********************************************************************
+FWMsgRun(, {|| u_fGetItCc(_aMv_par,_cAliasCC,"ZP7_XITCTA") }, "Processando a Consulta das Matriculas!", "Aguarde...")
+//-- ************************************************************************
+//--    Construcao do Objeto de Impressao do Relatorio
+//-- ************************************************************************
+//                    New(cReport,cTitle,uParam,bAction,cDescription,lLandscape,uTotalText,lTotalInLine,cPageTText,lPageTInLine,lTPageBreak,nColSpace)
+_oReport := TReport():New(_cPerg,_cTitulo+" - "+_aTipoRel[Mv_par21],_cPerg,{|_oReport|  ReportPrint(_oReport) },"",.t.)
+_oReport:SetLandScape() 			//-- Modo Paisagem 
+//-- *********************************************************************************************************
+//--    *****      S e c a o  -  1      *****
+//-- *********************************************************************************************************
+_oItemCt := TRSection():New(_oReport,"Item Contabil",{"TRBZP7"} )
+TRCell():New(_oItemCt,"ZP7_XITCTA"	,"ZP7" 	,"Item Contabil","@!"	,TamSX3("ZP7_XITCTA")[1]	,.F.)
+TRCell():New(_oItemCt,"CTD_DESC01"	,"CTD" 	,"Descricao"	,"@!"	,TamSX3("CTD_DESC01")[1]	,.F.)
+TRCell():New(_oItemCt,"ZP7STATU"	,"" 	,"Situação"		,""		,TamSX3("CTD_DESC01")[1]	,.F.)
+TRCell():New(_oItemCt,"ZP7QTDMAT"	,"ZP7" 	,"Qtde Matric"	,"@E 999,999,999"  		,15			,.F.)
+TRCell():New(_oItemCt,"ZP7_XQTDE"	,"ZP7" 	,"Total Horas"	,"@E 999,999,999.99"   	,15			,.F.)
+TRCell():New(_oItemCt,"ZP7_XVALOR"	,"ZP7" 	,"Vlr Benefic"	,"@E 999,999,999.99"	,15			,.F.)
+//-- *********************************************************************************************************
+//--    *****      S e c a o  -  2      *****
+//-- *********************************************************************************************************
+_oAlunos := TRSection():New(_oReport,"Matriculas",{"TRBZP7"} )
+TRCell():New(_oAlunos,"ZP7_XMATRI"	,"ZP7" 	,"Matric"  		,"@!"	,7							,.F.)
+TRCell():New(_oAlunos,"ZP7_XNOME"	,"ZP7" 	,"Nome"			,"@!"   ,TamSX3("ZP7_XNOME")[1]		,.F.)
+TRCell():New(_oAlunos,"ZP7_XCPF"	,"ZP7" 	,"CPF"			,"@R 999.999.999-99"	,TamSX3("ZP7_XCPF")[1]		,.F.)
+TRCell():New(_oAlunos,"ZP7_XDESCS"	,"ZP7" 	,"Descr Curso"  ,"@!"   ,40							,.F.)
+TRCell():New(_oAlunos,"ZP7_XDESMO"	,"ZP7" 	,"Descr Modali"	,"@!"   ,40							,.F.)
+TRCell():New(_oAlunos,"ZP7_XTURNO"	,"ZP7" 	,"Turno"	   	,"@!"   ,TamSX3("ZP7_XTURNO")[1]	,.F.)
+//--
+TRCell():New(_oAlunos,"ZP7_XQTDE"	,"ZP7" 	,"Qtd Horas"	,"@E 99,999.99"	,10		  			,.F.)
+TRCell():New(_oAlunos,"ZP7_XVALOR"	,"ZP7" 	,"Vlr Benefic"	,"@E 99,999.99"	,10		  			,.F.)
+TRCell():New(_oAlunos,"ZP7_XPERIO"	,"ZP7" 	,"Per/Seq/Ses"	,"@!"	,24							,.F.)
+//--
+TRCell():New(_oAlunos,"ZTIPO"		,"" 	,"Tp"  			,"@!"   ,1							,.F.)
+TRCell():New(_oAlunos,"ZSTATU"		,"" 	,"Sit"			,"@!"   ,1							,.F.)  
+//-- *********************************************************************************************************
+//--    Centralizacao a Direita Variaveis do tipo Valor dentro do objeto (container).
+//-- *********************************************************************************************************
+_oItemCt:Cell("ZP7QTDMAT"):SetHeaderAlign("RIGHT")
+_oItemCt:Cell("ZP7_XQTDE"):SetHeaderAlign("RIGHT")
+_oItemCt:Cell("ZP7_XVALOR"):SetHeaderAlign("RIGHT")
+_oItemCt:SetLineBreak(.f.)		//-- Quebra de linha automatica
+//--
+_oAlunos:Cell("ZP7_XQTDE"):SetHeaderAlign("RIGHT")
+_oAlunos:Cell("ZP7_XVALOR"):SetHeaderAlign("RIGHT")
+_oAlunos:SetLineBreak(.f.)		//-- Quebra de linha automatica
+//--
+Return _oReport
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<ReportPrint>                                               |
+|Relatorio de Cadastro de Cartao Beneficio.    							   |
+|                                                                          |
+|@Author<Antonio Dsantas>                                                  |
+|@since<09/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<Nil>                                                          |
+|@return<Nil>                                                              |
++--------------------------------------------------------------------------+
+|Uso        |SENAI										     			   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function ReportPrint(_oReport)
+Local _oItemCt   	:= _oReport:Section(1)
+Local _oAlunos		:= _oReport:Section(2)
+//--
+Local _aMv_par 		:= {} 
+Local _cDescItem 	:= ""
+Local _cDescConv	:= ""
+//--
+Local _nTipo  		:= 0              
+Local _nP			:= 0   
+Local _cTipo		:= ""
+Local _cStatus		:= ""         
+Local _nCtaA		:= 0
+Local _nCtaR		:= 0
+Local _nRecs		:= 0 
+//-- Variaveis de controle dos totais por TIPOS       
+Local _PTpT 	:= 0
+Local _aTotais	:= {}		//-- Array com Totais Para Impressao  
+//--
+Local _aTiposPG 	:={"Ordem de Pagamento","Pagamento Manual","Nao gera Pagamento"}
+Local _cRangeST 	:= "BTCLxEORPND"
+Local _aStatus 		:={	{ "B", "Bloqueado p/Remessa"	},;
+						{ "T", "Transf. p/Prox Sessao"	},;
+						{ "C", "Corrigido"				},;
+						{ "L", "Liberado p/Remessa"		},;
+						{ "x", "Não Liberado p/Remessa"	},;
+						{ "E", "Remessa Gerada"			},;
+						{ "O", "Ordem de Pgto Agendada"	},;
+						{ "R", "Rejeitado"				},;
+						{ "P", "Pago"					},;
+						{ "N", "Não Pago"				},;
+						{ "D", "Devolvido"				} }
+//****************************************
+//-- Inicializa as sessoes 
+//****************************************
+_oItemCt:Init()
+_oAlunos:Init()  
+_oAlunos:SetLeftMargin(3)
+
+//**************************************************************************
+//-- Posiciona no inicio o Arquivo Resultado da Consulta Sql 
+//**************************************************************************
+dbSelectArea(_cAliasCC)  
+(_cAliasCC)->(dbgotop())    
+//-- Conta o numero do Registro da Tabela Temporaria
+(_cAliasCC)->(dbEval({|| _nRecs++ }))
+_oReport:SetMeter(_nRecs)
+//-- 
+dbSelectArea(_cAliasCC)  
+(_cAliasCC)->(dbgotop())    
+_lImpSTot 	:= .f.  
+//**************************************************************************
+//-- Inicia Laco para impressao do Relatorio
+//**************************************************************************    
+_cItemCtaA	:= (_cAliasCC)->ZP7_XITCTA 
+Do While (_cAliasCC)->(!eof())   
+	_oReport:IncMeter()    
+	++_nCtaR
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³                                                                             ³
+	//³           IMPRIME O TOTAL DO ITEM CONTABIL - LINHA PRINCIPAL                ³
+	//³                                                                             ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	//-- Monta array com os parametros para Pegar o total para cada item Contabil 
+	_aMv_par 	:={	Mv_par01,Mv_par02,Mv_par03,Mv_par04,Mv_par05,Mv_par06,Mv_par07,;
+					Mv_par08,Mv_par09,Mv_par10,Mv_par11,Mv_par12,Mv_par13,Mv_par14,;
+					Mv_par15,Mv_par16,Mv_par17,Mv_par18,(_cAliasCC)->ZP7_XITCTA,;
+					(_cAliasCC)->ZP7_XITCTA,Mv_par21,Mv_par22,Mv_par23 }
+		//-- ********************************************************************
+		//--   Executa a Funcao de consulta dos TOTAIS para ITEM CONTABIL 
+		//-- ********************************************************************
+	_aVlrsCC	:= fGetTotCC(_aMv_par)
+	_cDescItem 	:= Posicione("CTD",1,FwxFilial("CTD")+(_cAliasCC)->ZP7_XITCTA,"CTD_DESC01")	
+	//-- ********************************************************************
+	//--   Forca a impressao do Cabecalho 
+	//-- ********************************************************************
+	If Mv_par21 == 2
+		_oItemCt:SetHeaderSection(.T.)
+		_oItemCt:PrintHeader()
+		_oItemCt:SetHeaderSection(.F.)
+	Endif 
+	_oItemCt:Cell( "ZP7_XITCTA"	):SetBlock({|| (_cAliasCC)->ZP7_XITCTA  			})
+	_oItemCt:Cell( "CTD_DESC01"	):SetBlock({|| _cDescItem 							})
+	_oItemCt:Cell( "ZP7STATU"	):SetBlock({|| "(Total para este Item)"				}) 
+	_oItemCt:Cell( "ZP7QTDMAT"	):SetBlock({|| _aVlrsCC[1]							}) 
+	_oItemCt:Cell( "ZP7_XQTDE"	):SetBlock({|| _aVlrsCC[2]  						})
+	_oItemCt:Cell( "ZP7_XVALOR"	):SetBlock({|| _aVlrsCC[3]  						})
+	_oItemCt:PrintLine()  
+	&&-- 
+	&&-- 
+	&&-- 	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	&&-- 	//³                                                                             ³
+	&&-- 	//³               IMPRIME TIPOS DE PAGAMENTO DO ITEM CONTABIL                   ³
+	&&-- 	//³                                                                             ³
+	&&--    //ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	&&-- 	_nCtaA := 0
+	&&-- 	For _nCtaA := 1 to Len(_aTiposPG)
+	&&-- 		_cTipoPG	:= Alltrim(Str(_nCtaA))
+	&&-- 		//-- Monta array com os parametros para Pegar o total para cada item Contabil 
+	&&-- 		_aMv_par 	:={	Mv_par01,Mv_par02,Mv_par03,Mv_par04,Mv_par05,_cTipoPG+";",Mv_par07,;
+	&&-- 						Mv_par08,Mv_par09,Mv_par10,Mv_par11,Mv_par12,Mv_par13,Mv_par14,;
+	&&-- 						Mv_par15,Mv_par16,Mv_par17,Mv_par18,(_cAliasCC)->ZP7_XITCTA,;
+	&&-- 						(_cAliasCC)->ZP7_XITCTA,Mv_par21,Mv_par22,Mv_par23 }
+	&&-- 		//-- ********************************************************************
+	&&-- 		//--    Executa a Funcao de consulta dos TOTAIS para STATUS 
+	&&-- 		//-- ********************************************************************
+	&&-- 		_aVlrsTpST	:= fGetTotCC(_aMv_par)
+	&&-- 		If _aVlrsTpST[1] > 0.00 .and. _aVlrsTpST[2] > 0.00
+	&&-- 			_oItemCt:Cell( "ZP7_XITCTA"	):SetBlock({||(_cAliasCC)->ZP7_XITCTA				   			})
+	&&-- 			_oItemCt:Cell( "CTD_DESC01"	):SetBlock({|| _cDescItem 										})
+	&&-- 			_oItemCt:Cell( "ZP7STATU"	):SetBlock({|| "("+_cTipoPG+"-"+_aTiposPG[_nCtaA]+")"			})
+	&&-- 			_oItemCt:Cell( "ZP7_XQTDE"	):SetBlock({|| _aVlrsTpST[1] 						   			})
+	&&-- 			_oItemCt:Cell( "ZP7_XVALOR"	):SetBlock({|| _aVlrsTpST[2]						  			})
+	&&-- 			_oItemCt:PrintLine() 
+	&&-- 			//-- ********************************************************************
+	&&-- 		 	//--   TOTLIZACOES POR TIPO
+	&&-- 			//-- ********************************************************************
+	&&-- 			_PTpT := aScan(_aTotais,{|x| x[1]==_cTipoPG+"-"+_aTiposPG[_nCtaA]})     
+	&&-- 			If 	_PTpT > 0 
+	&&-- 			 	_aTotais[_PTpT,2] += _aVlrsTpST[1]
+	&&-- 			 	_aTotais[_PTpT,3] += _aVlrsTpST[2]
+	&&-- 			Else
+	&&-- 				aAdd(_aTotais, {_cTipoPG+"-"+_aTiposPG[_nCtaA],_aVlrsTpST[1],_aVlrsTpST[2]})
+	&&-- 			Endif 
+	&&-- 		Endif 	
+	&&-- 	Next _nCtaA        
+	&&-- 
+	&&--        
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³                                                                             ³
+	//³                     IMPRIME OS TOTAIS POR CONVENIO                          ³
+	//³                                                                             ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+    //-- Defini o Nome da Tabela dos Convenios 
+	_cAliasCV	:= GetNextAlias() 
+	//-- Monta array com os parametros para Pegar o total para cada item Contabil 
+	_aMv_par 	:={	Mv_par01,Mv_par02,Mv_par03,Mv_par04,Mv_par05,Mv_par06,Mv_par07,;
+					Mv_par08,Mv_par09,Mv_par10,Mv_par11,Mv_par12,Mv_par13,Mv_par14,;
+					Mv_par15,Mv_par16,Mv_par17,Mv_par18,(_cAliasCC)->ZP7_XITCTA,;
+					(_cAliasCC)->ZP7_XITCTA,Mv_par21,Mv_par22,Mv_par23 }
+	//-- ********************************************************************
+	//--    Executa a Consulta DISTINCT para os CONVENIO do Item Contabil 
+	//-- ********************************************************************
+	u_fGetItCc(_aMv_par,_cAliasCV,"ZP7_XCONVE")
+	Do While (_cAliasCV)->(!eof())   
+		//-- Monta a Descricao do Convenio 	
+        _cDescConv	:= Alltrim((_cAliasCV)->ZP7_XCONVE)+"-"+Alltrim(Posicione("ZP1",1,FwxFilial("ZP1")+(_cAliasCV)->ZP7_XCONVE,"ZP1_XDESCR"))
+		//-- Monta array com os parametros para Pegar o total para cada item Contabil 
+		_aMv_par 	:={	Mv_par01,Mv_par02,Mv_par03,Mv_par04,Mv_par05,Mv_par06,Mv_par07,;
+						Mv_par08,Mv_par09,Mv_par10,Mv_par11,Mv_par12,Mv_par13,Mv_par14,;
+						Mv_par15,Mv_par16,Mv_par17,Mv_par18,(_cAliasCC)->ZP7_XITCTA,;
+						(_cAliasCC)->ZP7_XITCTA,Mv_par21,(_cAliasCV)->ZP7_XCONVE,(_cAliasCV)->ZP7_XCONVE }
+		//-- ********************************************************************
+		//--   Executa a Funcao de consulta dos TOTAIS para CODIGO DO CONVENIO
+		//-- ********************************************************************
+		_aVlrsTpST	:= fGetTotCC(_aMv_par)
+		_oItemCt:Cell( "ZP7_XITCTA"	):SetBlock({||(_cAliasCC)->ZP7_XITCTA		})      
+		_oItemCt:Cell( "CTD_DESC01"	):SetBlock({|| _cDescItem 					})
+		_oItemCt:Cell( "ZP7STATU"	):SetBlock({|| Space(3)+"("+_cDescConv+")"	})
+		_oItemCt:Cell( "ZP7QTDMAT"	):SetBlock({|| _aVlrsTpST[1]				}) 
+		_oItemCt:Cell( "ZP7_XQTDE"	):SetBlock({|| _aVlrsTpST[2] 				})
+		_oItemCt:Cell( "ZP7_XVALOR"	):SetBlock({|| _aVlrsTpST[3]				})
+		_oItemCt:PrintLine()  
+		//-- ********************************************************************
+	 	//--   TOTLIZACOES POR CONVENIO 
+		//-- ********************************************************************
+		_PTpT := aScan(_aTotais,{|x| x[1]==_cDescConv})     
+		If _PTpT > 0 
+			_aTotais[_PTpT,2] += _aVlrsTpST[1]
+			_aTotais[_PTpT,3] += _aVlrsTpST[2]
+			_aTotais[_PTpT,4] += _aVlrsTpST[3]
+		Else
+			aAdd(_aTotais, {_cDescConv,_aVlrsTpST[1],_aVlrsTpST[2],_aVlrsTpST[3]})
+		Endif 
+		//-- ***************************************************************
+		//--        Proximo Registro ITEM CONTABIL 
+		//-- ***************************************************************
+		(_cAliasCV)->(dbskip())   
+	Enddo    
+	_oReport:SkipLine()
+	(_cAliasCV)->(dbCloseArea())  
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³                                                                             ³
+	//³               IMPRIME OS TOTAIS POR STATUS DO ITEM CONTABIL                 ³
+	//³                                                                             ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+    //-- Defini o Nome da Tabela os Itens da
+	_cAliasIt	:= GetNextAlias() 
+	//-- Monta array com os parametros para Pegar o total para cada item Contabil 
+	_aMv_par 	:={	Mv_par01,Mv_par02,Mv_par03,Mv_par04,Mv_par05,Mv_par06,Mv_par07,;
+					Mv_par08,Mv_par09,Mv_par10,Mv_par11,Mv_par12,Mv_par13,Mv_par14,;
+					Mv_par15,Mv_par16,Mv_par17,Mv_par18,(_cAliasCC)->ZP7_XITCTA,;
+					(_cAliasCC)->ZP7_XITCTA,Mv_par21,Mv_par22,Mv_par23 }
+	//-- ********************************************************************
+	//--    Executa a Consulta DISTINCT para os STATUS do Item Contabil 
+	//-- ********************************************************************
+	u_fGetItCc(_aMv_par,_cAliasIt,"ZP7_XSTATU")
+	Do While (_cAliasIt)->(!eof())   
+		_nP			:= At((_cAliasIt)->ZP7_XSTATU,_cRangeST)  
+		_cStatus	:= If(_nP>0,_aStatus[_nP,1]+"-"+_aStatus[_nP,2],"DESCONHECIDO")
+		_cTipoPG	:= Alltrim(Str(_nCtaA))
+		//-- Monta array com os parametros para Pegar o total para cada item Contabil 
+		_aMv_par 	:={	Mv_par01,Mv_par02,Mv_par03,Mv_par04,Mv_par05,Mv_par06,Mv_par07,;
+						Mv_par08,Mv_par09,Mv_par10,Mv_par11,Mv_par12,Mv_par13,Mv_par14,;
+						_aStatus[_nP,1]+";",Mv_par16,Mv_par17,Mv_par18,;
+						(_cAliasCC)->ZP7_XITCTA,(_cAliasCC)->ZP7_XITCTA,Mv_par21,;
+						Mv_par22,Mv_par23 }
+		//-- ********************************************************************
+		//--    Executa a Funcao de consulta dos TOTAIS para STATUS 
+		//-- ********************************************************************
+		_aVlrsTpST	:= fGetTotCC(_aMv_par)
+		_oItemCt:Cell( "ZP7_XITCTA"	):SetBlock({||(_cAliasCC)->ZP7_XITCTA		})
+		_oItemCt:Cell( "CTD_DESC01"	):SetBlock({|| _cDescItem 					})
+		_oItemCt:Cell( "ZP7STATU"	):SetBlock({|| Space(3)+"("+_cStatus+")"	})
+		_oItemCt:Cell( "ZP7QTDMAT"	):SetBlock({|| _aVlrsTpST[1]				}) 
+		_oItemCt:Cell( "ZP7_XQTDE"	):SetBlock({|| _aVlrsTpST[2] 				})
+		_oItemCt:Cell( "ZP7_XVALOR"	):SetBlock({|| _aVlrsTpST[3]				})
+		_oItemCt:PrintLine()  
+		//-- ********************************************************************
+	 	//--   TOTLIZACOES POR STATUS 
+		//-- ********************************************************************
+		_PTpT := aScan(_aTotais,{|x| x[1]==_cStatus})     
+		If _PTpT > 0 
+			_aTotais[_PTpT,2] += _aVlrsTpST[1]
+			_aTotais[_PTpT,3] += _aVlrsTpST[2]
+			_aTotais[_PTpT,4] += _aVlrsTpST[3]
+		Else
+			aAdd(_aTotais, {_cStatus,_aVlrsTpST[1],_aVlrsTpST[2],_aVlrsTpST[3]})
+		Endif 
+		//-- ***************************************************************
+		//--        Proximo Registro ITEM CONTABIL 
+		//-- ***************************************************************
+		(_cAliasIt)->(dbskip())   
+	Enddo    
+	_oReport:SkipLine()
+	(_cAliasIt)->(dbCloseArea())  
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³  MOVE PARA O PROXIMO REGISTRO DOS ITENS CONTABEIS DO RANGE DE MATRICULAS.   ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	(_cAliasCC)->(dbskip())   
+	If _cItemCtaA != (_cAliasCC)->ZP7_XITCTA 
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³                                                                             ³
+		//³          Imprime o ANALITICO - MATRICULAS do ITENS CONTABIL                 ³
+		//³                                                                             ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		If Mv_par21 == 2
+			//-- ********************************************************************
+	        //--   Forca a impressao do Cabecalho 
+			//-- ********************************************************************
+			_oAlunos:SetHeaderSection(.T.)
+			_oAlunos:PrintHeader()
+			_oAlunos:SetHeaderSection(.F.)
+		    //-- Defini o Nome da Tabela os Itens da
+			_cAliasMt	:= GetNextAlias() 
+			//-- Monta array com os parametros para Pegar o total para cada item Contabil 
+			_aMv_par 	:={	Mv_par01,Mv_par02,Mv_par03,Mv_par04,Mv_par05,Mv_par06,Mv_par07,;
+							Mv_par08,Mv_par09,Mv_par10,Mv_par11,Mv_par12,Mv_par13,Mv_par14,;
+							Mv_par15,Mv_par16,Mv_par17,Mv_par18,_cItemCtaA,_cItemCtaA,;
+							Mv_par21,Mv_par22,Mv_par23 }
+
+			//-- Executa a Consulta DISTINCT para os STATUS do Item Contabil 
+			u_fGetItCc(_aMv_par,_cAliasMt)
+			Do While (_cAliasMt)->(!eof())   
+				_oAlunos:Cell( "ZP7_XMATRI"	):SetBlock({|| Alltrim((_cAliasMt)->ZP7_XMATRI)  	})
+				_oAlunos:Cell( "ZP7_XNOME"	):SetBlock({|| (_cAliasMt)->ZP7_XNOME   	  		})
+				_oAlunos:Cell( "ZP7_XCPF"	):SetBlock({|| (_cAliasMt)->ZP7_XCPF				})
+				_oAlunos:Cell( "ZP7_XDESCS"	):SetBlock({|| (_cAliasMt)->ZP7_XEVENT+"-"+Substr((_cAliasMt)->ZP7_XDESCS,1,30)	})     
+				_oAlunos:Cell( "ZP7_XDESMO"	):SetBlock({|| (_cAliasMt)->ZP7_XMODAL+"-"+Substr((_cAliasMt)->ZP7_XDESMO,1,35)  	})
+				_oAlunos:Cell( "ZP7_XTURNO"	):SetBlock({|| (_cAliasMt)->ZP7_XTURNO   			})
+				//--
+				_oAlunos:Cell( "ZP7_XQTDE"	):SetBlock({|| (_cAliasMt)->ZP7_XQTDE 				})
+				_oAlunos:Cell( "ZP7_XVALOR"	):SetBlock({|| (_cAliasMt)->ZP7_XVALOR				})
+				_oAlunos:Cell( "ZP7_XPERIO"	):SetBlock({|| (_cAliasMt)->ZP7_XPERIO+"/"+(_cAliasMt)->ZP7_XSEG+"/"+(_cAliasMt)->ZP7_XSESSA	})
+				//--
+				_oAlunos:Cell( "ZTIPO"	):SetBlock({|| (_cAliasMt)->ZP7_XTIPO	  				})
+				_oAlunos:Cell( "ZSTATU"	):SetBlock({|| (_cAliasMt)->ZP7_XSTATU	  				})
+				_oAlunos:PrintLine()  
+		
+				(_cAliasMt)->(dbSkip())   		
+			Enddo    
+			(_cAliasMt)->(dbCloseArea())
+		Endif  //-- Fim do:  Mv_par21 == 2
+	Endif 	//-- Fim:  _cItemCtaA != (_cAliasCC)->ZP7_XITCTA 
+	//-- ********************************************************************
+	//--    Modifica a Variavel de Controle de Emissao dos Detalhes do 
+	//--    ITEM CONTABIL, Apos a Impressao dos Detalhes e Apos o 
+	//--    Proximo Registro dos ITENS CONTABEIS. 
+	//-- ********************************************************************
+	_cItemCtaA := (_cAliasCC)->ZP7_XITCTA 			
+Enddo    
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³                                                                             ³
+//³                        IMPRIME OS TOTAIS GERAIS                             ³
+//³                                                                             ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_oReport:SkipLine()
+_oReport:SkipLine()   
+_aTotais := aSort(_aTotais,,, { |x,y| y[1]>x[1] } )
+_nCtaA 		:= 0   
+For _nCtaA := 1 to Len(_aTotais)	
+	_oItemCt:Cell( "ZP7_XITCTA"	):SetBlock({||""								})
+	_oItemCt:Cell( "CTD_DESC01"	):SetBlock({|| Iif(_nCtaA==1,"TOTAIS...","")	})
+	_oItemCt:Cell( "ZP7STATU"	):SetBlock({|| _aTotais[_nCtaA,1]				})
+	_oItemCt:Cell( "ZP7QTDMAT"	):SetBlock({|| _aTotais[_nCtaA,2] 				}) 
+	_oItemCt:Cell( "ZP7_XQTDE"	):SetBlock({|| _aTotais[_nCtaA,3] 				})
+	_oItemCt:Cell( "ZP7_XVALOR"	):SetBlock({|| _aTotais[_nCtaA,4] 				})
+	_oItemCt:PrintLine()  
+Next _nCtaB 
+//****************************************
+//-- Fecha o Arquivo de Trabalho
+//****************************************
+(_cAliasCC)->(dbCloseArea())
+//****************************************
+//-- Finaliza as sessoes 
+//****************************************
+_oItemCt:Finish() 
+_oAlunos:Finish() 
+Return
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fLerZP7>                                                   |
+|Monta query que busca as matriculas. 	    							   |
+|                                                                          |
+|@Author<Antonio Dsantas>                                                  |
+|@since<09/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<Nil>                                                          |
+|@return<Nil>                                                              |
++--------------------------------------------------------------------------+
+|Uso        |SENAI										     			   |
++-----------+--------------------------------------------------------------+
+*/
+User Function fGetItCc(_aMv_par,_cAlias,_cField)
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+Local _cQuery		:= "" 
+_cQuery := ""
+If _cField != Nil 
+	_cQuery += "Select Distinct "+_cField+" From "+RetSqlName("ZP7")+" "+_ChrBreak    
+Else
+	_cQuery += "Select *From "+RetSqlName("ZP7")+" "+_ChrBreak    
+Endif 	
+_cQuery += fParQuery(_aMv_par)  
+If _cField != Nil 
+	_cQuery += "Order by "+_cField
+Else
+	_cQuery += " order by ZP7_XMATRI, ZP7_XSTATU, ZP7_XDESCS, ZP7_XDESMO, ZP7_XTURNO, ZP7_XSEG, ZP7_XSESSA "+_ChrBreak     
+Endif
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Grava o Resultado da Query para consulta                         |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select(_cAlias)>0
+	(_cAlias)->(DbCloseArea())
+Endif  
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),_cAlias,.t.,.t.)  
+Return .t.  
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fParQuery>                                                 |
+|Devolve array com totais de Quantidade e Valor do PRONATEC, resultado de  |
+|consulta SQL conforme parametros fornecidos como argumento                |
+|                                                                          |
+|@Author<Antonio Dsantas>                                                  |
+|@since<11/07/2014>                                                        |
+|@version<                                                                 |
+|                                                                          |
+|@Receive                                                                  |
+|<   _aMv_par (a) - Array com os Parametros do relatorio                   |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _aTotZp7 (a) - Array dos Totais                                       |
+|     _aTotZp7[1] (n) - Quantidade Total                                   |
+|     _aTotZp7[2] (n) - Valor Total                                        |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI										     			   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGetTotCC(_aMv_par)
+Local _cAlias  		:= GetNextAlias() 
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+Local _cQuery		:= ""   
+Local _aTotZp7 		:= {}
+_cQuery := ""
+_cQuery += "Select Count(*) QtdeTot, Sum(ZP7_XQTDE) as TotHoras, Sum(ZP7_XVALOR) as VlrTot From "+RetSqlName("ZP7")+" "+_ChrBreak    
+_cQuery += fParQuery(_aMv_par)  
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Grava o Resultado da Query para consulta                         |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select(_cAlias)>0
+	(_cAlias)->(DbCloseArea())
+Endif  
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),_cAlias,.t.,.t.)  
+(_cAlias)->(DbgoTop())
+_aTotZp7 := {(_cAlias)->QtdeTot, (_cAlias)->TotHoras,(_cAlias)->VlrTot} 
+(_cAlias)->(DbCloseArea())
+Return _aTotZp7
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fParQuery>                                                 |
+|Filtros relativo as consultas SQL que seram aplicadas para relatorio      |
+|                                                                          |
+|@Author<Antonio Dsantas>                                                  |
+|@since<11/07/2014>                                                        |
+|@version<                                                                 |
+|                                                                          |
+|@Receive                                                                  |
+|<   _aMv_par (a) - Array com os Parametros do relatorio                   |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _cQuery (l) - Complemento de filtros para Consulta SQL                |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI										     			   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fParQuery(_aMv_par)   
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+Local _cQuery		:= "" 
+Local _aTurnos		:= {"MATUTINO","VERPERTINO","DIURNO","NOTURNO","TODOS"}
+Local _cQuery 		:= ""    
+_cQuery := ""
+_cQuery += " where D_E_L_E_T_ <> '*' "+_ChrBreak
+_cQuery += " and ZP7_FILIAL = '"+FwxFilial("ZP7")+"' "+_ChrBreak
+//-- Mv_par01 - Periodo ATE?
+_cQuery += " and ZP7_XPERIO = '"+_aMv_par[1]+"' "+_ChrBreak
+//-- Mv_par02 - Data de Pgto DE ?
+//-- Mv_par03 - Data de Pgto ATE ?
+_cQuery += " and (ZP7_XDTPG = '"+Space(TamSX3("ZP7_XDTPG")[1])+"' or ZP7_XDTPG  BetWeen '"+Dtos(_aMv_par[2])+"' and '"+Dtos(_aMv_par[3])+"') " + CRLF	
+//-- Mv_par04 - Codigo da Matricula DE ?
+//-- Mv_par05 - Codigo da Matricula ATE ?
+_cQuery += "and ((ZP7_XMATRI BetWeen '"+_aMv_par[4]+"' and '"+_aMv_par[5]+"') or "+"(ZP7_XMATRI BetWeen 'r"+_aMv_par[4]+"' and 'r"+_aMv_par[5]+"'))"+ CRLF	
+//-- Mv_par06 - Tipo(s) de Pagamento ?  
+If !Empty(Alltrim(_aMv_par[6]))
+	_cQuery += " and ZP7_XTIPO in "+FormatIn(_aMv_par[6],";")+" "+_ChrBreak
+Endif 
+//-- Mv_par07 - Codigo de Evento DE ?
+//-- Mv_par08 - Codigo de Evento ATE ?
+_cQuery += " and ZP7_XEVENT BetWeen '"+_aMv_par[7]+"' and '"+_aMv_par[8]+"' " + CRLF	
+//-- Mv_par09 - Codigo da Modalidade DE ?
+//-- Mv_par10 - Codigo da Modalidade ATE ?
+_cQuery += " and ZP7_XMODAL BetWeen '"+_aMv_par[9]+"' and '"+_aMv_par[10]+"' " + CRLF	
+//-- Mv_par11 - Codigo da Area Tecnolog DE ?
+//-- Mv_par12 - Codigo da Area Tecnolog ATE ?
+_cQuery += " and ZP7_XATECN BetWeen '"+_aMv_par[11]+"' and '"+_aMv_par[12]+"' " + CRLF	
+//-- Mv_par13 - Codigo do Curso DE ?
+//-- Mv_par14 - Codigo do Curso ATE ? 
+_cQuery += " and ZP7_XCURSO BetWeen '"+_aMv_par[13]+"' and '"+_aMv_par[14]+"' " + CRLF	
+//-- Mv_par15 - Com Seguinte(s) Status ?
+If !Empty(Alltrim(_aMv_par[15]))
+	_cQuery += " and ZP7_XSTATU in "+FormatIn(_aMv_par[15],";")+" "+_ChrBreak
+Endif 	
+//-- Mv_par16 - Do(s) Turno(s): (Matutino,Verpertino,Diurno,Noturno,Todos)  
+If Mv_par16 != 5          
+	_cQuery += " and ZP7_XTURNO = '"+PadR(_aTurnos[_aMv_par[16]],TamSX3("ZP7_XTURNO")[1])+"' " + CRLF	
+Endif 
+//-- Mv_par17 - Sessao De ?
+//-- Mv_par18 - Sessao Ate ?
+_cQuery += " and ZP7_XSESSA BetWeen '"+_aMv_par[17]+"' and '"+_aMv_par[18]+"' " + CRLF	
+//-- Mv_par19 =     C Custo DE?
+//-- Mv_par20 =     C Custo ATE?
+_cQuery += " and ZP7_XITCTA BetWeen '"+_aMv_par[19]+"' and '"+_aMv_par[20]+"' " + CRLF	
+//-- Mv_par22 - Convenio DE ?
+//-- Mv_par23 - Convenio ATE ?
+_cQuery += " and ZP7_XCONVE BetWeen '"+_aMv_par[22]+"' and '"+_aMv_par[23]+"' " + CRLF	
+Return _cQuery   
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<AjustaSX1>                                                 |
+|Cria as perguntas.					 	    							   |
+|                                                                          |
+|@Author<Antonio Dsantas>                                                  |
+|@since<09/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<Nil>                                                          |
+|@return<Nil>                                                              |
++--------------------------------------------------------------------------+
+|Uso        |SENAI										     			   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function xParPerg()	
+Local _aPerg := {}
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//   //-- MAPEAMENTOS DOS CAMPOS DE SX1
+//   aAdd (_aPerg,{"X1_PERGUNT","X1_PERPA","X1_PERENG","MV_CHL","C",5,0,0,"X1_GSC","X1_VALID",;
+//								"X1_VAR01",("X1_DEF01" e "X1_PYNE"),"X1_DEFSPA1","X1_DEFENG1","X1_CNT01",;
+//								"X1_VAR02","X1_DEF02","X1_DEFSPA2","X1_DEFENG2","X1_CNT02",;
+//								"X1_VAR03","X1_DEF03","X1_DEFSPA3","X1_DEFENG3","X1_CNT03",;
+//								"X1_VAR04","X1_DEF04","X1_DEFSPA4","X1_DEFENG4","X1_CNT04",;
+//								"X1_VAR05","X1_DEF05","X1_DEFSPA5","X1_DEFENG5","X1_CNT05",;
+//								"X1_F3","X1_GRPSXG","","X1_HELP","X1_PICTURE",{"Descricao para Tela PTG"},{"Descricao para Tela EPA"},{"Descricao para Tela USA"}})
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+
+//-- Mv_par01 =     Periodo ATE?
+aAdd(_aPerg, {"Periodo ATE?","Periodo ATE?","Periodo ATE?","MV_CH1","C",8,0,0,"G","",;
+					"MV_PAR01","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"ZP4REL","","","","",{"Codigo do Período a ser Pesquisado."},{"Codigo do Período a ser Pesquisado."},{"Codigo do Período a ser Pesquisado."}})
+
+//-- Mv_par02 =     Data de Pgto DE ?
+aAdd(_aPerg, {"Data de Pgto DE ?","Data de Pgto DE ?","Data de Pgto DE ?","MV_CH2","D",8,0,0,"G","",;
+					"MV_PAR02","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Com data de pagamento a partir de"},{"Com data de pagamento a partir de"},{"Com data de pagamento a partir de"}})
+
+//-- Mv_par03 =     Data de Pgto ATE ?
+aAdd(_aPerg, {"Data de Pgto ATE ?","Data de Pgto ATE ?","Data de Pgto ATE ?","MV_CH3","D",8,0,0,"G","",;
+					"MV_PAR03","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Com data de pagamento Ate"},{"Com data de pagamento Ate"},{"Com data de pagamento Ate"}})
+
+//-- Mv_par04 =     Codigo da Matricula DE ?
+aAdd(_aPerg, {"Codigo da Matricula DE ?","Codigo da Matricula DE ?","Codigo da Matricula DE ?","MV_CH4","C",15,0,0,"G","",;
+					"MV_PAR04","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Codigo da Matricula Igual ou Maior que"},{"Codigo da Matricula Igual ou Maior que"},{"Codigo da Matricula Igual ou Maior que"}})
+
+//-- Mv_par05 =     Codigo da Matricula ATE ?
+aAdd(_aPerg, {"Codigo da Matricula ATE ?","Codigo da Matricula ATE ?","Codigo da Matricula ATE ?","MV_CH5","C",15,0,0,"G","",;
+					"MV_PAR05","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Codigo da Matricula Ate"},{"Codigo da Matricula Ate"},{"Codigo da Matricula Ate"}})
+
+//-- Mv_par06 =     Tipo(s) de Pagamento ?
+aAdd(_aPerg, {"Tipo(s) de Pagamento ?","Tipo(s) de Pagamento ?","Tipo(s) de Pagamento ?","MV_CH6","C",99,0,0,"G","u_MrkTipo()",;
+					"MV_PAR06","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"'Range' dos Tipos de Pagamento, separados por (;) Ponto-e-virgula "},{"'Range' dos Tipos de Pagamento, separados por (;) Ponto-e-virgula "},{"'Range' dos Tipos de Pagamento, separados por (;) Ponto-e-virgula "}})
+
+//-- Mv_par07 =     Codigo de Evento DE ?
+aAdd(_aPerg, {"Codigo de Evento DE ?","Codigo de Evento DE ?","Codigo de Evento DE ?","MV_CH7","C",08,0,0,"G","",;
+					"MV_PAR07","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Codigo de Evento DE."},{"Codigo de Evento DE."},{"Codigo de Evento DE."}})
+
+//-- Mv_par08 =     Codigo de Evento ATE ?
+aAdd(_aPerg, {"Codigo de Evento ATE ?","Codigo de Evento ATE ?","Codigo de Evento ATE ?","MV_CH8","C",08,0,0,"G","",;
+					"MV_PAR08","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Codigo de Evento ATE."},{"Codigo de Evento ATE."},{"Codigo de Evento ATE."}})
+
+//-- Mv_par09 =     Codigo da Modalidade DE ?
+aAdd(_aPerg, {"Codigo da Modalidade DE ?","Codigo da Modalidade DE ?","Codigo da Modalidade DE ?","MV_CH9","C",02,0,0,"G","",;
+					"MV_PAR09","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Codigo da Modalidade DE."},{"Codigo da Modalidade DE."},{"Codigo da Modalidade DE."}})
+
+//-- Mv_par10 =     Codigo da Modalidade ATE ?
+aAdd(_aPerg, {"Codigo da Modalidade ATE ?","Codigo da Modalidade ATE ?","Codigo da Modalidade ATE ?","MV_CHa","C",02,0,0,"G","",;
+					"MV_PAR10","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Codigo da Modalidade ATE."},{"Codigo da Modalidade ATE."},{"Codigo da Modalidade ATE."}})
+
+//-- Mv_par11 =     Codigo da Area Tecnolog DE ?
+aAdd(_aPerg, {"Codigo da Area Tecnolog DE ?","Codigo da Area Tecnolog DE ?","Codigo da Area Tecnolog DE ?","MV_CHb","C",08,0,0,"G","",;
+					"MV_PAR11","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Codigo da Area Tecnolog DE."},{"Codigo da Area Tecnolog DE."},{"Codigo da Area Tecnolog DE."}})
+
+//-- Mv_par12 =     Codigo da Area Tecnolog ATE ?
+aAdd(_aPerg, {"Codigo da Area Tecnolog ATE ?","Codigo da Area Tecnolog ATE ?","Codigo da Area Tecnolog ATE ?","MV_CHc","C",08,0,0,"G","",;
+					"MV_PAR12","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Codigo da Area Tecnolog ATE."},{"Codigo da Area Tecnolog ATE."},{"Codigo da Area Tecnolog ATE."}})
+
+//-- Mv_par13 =     Codigo do Curso DE ?
+aAdd(_aPerg, {"Codigo do Curso DE ?","Codigo do Curso DE ?","Codigo do Curso DE ?","MV_CHd","C",10,0,0,"G","",;
+					"MV_PAR13","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Codigo do Curso DE."},{"Codigo do Curso DE."},{"Codigo do Curso DE."}})
+
+//-- Mv_par14 =     Codigo do Curso ATE ?
+aAdd(_aPerg, {"Codigo do Curso ATE ?","Codigo do Curso ATE ?","Codigo do Curso ATE ?","MV_CHe","C",10,0,0,"G","",;
+					"MV_PAR14","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Codigo do Curso ATE."},{"Codigo do Curso ATE."},{"Codigo do Curso ATE."}})
+
+//-- Mv_par15 =     Com Seguinte(s) Status ? 
+aAdd(_aPerg, {"Com Seguinte(s) Status ?","Com Seguinte(s) Status ?","Com Seguinte(s) Status ?","mv_chf","C",99,0,0,"C","u_MrkStat()",;
+					"Mv_par15","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Em quais Situaçoes. Em Branco considera todos."},{"Em quais Situaçoes. Em Branco considera todos."},{"Em quais Situaçoes. Em Branco considera todos."}}) 
+
+//-- Mv_par16 =     Do(s) Turno(s): (Matutino, Verpertino, Diurno, Noturno)
+aAdd(_aPerg, {"Do(s) Turno(s)","Do(s) Turno(s)","Do(s) Turno(s)","mv_chg","N",1,0,1,"C","NaoVazio()",;
+					"Mv_par16","Matutino","Matutino","Matutino","",;
+					"","Verpertino","Verpertino","Verpertino","",;
+					"","Diurno","Diurno","Diurno","",;
+					"","Noturno","Noturno","Noturno","",;
+					"","TODOS","TODOS","TODOS","",;
+					"","","","","",{"Nao Imprimir Tipos ?"},{"Nao Imprimir Tipos ?"},{"Nao Imprimir Tipos ?"}}) 
+
+//-- Mv_par17 =     Sessão De ?
+aAdd(_aPerg, {"Sessão DE ?","Sessão DE ?","Sessão DE ?","MV_CHh","C",10,0,0,"G","",;
+					"MV_PAR17","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"ZP6","","","","",{"Codigo Sessão Inicial."},{"Codigo Sessão Inicial."},{"Codigo Sessão Inicial."}})
+
+//-- Mv_par18 =     Sessão Ate ?
+aAdd(_aPerg, {"Sessão ATE ?","Sessão ATE ?","Sessão ATE ?","MV_CHi","C",10,0,0,"G","",;
+					"MV_PAR18","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"ZP6","","","","",{"Codigo Sessão Ate."},{"Codigo Sessão Ate."},{"Codigo Sessão Ate."}})
+
+//-- Mv_par19 =     Item Contabil DE?
+aAdd(_aPerg, {"Item Contabil DE ?","Item Contabil DE ?","Item Contabil DE ?","MV_CHj","C",20,0,0,"G","",;
+					"MV_PAR19","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"CTD","","","","",{"Codigo do Item Contabil."},{"Codigo do Item Contabil."},{"Codigo do Item Contabil."}})
+
+//-- Mv_par20 =     Item Contabil ATE?
+aAdd(_aPerg, {"Item Contabil ATE ?","Item Contabil ATE ?","Item Contabil ATE ?","MV_CHk","C",20,0,0,"G","",;
+					"MV_PAR20","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"CTD","","","","",{"Codigo do Item Contabil."},{"Codigo do Item Contabil."},{"Codigo do Item Contabil."}})
+
+//-- Mv_par21 =     Formato ?
+aAdd(_aPerg, {"Formato ?","Formato  ?","Formato  ?","mv_chl","N",1,0,1,"C","NaoVazio()",;
+					"Mv_par21","Sintetico","Sintetico","Sintetico","",;
+					"","Analitico","Analitico","Analitico","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Formato do Relatório"},{"Formato do Relatório"},{"Formato do Relatório"}}) 
+
+//-- Mv_par22 =     Convenio DE ?
+aAdd(_aPerg, {"Cod Convenio DE ?","Cod Convenio DE ?","Cod Convenio DE ?","MV_CHm","C",5,0,0,"G","",;
+					"MV_PAR22","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"ZP1","","","","",{"Codigo do Convenio."},{"Codigo do Convenio."},{"Codigo do Convenio."}})
+
+//-- Mv_par23 =     Convenio ATE ?
+aAdd(_aPerg, {"Cod Convenio ATE ?","Cod Convenio ATE ?","Cod Convenio ATE ?","MV_CHn","C",5,0,0,"G","",;
+					"MV_PAR23","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"ZP1","","","","",{"Codigo do Convenio."},{"Codigo do Convenio."},{"Codigo do Convenio."}})    
+u_SFAJUSX1(_cPerg,_aPerg) 
+Return

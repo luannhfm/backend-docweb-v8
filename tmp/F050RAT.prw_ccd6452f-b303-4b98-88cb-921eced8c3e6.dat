@@ -1,0 +1,113 @@
+#include 'protheus.ch'
+#include 'parmtype.ch'
+#include 'topconn.ch'
+
+/*/{Protheus.doc} F050RAT
+Ponto de Entrada executado na validacao do aCols no rateio do Contas a Pagar
+
+@author 	Jose Leite de Barros Neto
+@since		20/07/2017
+@version	1.0
+
+@type function
+/*/
+User Function F050RAT()
+	
+	Local cEstat := U_SFGN001A(ProcName(0), "F050RAT")
+	Local _aArea := GetArea()
+	Local _lRet  := .T.
+	
+	_lRet := fValRat()
+	
+	RestArea(_aArea)
+	//Refresh()
+	
+Return(_lRet)
+
+
+/** {Protheus.doc} fValRat
+Funcao para validar o Centro de Custo x Item Contabil de acordo com a
+Amarracao na tabela CTA
+
+@author: 	Jose Leite de Barros Neto
+@since: 	20/07/2017
+@Uso: 		FIEMT
+*/	
+Static Function fValRat()
+
+	Local cEstat := U_SFGN001A(ProcName(0), "F050RAT")
+	Local _lRet   	:= .T.
+	Local _nCont  	:= 0
+	Local _cQuery 	:= ""
+	Local _cMsg		:= ""
+	Local _aErro  	:= {}
+	Local _nPerc    := 0
+	Local _nVal		:= 0
+	
+    IF TYPE("nvalDig") == "U"
+		nvalDig := nValrat
+	EndIf
+	IF FunName() == "FINA100" .and. Empty(nvalDig)
+		nvalDig := M->E5_VALOR
+	EndIf	
+
+	DbSelectArea("TMP")
+	TMP->(DbGoTop())
+	While .Not. TMP->(Eof())
+		
+		//Desconsidera os deletados
+		If TMP->CTJ_FLAG == .T.
+			TMP->(DbSkip())
+			Loop
+		EndIf
+
+		_nPerc := _nPerc + ((TMP->CTJ_VALOR/nvalDig))*100
+		_nVal  := _nVal + TMP->CTJ_VALOR
+		
+		_nCont++		
+		If Select("TRA") > 0
+			DbSelectArea("TRA")
+			TRA->(DbCloseArea())
+		EndIf
+		
+		_cQuery := ""
+		_cQuery += " SELECT * FROM "+ RetSqlName("CTA") +" " + CRLF 
+		_cQuery += " WHERE CTA_FILIAL = '"+ SubStr(cFilAnt,1,4) +"' " + CRLF
+		_cQuery += "  AND CTA_CUSTO   = '"+ TMP->CTJ_CCD   +"' " + CRLF
+		_cQuery += "  AND CTA_ITEM    = '"+ TMP->CTJ_ITEMD +"' " + CRLF
+		_cQuery += "  AND D_E_L_E_T_ <> '*' "+ CRLF
+		
+		TCQUERY _cQuery NEW ALIAS "TRA"
+		
+		If .Not. Empty(TRA->(CTA_CUSTO))
+			_lRet := .T.
+		Else
+			TRA->(DbCloseArea())
+			aAdd( _aErro ,{_nCont,AllTrim(TMP->CTJ_CCD),AllTrim(TMP->CTJ_ITEMD)})
+		EndIf
+		
+					
+		TRA->(DbCloseArea())
+		
+		TMP->(DbSkip())
+	End
+	
+	If Len(_aErro) > 0
+		_cMsg := ""
+		For _j := 1 to Len(_aErro)
+			_cMsg += "Na Linha: "+ cValToChar(_aErro[_j][1]) +", O Centro de Custo: "+ _aErro[_j][2] +" ou Item Contábil: "+ _aErro[_j][3] +" informado estão incorretos! " + CRLF 
+		Next
+		_cMsg += "Favor verificar."
+		MsgAlert(_cMsg)
+		_lRet := .F.
+	EndIf
+	
+	_nPerc := Round(_nPerc,2)
+	
+	If (_nPerc <> 100) .and. nvalDig <> _nVal
+		_lRet := .F.
+		//Rafael Karczevski - 16/07/2019 - Correção Statement unterminated at end of line/unbalanced parentesis/brackets
+		MsgAlert("Rateio diferente de 100% (Atual: "+ cValToChar(_nPerc) +"%)","[Fonte: F050RAT]")
+	EndIf
+
+Return _lRet

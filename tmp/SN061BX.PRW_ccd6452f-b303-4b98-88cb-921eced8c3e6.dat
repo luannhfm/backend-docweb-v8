@@ -1,0 +1,282 @@
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE "TOTVS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE 'FONT.CH'
+#INCLUDE 'COLORS.CH'
+#INCLUDE "PARMTYPE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<SN061BX>                                                   |
+| Rotina para Liberacao de Remessa de Solicitacao de Liberacao de Convenio |
+| de Cartoes Pre Pago                                                      |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<22/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<Nil>                                                          |
+|@return<Nil>                                                              |
++--------------------------------------------------------------------------+
+|Uso        |SENAI										     			   |
++-----------+--------------------------------------------------------------+
+*/
+User Function SN061BX()
+Private _oBrowse 	:= FWMarkBrowse():New()
+Private _cMarca		:= _oBrowse:Mark()
+Private _aRotina	:= MenuDef()
+Private _cAlias01	:= GetNextAlias() 
+Private _cConven	:= Space(TamSX3("ZP1_XCONV")[1]) 
+Private _cSessao	:= ZP6->ZP6_XCOD
+Private _cfilter	:= ""
+//-- Torna a selecao do Convenio como OBRIGATORIA
+_cConven := fGetConv()  
+If Empty(Alltrim(_cConven))
+	Return .t.
+Endif 
+DbSelectArea("ZP3")
+ZP3->(DbSetOrder(0))
+ZP3->(DbGoTop())
+//--  Define a tabela
+_oBrowse:SetAlias('ZP3')
+//--  Descricao
+_oBrowse:SetDescription('Liberacao para Remessa')
+//--  Campo que sera marcado
+_oBrowse:SetFieldMark('ZP3_OK')
+//--  Legenda
+_oBrowse:AddLegend( "ZP3_XSTATU='P'"	,"BLUE" 	,"Em Preparacao"	)
+_oBrowse:AddLegend( "ZP3_XSTATU='L'"	,"GREEN"	,"Liberado" 		)
+_oBrowse:AddLegend( "ZP3_XSTATU='E'"	,"BLACK"	,"Enviado" 			)
+_oBrowse:AddLegend( "ZP3_XSTATU='R'"	,"RED"		,"Rejeitado" 		)
+_oBrowse:AddLegend( "ZP3_XSTATU='C'"	,"BROWN"	,"Conveniado" 		)
+_cfilter := "ZP3->ZP3_FILIAL == '"+cFilAnt+"' .and. ZP3->ZP3_XSESSA == '"+_cSessao+"' .and. ZP3->ZP3_XCONVE == '"+_cConven+"' .and. ZP3->ZP3_XSTATU == 'P' "
+//--  Definicao do filtro da Browse
+_oBrowse:SetFilterDefault(_cfilter)  
+//--
+ZP3->(DbGoTop())
+//_oBrowse:DisableDetails() 
+//-- Redefine o Menu, senao Herda do Browse que chamou
+aRotina := MenuDef()
+_oBrowse:Activate()
+Return(Nil)
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<MENUDEF>                                                   |
+|Responsavel pela criacao dos botoes, alterar, incluir, excluir e demais.  |
+|                                                                          |
+|@Author<Diogo C. Barros>                                                  |
+|@since<27/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<Nil>                                                          |
+|@return<Nil>                                                              |
++--------------------------------------------------------------------------+
+|Uso        |SENAI										     			   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function MenuDef()
+Local _aRotina := {}
+ADD OPTION _aRotina TITLE "Pesquisar"	ACTION "PESQBRW"         		OPERATION 1 ACCESS 0
+ADD OPTION _aRotina TITLE 'Libera'		ACTION 'U_fLibPre(_oBrowse)'	OPERATION 2 ACCESS 0
+Return _aRotina
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<ModelDef>                                                  |
+|Contem  a  construcao e a definicao do Model, lembrando que o Modelo de   |
+|dados (Model) contem as regras de negocio.							   	   |
+|                                                                          |
+|@Author<Diogo C. Barros>                                                  |
+|@since<27/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<Nil>                                                          |
+|@return<_oModel>                                                          |
++--------------------------------------------------------------------------+
+|Uso        |SENAI    													   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function ModelDef()
+Return FwLoadModel("ZP3DETAIL")
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<ViewDef>                                                   |
+|Contem a construcao e a definicao da View, ou seja, contrucao da interface|
+|                                                                          |
+|@Author<Diogo C. Barros>                                                  |
+|@since<27/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<Nil>                                                          |
+|@return<_oModel>                                                          |
++--------------------------------------------------------------------------+
+|Uso        |SENAI										     			   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function ViewDef()
+Return FwLoadView("ZP3DETAIL")
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fLibPre>                                                   |
+|Rotina responsavel pela liberacao das matriculas.						   |
+|                                                                          |
+|@Author<Diogo C. Barros>                                                  |
+|@since<27/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<Nil>                                                          |
+|@return<Nil>                                                              |
++--------------------------------------------------------------------------+
+|Uso        |SENAI										     			   |
++-----------+--------------------------------------------------------------+
+*/
+User Function fLibPre(_oBrowse)
+Local _aArea	:= GetArea()
+Local _cMarca	:= _oBrowse:Mark() //oMark:Mark()
+Local _nCtaA	:= 0
+//-- Seleciona a Tabela de Matriculas a Pagar 
+ZP3->(dbSetFilter({||&_cfilter},_cfilter))
+ZP3->(DbGoTop())
+//--
+Begin Transaction
+	//-- Seleciona a Tabela de Conveniados 
+	Do While ZP3->(!Eof())
+		If _oBrowse:IsMark(_cMarca)
+			_nCtaA++
+			//-- Libera o registro
+			ZP3->(RecLock("ZP3",.F.))
+			Replace ZP3->ZP3_XSTATU With "L"
+			Replace ZP3->ZP3_XUSLIB With __cUserId    
+			Replace ZP3->ZP3_XDTPED With dDataBase  
+			Replace ZP3->ZP3_OK	    With "" 
+			ZP3->(msUnlock())
+			ZP3->(dbCommit())
+		Else
+			//-- *************************************************************
+			//--   Libera o Cartão para uso
+			//-- *************************************************************
+			ZP7->(dbSeek(FwxFilial("ZP7")+ZP3->ZP3_XSESSA+ZP3->ZP3_XNRREF))
+			Do While ZP7->(!Eof()) .and.  ZP7->ZP7_FILIAL == FwxFilial("ZP7") .and. ZP7->ZP7_XSESSA == ZP3->ZP3_XSESSA .and. ZP7->ZP7_XNRREF == ZP3->ZP3_XNRREF
+				ZP7->(RecLock("ZP7",.F.))
+				Replace ZP7->ZP7_XCARTA With ""
+				Replace ZP7->ZP7_XNRREF With ""
+				ZP7->(msUnlock())
+				ZP7->(dbCommit()) 
+				//-- 					
+				dbSelectArea("ZP0")
+				ZP0->(dbSetOrder(1)) 		//-- CPF
+				If (ZP0->(dbSeek(FwxFilial("ZP0")+ZP7->ZP7_XCPF)))
+					ZP0->(RecLock("ZP0",.F.))
+					Replace ZP0->ZP0_XCARTA With " "
+					Replace ZP0->ZP0_XNRREF With " "
+					Replace ZP0->ZP0_XDTCAR With CTOD("  /  /  ")
+					ZP0->(msUnlock())
+					ZP0->(dbCommit()) 
+				Endif 
+				ZP7->(dbSkip()) 
+			Enddo 
+			ZP3->(RecLock("ZP3",.F.))
+			Replace ZP3->ZP3_FILIAL	With " " 	//-- Filial
+			Replace ZP3->ZP3_XMATRI	With " "	//-- Matricula
+			Replace ZP3->ZP3_XALUNO	With " "	//-- Aluno
+			Replace ZP3->ZP3_XCPF	With " "	//-- CPF Aluno
+			Replace ZP3->ZP3_XNOME	With " "	//-- Nome
+			Replace ZP3->ZP3_XEVENT	With " "	//-- Evento
+			Replace ZP3->ZP3_XDESEV	With " "	//-- Descricao
+			Replace ZP3->ZP3_XMODAL	With " "	//-- Modalidade
+			Replace ZP3->ZP3_XDESMO	With " "	//-- Descr Modali
+			Replace ZP3->ZP3_XATECN	With " "	//-- Area Tecnolo
+			Replace ZP3->ZP3_XDESAT	With " "	//-- Descr A Tecn
+			Replace ZP3->ZP3_XCURSO	With " "	//-- Curso
+			Replace ZP3->ZP3_XDESCS	With " "	//-- Descr Curso
+			Replace ZP3->ZP3_XTURNO	With " "	//-- Turno   
+			Replace ZP3->ZP3_XSESSA	With " "	//-- Sessao INICIAO ou incorporado
+			Replace ZP3->ZP3_XUSLIB	With ""		//-- Quem Liberou
+			Replace ZP3->ZP3_XDTPED	With CTOD("  /  /  ")	//-- Data da Liberação		
+			Replace ZP3->ZP3_OK		With "" 	//-- Marcação
+			ZP3->(msUnlock())
+			ZP3->(dbCommit()) 
+        Endif
+		ZP3->(dbSkip())
+	Enddo         
+End Transaction
+Aviso(FunName()+"/"+ProcName(),"Foram Liberados "+AllTrim(Str(_nCtaA))+" Cartões.",{"OK"})
+RestArea(_aArea)
+Return Nil
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGetConv>                                                  |
+| Abre interface (Tela) p/operador selecionar ou informar Cod do Convenio  |
+|@Author<Antonio Dantas>                                                   |
+|@since<24/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<   _cConven (c) - Codigo do Convenio Selecionado                         |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGetConv()
+//-- **********************************************************************
+//--    Declaração de Variaveis Private dos Objetos
+//-- **********************************************************************
+SetPrvt("_oDlgCv","_oSayCv","_oGetCv","_oBtnCvOK","_oBtnESC")      
+dbSelectArea("ZP1")
+ZP1->(dbSetorder(1))
+//-- **********************************************************************
+//--    Definicao do Dialog e todos os seus componentes.
+//-- **********************************************************************
+_oDlgCv		:= MSDialog():New( 202,326,359,699,"Cadastro de Convênios",,,.F.,,,,,,.T.,,,.T. )
+_oSayCv		:= TSay():New( 024,050,{||"Cod. do Convenio:"},_oDlgCv,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,045,008)
+_oGetCv		:= TGet():New( 021,095,{|u| If(PCount()>0,_cConven:=u,_cConven)}		,_oDlgCv,060,008,"@!"	,{|| Empty(Alltrim(_cConven)) .OR. VldZP1(@_cConven) }	,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"ZP1","_cConven",,)
+_oBtnCvOK	:= TButton():New(048,120,"OK"			,_oDlgCv,{|| _oDlgCv:End() }	,037,012,,,,.T.,,"",,,,.F. )
+_oDlgCv:Activate(,,,.T.) 
+Return _cConven
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<VldZP1>                                                    |
+|Valida o codigo do Convenio passada como argumento                        |
+|@Author<Antonio Dantas>                                                   |
+|@since<24/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<  _cConven (c) - Codigo do Convenio que sera validado                    |     
+|                  *Recebida por REFERENCIA para ser modificada na funcao  |
+|>                                                                         |
+|@return                                                                   |
+|<  _lReturn (l) - (.t.) Codigo valido/ (.f.) Codigo Invalido              |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function VldZP1(_cConven)
+Local _aArea	:= GetArea() 
+Local _aAreaZP1	:= ZP1->(GetArea())
+Local _lReturn 	:= .t.
+_cConven := StrZero(Val(_cConven),TamSX3("ZP1_XCONV")[1])
+dbSelectArea("ZP1")
+ZP1->(dbSetOrder(1)) 	//-- Cod Convenio
+If !(ZP1->(dbSeek(FwxFilial("ZP1")+_cConven)))
+	Aviso(FunName()+"/"+ProcName(),"Codigo do Convenio informado é invalido!",{"OK"})
+	_lReturn 	:= .f.
+Endif     
+RestArea(_aArea)
+RestArea(_aAreaZP1)
+Return _lReturn 

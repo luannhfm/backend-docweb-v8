@@ -1,0 +1,829 @@
+#INCLUDE 'TOTVS.CH'
+#INCLUDE 'IDATOOLS.CH'
+
+
+/*/{Protheus.doc} IdaTable
+@description Classe IdaTable
+
+@author  Helitom Silva
+@since   26/06/2015
+
+/*/
+Class IdaTable
+
+    Data oRecord       HIDDEN
+    Data nRecord       HIDDEN
+    Data nQttRecord    HIDDEN
+    Data nQttField     HIDDEN
+    Data aTable        HIDDEN
+    Data aStructTab    HIDDEN
+    Data cAliasTMP     HIDDEN
+    Data cQuery	       HIDDEN
+    Data cFilterADVPL
+
+    Method New() Constructor
+    Method AddRecord()
+    Method GetValue()
+    Method SetValue()
+    Method GetNumRec()
+    Method SetNumRec()
+    Method SetCurRec()
+    Method GoRec()
+    Method FirstRec()
+    Method PreviousRec()
+    Method NextRec()
+    Method LastRec()
+    Method GetRecord()
+    Method GetRecField()
+    Method GetQttRec()
+    Method SetQttRec()
+    Method GetQttField()
+    Method SetQttField()
+    Method GetField()
+    Method TableEOF()
+    Method GetStruct()
+    Method GetQuery()
+    Method SeekLine()
+    Method SaveData()
+
+EndClass
+
+
+/*/{Protheus.doc} New
+@description Metodo construtor da classe IdaTable
+
+@author  Helitom Silva
+@since   26/06/2015
+
+@param p_cInput, Caracter, Instrução select SQL, Tabela ou Solicitação de Estrutura, exemplo SB1:STRUCT.
+@param p_lTable, Logico, Se .T. indica que no paramento p_cInput foi informado uma tabela do Protheus, caso contrario foi informado uma instrução Select SQL.
+@param p_lExecQuery, Logico, Se .T. indica que será executado uma instrução Select SQL, caso contrario DbSelectArea().
+@param p_lExecQuery, Logico, Se .T. indica que será executado uma instrução Select SQL, caso contrario DbSelectArea().
+@param p_lCloseArea, Logico, Se .T. indica que a area aberta Fechada apos carregar a Classe.
+@param p_lTabDbUse, Logico, Se .T. indica que será executado a Funcao DbUseArea dobre o Input.
+
+/*/
+Method New(p_cInput, p_lTable, p_lExecQuery, p_cFilterADVPL, p_lCloseArea, p_lTabDbUse) Class IdaTable
+
+    Local aBkpArea	 := {}
+    Local nRec       := 0
+    Local nFilial    := 0
+    Local nX	     := 0
+    Local cTable     := ''
+
+    Default p_cInput 	   := ''
+    Default p_lTable 	   := .T.
+    Default p_lExecQuery   := !(p_cInput $ 'SXE|SXF|SM0')
+    Default p_cFilterADVPL := ''
+    Default p_lCloseArea   := !(p_cInput $ 'SXE|SXF|SM0')
+    Default p_lTabDbUse	   := .F.
+
+    Self:aTable       := {}
+    Self:cAliasTMP    := GetNextAlias()
+    Self:cFilterADVPL := p_cFilterADVPL
+    Self:cQuery		  := ""
+
+    Self:SetNumRec(0)
+    Self:SetQttRec(0)
+
+    If .not. ':STRUCT' $ Upper(p_cInput)
+
+        If p_lTable
+
+            cTable := p_cInput
+
+            If p_lExecQuery
+
+                If !Empty(FWX2Nome(cTable)) //Select(cTable) > 0
+                    Self:aStructTab := (cTable)->(DbStruct())
+                EndIf
+
+                p_cInput := "SELECT * FROM " + RetSQLName(cTable) + " TMP "
+                p_cInput += "WHERE " + Iif(!Empty(AllTrim(p_cFilterADVPL)), ADVParSQL(p_cFilterADVPL) + " ", " 0=0 ")
+
+                If !Empty(FWX2Nome(cTable))
+                    p_cInput += "    AND  TMP." + Self:aStructTab[aScan(Self:aStructTab, {|X| 'FILIAL' $ X[1]})][1] + " = '" + xFilial(cTable) + "' "
+                EndIf
+
+                p_cInput += "  AND TMP.D_E_L_E_T_ = ' '"
+
+            EndIf
+
+        EndIf
+
+        Iif(Empty(AllTrim(p_cInput)), MsgAlert('[Class IdaTable] Deve ser informado a Tabela ou SQL para Iniciar a classe IdaTable!'), Nil)
+
+        Iif(p_lCloseArea .and. Select(Self:cAliasTMP) > 0, (Self:cAliasTMP)->(DbCloseArea()), Nil)
+
+        //CopytoClipBoard(p_cInput)
+
+        If p_lExecQuery
+
+            TcQuery p_cInput New Alias (Self:cAliasTMP)
+
+        Else
+
+            If p_lTabDbUse
+                DbUseArea(.T., "TOPCONN", p_cInput, Self:cAliasTMP, .T., .T.)
+            Else
+                Self:cAliasTMP := p_cInput
+                DbSelectArea(Self:cAliasTMP)
+                aBkpArea := (Self:cAliasTMP)->(GetArea())
+            EndIf
+
+        EndIf
+
+        Self:cQuery := p_cInput
+
+        Self:aStructTab := (Self:cAliasTMP)->(DbStruct())
+        Self:SetQttField()
+
+        If p_lExecQuery
+
+            For nX := 1 to Len(Self:aStructTab)
+
+                If ( RetDSX3(Self:aStructTab[nX][1])[8] $ 'DNL' )
+                    TCSetField(Self:cAliasTMP, Self:aStructTab[nX, 1], RetDSX3(Self:aStructTab[nX][1])[8], RetDSX3(Self:aStructTab[nX][1])[4], RetDSX3(Self:aStructTab[nX][1])[5])
+                    Self:aStructTab[nX][2] := RetDSX3(Self:aStructTab[nX][1])[8]
+                Endif
+
+            Next
+
+        EndIf
+
+        DbSelectArea(Self:cAliasTMP)
+        (Self:cAliasTMP)->(DbGoTop())
+        While !(Self:cAliasTMP)->(Eof())
+
+            If !p_lExecQuery .and. !Empty(AllTrim(p_cFilterADVPL))
+
+                If !(&(p_cFilterADVPL))
+                    (Self:cAliasTMP)->(DbSkip())
+                    Loop
+                EndIf
+
+            EndIf
+
+            Self:AddRecord(Self:aStructTab)
+
+            For nX := 1 to (Self:oRecord:GetQttField())
+                Self:oRecord:SetValue((Self:cAliasTMP)->(FieldName(nX)), &((Self:cAliasTMP)->(FieldName(nX))))
+            Next
+
+            (Self:cAliasTMP)->(DbSkip())
+        End
+
+        Self:FirstRec()
+
+    Else
+
+        Self:cAliasTMP  := SubStr(p_cInput, 1, At(':STRUCT', p_cInput) - 1)
+        Self:aStructTab := (Self:cAliasTMP)->(DbStruct())
+        Self:SetQttField()
+
+    EndIf
+
+    Iif(p_lCloseArea .and. Select(Self:cAliasTMP) > 0, (Self:cAliasTMP)->(DbCloseArea()), Nil)
+
+    Iif(Len(aBkpArea) > 0, RestArea(aBkpArea), Nil)
+
+Return Self
+
+
+/*/{Protheus.doc} AddRecord
+@description Obtem objeto com dados do Registro
+
+@author  Helitom Silva
+@since   26/06/2015
+
+@param p_aStruct, Array, Estrutura de registro no formato do retorno da Função DbStruct()
+
+/*/
+Method AddRecord(p_aStruct) Class IdaTable
+
+    Default p_aStruct := Self:aStructTab
+
+    If !(ValType(p_aStruct) == 'A')
+        MsgAlert('[Class IdaTable] Para adicionar um registro, deve ser informado a Estrutura do registro')
+    EndIf
+
+    aAdd(Self:aTable, IdaRecord():New(p_aStruct))
+
+    Self:SetQttRec(Self:GetQttRec() + 1)
+
+    Self:SetCurRec(Self:GetQttRec())
+
+Return
+
+/*/{Protheus.doc} GetValue
+@description Obtem valor de um campo do Registro da Tabela
+
+@author  Helitom Silva
+@since   26/06/2015
+
+@param p_cField, Caracter, Campo ao qual deseja obter o valor
+
+/*/
+Method GetValue(p_cField) Class IdaTable
+
+    Local uRet 		:= Nil
+    Local nPosField := 0
+
+    Default p_cField := ''
+
+    If Self:GetNumRec() > 0
+        uRet := Self:oRecord:GetValue(p_cField)
+    Else
+        Self:SetCurRec(0)
+        uRet := Self:oRecord:GetValue(p_cField)
+    EndIf
+
+Return uRet
+
+
+/*/{Protheus.doc} SetValue
+@description Define valor de um campo do Registro da Tabela
+
+@author  Helitom Silva
+@since   26/06/2015
+
+@param p_cField, Caracter, Campo ao qual deseja obter o valor
+
+/*/
+Method SetValue(p_cField, p_uValue) Class IdaTable
+
+    Default p_cField := ''
+
+    Self:oRecord:SetValue(p_cField, p_uValue)
+
+Return
+
+
+/*/{Protheus.doc} GetNumRec
+@description Obtem numero do Registro Corrente
+
+@author  Helitom Silva
+@since   19/08/2015
+
+@return Self:nRecord, Numerico, nRecord
+
+/*/
+Method GetNumRec() Class IdaTable
+Return Self:nRecord
+
+
+/*/{Protheus.doc} SetNumRec
+@description Define numero do Registro
+
+@author  Helitom Silva
+@since   19/08/2015
+
+/*/
+Method SetNumRec(p_nRecord) Class IdaTable
+
+    Default p_nRecord := 0
+
+    Self:nRecord := p_nRecord
+
+Return
+
+
+/*/{Protheus.doc} SetCurRec
+@description Define Registro corrente
+
+@author  Helitom Silva
+@since   26/06/2015
+
+@param p_nRecord, Objeto, Numero do registro
+
+/*/
+Method SetCurRec(p_nRecord) Class IdaTable
+
+    If !(ValType(p_nRecord) == 'N')
+        MsgAlert('[Class IdaTable] Para definir um registro, deve ser informado o número do registro')
+    EndIf
+
+    Self:SetNumRec(p_nRecord)
+
+    If (Self:GetNumRec() > 0 .and. Self:GetQttRec() >= Self:GetNumRec())
+        Self:oRecord := Self:aTable[Self:GetNumRec()]
+    Else
+        Self:oRecord := Self:GetRecord(Self:GetNumRec())
+    EndIf
+
+Return
+
+
+/*/{Protheus.doc} GoRec
+@description Posiciona no Registro
+
+@author  Helitom Silva
+@since   21/10/2016
+
+@param p_nRecord, Objeto, Numero do registro
+
+/*/
+Method GoRec(p_nRecord) Class IdaTable
+
+    If !(ValType(p_nRecord) == 'N')
+        MsgAlert('[Class IdaTable] Para ir até um registro, deve ser informado o número do registro')
+    EndIf
+
+    Self:SetCurRec(p_nRecord)
+
+Return
+
+
+/*/{Protheus.doc} GetRecord
+@description Obtem objeto com dados do Registro
+
+@author  Helitom Silva
+@since   26/06/2015
+
+@param p_nRecord, Caracter, Codigo da Caixaação
+
+/*/
+Method GetRecord(p_nRecord) Class IdaTable
+
+    Local oRet
+
+    Default p_nRecord := 0
+
+    If (p_nRecord > 0 .and. Self:GetQttRec() >= p_nRecord)
+        oRet := Self:aTable[p_nRecord]
+    Else
+        oRet := IdaRecord():New(Self:aStructTab)
+    EndIf
+
+Return oRet
+
+
+/*/{Protheus.doc} FirstRec
+@description Move Ponteiro para primeiro Registro
+
+@author  Helitom Silva
+@since   26/06/2015
+@version 1.0
+
+/*/
+Method FirstRec() Class IdaTable
+
+    Self:SetCurRec(1)
+
+Return
+
+
+/*/{Protheus.doc} PreviousRec
+@description Move Ponteiro para Registro anterior
+
+@author  Helitom Silva
+@since   26/06/2015
+@version 1.0
+
+/*/
+Method PreviousRec() Class IdaTable
+
+    Self:SetCurRec(Self:GetNumRec()-1)
+
+Return
+
+
+/*/{Protheus.doc} NextRec
+@description Move Ponteiro para o proximo Registro
+
+@author  Helitom Silva
+@since   26/06/2015
+@version 1.0
+
+/*/
+Method NextRec() Class IdaTable
+
+    Self:SetCurRec(Self:GetNumRec()+1)
+
+Return
+
+
+/*/{Protheus.doc} LastRec
+@description Move Ponteiro para ultimo Registro
+
+@author  Helitom Silva
+@since   26/06/2015
+@version 1.0
+
+/*/
+Method LastRec() Class IdaTable
+
+    Self:SetCurRec(Self:GetQttRec())
+
+Return
+
+
+/*/{Protheus.doc} GetRecField
+@description Obtem valor de um campo de um registro
+
+@author  Helitom Silva
+@since   26/06/2015
+
+@param p_cCoIdaRecord, Caracter, Codigo da Caixaação
+@param p_cField, Caracter, Campo ao qual deseja obter o valor
+
+/*/
+Method GetRecField(p_cFieldWhr, p_cSimbLink, p_uValueWhr, p_cFieldGet) Class IdaTable
+
+    Local uRet := Nil
+
+    Private nRec 	  := 0
+    Private aTableTMP := Self:aTable
+    Private cFieldWhr := ''
+    Private uValueWhr := ''
+
+    Default p_cFieldWhr := ''
+    Default p_cSimbLink := ''
+    Default p_uValueWhr := ''
+    Default p_cFieldGet := ''
+
+    cFieldWhr := p_cFieldWhr
+    uValueWhr := p_uValueWhr
+
+    For nRec := 1 to Self:GetQttRec()
+        If &('aTableTMP[nRec]:GetValue(cFieldWhr) ' + p_cSimbLink + ' uValueWhr')
+            uRet := aTableTMP[nRec]:GetValue(p_cFieldGet)
+            Exit
+        EndIf
+    Next
+
+Return uRet
+
+
+/*/{Protheus.doc} GetQttRec
+@description Obtem a quantidade de Registros 
+	
+@author  Helitom Silva
+@since   26/06/2015
+
+/*/
+Method GetQttRec() Class IdaTable
+Return Self:nQttRecord
+
+
+/*/{Protheus.doc} SetQttRec
+@description Define a quantidade de Registros 
+	
+@author  Helitom Silva
+@since   26/06/2015
+
+/*/
+Method SetQttRec() Class IdaTable
+
+    Self:nQttRecord := Len(Self:aTable)
+
+Return
+
+
+/*/{Protheus.doc} GetQttField
+@description Obtem a quantidade de Registros 
+	
+@author  Helitom Silva
+@since   08/12/2016
+
+/*/
+Method GetQttField() Class IdaTable
+Return Self:nQttField
+
+
+/*/{Protheus.doc} SetQttField
+@description Define a quantidade de Campos 
+	
+@author  Helitom Silva
+@since   08/12/2016
+
+/*/
+Method SetQttField() Class IdaTable
+
+    Self:nQttField := Len(Self:aStructTab)
+
+Return
+
+
+/*/{Protheus.doc} GetField
+@description Obtem a Nome do campo
+	
+@author  Helitom Silva
+@since   08/12/2016
+
+@param p_nField, Numeric, Numero do campo dentro da Estrutura
+
+/*/
+Method GetField(p_nField) Class IdaTable
+
+    Local cRet := ''
+
+    Default p_nField := 0
+
+    If p_nField > 0 .and. .not. (p_nField > Len(Self:aStructTab))
+        cRet := Self:aStructTab[p_nField, 1]
+    EndIf
+
+Return cRet
+
+
+/*/{Protheus.doc} TableEOF
+@description Verifica se chegou ao ultimo registro.
+	
+@author  Helitom Silva
+@since   18/08/2015
+
+/*/
+Method TableEOF() Class IdaTable
+Return Self:GetNumRec() > Self:GetQttRec()
+
+
+/*/{Protheus.doc} GetStruct
+@description Obtem Estrutura de Campos da Tabela.
+	
+@author  Helitom Silva
+@since   21/10/2016
+
+/*/
+Method GetStruct() Class IdaTable
+Return Self:aStructTab
+
+
+/*/{Protheus.doc} GetQuery
+@description Obtem SQL usado para a consulta.
+	
+@author  Helitom Silva
+@since   31/01/2016
+
+/*/
+Method GetQuery() Class IdaTable
+Return Self:cQuery
+
+
+/*/{Protheus.doc} SeekLine
+@description Posiciona na Linha que a busca encontrar coluna e valor informado
+	
+@author  Helitom Silva
+@since   01/02/2017
+
+@param p_cField, Caracter, Nome da coluna
+@param p_uValue, Indefinido, Valor a ser definido na coluna
+@param p_lPosicio, Logico, Define se posiciona na Linha encontrada
+
+@param p_nLinha, Numerico, Indica a linha encontrada
+
+
+/*/
+Method SeekLine(p_cFieldWhr, p_cSimbLink, p_uValueWhr) Class IdaTable
+
+    Local lRet := .F.
+
+    Private nRec 	  := 0
+    Private aTableTMP := Self:aTable
+    Private cFieldWhr := ''
+    Private uValueWhr := ''
+
+    Default p_cFieldWhr := ''
+    Default p_cSimbLink := ''
+    Default p_uValueWhr := ''
+
+    cFieldWhr := p_cFieldWhr
+    uValueWhr := p_uValueWhr
+
+    For nRec := 1 to Self:GetQttRec()
+        If &('aTableTMP[nRec]:GetValue(cFieldWhr) ' + p_cSimbLink + ' uValueWhr')
+            Self:SetCurRec(nRec)
+            lRet := .T.
+            Exit
+        EndIf
+    Next
+
+Return lRet
+
+
+/*/{Protheus.doc} SaveData
+@description Salva dados no Banco dados.
+
+@author  Helitom Silva
+@since   02/04/2020
+@version 1.0
+
+@param p_cTable, Caracter, Nome da Tabela
+@param p_nIndex, Numerico, Numero do Indice
+@param p_cKey, , Chave contendo os dados
+@param p_nOperation, Numeric, 3 - Inclui, 4 - Altera, 5 - Exclui
+
+@return return, return_description
+
+@type method
+/*/
+Method SaveData(p_cTable, p_nIndex, p_cKey, p_nOperation) class IdaTable
+
+    Local lRet := .T.
+    Local nY   := 0
+
+    Default p_cTable     := ''
+    Default p_nIndex     := 0
+    Default p_cKey       := ''
+    Default p_nOperation := 0
+
+    If !Empty(p_cTable) .and. p_nIndex > 0 .and. !Empty(p_cKey) .and. p_nOperation > 0
+
+        DbSelectArea(p_cTable)
+        (p_cTable)->(DbSetOrder(p_nIndex))
+        lExistRec := (p_cTable)->(DbSeek(p_cKey))
+
+        If (p_nOperation = 3 .or. p_nOperation = 4)
+
+            RecLock(p_cTable, !lExistRec)
+
+            For nY := 1 to Self:GetQttField()
+                If .not. Self:GetField(nY) $ 'R_E_C_N_O_|D_E_L_E_T_'
+                    (p_cTable)->&(Self:GetField(nY)) := Self:GetValue(Self:GetField(nY))
+                EndIf
+            Next
+
+            (p_cTable)->(MsUnLock())
+
+        ElseIf p_nOperation  = 5
+
+            If lExistRec
+
+                RecLock(p_cTable, .F.)
+                (p_cTable)->(DbDelete())
+                (p_cTable)->(MsUnLock())
+
+            Else
+                MsgAlert('[Class IdaTable] Não foi encontrado registro na Base com o Indice e Chave informado.')
+            EndIf
+
+        EndIf
+
+    Else
+        MsgAlert('[Class IdaTable] Não é possível gravar dados, sem parâmetros para gravação do registro.')
+    EndIf
+
+Return lRet
+
+
+/*/{Protheus.doc} IdaRecord
+@description Classe registro
+	
+@author  Helitom Silva
+@since   26/06/2015
+
+/*/
+    Class IdaRecord
+
+        Data aStruct
+        Data aRecord
+        Data nRecord
+        Data nFields
+
+        Method New() Constructor
+        Method GetValue()
+        Method SetValue()
+        Method GetNumRec()
+        Method SetNumRec()
+        Method GetQttField()
+        Method SetQttField()
+
+    EndClass
+
+
+/*/{Protheus.doc} New
+@description Construtor classe registro
+	
+@author  Helitom Silva
+@since   26/06/2015
+
+@param p_aStruct, Array, Estrutura de registro no formato do retorno da Função DbStruct()
+@param p_nRecord, Numerico, Numero do Registro
+
+/*/
+Method New(p_aStruct, p_nRecord) Class IdaRecord
+
+    Local nX := 0
+
+    Default p_aStruct := ''
+    Default p_nRecord := 0
+
+    Self:aStruct := p_aStruct
+    Self:aRecord := {}
+
+    Self:SetQttField(Len(Self:aStruct))
+
+    For nX := 1 to Self:GetQttField()
+
+        aAdd(Self:aRecord,  {Self:aStruct[nX][1], RetDado(Self:aStruct[nX][2])})
+
+    Next
+
+    Self:SetNumRec(p_nRecord)
+
+Return Self
+
+
+/*/{Protheus.doc} GetValue
+@description Obtem valor de um campo do Registro
+
+@author  Helitom Silva
+@since   26/06/2015
+
+@param p_cField, Caracter, Campo ao qual deseja obter o valor
+
+/*/
+Method GetValue(p_cField) Class IdaRecord
+
+    Local uRet 		:= Nil
+    Local nPosField := 0
+
+    Default p_cField := ''
+
+    If (nPosField := aScan(Self:aRecord, {|X| X[1] = p_cField})) > 0
+        uRet := Self:aRecord[nPosField][2]
+    EndIf
+
+Return uRet
+
+
+/*/{Protheus.doc} SetValue
+@description Define valor de um campo do Registro
+
+@author  Helitom Silva
+@since   26/06/2015
+
+@param p_cField, Caracter, Campo ao qual deseja obter o valor
+
+/*/
+Method SetValue(p_cField, p_uValue) Class IdaRecord
+
+    Local nPosField := 0
+
+    Default p_cField := ''
+
+    If (nPosField := aScan(Self:aRecord, {|X| X[1] = p_cField})) > 0
+        Self:aRecord[nPosField][2] := p_uValue
+    EndIf
+
+Return
+
+
+/*/{Protheus.doc} GetNumRec
+@description Obtem numero do Registro
+
+@author  Helitom Silva
+@since   26/06/2015
+@version 1.0
+
+/*/
+Method GetNumRec() Class IdaRecord
+Return Self:nRecord
+
+
+/*/{Protheus.doc} SetNumRec
+@description Define numero do Registro
+
+@author  Helitom Silva
+@since   26/06/2015
+@version 1.0
+
+/*/
+Method SetNumRec(p_nRecord) Class IdaRecord
+
+    Default p_nRecord := 0
+
+    Self:nRecord := p_nRecord
+
+Return
+
+
+/*/{Protheus.doc} GetNumRec
+@description Obtem quantidade de colunas
+
+@author  Helitom Silva
+@since   26/06/2015
+@version 1.0
+
+/*/
+Method GetQttField() Class IdaRecord
+Return Self:nFields
+
+
+/*/{Protheus.doc} SetQttField
+@description Define quantidade de colunas
+
+@author  Helitom Silva
+@since   26/06/2015
+@version 1.0
+
+@param p_nFields, Numerico, Quantidade de colunas
+
+/*/
+Method SetQttField(p_nFields) Class IdaRecord
+
+    Default p_nFields := 0
+
+    Self:nFields := p_nFields
+
+Return

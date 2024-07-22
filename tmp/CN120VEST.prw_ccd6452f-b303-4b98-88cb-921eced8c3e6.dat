@@ -1,0 +1,150 @@
+#include "protheus.ch"
+
+#DEFINE DEF_CONTTOT "001" //Controle Total
+#DEFINE DEF_ESTMED "025"//Estorno de Medicoes
+
+/*/{Protheus.doc} CN120VEST
+LOCALIZAÇÃO:  Function CN120MedEst - Função utilizada no estorno da medição.
+EM QUE PONTO:  Executada antes do processamento do estorno.
+Será enviado um parâmetro para o ponto de entrada, determinando se o usuário possui ou não direito de estornar a medição para o contrato atual.
+O retorno do ponto de entrada será do tipo lógico.
+Regra de estorno da medicao/pedido envolvendo a permissao somente os gestores do contrato.
+@author Carlos A. Queiroz
+@since 20/02/13
+@return lRet, Informa se permite a conclusão do estorno.
+@type user function
+/*/
+User Function CN120VEST()
+Local lRet      := .F.
+Local cWhileCNN := ""
+Local aGestores := {}
+Local aUsrGrp	:= {}
+Local lAcesso  	:= PARAMIXB[1] // indica se usuário tem ou não direitos sobre o contrato
+Local nX        := 0
+Local cGestores := ""
+Local lNext     := .F.
+Local _aArea    := GetArea()
+Local _aAreaCNN := CNN->(GetArea())
+Local _aAreaCND := CND->(GetArea())
+Local _aAreaSC7 := SC7->(GetArea())
+
+Private _cFilPed   := ""
+Private _cFilContr := ""
+Private __lOkSC := .T.
+Private cUserSC := ""
+
+lRet := lAcesso
+//Só verifico se o usuário é um gestor ou faz parte de um grupo gestor 
+//se ele tiver acesso à esta transação e se o mesmo tiver controle de acesso.
+If lAcesso .And. CN9->CN9_VLDCTR == '1'	//1=Sim;2=Não
+	lRet := .F.
+	begin transaction
+	
+	_cFilPed := CND->CND_FILIAL
+	
+	//dbselectarea("SC7")
+	//dbsetorder(1)
+	//If dbseek(_cFilPed+CND->CND_PEDIDO)
+	
+	_cFilContr := CND->CND_FILCTR //iif(!empty(SC7->C7_XFILCOM),SC7->C7_XFILCOM,SC7->C7_FILIAL)
+	
+	dbselectarea("CNN")
+	dbsetorder(2)
+	If dbseek(_cFilContr+space(TamSx3("CNN_GRPCOD")[1])+CND->CND_CONTRA)
+		
+		cWhileCNN := _cFilContr+space(TamSx3("CNN_GRPCOD")[1])+CND->CND_CONTRA
+		
+		While CNN->(!EOF()) .and. cWhileCNN == CNN->CNN_FILIAL+CNN->CNN_GRPCOD+CNN->CNN_CONTRA
+			
+			aAdd(aGestores, CNN->CNN_USRCOD)
+			
+			if alltrim(CNN->CNN_USRCOD) == alltrim(__cuserid)
+				__lOkSC := .F.
+			endif
+			CNN->(dbskip())
+		EndDo
+		
+		dbseek(_cFilContr+space(TamSx3("CNN_GRPCOD")[1])+CND->CND_CONTRA)
+		
+		If __lOkSC
+			cUserSC := CNN->CNN_USRCOD
+			RecLock("CNN",.F.)
+			CNN->CNN_USRCOD := cUserSC
+			CNN->(msunlock())
+		EndIf
+	EndIf
+	
+	For nX:=1 to Len(aGestores)
+		If alltrim(__cUserId) == alltrim(aGestores[nX])
+			lRet := .T.
+		EndIf
+	Next nX
+	//Se o usuário não é gestor do contrato, verifico se ele pertence a um grupo gestor de contrato
+	If !lRet
+	aUsrGrp := UsrRetGrp()
+	For nX := 1 To Len(aUsrGrp) 
+		If CNN->( DbSeek( _cFilContr + aUsrGrp[nX] + CND->CND_CONTRA) )
+			cWhileCNN := _cFilContr + aUsrGrp[nX] + CND->CND_CONTRA
+			While CNN->( !Eof() ) .And. cWhileCNN == CNN->CNN_FILIAL + CNN->CNN_GRPCOD + CNN->CNN_CONTRA
+				If CNN->CNN_TRACOD == DEF_CONTTOT .Or. CNN->CNN_TRACOD == DEF_ESTMED
+					lRet := .T.
+					Exit
+				EndIf
+			EndDo
+			//Se já identifiquei que o usuário pode estornar, saio do Loop.
+			If lRet
+				Exit
+			EndIf
+		EndIf
+	Next nX
+EndIf
+/*
+IF lRet
+   dbselectarea("SC7")
+   dbsetorder(1)
+   If dbseek(_cFilContr+CND->CND_PEDIDO)
+		RecLock("SC7",.F.)
+		SC7->C7_USER := ""
+		SC7->(msunlock())
+	ENDIF
+   CND->(RECLOCK('CND',.F.))
+   CND->CND_PEDIDO:=SPACE(6)
+   CND->(MSUNLOCK('CND'))
+
+   CNE->(RECLOCK('CNE',.F.))
+   CNE->CNE_PEDIDO:=SPACE(6)
+   CNE->(MSUNLOCK('CND'))
+
+ENDIF
+*/
+
+If !lRet
+	For nX:=1 to Len(aGestores)
+		if lNext .and. nX == Len(aGestores)
+			cGestores += " e "
+		Endif
+		cGestores += upper(alltrim(UsrRetName(aGestores[nX])))
+		if nX <> Len(aGestores)
+			if nX <> Len(aGestores)-1
+				cGestores += ", "
+			endif
+			lNext := .T.
+		endif
+	Next nX
+	
+	MsgInfo( "O usuário " + AllTrim( UsrRetName( __cUserId ) ) +;
+	 	" não é um gestor do contrato " + AllTrim( SC7->C7_CONTRA ) +;
+	 	" e por isso não tem permissão para executar o processo de estorno da medição/pedido." +;
+	 	CRLF + "Apenas o(s) gestor(es) do contrato " + cGestores + " consegue(m) concluir o processo.",;
+	 	"Usuário sem permissão" )
+	lRet := .F.
+EndIf
+End Transaction
+EndIf
+
+RestArea(_aAreaCNN)
+RestArea(_aAreaCND)
+RestArea(_aAreaSC7)
+RestArea(_aArea)
+
+Return lRet

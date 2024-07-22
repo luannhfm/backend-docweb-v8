@@ -1,0 +1,998 @@
+// Categoria: TESTES
+
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "TOTVS.CH"
+#INCLUDE "RESTFUL.CH"
+
+A00_FILIAL
+
+/*/{Protheus.doc} WSRESTFUL MEDERI
+Webservice de Integração Mederi
+@author Rafael Domingues
+@since 17.03.2023
+/*/
+WSRESTFUL MEDERI DESCRIPTION 'Mederi - Webservice de integrações' FORMAT APPLICATION_JSON
+	WSDATA tipo 	As STRING
+	WSDATA datade 	As STRING
+	WSDATA dataat 	As STRING
+
+	WSMETHOD POST cliente;
+		DESCRIPTION "Inclusão Cliente";
+		PATH '/fat/cliente';
+		WSSYNTAX '/fat/cliente';
+		PRODUCES APPLICATION_JSON
+
+	WSMETHOD POST fornecedor;
+		DESCRIPTION "Inclusão Fornecedor";
+		PATH '/com/fornecedor';
+		WSSYNTAX '/com/fornecedor';
+		PRODUCES APPLICATION_JSON
+
+	WSMETHOD POST ccusto;
+		DESCRIPTION "Inclusão Centro de Custo";
+		PATH '/ctb/ccusto';
+		WSSYNTAX '/ctb/ccusto';
+		PRODUCES APPLICATION_JSON
+
+	WSMETHOD POST creceber;
+		DESCRIPTION "Inclusão Contas a Receber";
+		PATH '/fin/creceber';
+		WSSYNTAX '/fin/creceber';
+		PRODUCES APPLICATION_JSON
+
+	WSMETHOD POST cpagar;
+		DESCRIPTION "Inclusão Contas a Pagar";
+		PATH '/fin/cpagar';
+		WSSYNTAX '/fin/cpagar';
+		PRODUCES APPLICATION_JSON
+
+	WSMETHOD POST lancacontabil;
+		DESCRIPTION "Inclusão Lançamentos Contábeis";
+		PATH '/ctb/lancacontabil';
+		WSSYNTAX '/ctb/lancacontabil';
+		PRODUCES APPLICATION_JSON
+
+	WSMETHOD GET consult;
+		DESCRIPTION "Consulta Baixa Títulos a Pagar/Receber";
+		PATH '/fin';
+		WSSYNTAX '/fin';
+		PRODUCES APPLICATION_JSON
+
+	WSMETHOD POST itcontabil;
+		DESCRIPTION "Inclusão Itens Contábeis";
+		PATH '/ctb/itcontabil';
+		WSSYNTAX '/ctb/itcontabil';
+		PRODUCES APPLICATION_JSON
+END WSRESTFUL
+
+/*/{Protheus.doc} WSRESTFUL MEDERI
+Integração Clientes
+@author Rafael Domingues
+@since 17.03.2023
+/*/
+WSMETHOD POST cliente WSSERVICE MEDERI
+	Local oJson			:= NIL
+	Local oJsonRet		:= NIL
+	Local nY			:= 0
+	Local nX			:= 0
+	Local nErr			:= 0
+	Local cErr			:= ""
+	Local _cCodAux 		:= ""
+	Local _cLojAux		:= ""
+	Local cRet			:= ""
+	Local cJsRet		:= ""
+	Local _cTime		:= Time()
+	Local aSA1Auto  	:= {}
+	Local nPosFil		:= 0
+	Local nPosCod		:= 0
+	Local nPosLoj		:= 0
+
+	Private lMsErroAuto		:= .F.
+	Private lMsHelpAuto		:= .T.
+	Private lAutoErrNoFile 	:= .T.
+	Private aErro 			:= {}
+
+	cBody := ::GetContent()
+	::SetContentType("application/json")
+	oJson := JsonObject():new()
+	cRet := oJson:fromJson(FwNoAccent(cBody))
+
+	If ValType(cRet) <> "U"
+		SetRestFault(400,EncodeUTF8("Estrutura json invalida"),.T.)
+		Return lMsErroAuto
+	EndIf
+
+	DbSelectArea("SA1")
+
+	names1 := oJson:GetNames()
+	names2 := oJson[names1[1]][1]:GetNames()
+
+	cJsRet := '{"CLIENTES": [
+
+	For nX := 1 To Len(oJson[names1[1]])
+		For nY := 1 To Len(names2)
+			If AllTrim(names2[nY]) == "A1_COD"
+				_cCodAux := oJson[names1[1]][nX][names2[nY]]
+				aAdd(aSA1Auto,{names2[nY], _cCodAux ,Nil})
+			ElseIf AllTrim(names2[nY]) == "A1_LOJA"
+				_cLojAux := oJson[names1[1]][nX][names2[nY]]
+				aAdd(aSA1Auto,{names2[nY], _cLojAux ,Nil})
+			Else
+				aAdd(aSA1Auto,{names2[nY], oJson[names1[1]][nX][names2[nY]] ,Nil})
+			EndIf
+		Next nY
+
+		nPosFil := aScan(aSA1Auto,{|x| Alltrim(x[1]) == 'A1_FILIAL' })
+		nPosCod := aScan(aSA1Auto,{|x| Alltrim(x[1]) == 'A1_COD' })
+		nPosLoj := aScan(aSA1Auto,{|x| Alltrim(x[1]) == 'A1_LOJA' })
+
+		lMsErroAuto := .F.
+
+		SA1->(DbSetOrder(1))
+		If SA1->(DbSeek(PadR(AllTrim(aSA1Auto[nPosFil][2]),TamSx3("A1_FILIAL")[1]) + PadR(AllTrim(aSA1Auto[nPosCod][2]),TamSx3("A1_COD")[1]) + PadR(AllTrim(aSA1Auto[nPosLoj][2]),TamSx3("A1_LOJA")[1])))
+			MSExecAuto({|_x, _y| CRMA980(_x, _y)}, aSA1Auto, 4) // Altera
+		Else
+			MSExecAuto({|_x, _y| CRMA980(_x, _y)}, aSA1Auto, 3) // Inclusao
+		EndIf
+
+		//Se não deu certo a inclusão, mostra a mensagem de erro
+		If lMsErroAuto
+			aErro := GetAutoGrLog()
+
+			For nErr := 1 To Len(aErro)
+				If At("Invalido",aErro[nErr])
+					cErr := aErro[nErr]
+					Exit
+				EndIf
+			Next nErr
+
+			cJsRet += '{'
+			cJsRet += '"A1_COD": "'+AllTrim(_cCodAux)+'",'
+			cJsRet += '"A1_LOJA": "'+AllTrim(_cLojAux)+'",'
+			cJsRet += '"CODRET": "400",'
+			cJsRet += '"MSGRET": "'+EncodeUTF8(NoAcento(cErr), "cp1252")+'" '
+			cJsRet += '},'
+		Else
+			cJsRet += '{'
+			cJsRet += '"A1_COD": "'+AllTrim(_cCodAux)+'",'
+			cJsRet += '"A1_LOJA": "'+AllTrim(_cLojAux)+'",'
+			cJsRet += '"CODRET": "001",'
+			cJsRet += '"MSGRET": "SUCESSO" '
+			cJsRet += '},'
+		EndIf
+	Next nX
+
+	If Substr( cJsRet, Len(cJsRet), 1 ) == ","
+		cJsRet := Substr( cJsRet, 1, Len(cJsRet) - 1 )
+	EndIf
+	cJsRet += ']}'
+
+	//Gravar o log com o resultado
+	DbSelectArea("SZ0")
+	SZ0->(RecLock("SZ0",.T.))
+	SZ0->Z0_FILIAL 	:= xFilial("SZ0")
+	SZ0->Z0_DTINTEG := Date()
+	SZ0->Z0_HORAINT := _cTime
+	SZ0->Z0_TIPOINT := "1"
+	SZ0->Z0_JSONIN 	:= cBody
+	SZ0->Z0_JSONOUT := cJsRet
+	SZ0->(MsUnLock())
+
+	// Devolve o retorno para o Rest
+	::SetResponse(cJsRet)
+
+	FreeObj(oJsonRet)
+	FreeObj(oJson)
+Return .T.
+
+/*/{Protheus.doc} WSRESTFUL MEDERI
+Integração Fornecedores
+@author Rafael Domingues
+@since 17.03.2023
+/*/
+WSMETHOD POST fornecedor WSSERVICE MEDERI
+	Local oJson			:= NIL
+	Local oJsonRet		:= NIL
+	Local nY			:= 0
+	Local nX			:= 0
+	Local cRet			:= ""
+	Local cJsRet		:= ""
+	Local _cCodAux		:= ""
+	Local _cLojAux		:= ""
+	Local _cTime		:= Time()
+	Local lAlt			:= .F.
+
+	Private lDeuCerto 	:= .F.
+	Private oModel 		:= ""
+	Private oSA2Mod 	:= Nil
+	Private aErro 		:= {}
+
+	DbSelectArea("SA2")
+
+	cBody := ::GetContent()
+	::SetContentType("application/json")
+	oJson := JsonObject():new()
+	cRet := oJson:fromJson(FwNoAccent(cBody))
+
+	If ValType(cRet) <> "U"
+		SetRestFault(400,EncodeUTF8("Estrutura json invalida"),.T.)
+		Return lDeuCerto
+	EndIf
+
+	names1 := oJson:GetNames()
+	names2 := oJson[names1[1]][1]:GetNames()
+
+	cJsRet := '{"FORNECEDORES": [
+
+	For nX := 1 To Len(oJson[names1[1]])
+		SA2->(DbSetOrder(1))
+		If !SA2->(DbSeek( Padr(oJson[names1[1]][nX]:A2_FILIAL,TamSx3("A2_FILIAL")[1]) + Padr(oJson[names1[1]][nX]:A2_COD,TamSx3("A2_COD")[1]) + Padr(oJson[names1[1]][nX]:A2_LOJA,TamSx3("A2_LOJA")[1]) ))
+			oModel := FWLoadModel("MATA020")
+			oModel:SetOperation(3)
+			oModel:Activate()
+			oSA2Mod := oModel:GetModel("SA2MASTER")
+		Else
+			lAlt := .T.
+			oModel := FWLoadModel("MATA020")
+			oModel:SetOperation(4)
+			oModel:Activate()
+			oSA2Mod := oModel:GetModel("SA2MASTER")
+		EndIf
+		For nY := 1 To Len(names2)
+			If AllTrim(names2[nY]) == "A2_COD"
+				_cCodAux := oJson[names1[1]][nX][names2[nY]]
+				If lAlt
+					oSA2Mod:LoadValue(names2[nY],_cCodAux)
+				Else
+					oSA2Mod:SetValue(names2[nY],_cCodAux)
+				EndIf
+			ElseIf AllTrim(names2[nY]) == "A2_LOJA"
+				_cLojAux := oJson[names1[1]][nX][names2[nY]]
+				If lAlt
+					oSA2Mod:LoadValue(names2[nY],_cLojAux)
+				Else
+					oSA2Mod:SetValue(names2[nY],_cLojAux)
+				EndIf
+			Else
+				oSA2Mod:SetValue(names2[nY],oJson[names1[1]][nX][names2[nY]])
+			EndIf
+		Next nY
+
+		//Se conseguir validar as informações
+		If oModel:VldData()
+			If oModel:CommitData()
+				lDeuCerto := .T.
+			Else
+				lDeuCerto := .F.
+			EndIf
+		Else
+			lDeuCerto := .F.
+		EndIf
+
+		//Se não deu certo a inclusão, mostra a mensagem de erro
+		If !lDeuCerto
+			aErro := oModel:GetErrorMessage()
+			oModel:DeActivate()
+
+			cJsRet += '{'
+			cJsRet += '"A2_COD": "'+AllTrim(_cCodAux)+'",'
+			cJsRet += '"A2_LOJA": "'+AllTrim(_cLojAux)+'",'
+			cJsRet += '"CODRET": "400",'
+			cJsRet += '"MSGRET": "'+EncodeUTF8(NoAcento(aErro[06]), "cp1252")+'" '
+			cJsRet += '},'
+		Else
+			oModel:DeActivate()
+			cJsRet += '{'
+			cJsRet += '"A2_COD": "'+AllTrim(_cCodAux)+'",'
+			cJsRet += '"A2_LOJA": "'+AllTrim(_cLojAux)+'",'
+			cJsRet += '"CODRET": "001",'
+			cJsRet += '"MSGRET": "SUCESSO" '
+			cJsRet += '},'
+		EndIf
+	Next nX
+
+	If Substr( cJsRet, Len(cJsRet), 1 ) == ","
+		cJsRet := Substr( cJsRet, 1, Len(cJsRet) - 1 )
+	EndIf
+	cJsRet += ']}'
+
+	//Gravar o log com o resultado
+	DbSelectArea("SZ0")
+	SZ0->(RecLock("SZ0",.T.))
+	SZ0->Z0_FILIAL 	:= xFilial("SZ0")
+	SZ0->Z0_DTINTEG := Date()
+	SZ0->Z0_HORAINT := _cTime
+	SZ0->Z0_TIPOINT := "2"
+	SZ0->Z0_JSONIN 	:= cBody
+	SZ0->Z0_JSONOUT := cJsRet
+	SZ0->(MsUnLock())
+
+	// Devolve o retorno para o Rest
+	::SetResponse(cJsRet)
+
+	FreeObj(oJsonRet)
+	FreeObj(oJson)
+Return .T.
+
+/*/{Protheus.doc} WSRESTFUL MEDERI
+Integração Centro de Custo
+@author Rafael Domingues
+@since 17.03.2023
+/*/
+WSMETHOD POST ccusto WSSERVICE MEDERI
+	Local oJson		:= NIL
+	Local cRet		:= ""
+	Local cJsRet	:= ""
+	Local nX		:= 0
+	Local _cTime	:= Time()
+
+	DbSelectArea('CTT')
+	CTT->(DbSetOrder(1))
+
+	cBody := ::GetContent()
+	::SetContentType("application/json")
+	oJson := JsonObject():new()
+	cRet := oJson:fromJson(FwNoAccent(cBody))
+
+	If ValType(cRet) <> "U"
+		SetRestFault(400,EncodeUTF8("Estrutura json invalida"),.T.)
+		Return lDeuCerto
+	EndIf
+
+	names1 := oJson:GetNames()
+	names2 := oJson[names1[1]][1]:GetNames()
+
+	cJsRet := '{"CCUSTO": [
+
+	For nX := 1 To Len(oJson[names1[1]])
+		If CTT->(DbSeek(Padr(oJson[names1[1]][nX]:CTT_FILIAL,TamSx3("CTT_FILIAL")[1])+Padr(oJson[names1[1]][nX]:CTT_CUSTO,TamSx3("CTT_CUSTO")[1])))
+			CTT->(RecLock('CTT',.F.))
+			CTT->CTT_DESC01 := oJson[names1[1]][nX]:CTT_DESC01
+			CTT->(MsUnlock())
+
+			cJsRet += '{'
+			cJsRet += '"CTT_CUSTO": "'+AllTrim(oJson[names1[1]][nX]:CTT_CUSTO)+'",'
+			cJsRet += '"CODRET": "001",'
+			cJsRet += '"MSGRET": "SUCESSO" '
+			cJsRet += '},'
+
+		Else
+			CTT->(RecLock('CTT',.T.))
+			CTT->CTT_FILIAL := oJson[names1[1]][nX]:CTT_FILIAL
+			CTT->CTT_CUSTO 	:= oJson[names1[1]][nX]:CTT_CUSTO
+			CTT->CTT_CLASSE := oJson[names1[1]][nX]:CTT_CLASSE
+			CTT->CTT_NORMAL := oJson[names1[1]][nX]:CTT_NORMAL
+			CTT->CTT_DESC01 := oJson[names1[1]][nX]:CTT_DESC01
+			CTT->(MsUnlock())
+
+			cJsRet += '{'
+			cJsRet += '"CTT_CUSTO": "'+AllTrim(oJson[names1[1]][nX]:CTT_CUSTO)+'",'
+			cJsRet += '"CODRET": "001",'
+			cJsRet += '"MSGRET": "SUCESSO" '
+			cJsRet += '},'
+		EndIf
+	Next nX
+
+	If Substr( cJsRet, Len(cJsRet), 1 ) == ","
+		cJsRet := Substr( cJsRet, 1, Len(cJsRet) - 1 )
+	EndIf
+	cJsRet += ']}'
+
+	//Gravar o log com o resultado
+	DbSelectArea("SZ0")
+	SZ0->(RecLock("SZ0",.T.))
+	SZ0->Z0_FILIAL 	:= xFilial("SZ0")
+	SZ0->Z0_DTINTEG := Date()
+	SZ0->Z0_HORAINT := _cTime
+	SZ0->Z0_TIPOINT := "2"
+	SZ0->Z0_JSONIN 	:= cBody
+	SZ0->Z0_JSONOUT := cJsRet
+	SZ0->(MsUnLock())
+
+	// Devolve o retorno para o Rest
+	::SetResponse(cJsRet)
+
+	FreeObj(oJson)
+Return .T.
+
+/*/{Protheus.doc} WSRESTFUL MEDERI
+Integração Contas a Receber
+@author Rafael Domingues
+@since 17.03.2023
+/*/
+WSMETHOD POST creceber WSSERVICE MEDERI
+	Local oJson			:= NIL
+	Local nY			:= 0
+	Local nX			:= 0
+	Local cRet			:= ""
+	Local aVetSE1 		:= {}
+	Local cJsRet		:= ""
+	Local _cTime		:= Time()
+	Local nPosFil		:= 0
+	Local nPosPre		:= 0
+	Local nPosNum		:= 0
+	Local nPosPar		:= 0
+	Local nPosTip		:= 0
+
+	Private lMsErroAuto := .F.
+
+	DbSelectArea("SE1")
+
+	cBody := ::GetContent()
+	::SetContentType("application/json")
+	oJson := JsonObject():new()
+	cRet := oJson:fromJson(FwNoAccent(cBody))
+
+	If ValType(cRet) <> "U"
+		SetRestFault(400,EncodeUTF8("Estrutura json invalida"),.T.)
+		Return lMsErroAuto
+	EndIf
+
+	names1 := oJson:GetNames()
+	names2 := oJson[names1[1]][1]:GetNames()
+
+	cJsRet := '{"RECEBER": ['
+
+	For nX := 1 To Len(oJson[names1[1]])
+		aVetSE1 := {}
+		For nY := 1 To Len(names2)
+			DbSelectArea("SX3")
+			DbSetOrder(2)
+			If MsSeek(AllTrim(names2[nY]))
+				If SX3->X3_TIPO == "D"
+					aAdd(aVetSE1, {names2[nY] ,CtoD(oJson[names1[1]][nX][names2[nY]]) ,Nil})
+				ElseIf SX3->X3_TIPO == "C"
+					aAdd(aVetSE1, {names2[nY] ,PadR(AllTrim(oJson[names1[1]][nX][names2[nY]]),TamSx3(names2[nY])[1]),Nil})
+				Else
+					aAdd(aVetSE1, {names2[nY] ,oJson[names1[1]][nX][names2[nY]] ,Nil})
+				EndIf
+			EndIf
+		Next nY
+		aAdd(aVetSE1, {"E1_SITUACA" ,"1",Nil})
+
+		nPosFil := aScan(aVetSE1,{|x| Alltrim(x[1]) == 'E1_FILIAL' })
+		nPosPre := aScan(aVetSE1,{|x| Alltrim(x[1]) == 'E1_PREFIXO' })
+		nPosNum := aScan(aVetSE1,{|x| Alltrim(x[1]) == 'E1_NUM' })
+		nPosPar := aScan(aVetSE1,{|x| Alltrim(x[1]) == 'E1_PARCELA' })
+		nPosTip := aScan(aVetSE1,{|x| Alltrim(x[1]) == 'E1_TIPO' })
+
+		lMsErroAuto := .F.
+
+		SE1->(DbSetOrder(1))
+		If SE1->(DbSeek(PadR(AllTrim(aVetSE1[nPosFil][2]),TamSx3("E1_FILIAL")[1]) + PadR(AllTrim(aVetSE1[nPosPre][2]),TamSx3("E1_PREFIXO")[1]) +  PadR(AllTrim(aVetSE1[nPosNum][2]),TamSx3("E1_NUM")[1]) + PadR(AllTrim(aVetSE1[nPosPar][2]),TamSx3("E1_PARCELA")[1]) + PadR(AllTrim(aVetSE1[nPosTip][2]),TamSx3("E1_TIPO")[1]) ))
+			MSExecAuto({|x,y| FINA040(x,y)}, aVetSE1, 4) // Altera
+		Else
+			MSExecAuto({|x,y| FINA040(x,y)}, aVetSE1, 3) // Inclusao
+		EndIf
+
+		If lMsErroAuto
+			cErroTemp 	:= Mostraerro("\system\", AllTrim(aVetSE1[nX,2])+DtoS(Date())+StrTran(Time(),":") + ".log")
+			nLinhas 	:= MLCount(cErroTemp)
+			cBuffer 	:= ""
+			cCampo 		:= ""
+			nErrLin 	:= 1
+			cBuffer 	:= RTrim(MemoLine(cErroTemp,,nErrLin))
+
+			While (nErrLin <= nLinhas)
+				nErrLin++
+				cBuffer += RTrim(MemoLine(cErroTemp,,nErrLin)) +CRLF
+				If (Upper(SubStr(cBuffer,Len(cBuffer)-7,Len(cBuffer))) == "INVALIDO")
+					cCampo := cBuffer
+					Exit
+				EndIf
+			EndDo
+
+			If Empty(cCampo)
+				cCampo := AllTrim(cBuffer)
+			EndIf
+
+			cJsRet += '{'
+			cJsRet += '"E1_NUM": "'+AllTrim(aVetSE1[3][2])+'",'
+			cJsRet += '"E1_PARCELA": "'+AllTrim(aVetSE1[4][2])+'",'
+			cJsRet += '"CODRET": "400",'
+			cJsRet += '"MSGRET": "'+EncodeUTF8(NoAcento(cCampo), "cp1252")+'" '
+			cJsRet += '},'
+
+		Else
+			cJsRet += '{'
+			cJsRet += '"E1_NUM": "'+AllTrim(aVetSE1[3][2])+'",'
+			cJsRet += '"E1_PARCELA": "'+AllTrim(aVetSE1[4][2])+'",'
+			cJsRet += '"CODRET": "001",'
+			cJsRet += '"MSGRET": "SUCESSO" '
+			cJsRet += '},'
+		Endif
+	Next nX
+
+	If Substr( cJsRet, Len(cJsRet), 1 ) == ","
+		cJsRet := Substr( cJsRet, 1, Len(cJsRet) - 1 )
+	EndIf
+	cJsRet += ']}'
+
+	//Gravar o log com o resultado
+	DbSelectArea("SZ0")
+	SZ0->(RecLock("SZ0",.T.))
+	SZ0->Z0_FILIAL 	:= xFilial("SZ0")
+	SZ0->Z0_DTINTEG := Date()
+	SZ0->Z0_HORAINT := _cTime
+	SZ0->Z0_TIPOINT := "2"
+	SZ0->Z0_JSONIN 	:= cBody
+	SZ0->Z0_JSONOUT := cJsRet
+	SZ0->(MsUnLock())
+
+	// Devolve o retorno para o Rest
+	::SetResponse(cJsRet)
+
+	FreeObj(oJson)
+
+Return .T.
+
+/*/{Protheus.doc} WSRESTFUL MEDERI
+Integração Contas a Pagar
+@author Rafael Domingues
+@since 17.03.2023
+/*/
+WSMETHOD POST cpagar WSSERVICE MEDERI
+	Local oJson			:= NIL
+	Local nY			:= 0
+	Local nX			:= 0
+	Local cRet			:= ""
+	Local aVetSE2 		:= {}
+	Local cJsRet		:= ""
+	Local _cTime		:= Time()
+	Local nPosFil		:= 0
+	Local nPosPre		:= 0
+	Local nPosNum		:= 0
+	Local nPosPar		:= 0
+	Local nPosTip		:= 0
+	Local nPosFor		:= 0
+	Local nPosLoj		:= 0
+
+	Private lMsErroAuto := .F.
+
+	DbSelectArea("SE2")
+
+	cBody := ::GetContent()
+	::SetContentType("application/json")
+	oJson := JsonObject():new()
+	cRet := oJson:fromJson(FwNoAccent(cBody))
+
+	If ValType(cRet) <> "U"
+		SetRestFault(400,EncodeUTF8("Estrutura json invalida"),.T.)
+		Return lDeuCerto
+	EndIf
+
+	names1 := oJson:GetNames()
+	names2 := oJson[names1[1]][1]:GetNames()
+
+	cJsRet := '{"PAGAR": ['
+
+	For nX := 1 To Len(oJson[names1[1]])
+		aVetSE2 := {}
+		For nY := 1 To Len(names2)
+			DbSelectArea("SX3")
+			DbSetOrder(2)
+			If MsSeek(AllTrim(names2[nY]))
+				If SX3->X3_TIPO == "D"
+					aAdd(aVetSE2, {names2[nY] ,CtoD(oJson[names1[1]][nX][names2[nY]]) ,Nil})
+				ElseIf SX3->X3_TIPO == "C"
+					aAdd(aVetSE2, {names2[nY] ,PadR(AllTrim(oJson[names1[1]][nX][names2[nY]]),TamSx3(names2[nY])[1]),Nil})
+				Else
+					aAdd(aVetSE2, {names2[nY] ,oJson[names1[1]][nX][names2[nY]] ,Nil})
+				EndIf
+			EndIf
+		Next nY
+
+		nPosFil := aScan(aVetSE2,{|x| Alltrim(x[1]) == 'E2_FILIAL' })
+		nPosPre := aScan(aVetSE2,{|x| Alltrim(x[1]) == 'E2_PREFIXO' })
+		nPosNum := aScan(aVetSE2,{|x| Alltrim(x[1]) == 'E2_NUM' })
+		nPosPar := aScan(aVetSE2,{|x| Alltrim(x[1]) == 'E2_PARCELA' })
+		nPosTip := aScan(aVetSE2,{|x| Alltrim(x[1]) == 'E2_TIPO' })
+		nPosFor := aScan(aVetSE2,{|x| Alltrim(x[1]) == 'E2_FORNECE' })
+		nPosLoj := aScan(aVetSE2,{|x| Alltrim(x[1]) == 'E2_LOJA' })
+
+		lMsErroAuto := .F.
+
+		SE2->(DbSetOrder(1))
+		If SE2->(DbSeek(PadR(AllTrim(aVetSE2[nPosFil][2]),TamSx3("E2_FILIAL")[1]) +	PadR(AllTrim(aVetSE2[nPosPre][2]),TamSx3("E2_PREFIXO")[1]) + PadR(AllTrim(aVetSE2[nPosNum][2]),TamSx3("E2_NUM")[1]) + PadR(AllTrim(aVetSE2[nPosPar][2]),TamSx3("E2_PARCELA")[1]) + PadR(AllTrim(aVetSE2[nPosTip][2]),TamSx3("E2_TIPO")[1]) + PadR(AllTrim(aVetSE2[nPosFor][2]),TamSx3("E2_FORNECE")[1]) + PadR(AllTrim(aVetSE2[nPosLoj][2]),TamSx3("E2_LOJA")[1])))
+			MsExecAuto( { |x,y,z| FINA050(x,y,z)}, aVetSE2,, 4) // Altera
+		Else
+			MsExecAuto( { |x,y,z| FINA050(x,y,z)}, aVetSE2,, 3) // Inclusao
+		EndIf
+
+		If lMsErroAuto
+			cErroTemp 	:= Mostraerro("\system\", AllTrim(aVetSE2[nX,2])+DtoS(Date())+StrTran(Time(),":") + ".log")
+			nLinhas 	:= MLCount(cErroTemp)
+			cBuffer 	:= ""
+			cCampo 		:= ""
+			nErrLin 	:= 1
+			cBuffer 	:= RTrim(MemoLine(cErroTemp,,nErrLin))
+
+			While (nErrLin <= nLinhas)
+				nErrLin++
+				cBuffer += RTrim(MemoLine(cErroTemp,,nErrLin)) +CRLF
+				If (Upper(SubStr(cBuffer,Len(cBuffer)-7,Len(cBuffer))) == "INVALIDO")
+					cCampo := cBuffer
+					Exit
+				EndIf
+			EndDo
+
+			If Empty(cCampo)
+				cCampo := AllTrim(cBuffer)
+			EndIf
+
+			cJsRet += '{'
+			cJsRet += '"E2_NUM": "'+AllTrim(aVetSE2[3][2])+'",'
+			cJsRet += '"E2_PARCELA": "'+AllTrim(aVetSE2[4][2])+'",'
+			cJsRet += '"CODRET": "400",'
+			cJsRet += '"MSGRET": "'+EncodeUTF8(NoAcento(cCampo), "cp1252")+'" '
+			cJsRet += '},'
+
+		Else
+			cJsRet += '{'
+			cJsRet += '"E2_NUM": "'+AllTrim(aVetSE2[3][2])+'",'
+			cJsRet += '"E2_PARCELA": "'+AllTrim(aVetSE2[4][2])+'",'
+			cJsRet += '"CODRET": "001",'
+			cJsRet += '"MSGRET": "SUCESSO" '
+			cJsRet += '},'
+		Endif
+	Next nX
+
+	If Substr( cJsRet, Len(cJsRet), 1 ) == ","
+		cJsRet := Substr( cJsRet, 1, Len(cJsRet) - 1 )
+	EndIf
+	cJsRet += ']}'
+
+	//Gravar o log com o resultado
+	DbSelectArea("SZ0")
+	SZ0->(RecLock("SZ0",.T.))
+	SZ0->Z0_FILIAL 	:= xFilial("SZ0")
+	SZ0->Z0_DTINTEG := Date()
+	SZ0->Z0_HORAINT := _cTime
+	SZ0->Z0_TIPOINT := "2"
+	SZ0->Z0_JSONIN 	:= cBody
+	SZ0->Z0_JSONOUT := cJsRet
+	SZ0->(MsUnLock())
+
+	// Devolve o retorno para o Rest
+	::SetResponse(cJsRet)
+
+	FreeObj(oJson)
+
+Return .T.
+
+/*/{Protheus.doc} WSRESTFUL MEDERI
+Integração Lancamento Contabil
+@author Rafael Domingues
+@since 17.03.2023
+/*/
+WSMETHOD POST lancacontabil WSSERVICE MEDERI
+	Local oJson			:= NIL
+	Local nX			:= 0
+	Local cRet			:= ""
+	Local aItens 		:= {}
+	Local aCab 			:= {}
+	Local cJsRet		:= ""
+
+	Private lMsErroAuto := .F.
+
+	cBody := ::GetContent()
+	::SetContentType("application/json")
+	oJson := JsonObject():new()
+	cRet := oJson:fromJson(FwNoAccent(cBody))
+
+	If ValType(cRet) <> "U"
+		SetRestFault(400,EncodeUTF8("Estrutura json invalida"),.T.)
+		Return lMsErroAuto
+	EndIf
+
+	aAdd(aCab,{'DDATALANC'  , CtoD(oJson:CT2_DATA)	,NIL})
+	aAdd(aCab,{'CLOTE'      , oJson:CT2_LOTE		,NIL})
+	aAdd(aCab,{'CSUBLOTE'   , oJson:CT2_SBLOTE		,NIL})
+	aAdd(aCab,{'CDOC'       , oJson:CT2_DOC			,NIL})
+	aAdd(aCab,{'CPADRAO'    , ''					,NIL})
+	aAdd(aCab,{'NTOTINF'    , 0						,NIL})
+	aAdd(aCab,{'NTOTINFLOT' , 0						,NIL})
+
+	For nX := 1 To Len(oJson:ITENS)
+		aAdd(aItens,{ 	{'CT2_FILIAL' 	, oJson:ITENS[nX]:CT2_FILIAL	, NIL},;
+			{'CT2_LINHA' 	, Padl(AllTrim(Str(nX)),3,"0")	, NIL},;
+			{'CT2_MOEDLC'	, oJson:ITENS[nX]:CT2_MOEDLC	, NIL},;
+			{'CT2_DC'		, oJson:ITENS[nX]:CT2_DC		, NIL},;
+			{'CT2_DEBITO' 	, oJson:ITENS[nX]:CT2_DEBITO	, NIL},;
+			{'CT2_CREDIT' 	, oJson:ITENS[nX]:CT2_CREDIT	, NIL},;
+			{'CT2_VALOR' 	, oJson:ITENS[nX]:CT2_VALOR		, NIL},;
+			{'CT2_ORIGEM' 	, "MSEXECAUT"					, NIL},;
+			{'CT2_CONVER'  	, '15555'						, NIL},;
+			{'CT2_HP' 		, ""							, NIL},;
+			{'CT2_HIST' 	, oJson:ITENS[nX]:CT2_HIST		, NIL},;
+			{'CT2_CCD' 		, oJson:ITENS[nX]:CT2_CCD		, NIL},;
+			{'CT2_CCC' 		, oJson:ITENS[nX]:CT2_CCC		, NIL},;
+			{'CT2_ITEMD'	, oJson:ITENS[nX]:CT2_ITEMD		, NIL},;
+			{'CT2_ITEMC'	, oJson:ITENS[nX]:CT2_ITEMC		, NIL},;
+			{'CT2_CLVLDB'	, oJson:ITENS[nX]:CT2_CLVLDB	, NIL},;
+			{'CT2_CLVLCR'	, oJson:ITENS[nX]:CT2_CLVLCR	, NIL},;
+			{'CT2_AT01DB'	, oJson:ITENS[nX]:CT2_AT01DB	, NIL},;
+			{'CT2_AT01CR'	, oJson:ITENS[nX]:CT2_AT01CR	, NIL},;
+			{'CT2_AT02DB'	, oJson:ITENS[nX]:CT2_AT02DB	, NIL},;
+			{'CT2_AT02CR'	, oJson:ITENS[nX]:CT2_AT02CR	, NIL},;
+			{'CT2_TPSALD'	, oJson:ITENS[nX]:CT2_TPSALD	, NIL}})
+	Next nX
+
+	If Len(aItens) > 0
+		MSExecAuto( {|X,Y,Z| CTBA102(X,Y,Z)} ,aCab ,aItens, 3)
+
+		If lMsErroAuto
+			cErroTemp 	:= Mostraerro("\system\", AllTrim(oJson:CT2_LOTE)+DtoS(Date())+StrTran(Time(),":") + ".log")
+			nLinhas 	:= MLCount(cErroTemp)
+			cBuffer 	:= ""
+			cCampo 		:= ""
+			nErrLin 	:= 1
+			cBuffer 	:= RTrim(MemoLine(cErroTemp,,nErrLin))
+
+			For nX := 1 To nLinhas
+				If At("INVALIDO",Upper(MemoLine(cErroTemp,,nX))) > 0
+					cCampo := MemoLine(cErroTemp,,nX)
+				EndIf
+			Next
+
+			If Empty(cCampo)
+				For nX := 1 To nLinhas
+					cCampo += MemoLine(cErroTemp,,nX)
+				Next
+			EndIf
+
+			cJsRet := '{'
+			cJsRet += '"CT2_DATA": "'+oJson:CT2_DATA+'",'
+			cJsRet += '"CT2_LOTE": "'+oJson:CT2_LOTE+'",'
+			cJsRet += '"CT2_SBLOTE": "'+oJson:CT2_SBLOTE+'",'
+			cJsRet += '"CT2_DOC": "'+oJson:CT2_DOC+'",'
+			cJsRet += '"CODRET": "400",'
+			cJsRet += '"MSGRET": "'+EncodeUTF8(NoAcento(cCampo), "cp1252")+'" '
+			cJsRet += '}'
+
+		Else
+			cJsRet := '{'
+			cJsRet += '"CT2_DATA": "'+oJson:CT2_DATA+'",'
+			cJsRet += '"CT2_LOTE": "'+oJson:CT2_LOTE+'",'
+			cJsRet += '"CT2_SBLOTE": "'+oJson:CT2_SBLOTE+'",'
+			cJsRet += '"CT2_DOC": "'+oJson:CT2_DOC+'",'
+			cJsRet += '"CODRET": "001",'
+			cJsRet += '"MSGRET": "SUCESSO" '
+			cJsRet += '}'
+		EndIf
+	Else
+		SetRestFault(400,EncodeUTF8("Não existem registros a serem contabilizados"),.T.)
+		Return lMsErroAuto
+	EndIf
+
+	// Devolve o retorno para o Rest
+	::SetResponse(cJsRet)
+
+	FreeObj(oJson)
+
+Return .T.
+
+/*/{Protheus.doc} WSRESTFUL MEDERI
+Consulta Contas a Pagar/Receber
+@author Rafael Domingues
+@since 17.03.2023
+/*/
+	WSMETHOD GET consult WSRECEIVE tipo,datade,dataat WSREST MEDERI
+	Local aArea 	:= GetArea()
+	Local cTipo 	:= ::tipo
+	Local cDataDe 	:= ::datade
+	Local cDataAt 	:= ::dataat
+	Local lRest 	:= .T.
+	Local cQry		:= ""
+	Local cAliasA	:= GetNextAlias()
+	Local _cRet		:= ""
+
+	::SetContentType("application/json")
+
+	DbSelectArea("SE1")
+	DbSelectArea("SE2")
+
+	If cTipo == "R"
+		cQry := " SELECT R_E_C_N_O_ AS RECSE1 FROM "+RetSqlName("SE1")+" (NOLOCK) "
+		cQry += " WHERE D_E_L_E_T_ <> '*' "
+		cQry += " AND E1_EMISSAO BETWEEN '"+cDataDe+"' AND '"+cDataAt+"' "
+		cQry += " AND E1_BAIXA <> '' "
+		cQry := ChangeQuery(cQry)
+		DbUseArea(.T., "TOPCONN", TCGenQry(,,cQry), cAliasA, .F., .T.)
+
+		_cRet := '{"RECEBER":['
+
+		(cAliasA)->(DbGoTop())
+		While (cAliasA)->(!Eof())
+			SE1->(DbGoTo((cAliasA)->RECSE1))
+
+			_cRet += '{'
+			_cRet += '"E1_FILIAL":'+ '"' +AllTrim(SE1->E1_FILIAL)+'",'
+			_cRet += '"E1_PREFIXO":'+ '"' +AllTrim(SE1->E1_PREFIXO)+'",'
+			_cRet += '"E1_NUM":'+ '"' +AllTrim(SE1->E1_NUM)+'",'
+			_cRet += '"E1_PARCELA":'+ '"' +AllTrim(SE1->E1_PARCELA)+'",'
+			_cRet += '"E1_TIPO":'+ '"' +AllTrim(SE1->E1_TIPO)+'",'
+			_cRet += '"E1_NATUREZ":'+ '"' +AllTrim(SE1->E1_NATUREZ)+'",'
+			_cRet += '"E1_CLIENTE":'+ '"' +AllTrim(SE1->E1_CLIENTE)+'",'
+			_cRet += '"E1_LOJA":'+ '"' +AllTrim(SE1->E1_LOJA)+'",'
+			_cRet += '"E1_EMISSAO":'+ '"' +DtoC(SE1->E1_EMISSAO)+'",'
+			_cRet += '"E1_VENCTO":'+ '"' +DtoC(SE1->E1_VENCTO)+'",'
+			_cRet += '"E1_VENCREA":'+ '"' +DtoC(SE1->E1_VENCREA)+'",'
+			_cRet += '"E1_BAIXA":'+ '"' +DtoC(SE1->E1_VENCREA)+'",'
+			_cRet += '"E1_VALOR":' +AllTrim(Str(SE1->E1_VALOR))+'},'
+
+			(cAliasA)->(DbSkip())
+		End
+		(cAliasA)->(DbCloseArea())
+
+		If Substr( _cRet, Len(_cRet), 1 ) == ","
+			_cRet := Substr( _cRet, 1, Len(_cRet) - 1 )
+		EndIf
+		_cRet += ']}'
+	ElseIf cTipo == "P"
+		cQry := " SELECT R_E_C_N_O_ AS RECSE2 FROM "+RetSqlName("SE2")+" (NOLOCK) "
+		cQry += " WHERE D_E_L_E_T_ <> '*' "
+		cQry += " AND E2_EMISSAO BETWEEN '"+cDataDe+"' AND '"+cDataAt+"' "
+		cQry += " AND E2_BAIXA <> '' "
+		cQry := ChangeQuery(cQry)
+		DbUseArea(.T., "TOPCONN", TCGenQry(,,cQry), cAliasA, .F., .T.)
+
+		_cRet := '{"PAGAR":['
+
+		(cAliasA)->(DbGoTop())
+		While (cAliasA)->(!Eof())
+			SE2->(DbGoTo((cAliasA)->RECSE2))
+
+			_cRet += '{'
+			_cRet += '"E2_FILIAL":'+ '"' +AllTrim(SE2->E2_FILIAL)+'",'
+			_cRet += '"E2_PREFIXO":'+ '"' +AllTrim(SE2->E2_PREFIXO)+'",'
+			_cRet += '"E2_NUM":'+ '"' +AllTrim(SE2->E2_NUM)+'",'
+			_cRet += '"E2_PARCELA":'+ '"' +AllTrim(SE2->E2_PARCELA)+'",'
+			_cRet += '"E2_TIPO":'+ '"' +AllTrim(SE2->E2_TIPO)+'",'
+			_cRet += '"E2_NATUREZ":'+ '"' +AllTrim(SE2->E2_NATUREZ)+'",'
+			_cRet += '"E2_FORNECE":'+ '"' +AllTrim(SE2->E2_FORNECE)+'",'
+			_cRet += '"E2_LOJA":'+ '"' +AllTrim(SE2->E2_LOJA)+'",'
+			_cRet += '"E2_EMISSAO":'+ '"' +DtoC(SE2->E2_EMISSAO)+'",'
+			_cRet += '"E2_VENCTO":'+ '"' +DtoC(SE2->E2_VENCTO)+'",'
+			_cRet += '"E2_VENCREA":'+ '"' +DtoC(SE2->E2_VENCREA)+'",'
+			_cRet += '"E2_BAIXA":'+ '"' +DtoC(SE2->E2_VENCREA)+'",'
+			_cRet += '"E2_VALOR":' +AllTrim(Str(SE2->E2_VALOR))+'},'
+
+			(cAliasA)->(DbSkip())
+		End
+		(cAliasA)->(DbCloseArea())
+
+		If Substr( _cRet, Len(_cRet), 1 ) == ","
+			_cRet := Substr( _cRet, 1, Len(_cRet) - 1 )
+		EndIf
+		_cRet += ']}'
+	EndIf
+
+	::SetResponse(EncodeUTF8(_cRet, "cp1252"))
+
+	RestArea(aArea)
+Return lRest
+
+/*/{Protheus.doc} WSRESTFUL MEDERI
+Integração Lancamento Item Contabil
+@author Rafael Domingues
+@since 23.08.2023
+/*/
+WSMETHOD POST itcontabil WSSERVICE MEDERI
+	Local oJson			:= NIL
+	Local nX			:= 0
+	Local cRet			:= ""
+	Local aDados 		:= {}
+	Local cJsRet		:= ""
+
+	Private lMsHelpAuto := .F.
+	Private lMsErroAuto := .F.
+
+	cBody := ::GetContent()
+	::SetContentType("application/json")
+	oJson := JsonObject():new()
+	cRet := oJson:fromJson(FwNoAccent(cBody))
+
+	If ValType(cRet) <> "U"
+		SetRestFault(400,EncodeUTF8("Estrutura json invalida"),.T.)
+		Return lMsErroAuto
+	EndIf
+
+	DbSelectArea("CTD")
+	DbSetOrder(1)
+
+	For nX := 1 To Len(oJson["ITCONTABIL"])
+		If Empty(oJson["ITCONTABIL"][nX]['CTD_ITEM'])
+			cJsRet := '{'
+			cJsRet += '"CODRET": "401",'
+			cJsRet += '"MSGRET": "'+EncodeUTF8(NoAcento("CTD_ITEM nao pode ser vazio"), "cp1252")+'" '
+			cJsRet += '}'
+			::SetResponse(cJsRet)
+			Return .T.
+		EndIf
+	Next nX
+
+	cJsRet := '{"ITCONTABIL":['
+
+	For nX := 1 To Len(oJson["ITCONTABIL"])
+		If !CTD->(DbSeek(xFilial("CTD") + PadR(AllTrim(oJson["ITCONTABIL"][nX]['CTD_ITEM']),TamSx3("CTD_ITEM")[1]) ))
+			aDados:= {	{'CTD_ITEM'   , oJson["ITCONTABIL"][nX]['CTD_ITEM']  	, Nil},;
+				{'CTD_CLASSE' , oJson["ITCONTABIL"][nX]['CTD_CLASSE']	, Nil},;
+				{'CTD_NORMAL' , "0"  				, Nil},;
+				{'CTD_DESC01' , oJson["ITCONTABIL"][nX]['CTD_DESC01']	, Nil},;
+				{'CTD_BLOQ'   , "2"					, Nil},;
+				{'CTD_DTEXIS' , CTOD("01/01/80")  	, Nil},;
+				{'CTD_DTEXSF' , CTOD("  /  /  ")	, Nil},;
+				{'CTD_CCLP'   , "  "				, Nil},;
+				{'CTD_CCPON'  , "  "				, Nil},;
+				{'CTD_BOOK'   , "  "				, Nil},;
+				{'CTD_CCSUP'  , "  "	    		, Nil},;
+				{'CTD_RES'    , "  "				, Nil}}
+
+			MSExecAuto({|x, y| CTBA040(x, y)},aDados, 3)
+
+			If lMsErroAuto
+				cErroTemp 	:= Mostraerro("\system\", AllTrim(oJson:CTD_ITEM)+DtoS(Date())+StrTran(Time(),":") + ".log")
+				nLinhas 	:= MLCount(cErroTemp)
+				cBuffer 	:= ""
+				cCampo 		:= ""
+				nErrLin 	:= 1
+				cBuffer 	:= RTrim(MemoLine(cErroTemp,,nErrLin))
+
+				For nX := 1 To nLinhas
+					If At("INVALIDO",Upper(MemoLine(cErroTemp,,nX))) > 0
+						cCampo := MemoLine(cErroTemp,,nX)
+					EndIf
+				Next
+
+				cJsRet += '{'
+				cJsRet += '"CTD_ITEM": "'+oJson["ITCONTABIL"][nX]['CTD_ITEM']+'",'
+				cJsRet += '"CTD_DESC01": "'+oJson["ITCONTABIL"][nX]['CTD_DESC01']+'",'
+				cJsRet += '"CODRET": "002",'
+				cJsRet += '"MSGRET": "'+EncodeUTF8(NoAcento(cCampo), "cp1252")+'" '
+				cJsRet += '},'
+			Else
+				cJsRet += '{'
+				cJsRet += '"CTD_ITEM": "'+oJson["ITCONTABIL"][nX]['CTD_ITEM']+'",'
+				cJsRet += '"CTD_DESC01": "'+oJson["ITCONTABIL"][nX]['CTD_DESC01']+'",'
+				cJsRet += '"CODRET": "001",'
+				cJsRet += '"MSGRET": "SUCESSO" '
+				cJsRet += '},'
+			EndIf
+		Else
+			cJsRet += '{'
+			cJsRet += '"CTD_ITEM": "'+oJson["ITCONTABIL"][nX]['CTD_ITEM']+'",'
+			cJsRet += '"CTD_DESC01": "'+oJson["ITCONTABIL"][nX]['CTD_DESC01']+'",'
+			cJsRet += '"CODRET": "001",'
+			cJsRet += '"MSGRET": "SUCESSO" '
+			cJsRet += '},'
+		EndIf
+	Next nX
+
+	If Substr( cJsRet, Len(cJsRet), 1 ) == ","
+		cJsRet := Substr( cJsRet, 1, Len(cJsRet) - 1 )
+	EndIf
+	cJsRet += ']}'
+
+	// Devolve o retorno para o Rest
+	::SetResponse(cJsRet)
+
+	FreeObj(oJson)
+
+Return .T.
+/*
+{
+    "ITCONTABIL": [{
+            "CTD_ITEM": "0101001",
+            "CTD_CLASSE": "2",
+            "CTD_DESC01": "TESTE01"
+        },
+		{
+            "CTD_ITEM": "0101002",
+            "CTD_CLASSE": "2",
+            "CTD_DESC01": "TESTE02"
+        }
+    ]
+}
+*/

@@ -1,0 +1,612 @@
+#include 'totvs.ch'
+#include 'restful.ch'
+#INCLUDE 'FWMVCDEF.CH'
+#include "Protheus.ch"
+#include "rwmake.ch"
+#include "topconn.ch"
+#include "TbiConn.ch"
+#include "PARMTYPE.CH"
+
+#DEFINE PROC_LABEL "Integracao Produto Paradigma com o Protheus"
+#DEFINE PROC_NAME "APIM010"
+#DEFINE CRLF CHR ( 13 ) + CHR ( 10 )
+#DEFINE BARRAI CHR( 92 )
+
+#DEFINE ERRORCODE_DEF 400
+#DEFINE ERRORSRV_DEF	500
+
+Static bSx3Tam   := {|cCpo| GetSx3Cache(cCpo,"X3_TAMANHO") }
+
+Private oError
+Private bError      := { |e| oError := e, Break(e) }
+Private bErrorBlock := ErrorBlock( bError )
+
+/*
+	Method   : API Integracao Produto
+	Autor    : Carlos Ryve Gandini
+	Data/Time: 20/04/21 às 13:43:13
+	Descricao: Integracao Produto Paradigma no Protheus
+	Sintaxe  : <Vide Parametros Formais>
+*/
+
+WSRESTFUL Products DESCRIPTION 'API integration Products Paradigm' FORMAT APPLICATION_JSON
+	WSDATA RequestNumber As Character
+
+	WSMETHOD POST ProductInclusion DESCRIPTION 'Product Inclusion' WSSYNTAX '/Products/ProductInclusion' PRODUCES APPLICATION_JSON
+ENDWSRESTFUL
+
+/*
+ProductInclusion method POST utilizando jSonObject
+*/
+
+WSMETHOD POST ProductInclusion WSRECEIVE WSRESTFUL Products
+
+Local nMVCOper    := MODEL_OPERATION_INSERT
+Local lNewProduct := .T.
+Local cMethod		:= "POST"
+Local cMessage    := ""
+Local lReturn := .T.
+
+Local aArea := GetArea()
+
+Local oJson
+Local oItems
+
+Local cJson     := Self:GetContent()
+Local cError
+Local cErroRet := ""
+Local lIntegrado := .F.
+
+Local nY
+
+Local _dDtIni	:= Ctod("")
+Local _cHora	:= Time()
+
+Private cPathErr := SuperGetMV("MV_XPATHER", .F., "\log\")
+Private cFldErr := "RESTM010"
+
+SET CENTURY ON
+SET DATE BRITISH
+_dDtIni := Date()
+
+ConOut("***********************************************************************************************")
+ConOut("* J2A: API responsavel integracao Produto do Paradigma com Protheus                           *")
+ConOut("* Início: " + DtoC(_dDtIni) + " - " + _cHora + "                                              *")
+ConOut("* Montagem do ambiente na empresa                                                             *")
+ConOut("***********************************************************************************************")
+
+If !fSetAmb(.T.)
+	SetSoapFault("ERROR","ERRO ABRIR AMBIENTE")
+	Return(.F.)
+Endif
+
+_SetOwnerPrvt("nTmCT1CTA"    , eVal( bSx3Tam ,"CT1_CONTA"     ) )
+_SetOwnerPrvt("nTmB1COD"    , eVal( bSx3Tam , "B1_COD"     ) )
+_SetOwnerPrvt("nTmB1DESC"   , eVal( bSx3Tam , "B1_DESC"    ) )
+_SetOwnerPrvt("nTmB1TIPO"   , eVal( bSx3Tam , "B1_TIPO"    ) )
+_SetOwnerPrvt("nTmB1UM"     , eVal( bSx3Tam , "B1_UM"      ) )
+_SetOwnerPrvt("nTmB1GRUPO"  , eVal( bSx3Tam , "B1_GRUPO"   ) )
+_SetOwnerPrvt("nTmB1XPRVE"  , eVal( bSx3Tam , "B1_XPRVEN" ) )
+_SetOwnerPrvt("nTmB5CEME"   , eVal( bSx3Tam , "B5_CEME"    ) )
+_SetOwnerPrvt("nTmB1NCN"    , eVal( bSx3Tam , "B1_POSIPI"  ) )
+_SetOwnerPrvt("idExecutor"	 , GetServerIp()+":"+alltrim(str(GetServerPort())) )
+
+showConsole("Ambiente montado corretamente (" + SM0->M0_CODIGO + "/" + SM0->M0_CODFIL + ")", "N", idExecutor)
+
+FWMonitorMsg( "(" + cEmpAnt + "/" + cFilAnt + ") Executor em execucao (" + idExecutor + ")" )
+
+showConsole("Msg PtInternal Sucess (" + SM0->M0_CODIGO + "/" + SM0->M0_CODFIL + ")", "N", idExecutor)
+
+Private lMsErroAuto     := .F.
+Private lMsHelpAuto     := .T.
+Private lAutoErrNoFile  := .T.
+
+
+DbSelectArea("SB1")
+aSB1Area := SB1->(GetArea())
+SB1->(DbSetOrder(1))
+
+DbSelectArea("SB5")
+aSB5Area := SB5->(GetArea())
+SB5->(DbSetOrder(1))
+
+DbSelectArea("XX4")
+
+
+//Se não existir o diretório de logs dentro da Protheus Data, será criado
+IF .NOT. ExistDir(cPathErr)
+	MakeDir(cPathErr)
+EndIF
+//Se não existir o diretório específico de logs dentro da Protheus Data, será criado
+IF .NOT. ExistDir(cPathErr+cFldErr)
+	MakeDir(cPathErr+cFldErr)
+EndIF
+
+//Definindo o conteúdo como JSON, e pegando o content e dando um parse para ver se a estrutura está ok
+Self:SetContentType("application/json")
+oJson   := JsonObject():New()
+cError  := oJson:FromJson(cJson)
+
+//Se tiver algum erro no Parse, encerra a execução
+IF .NOT. Empty(cError)
+
+	SetRestFault(500,'Parser Json Error',.T.)
+	DisarmTransaction()
+	lReturn    := .F.
+
+Else
+
+	aAutoItens := {}
+
+	Begin Transaction
+
+		fSetErrorHandler("Integrando produtos via API - Inicio do Processo")
+
+		BEGIN SEQUENCE
+
+			sCdProduto := PadR(oJson['RetornarProdutoPorCodigoResult']['lstObjetoRetorno']['ProdutoDTO']:GetJsonObject('sCdProduto'),nTmB1COD)
+
+			sProdutoDesc := PadR(oJson['RetornarProdutoPorCodigoResult']['lstObjetoRetorno']['ProdutoDTO']:GetJsonObject('sDsProduto'),nTmB1DESC)
+			sProdutoDesc := DecodeUtf8(sProdutoDesc,"cp1252")
+
+			sCdItemEmpresa := PadR(oJson['RetornarProdutoPorCodigoResult']['lstObjetoRetorno']['ProdutoDTO']:GetJsonObject('sCdProdutoWBC'),nTmB1COD)
+
+			cPrdTipo := PadR(oJson['RetornarProdutoPorCodigoResult']['lstObjetoRetorno']['ProdutoDTO']:GetJsonObject('sCdClasse'),nTmB1TIPO)
+			cPrdTipo := Iif( Empty(cPrdTipo), "MC", cPrdTipo )
+
+			cUnidade := PadR(oJson['RetornarProdutoPorCodigoResult']['lstObjetoRetorno']['ProdutoDTO']:GetJsonObject('sCdUnidadeMedida'),nTmB1UM)
+			cUnidade := Iif( Empty(cUnidade), "MC", cUnidade )
+
+			cPrdGrupo := PadR(oJson['RetornarProdutoPorCodigoResult']['lstObjetoRetorno']['ProdutoDTO']:GetJsonObject(' '),nTmB1GRUPO)
+			cPrdGrupo := Iif( Empty(cPrdGrupo), "0008", cPrdGrupo )
+
+			sProdVenda := PadR(oJson['RetornarProdutoPorCodigoResult']['lstObjetoRetorno']['ProdutoDTO']:GetJsonObject('nCdProdutoTipo'),nTmB1XPRVE)
+			sProdVenda := "N"
+
+			cPrdConta := PadR(oJson['RetornarProdutoPorCodigoResult']['lstObjetoRetorno']['ProdutoDTO']['lstProdutoContaContabil']['ProdutoContaContabilDTO']:GetJsonObject('sCdContaContabil'),nTmCT1CTA)
+
+			cPrdNCN := PadR(oJson['RetornarProdutoPorCodigoResult']['lstObjetoRetorno']['ProdutoDTO']:GetJsonObject('sCdNcm'),nTmB1NCN)
+
+					/*
+						Autor       : Carlos Ryve Gandini
+						Data/Time   : 22/04/21 às 09:18:06
+						Detalhe     : Criar um indice que possa buscar o produto
+						              pelo código do Paradigma
+					*/
+
+			//Pesquisa por nickname
+			If !FWSIXUtil():ExistIndex( "SB5" , "CODWBC" , .T. )
+
+				DisarmTransaction()
+				lReturn := .F.
+				cErrRet := "Indice para produto WBC NotFound SB5 do ERP. Indice precisa ser criado para execusão da integração."
+
+			Else
+
+				SB5->(dbSelectArea("SB5"))
+				SB5->(DbOrderNickName("CODWBC"))
+				If (SB5->(DbSeek(FWxFilial('SB5') + sCdItemEmpresa)))
+					lNewProduct := .F.
+				EndIf
+
+			EndIf
+
+			If lReturn
+
+				cPrdLocPad := "01"
+				nPrdUPRC   := 0
+				//cPrdConta  := ""
+				cPrdIRRF   := "N"
+				cPrdINSS   := ""
+				cPrdFreISS := ""
+
+				cPrdEntida := cFilAnt
+				xPrdEntida := ""
+
+				Do Case
+
+				Case cPrdEntida = "01MT0001"
+					xPrdEntida := "1"
+				Case cPrdEntida = "04MT0001"
+					xPrdEntida := "4"
+				Case cPrdEntida = "02MT0001"
+					xPrdEntida := "5"
+				Case cPrdEntida = "06MT0001"
+					xPrdEntida := "6"
+				Case cPrdEntida = "03MT0001"
+					xPrdEntida := "7"
+				Case cPrdEntida = "07MT0001"
+					xPrdEntida := "8"
+
+				EndCase
+
+				If lNewProduct
+					cCodProd := GetSx8Num("SB1","B1_COD")
+				Else
+					cCodProd := SB5->B5_COD
+				EndIf
+
+				WFConout( "",,,,.T.,FUNNAME() )
+				WFConout( Repl("*",25)+"PRODUTO A SER"+ Iif(lNewProduct, " GRAVADO "," ALTERADO ") + cCodProd +Repl("*",25),,,,.T.,FUNNAME() )
+				WFConout( Repl("*",25)+"DESCRICAO PRODUTO "+ AllTrim(sProdutoDesc) +Repl("*",25),,,,.T.,FUNNAME() )
+				WFConout( "",,,,.T.,FUNNAME() )
+
+
+				aVetor:= { {"B1_COD"     ,cCodProd ,NIL},;
+					{"B1_DESC"    ,AllTrim(sProdutoDesc),NIL},;
+					{"B1_TIPO"    ,cPrdTipo ,Nil},;
+					{"B1_UM"      ,cUnidade,Nil},;
+					{"B1_GRUPO"   ,cPrdGrupo ,Nil},;
+					{"B1_PICM"    ,0                         ,Nil},;
+					{"B1_IPI"     ,0                         ,Nil},;
+					{"B1_CONTRAT" ,"N"                       ,Nil},;
+					{"B1_LOCPAD"  ,cPrdLocPad                ,Nil},;
+					{"B1_UPRC"    ,nPrdUPRC                  ,Nil},;
+					{"B1_CONTA"   ,cPrdConta                 ,Nil},;
+					{"B1_IRRF"    ,cPrdIRRF                  ,Nil},;
+					{"B1_INSS"    ,cPrdINSS                  ,Nil},;
+					{"B1_XPRDVEN" ,sProdVenda                ,Nil},;
+					{"B1_POSIPI"  ,cPrdNCN                   ,Nil},;
+					{"B1_MSBLQL"  ,"2"                       ,Nil},;
+					{"B1_LOCALIZ" ,"N"                       ,Nil}}
+
+				MSExecAuto({|x,y| Mata010(x,y)},aVetor,Iif(lNewProduct,3,4))
+
+				cSet := ""
+
+				If lMsErroAuto
+
+					cErro := ""
+					cErro2 := ""
+
+					cArqLog := cCodProd+AllTrim(sProdutoDesc)+"-"+ StrTran(Time(), ':', '-')+".log"
+					cArqLog := StrTran(cArqLog,"/","-")
+					cArqLog := StrTran(cArqLog,BARRAI,"-")
+					aLogAuto    := {}
+					aLogAuto    := GetAutoGrLog()
+
+					If (nErr := aScan( aLogAuto, {|x| "< -- Invalido" $ x} )) > 0
+						cErro += "'"+ aLogAuto[nErr] + "'" //StrTran(aLogAuto[nErr],":="," ")
+					EndIf
+
+					//If (nErr := aScan( aLogAuto, {|x| "Mensagem do erro: [" $ x} )) > 0
+					//	cErro += aLogAuto[nErr] + CRLF
+					//EndIf
+
+					For nY := 1 To Len(aLogAuto)
+						cErro2 += aLogAuto[nY] + CRLF
+					Next nY
+
+					MemoWrite(cPathErr+cFldErr+"\"+cArqLog, cErro)
+
+					//SetRestFault(500, cErro)
+					cErroRet := cErro
+
+					DisarmTransaction()
+					RollbackSx8()
+
+					ConOut("***********************************************************************************************")
+					ConOut("* J2A: API responsavel integracao do Paradigma x Protheus (Produto)                           *")
+					ConOut("* Início: " + DtoC(_dDtIni) + " - " + Time() + "                                              *")
+					ConOut("cArqLog:" + cArqLog                                                                             )
+					ConOut("cErro:" + cErro                                                                                 )
+					ConOut("***********************************************************************************************")
+
+					lReturn := .F.
+
+				Else
+
+						/*
+							Autor       : Carlos Ryve Gandini
+							Data/Time   : 22/04/21 às 10:36:42
+							Detalhe     : Desbloqueando o produto para criar o complemento SB5
+						*/
+					If SB1->B1_MSBLQL == "1"
+						Reclock("SB1",.F.)
+						B1_MSBLQL 	:= "2"
+						MsUnlock()
+					EndIf
+
+					lReturn := .T.
+					ConfirmSx8()
+					lIntegrado := .T.
+
+				Endif
+
+				If lReturn
+
+					lAchou := SB5->( MsSeek( FWxFilial("SB5")+cCodProd ))
+
+					WFConout( "",,,,.T.,FUNNAME() )
+					WFConout( Repl("-",25)+"INICIO DA ETAPA 2 DE 2 PRODUTO :"+ cCodProd +Repl("-",25),,,,.T.,FUNNAME() )
+					WFConout( "",,,,.T.,FUNNAME() )
+
+					LBkMsErroAuto := lMsErroAuto
+					lMsErroAuto := .F.
+
+					aCab:= { {"B5_COD"    ,cCodProd             ,Nil},;   // Código identificador do produto
+					{"B5_CEME"   ,AllTrim(sProdutoDesc),Nil},;   // Nome científico do produto
+					{"B5_AGLUMRP",""                   ,Nil},;     // Aglutinacao no MRP
+					{"B5_XCODWBC",sCdItemEmpresa       ,Nil}}     // Aglutinacao no MRP
+
+					MSExecAuto({|x,y| Mata180(x,y)},aCab,Iif(lAchou,4,3)) //Inclusão
+
+					WFConout( Repl("#",25)+"COMPLEMENTO DO PRODUTO "+cCodProd+Repl("#",25),,,,.T.,FUNNAME() )
+					WFConout( AllTrim(sProdutoDesc)                                          ,,,,.T.,FUNNAME() )
+
+					If lMsErroAuto
+
+						cErro := ""
+						cErro2 := ""
+
+						cArqLog := cCodProd+AllTrim(sProdutoDesc)+"-"+ StrTran(Time(), ':', '-')+".log"
+						aLogAuto    := {}
+						aLogAuto    := GetAutoGrLog()
+
+						If (nErr := aScan( aLogAuto, {|x| "< -- Invalido" $ x} )) > 0
+							cErro += aLogAuto[nErr] + CRLF
+						EndIf
+
+						If (nErr := aScan( aLogAuto, {|x| "Mensagem do erro: [" $ x} )) > 0
+							cErro += aLogAuto[nErr] + CRLF
+						EndIf
+
+						For nY := 1 To Len(aLogAuto)
+							cErro2 += aLogAuto[nY] + CRLF
+						Next nY
+
+						MemoWrite(cPathErr+cFldErr+"\"+cArqLog, cErro)
+
+						cErroRet := cErro
+						//SetRestFault(500, cErro)
+
+						lReturn    := .F.
+						//lIntegrado := .F.
+
+						ConOut("***********************************************************************************************")
+						ConOut("* J2A: API responsavel integracao do Paradigma x Protheus (Produto)                           *")
+						ConOut("* Início: " + DtoC(_dDtIni) + " - " + Time() + "                                              *")
+						ConOut("cArqLog:" + cArqLog                                                                             )
+						ConOut("cErro:" + cErro                                                                                 )
+						ConOut("***********************************************************************************************")
+
+						AutoGrLog(Replicate("=", 20))
+
+					Else
+
+							/*
+								Autor       : Carlos Ryve Gandini
+								Data/Time   : 22/04/21 às 10:36:42
+								Detalhe     : Bloqueando o produto atendendo Regra Negocio FIEMT
+							*/
+						If SB1->B1_MSBLQL == "2"
+							Reclock("SB1",.F.)
+							B1_MSBLQL 	:= IIF(lNewProduct, "1", "2")
+							MsUnlock()
+						EndIf
+
+						lReturn := .T.
+						lIntegrado := .T.
+
+					Endif
+
+					WFConout( Repl("#",25)+Iif(lMsErroAuto,"ATENCAO ERRO","SUCESSO")+" NA GRAVACAO COMPLENTO PRODUTO.",,,,.T.,FUNNAME() )
+
+				EndIf
+
+				DbCommitAll()
+
+			EndIf
+
+			RECOVER
+
+			DisarmTransaction()
+
+		END SEQUENCE
+
+		fResetErrorHandler()
+		Sleep(1000)
+
+	End Transaction
+
+
+	aDados := {}
+
+	If !Empty(cErroRet)
+		aAdd( aDados , idExecutor )
+		aAdd( aDados , 0 )
+		aAdd( aDados , "Falha Dados obrigatorio nao informado"  ) ///*cErroRet*/
+		aAdd( aDados , "" )
+		aAdd( aDados , "" )
+	ElseIf !lIntegrado
+		aAdd( aDados , idExecutor )
+		aAdd( aDados , 0 )
+		aAdd( aDados , "Falha no Processamento" )
+		aAdd( aDados , "" )
+		aAdd( aDados , "" )
+	Else
+		aAdd( aDados , idExecutor )
+		aAdd( aDados , 1 )
+		aAdd( aDados , "Processo integrado com sucesso." )
+		aAdd( aDados , cCodProd )
+		aAdd( aDados , sCdItemEmpresa )
+	EndIf
+
+	oRet := fReturn(cMethod, aDados, cMessage) // Montagem da estrutura de retorno da API
+	::SetResponse(oRet:toJson())
+
+EndIf
+
+RestArea(aArea)
+FreeObj(oJson)
+
+fSetAmb(.F.)
+//RpcClearEnv()
+
+ConOut("***********************************************************************************************")
+ConOut("* J2A: API responsavel integracao do Paradigma com Protheus                                   *")
+ConOut("* Início: " + DtoC(_dDtIni) + " - " + Time() + "                                              *")
+ConOut("* Ambiente Fechado                                                                            *")
+ConOut("***********************************************************************************************")
+
+Return(lReturn)
+
+
+Static Function ShowConsole(msg, cTipo, info)
+/*/f/
+	ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+	<Descricao> : Exibe as mensagens de processamento no console do Protheus
+	<Autor> : Carlos Ryve
+	<Data> : 20/04/2021
+	<Parametros> : msg, cTipo, info
+	msg		: Mensagem a ser exibida no console
+	cTipo	: "N" - (Default) Somente exibe mensagem
+	: "I" - Indica início de processamento
+	: "E" - Indica falha de processamento. Envia e-mail reportando mensagem.
+	info	: Informações adicionais à mensagem.
+	<Retorno> : Nenhum
+	<Tipo> (Menu,Trigger,Validacao,Ponto de Entrada,Genericas,Especificas ) : E
+	<Obs> :
+	ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+*/
+	Local il, nl
+	Local dIni := Date()
+	Default cTipo := "N"
+	If cTipo == "I" // inicio
+		ConOut("**************************************************************************************************************************")
+		ConOut("* "+PROC_LABEL)
+		ConOut("* Environment: "+GetEnvServer())
+	EndIF
+	If ValType(info) == "U"
+		info := ""
+	Else
+		info := " ("+info+")"
+	EndIf
+	msg := "* "+PROC_NAME+info+" - " + dtoc(dIni) + "-" + Time() + ": "+msg
+	nl := mlCount(msg,120,4,.f.)
+	For il := 1 to nl
+		ConOut(memoline(msg,120,il, 4,.f.))
+	Next
+	If cTipo == "I" // inicio
+		ConOut("**************************************************************************************************************************")
+	EndIf
+
+	If cTipo == "E"
+		ConOut( SendMail(msg) )
+	EndIf
+
+Return
+
+/*{Protheus.doc} function fReturn
+Função que monta a estrutura de retorno da API
+@author  Carlos Ryve Gandini
+@since   22/04/2021
+@version 12.1.27
+*/
+Static Function fReturn(cMethod, aDados, cMessage)
+	Local cRet := ""
+	Local oRet := JsonObject():new()
+
+	fSetErrorHandler(EncodeUTF8("Falha na montagem da estrutura de retorno da API"))
+
+	If cMethod == "GET"
+		If !Empty(cMessage)
+			oRet["status"]	:= .F.
+			oRet["message"]	:= EncodeUTF8(cMessage)
+		Else
+			oRet["companyId "] 	:= aDados[3]
+			oRet["id"] 			:= aDados[4]
+			oRet["xmlType"] 	:= aDados[5]
+			oRet["xmlMessage"] 	:= Encode64(aDados[6])
+		EndIf
+
+	ElseIf cMethod == "POST"
+		If !Empty(cMessage)
+			oRet["status"]	:= 3
+			oRet["message"]	:= DecodeUtf8(cMessage,"cp1252") //EncodeUTF8(cMessage)
+			oRet["cCdProdutoERP"]	:= aDados[4]
+			oRet["cCdProdutoWBC"]	:= aDados[5]
+		Else
+			oRet["status"]	:= aDados[2]
+			oRet["message"]	:= aDados[3]
+			oRet["cCdProdutoERP"]	:= aDados[4]
+			oRet["cCdProdutoWBC"]	:= aDados[5]
+		EndIf
+	EndIf
+
+	fResetErrorHandler()
+
+Return oRet
+
+/*{Protheus.doc} function fSetErrorHandler
+Tratamento de Erros
+@author  Carlos Ryve Gandini
+@since   22/04/2021
+@version All
+*/
+Static Function fSetErrorHandler(cTitle)
+
+	bError  	:= { |e| oError := e , oError:Description := cTitle + CRLF + oError:Description, Break(e) }
+	bErrorBlock := ErrorBlock( bError )
+
+Return .T.
+
+/*{Protheus.doc} function fResetErrorHandler
+Tratamento de Erros
+@author Carlos Ryve Gandini
+@since   22/04/2021
+@version All
+*/
+Static Function fResetErrorHandler(cTitle)
+
+	bError  	:= { |e| oError := e , Break(e) }
+	bErrorBlock := ErrorBlock( bError )
+
+Return .T.
+
+/*{Protheus.doc} function fCompress
+Função que compacta e converte objeto JSON para String
+@author  Carlos Ryve Gandini 
+@since   22/04/2021
+@version 12.1.27
+*/
+Static Function fCompress(oObj)
+	Local cJson    := ""
+	Local cComp    := ""
+	Local lCompact := .F.
+
+	// Set gzip format to Json Object
+	cJson := oObj:toJSON()
+
+	If Type("::GetHeader('Accept-Encoding')") != "U"  .and. 'GZIP' $ Upper(::GetHeader('Accept-Encoding') )
+		lCompact := .T.
+	EndIf
+
+	If(lCompact)
+		::SetHeader('Content-Encoding','gzip')
+		GzStrComp(cJson, @cComp, @nLenComp )
+	Else
+		cComp := cJson
+	Endif
+Return cComp
+
+/*{Protheus.doc} function fCompress
+Função que prepara abertura ambiente da empresa
+@author  Carlos Ryve Gandini 
+@since   22/04/2021
+@version 12.1.27
+*/
+Static Function fSetAmb(lOpenEnv)
+
+	Local lReturn := .T.
+
+	If lOpenEnv
+		If Select("SX2") == 0
+			RpcSetType(3)
+			lReturn := RpcSetEnv("01","01MT0001")
+		ElseIf !lOpenEnv
+			RpcClearEnv()
+		Endif
+	Endif
+
+Return lReturn

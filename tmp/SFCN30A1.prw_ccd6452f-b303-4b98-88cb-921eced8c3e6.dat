@@ -1,0 +1,307 @@
+#Include 'Protheus.ch'
+#Include 'FwMVCDef.ch'
+
+/*/{Protheus.doc} SFCN30A1
+Gatilho para preenchimento dos dados do contrato com os dados da oportunidade e proposta de venda.
+@type Function
+@author Alan Teles de Oliveira
+@since 29/11/2018
+@param p_lAIPlan, logical, indica se está posicionado no cabeçalho da planilha do contrato.
+@return character, revisão da oportunidade ou tipo da planilha
+@history 23/01/2019, Alan Teles de Oliveira, adicionado ao gatilho o preenchimento dos itens da 
+planilha de dados.
+@history 01/03/2019, Alan Teles de Oliveira, adicionado parâmetro a consulta da tabela ADZ a 
+verificação da revisão.
+@history 08/03/2019, Alan Teles de Oliveira, alterado set do campo CNB_VLUNIT para valor sem 
+desconto da ADZ.
+@history 19/02/2020, Franklin Oliveira, Corrigido para o gatilho preencher os campos CNB_VLDESC, 
+CN9_VLATU, CNA_VLTOT e CNA_SALDO
+@history 03/04/2020, Franklin Oliveira, Correção para o gatilho não preencher os campos CN9_VLINI, 
+CN9_VLATU, CN9_SALDO e CNA_VLTOT e CNA_SALDO.
+@history 19/03/2021, Franklin de Brito de Oliveira, Correção no preenchimento dos campos CNA_XOPORT
+, CNA_XREVOP, CNA_XPROPO, CNA_XPREVI.
+/*/
+User Function SFCN30A1(p_lAIPlan)
+
+    Local cRet      := ''
+    Local cAlTmp    := ''
+    Local cCampAtu  := ReadVar()
+    Local nUltReg   := 0
+    Local nI        := 0
+    Local nTotal    := 0
+    Local nLinha    := 1
+    Local aArea     := GetArea()    
+    Local oModel    := FWModelActive()
+    Local oView		:= FwViewActive()
+    Local oStruCN9  := oModel:GetModel('CN9MASTER')
+    Local oStruCNC  := oModel:GetModel('CNCDETAIL')
+    Local oStruCNA  := oModel:GetModel('CNADETAIL')
+    Local oMdlCNB   := oModel:GetModel('CNBDETAIL')
+    Local oStruCNB  := oMdlCNB:GetStruct()
+
+    Default p_lAIPlan := .F.
+
+    If 'CN9_XREVOP' $ cCampAtu
+        cRet := oStruCN9:GetValue('CN9_XREVOP')
+    ElseIf 'CNA_TIPPLA' $ cCampAtu
+        cRet := oStruCNA:GetValue('CNA_TIPPLA')
+    EndIf
+
+    dbSelectArea('AD1')
+    dbSetOrder(1)
+    If dbSeek(FwxFilial('AD1') + oStruCN9:GetValue('CN9_XOPORT') + oStruCN9:GetValue('CN9_XREVOP'))        
+
+        oView:lModify := .T.
+
+        If .not. p_lAIPlan 
+
+            oStruCN9:LoadValue("CN9_CLIENT", AD1->AD1_CODCLI)
+            oStruCN9:LoadValue("CN9_LOJACL", AD1->AD1_LOJCLI)
+            oStruCN9:LoadValue("CN9_CONDPG", fCondPG(oStruCN9:GetValue('CN9_XOPORT'), oStruCN9:GetValue('CN9_XREVOP')))
+            oStruCN9:LoadValue("CN9_XCEI",   AD1->AD1_XCEI)
+            oStruCN9:LoadValue("CN9_XCLASS", AD1->AD1_XCLASS)
+        
+        EndIf
+
+        If .not. p_lAIPlan .or. Altera
+        
+            //Clientes
+            oStruCNC:CanUpdateLine(.T.)
+            oStruCNC:CanInsertLine(.T.)
+
+            oStruCNC:GoLine(1)
+
+            If oStruCNC:IsDeleted()
+                oStruCNC:UndeleteLine()
+            EndIf
+
+            oStruCNC:SetValue("CNC_CLIENT", AD1->AD1_CODCLI)
+            oStruCNC:SetValue("CNC_LOJACL", AD1->AD1_LOJCLI)
+
+            oStruCNC:CanUpdateLine(.F.)
+            oStruCNC:CanInsertLine(.F.)
+
+            //Planilhas
+            oStruCNA:CanUpdateLine(.T.)
+            oStruCNA:CanInsertLine(.T.)
+
+            oStruCNA:GoLine(1)
+
+            If oStruCNA:IsDeleted()
+                oStruCNA:UndeleteLine()
+            EndIf
+
+            oStruCNA:SetValue( "CNA_CLIENT", AD1->AD1_CODCLI )
+            oStruCNA:SetValue( "CNA_LOJACL", AD1->AD1_LOJCLI )
+            oStruCNA:SetValue( "CNA_XOPORT", AD1->AD1_NROPOR )
+            oStruCNA:SetValue( "CNA_XREVOP", AD1->AD1_REVISA )
+            
+            If Empty(oStruCNA:GetValue("CNA_FLREAJ"))
+                oStruCNA:SetValue("CNA_FLREAJ", Posicione('CN1', 1, FwxFilial('CN1') + oStruCN9:GetValue('CN9_TPCTO'), 'CN1_CREAJM'))
+            EndIf
+
+            oStruCNA:CanUpdateLine(.F.)
+            oStruCNA:CanInsertLine(.F.)
+
+        EndIf
+
+        //Itens da Planilha
+        If Altera .and. p_lAIPlan
+        
+            dbSelectArea('CNB')
+            CNB->(dbGoTop())
+            CNB->(dbSetOrder(1)) //CNB_FILIAL+CNB_CONTRA+CNB_REVISA+CNB_NUMERO+CNB_ITEM
+            
+            If CNB->(dbSeek(xFilial('CNB') + oMdlCNB:GetValue('CNB_CONTRA') + oMdlCNB:GetValue('CNB_REVISA') + oMdlCNB:GetValue('CNB_NUMERO')))
+                
+                While   .not. CNB->(Eof()) .and. CNB->CNB_FILIAL = xFilial('CNB') .and. CNB->CNB_CONTRA = oMdlCNB:GetValue('CNB_CONTRA') .and. CNB->CNB_REVISA = oMdlCNB:GetValue('CNB_REVISA') .and. CNB->CNB_NUMERO = oMdlCNB:GetValue('CNB_NUMERO')
+                
+                    RecLock('CNB', .F.)                    
+                        CNB->(dbDelete())
+                    CNB->(MsUnlock())
+
+                    CNB->(dbSkip())
+
+                End
+
+            EndIf
+
+        EndIf
+        
+        oStruCNB:SetProperty("*", MODEL_FIELD_WHEN, {||.T.})   
+
+        If oMdlCNB:IsOnlyQuery()
+
+			oMdlCNB:ClearData(.F.)
+			oMdlCNB:InitLine()
+			oMdlCNB:GoLine(1)
+
+		ElseIf .not. Empty(oMdlCNB:GetValue('CNB_PRODUT'))
+
+			For nI := 1 To oMdlCNB:Length()
+
+				oMdlCNB:GoLine(nI)
+				oMdlCNB:DeleteLine(.T., .T.)
+
+			Next 
+
+            oMdlCNB:AddLine()
+
+		EndIf
+
+        nI      := 0        
+        cAlTmp  := fIntPlan(oStruCN9:GetValue('CN9_XOPORT'), oStruCN9:GetValue('CN9_XREVOP'))
+
+        (cAlTmp)->(dbGoTop())
+        (cAlTmp)->(dbEval({|x| nUltReg++}))
+        (cAlTmp)->(dbGoTop())
+
+        oStruCNA:SetValue( "CNA_XPROPO", (cAlTmp)->ADY_PROPOS )
+        oStruCNA:SetValue( "CNA_XPREVI", (cAlTmp)->ADY_PREVIS )
+
+
+        While .not. (cAlTmp)->(Eof())
+
+            nI++
+
+            If Posicione('SF4', 1, xFilial('SF4') + (cAlTmp)->ADZ_TES, 'F4_DUPLIC') != 'N'
+                nTotal += (cAlTmp)->ADZ_TOTAL
+            EndIf
+            
+            If p_lAIPlan 
+             
+                oMdlCNB:SetValue('CNB_PRODUT',  (cAlTmp)->ADZ_PRODUT)
+                oMdlCNB:SetValue('CNB_QUANT',   (cAlTmp)->ADZ_QTDVEN)
+                oMdlCNB:SetValue('CNB_VLUNIT',  (cAlTmp)->ADZ_PRCTAB)
+                oMdlCNB:SetValue('CNB_DESC',    (cAlTmp)->ADZ_DESCON)
+                oMdlCNB:SetValue('CNB_TS',      (cAlTmp)->ADZ_TES)
+                oMdlCNB:LoadValue('CNB_VLDESC', (cAlTmp)->ADZ_VALDES)
+                oMdlCNB:LoadValue('CNB_XUNEXE', (cAlTmp)->ADZ_XUNEXE)
+            
+                If nI < nUltReg
+                    nLinha := oMdlCNB:AddLine()
+                    If !(oMdlCNB:VldLineData())
+                        MsgInfo("Ocorreu um item ao obter o produto: " + (cAlTmp)->ADZ_PRODUT + ", verifique o cadastro do mesmo!", "[Fonte: SFCN30A1]")
+                    EndIf
+                    oMdlCNB:GoLine(nLinha)
+                EndIf
+                                
+            EndIf
+
+            (cAlTmp)->(dbSkip())
+
+        EndDo
+
+        If oMdlCNB:Length() > 0
+            oMdlCNB:GoLine(1)
+        EndIf
+        
+        oView:Refresh()
+
+    EndIf
+
+    If Select(cAlTmp) > 0
+        (cAlTmp)->(dbCloseArea())
+    EndIf
+
+    RestArea(aArea)
+
+Return cRet
+
+/*/{Protheus.doc} fIntPlan
+Consulta os itens da proposta aprovada para a oportunidade selecionda.
+@type function
+@author Alan Teles de Oliveira
+@since 23/01/2019
+@return character, o alias criado com o resultado da consulta.
+/*/
+Static Function fIntPlan(p_cOport, p_cRevis)
+
+    Local cRet := GetNextAlias()
+
+    BeginSQL Alias cRet
+    
+        SELECT 	
+            ADY.ADY_PROPOS,
+            ADY.ADY_PREVIS,
+            ADZ.ADZ_PRODUT,
+            ADZ.ADZ_QTDVEN,
+            ADZ.ADZ_PRCTAB,
+            ADZ.ADZ_DESCON,
+            ADZ.ADZ_PRCVEN,
+            ADZ.ADZ_VALDES,
+            ADZ.ADZ_TOTAL,
+            ADZ.ADZ_TES,
+            ADZ.ADZ_XUNEXE
+        FROM %Table:ADY% ADY
+
+        INNER JOIN %Table:ADZ% ADZ ON
+            ADZ.ADZ_PROPOS = ADY.ADY_PROPOS AND
+            ADZ.ADZ_REVISA = ADY.ADY_PREVIS AND
+            ADZ.ADZ_FILIAL = ADY.ADY_FILIAL AND
+            ADZ.%NotDel%
+
+        WHERE
+            ADY.ADY_FILIAL = %Exp:xFilial('ADY')% AND
+            ADY.ADY_OPORTU = %Exp:p_cOport% AND
+            ADY.ADY_REVISA = %Exp:p_cRevis% AND
+            ADY.ADY_STATUS = 'E' AND
+            ADY.%NotDel%
+
+    EndSQL
+
+Return cRet
+
+/*/{Protheus.doc} fCondPG
+Recupera a condição de pagamento informada na oportunidade de venda
+@type function
+@author user
+@since 19/03/2021
+@param p_cOport, character, código da oportunidade
+@param p_cRevis, character, código de revisão da oportunidade
+@return character, Condição de pagamento da oportunidade informada
+/*/
+Static Function fCondPG(p_cOport, p_cRevis)
+
+    Local cSQL := '%%'
+    Local cRet := ''
+    Local cAlTmp := GetNextAlias()
+
+    If .not. Empty(p_cRevis)
+        cSQL := "% AND ADY.ADY_REVISA = '" + p_cRevis + "' %"
+    EndIf
+
+    If Select(cAlTmp) > 0
+        (cAlTmp)->(dbCloseArea())
+    EndIf
+
+    BeginSQL Alias cAlTmp
+    
+        SELECT
+            ADY.ADY_PROPOS, 
+            ADY.ADY_PREVIS, 
+            ADY.ADY_CONDPG 
+        FROM %Table:ADY% ADY
+        WHERE             
+            ADY.ADY_FILIAL = %Exp:xFilial("ADY")% AND
+            ADY.ADY_OPORTU = %Exp:p_cOport% AND
+            ADY_STATUS = 'E' AND
+            ADY.%NotDel%
+            %Exp:cSQL%
+        ORDER BY
+            ADY_PROPOS, 
+            ADY_PREVIS
+
+    EndSQL
+
+    (cAlTmp)->(dbGoTop())
+
+    If .not. (cAlTmp)->(Eof())
+        cRet := (cAlTmp)->ADY_CONDPG
+    EndIf
+
+    If Select(cAlTmp) > 0
+        (cAlTmp)->(dbCloseArea())
+    EndIf
+
+Return cRet

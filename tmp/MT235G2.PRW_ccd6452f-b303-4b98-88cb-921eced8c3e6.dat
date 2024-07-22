@@ -1,0 +1,124 @@
+#include "Totvs.ch"
+#include "topconn.ch"
+#include "tbiconn.ch"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ MT235G2  º Autor ³ Kley Goncalves     º Data ³ 13/10/2011  º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDescricao ³ Ponto de Entrada na rotina de Eliminacao de Residuo, antes º±±
+±±º          ³ de executar a eliminacao as Solicitacoes de Compra (SC1).  º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ MP 11 - PROJETO CNI                                        º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function MT235G2
+
+Local oFont1
+Local lExecuta  := GetMv("SI_SCRESID",.F.,.F.)
+Local oDlg      := Nil
+Local cObsSC    := ""
+Local oObsSC
+Local nOpca     := 0
+Local bOk       := {|| nOpca:=1, oDlg:End() }
+Local bCancel   := {|| nOpca:=0, oDlg:End() }
+Local cEOL      := Chr(13)+Chr(10)
+Local nPerc     := MV_PAR01
+Local nRes      := 0
+Local cAlias    := ParamIXB[1]
+Local nTipo     := ParamIXB[2]
+Local nOrdemSC1 := (cAlias)->(IndexOrd())
+Local nRecnoSC1 := (cAlias)->(Recno())
+Local _xlOk		:= .T.
+
+Static _xcObsSC
+Static _xcObsSC2
+Static _xlCancela
+
+Define Font oFont1 Name "Consolas" Size 07,17
+
+If lExecuta .and. _xlOk == Nil .and. nTipo == 3
+	_xlOk := .F.
+ElseIf !lExecuta .and. _xlOk == Nil .and. nTipo # 3
+	_xlOk := .T.
+EndIf
+
+Do While lExecuta .and. _xlCancela # .T. .and. Empty(_xcObsSC) .and. nTipo == 3
+
+	Define MsDialog oDlg Title "Eliminacao de Residuo" From 0,0 To 190,532 Of oDlg Pixel
+	
+	@ 06,06 To 60,261 LABEL " Informe o Motivo da Eliminacao do Residuo " OF oDlg PIXEL
+	@ 20,15 Get oObsSC     Var cObsSC Multiline Text Font oFont1 Size 240,30 Pixel Of oDlg
+	
+	@ 70,225 Button "&Ok"       Size 36,16 Pixel Action Eval(bOk)
+	@ 70,179 Button "&Cancela"  Size 36,16 Pixel Action Eval(bCancel)
+	
+	Activate MsDialog oDlg Center
+
+	_xcObsSC   := ""
+	_xlOk        := .F.
+
+   	If nOpca == 0
+   		MsgStop("O processamento foi abortado.","Motivo da Eliminação")
+   		_xlCancela := .T.
+   	Else
+   		_xcObsSC2 := AllTrim(StrTran(cObsSC,cEOL," "))
+
+	   	If Empty(_xcObsSC2)
+			MsgAlert("O Motivo da Eliminação deve ser informado." +cEOL+cEOL+ "Se necessario abortar clique em 'Cancelar'.","Motivo da Eliminação")				
+	   	ElseIf Len(_xcObsSC2) < 5
+			MsgAlert("O Motivo informado é muito curto.","Motivo da Eliminação")				
+	   	ElseIf Len(_xcObsSC2) > 203
+			MsgAlert("O Motivo é muito extenso. Deve conter no máximo 200 caracteres." +cEOL+cEOL+;
+			         "Você informou " + LTrim(Str(Len(_xcObsSC2))) + " caracteres.","Motivo da Eliminação")
+		Else
+			_xcObsSC   := _xcObsSC2
+			_xlOk        := .T.
+		EndIf	
+	EndIf
+
+	Loop	
+EndDo
+
+If lExecuta .and. _xlCancela # .T. .and. !Empty(_xcObsSC) .and. _xlOk .and. nTipo == 3
+	// Calcular o Residuo maximo da Compra
+	nRes := ((cAlias)->C1_QUANT * nPerc)/100		
+	// Verifica se a Solicitacao deve ser Encerrada
+	If ((cAlias)->C1_QUANT - (cAlias)->C1_QUJE <= nRes .And. (cAlias)->C1_QUANT > (cAlias)->C1_QUJE)
+		Begin Transaction
+			dbSelectArea("SC1")
+			dbGoto((cAlias)->(SC1RECNO))
+			If SimpleLock("SC1")
+				RecLock("SC1",.F.)
+					Replace C1_XRESMOT WITH _xcObsSC
+					Replace C1_XRESUSR WITH __cUserID
+					Replace C1_XRESDTA WITH dDatabase
+					Replace C1_XRESHOR WITH Left(Time(),5)
+				MsUnlock()
+			EndIf
+		End Transaction
+	Endif
+EndIf
+
+/*
+	02/08/2017 - Franklin B. Oliveira
+	Valido se o pedido de compra (nTipo == 1) possui numero de cotação e numero de solicitação;
+	se não possuir, não deve ser eliminado por residuo.
+	02/03/2018 - Franklin B. Oliveira
+	Removido por solicitação do Leandro Almeida (CAQC).
+	
+If _xlOk .And. (nTipo == 1)
+	If Empty(SC7->C7_NUMSC) .And. Empty(SC7->C7_NUMCOT)
+		_xlOk := .F.
+	EndIf
+EndIf
+*/	
+(cAlias)->(DbSetOrder(nOrdemSC1))                                     
+(cAlias)->(DbGoto(nRecnoSC1))
+
+Return _xlOk

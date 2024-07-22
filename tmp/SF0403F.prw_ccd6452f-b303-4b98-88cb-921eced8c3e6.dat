@@ -1,0 +1,644 @@
+#Include 'Protheus.ch'
+#Include 'FWMVCDEF.ch'
+#Include 'ApWizard.ch'
+#Include 'TopConn.ch'
+
+/*/{Protheus.doc} SF0403F
+Amarração de Curso/Disciplina x Produto Protheus.
+
+@author Franklin de Brito de Oliveira
+@since 21/07/2015
+@version 1.0
+
+@return Nil
+
+/*/
+User Function SF0403F()
+
+Local oBrowse
+
+Private aRotina := MenuDef()
+
+	//Instancio a classe FWMBrowse
+	oBrowse := FWMBrowse():New()
+	
+	//Setando o Alias a ser utilizado
+	oBrowse:SetAlias( 'ZZB' ) 
+	
+	//Descrição do Cabeçalho
+	oBrowse:SetDescription('Cadastro de Amarração - Disciplina X Livro')
+	
+	//Legenda
+	oBrowse:AddLegend( "ZZB_STATUS=='A'", "GREEN"	, "Ativo" 		)
+	oBrowse:AddLegend( "ZZB_STATUS=='B'", "RED"		, "Inativo"	)
+	
+	//Ativando
+	oBrowse:Activate()
+	
+Return( Nil )
+
+/*/{Protheus.doc} MenuDef
+Função de definição do menu.
+
+@author Franklin de Brito de Oliveira
+@since 21/07/2015
+@version 1.0
+
+@return aRotina, Array com as opções do menu
+
+/*/
+Static Function MenuDef()
+	
+Local aRotina := {}
+
+	aAdd( aRotina, { 'Pesquisar' 	, 'PesqBrw'			, 0, 1, 0, .T. } )
+	aAdd( aRotina, { 'Importar CSV'	, 'U_Imp0403F()'	, 0, 1, 0, .T. } )
+	aAdd( aRotina, { 'Visualizar'	, 'ViewDef.SF0403F'	, 0, 2, 0, Nil } )
+	aAdd( aRotina, { 'Incluir'   	, 'ViewDef.SF0403F'	, 0, 3, 0, Nil } )
+	aAdd( aRotina, { 'Alterar'   	, 'ViewDef.SF0403F'	, 0, 4, 0, Nil } )
+	aAdd( aRotina, { 'Excluir'   	, 'ViewDef.SF0403F'	, 0, 5, 0, Nil } )
+	
+	
+Return( aRotina )
+
+
+/*/{Protheus.doc} ModelDef
+Função para montar o modelo de dados.
+
+@author Franklin de Brito de Oliveira
+@since 21/07/2015
+@version 1.0
+
+@return oModel, Objeto modelo de formulário
+
+/*/
+Static Function ModelDef()
+
+Local oModel
+Local oStruZZBMaster := FWFormStruct( 1, 'ZZB', { |X|  AllTrim(X) $ 'ZZB_CODCUR, ZZB_DESCUR, ZZB_CODDIS, ZZB_DESDIS' } )
+Local oStruZZBDetail := FWFormStruct( 1, 'ZZB', { |X| .Not. ( AllTrim(X) $ 'ZZB_CODCUR, ZZB_DESCUR, ZZB_CODDIS, ZZB_DESDIS' ) } )
+
+	oModel := MPFormModel():New( 'SF0403FM', , { |oModel| F0403FMPOS( oModel ) } )
+	
+	oModel:AddFields( 'ZZBMASTER'	, /*cOwner*/ , oStruZZBMaster )
+	oModel:AddGrid('ZZBDETAIL'		, 'ZZBMASTER', oStruZZBDetail,  {|oModelGrid, nLine, cAction, cField| F0403LPRE(oModelGrid, nLine, cAction, cField) })
+	
+	oModel:SetRelation( 'ZZBDETAIL', { { 'ZZB_FILIAL', 'xFilial( "ZZB" )' }, {'ZZB_CODCUR', 'ZZB_CODCUR' }, {'ZZB_CODDIS', 'ZZB_CODDIS' } }, ZZB->( IndexKey( 1 ) ) )
+
+	oModel:SetPrimaryKey( { "ZZB_FILIAL", "ZZB_CODCUR", "ZZB_CODDIS" } )
+	
+	oModel:GetModel( 'ZZBDETAIL' ):SetUniqueLine( { 'ZZB_CODPRO', 'ZZB_STATUS' } )
+		
+	oModel:GetModel( 'ZZBDETAIL' ):SetOptional( .F. )
+	
+	oModel:SetDescription( 'Amarração - Disciplina X Livro' ) 
+	
+	oModel:GetModel( 'ZZBMASTER' ):SetDescription( 'Dados do Curso/Disciplina' )
+	oModel:GetModel( 'ZZBDETAIL' ):SetDescription( 'Dados dos Produtos (Livros)' )
+		
+Return( oModel )
+
+
+/*/{Protheus.doc} F0403FMPOS
+	Função para pós-validação de modelo, equivalente ao antigo
+	processo de "TudoOk".
+
+@author franklin.oliveira
+@since 16/05/2016
+@param oModel, object, Modelo de dados
+@type function
+/*/
+Static Function F0403FMPOS( oModel )
+
+Local aArea			:= GetArea()
+
+Local cCodCurso 	:= oModel:GetValue( 'ZZBMASTER', 'ZZB_CODCUR' )
+Local cCodDiscp 	:= oModel:GetValue( 'ZZBMASTER', 'ZZB_CODDIS' )
+
+Local lRet			:= .T.
+
+Local nOperation 	:= oModel:GetOperation()
+
+	If nOperation == MODEL_OPERATION_INSERT
+		If ZZB->( DbSeek(xFilial("ZZB") + cCodCurso + cCodDiscp) )
+			Help(" ",1, "SF0403FJAEXIST", "Curso/Disciplina já cadastrado.","Curso/Disciplina " + AllTrim(cCodCurso) ;
+											+ "/" + AllTrim(cCodDiscp) +" já cadastrado, utilize a opção 'Alterar'.", 1, 0 )
+			lRet := .F.
+		EndIf
+	ElseIf nOperation == MODEL_OPERATION_DELETE
+		DbSelectArea("ZE0")
+		DbSetOrder(1)
+		If ZE0->( DbSeek(xFilial("ZE0") + cCodCurso + cCodDiscp) )
+			Help(" ",1, "SF0403FNAOEXC", "Cadastro utilizado","Curso/Disciplina "+ AllTrim(cCodCurso) ;
+											+ "/" + AllTrim(cCodDiscp) +" já utilizado, não é possível excluir.",1,0 )
+			lRet := .F.
+		EndIf
+	EndIf
+	
+	RestArea(aArea)
+
+Return lRet
+
+/*/{Protheus.doc} ViewDef
+Função para montar interface.
+
+@author Franklin de Brito de Oliveira
+@since 21/07/2015
+@version 1.0
+
+@return oView, Objeto formulário de visualização
+/*/
+Static Function ViewDef()
+	
+Local oView
+Local oModel  := FWLoadModel( 'SF0403F' )
+Local oStruZZBMaster := FWFormStruct( 2, 'ZZB', { |X|  AllTrim(X) $ 'ZZB_CODCUR, ZZB_DESCUR, ZZB_CODDIS, ZZB_DESDIS' } )
+Local oStruZZBDetail := FWFormStruct( 2, 'ZZB', { |X| .Not. ( AllTrim(X) $ 'ZZB_CODCUR, ZZB_DESCUR, ZZB_CODDIS, ZZB_DESDIS' ) } )
+	
+	oView := FWFormView():New()
+	
+	oView:SetModel( oModel )
+	
+	oView:AddField( 'VZZBMASTER', oStruZZBMaster, 'ZZBMASTER' )
+	oView:AddGrid( 'VZZBDETAIL', oStruZZBDetail, 'ZZBDETAIL' )
+	
+	oView:CreateHorizontalBox( 'CABECALHO', 15 )
+	oView:CreateHorizontalBox( 'DETALHE', 85 )
+	
+	oView:SetOwnerView( 'VZZBMASTER', 'CABECALHO' )
+	oView:SetOwnerView( 'VZZBDETAIL', 'DETALHE' )
+	
+	oView:EnableTitleView( 'VZZBMASTER' )
+	oView:EnableTitleView( 'VZZBDETAIL' )
+	
+	oView:AddIncrementField( 'VZZBDETAIL', 'ZZB_ITEM' ) 
+	
+	oView:SetCloseOnOk( {|| .t.} )
+	
+Return( oView )
+
+
+/*/{Protheus.doc} Imp0403F
+Função para iniciar a importação de dados para a tabela ZZB, atravéz de arquivo .csv
+
+@type function
+@author franklin.oliveira
+@since 10/09/2015
+@version 1.0
+
+/*/
+User Function Imp0403F()
+
+Local oWizard
+Local cPathIni 	:= "C:\"
+Local cLocFile	:= ""
+Local lWiz 		:= .F.
+
+Private cAliasTrb
+Private cArqTmp
+	
+	DEFINE WIZARD oWizard TITLE "Wizard" HEADER "Wizard de importação Curso/Disc. X Produto" MESSAGE " "; 
+	TEXT "Wizard de atualização de Curso/Disc. X Produto através de importação de arquivo" PANEL;
+	NEXT {|| .T.} FINISH {|| .T.}
+		
+		// PANEL 2
+		//cria um novo passo (janela) para o wizard
+		CREATE PANEL oWizard HEADER "Seleção do arquivo" MESSAGE "Selecione o arquivo de importação" PANEL;
+		BACK {|| .T.} ;
+		NEXT {|| .T.} ; 
+		FINISH {|| lWiz := fVldPnl01(cLocFile)} EXEC {|| .T.}
+
+		@ 010, 010 TO 125, 280 OF oWizard:oMPanel[2] PIXEL
+		@ 020, 015 SAY "Selecione o arquivo: " OF oWizard:oMPanel[2] PIXEL
+		@ 050, 015 MSGET cLocFile 	SIZE 200, 012 PIXEL WHEN .F. OF oWizard:oMPanel[2]
+		@ 050, 220 BUTTON 	"Selecionar Arquivo"	SIZE 050, 014 PIXEL OF oWizard:oMPanel[2] ACTION ;
+			(cLocFile := cGetFile("Arquivo CSV | *.csv", "Selecione o arquivo CSV", , cPathIni, .T., GETF_LOCALHARD + GETF_NETWORKDRIVE ))
+			
+		oWizard:oDlg:lEscClose := .F.
+
+	ACTIVATE WIZARD oWizard CENTERED
+
+	If lWiz 
+		Processa({|lAbort| fImpZZB(lAbort)}, 'Importação de dados', 'Aguarde, Importando dados...', .T.)
+		
+		// Apaga arquivo temporario
+		If !Empty(cArqTmp)
+			(cAliasTrb)->( dbCloseArea() )
+			FErase( cArqTmp + OrdBagExt() )
+		EndIf
+	EndIf
+			
+Return (Nil)
+
+Static Function fVldPnl01(cLocFile)
+	
+Local aCampo	:= {}
+Local aEstrut	:= {}
+Local aTXT		:= {}
+Local lRet 		:= .T.
+
+	cAliasTrb 	:= GetNextAlias()
+	
+	If Empty(cLocFile)
+		lRet := .F.
+		MsgAlert("Nenhum arquivo foi selecionado.")
+		Return lRet
+	EndIf
+	
+	aAdd(aEstrut, {'ZZB_CODCUR', 'C', TamSX3("ZZB_CODCUR")[1], 0})
+	aAdd(aEstrut, {'ZZB_DESCUR', 'C', TamSX3("ZZB_DESCUR")[1], 0})
+	aAdd(aEstrut, {'ZZB_CODDIS', 'C', TamSX3("ZZB_CODDIS")[1], 0})
+	aAdd(aEstrut, {'ZZB_DESDIS', 'C', TamSX3("ZZB_DESDIS")[1], 0})
+	aAdd(aEstrut, {'ZZB_CODPRO', 'C', TamSX3("ZZB_CODPRO")[1], 0})
+	aAdd(aEstrut, {'ZZB_DESPRO', 'C', TamSX3("ZZB_DESPRO")[1], 0})
+	
+	cArqTmp := CriaTrab(aEstrut, .T.)
+	
+	dbUseArea( .T.,, cArqTmp, cAliasTrb, .F., .F. )
+	
+	// Cria Indice Temporario do Arquivo de Trabalho.
+	cChave   := "ZZB_CODCUR+ZZB_CODDIS+ZZB_CODPRO"
+	
+	IndRegua(cAliasTrb,cArqTmp,cChave,,,"Criando Arquivo Temporário...")
+	
+	DbSelectArea(cAliasTrb)
+	DbSetIndex(cArqTmp + OrdBagExt())
+	DbSetOrder(1)
+	
+	// Estrutura do arquivo texto
+	aAdd(aCampo,"ZZB_CODCUR")
+	aAdd(aCampo,"ZZB_DESCUR")
+	aAdd(aCampo,"ZZB_CODDIS")
+	aAdd(aCampo,"ZZB_DESDIS")
+	aAdd(aCampo,"ZZB_CODPRO")
+	//Define o valor do array conforme estrutura
+	aPosCampos:= Array(Len(aCampo))
+	
+	If (nHandle := FT_FUse(AllTrim(cLocFile)))== -1
+		lRet := .F.
+		Help(" ",1,"NOFILEIMPOR")
+		Return lRet
+	EndIf
+	
+	//Verifica Estrutura do Arquivo
+	FT_FGOTOP()
+	cLinha := FT_FREADLN()
+	nPos	:=	0
+	nAt	:=	1
+	
+	While nAt > 0
+		nPos++
+		nAt	:=	AT(";",cLinha)
+		If nAt == 0
+			cCampo := cLinha
+		Else
+			cCampo	:=	Substr(cLinha,1,nAt-1)
+		Endif
+		nPosCpo	:=	Ascan(aCampo,{|x| x==cCampo})
+		If nPosCPO > 0
+			aPosCampos[nPosCpo]:= nPos
+		Endif
+		cLinha	:=	Substr(cLinha,nAt+1)
+	Enddo
+	
+	If (nPosNil:= Ascan(aPosCampos,Nil)) > 0
+		lRet := .F.
+		Aviso("Estrutura de arquivo inválido.","O campo "+aCampo[nPosNil]+" nao foi encontrado na estrutura, verifique.",{"Sair"})
+		Return lRet
+	Endif
+	
+	// Inicia Importacao das Linhas
+	FT_FSKIP()
+	While !FT_FEOF()
+		cLinha := FT_FREADLN()
+		AADD(aTxt,{})
+		nCampo := 1
+		While At(";",cLinha)>0
+			aAdd(aTxt[Len(aTxt)],Substr(cLinha,1,At(";",cLinha)-1))
+			nCampo ++
+			cLinha := StrTran(Substr(cLinha,At(";",cLinha)+1,Len(cLinha)-At(";",cLinha)),'"','')
+		End
+		If Len(AllTrim(cLinha)) > 0
+			aAdd(aTxt[Len(aTxt)],StrTran(Substr(cLinha,1,Len(cLinha)),'"','') )
+		Else
+			aAdd(aTxt[Len(aTxt)],"")
+		Endif
+		FT_FSKIP()
+	End
+	
+	// Gravacao dos Itens (TRB)
+	FT_FUSE()
+	For nX:=1 To Len(aTxt)
+		For nY:=1 To Len(aCampo)
+			dbSelectArea(cAliastrb)
+			RecLock(cAliasTrb,.T.)
+			For nY:=1 To Len(aCampo)
+				FieldPut(FieldPos(aCampo[nY]), aTxt[nX,aPosCampos[nY]])
+			Next
+			MsUnLock()
+		Next
+	Next
+	
+	dbSelectArea(cAliasTrb)
+	dbGotop()
+	
+	If (cAliasTrb)->(EoF())
+		lRet := .F.
+		Aviso("Arquivo Vazio.", "O arquivo selecionado não possui dados", {"Sair"})
+		Return lRet
+	EndIf
+	
+Return (lRet)
+
+Static Function fImpZZB(lAbort)
+
+Local aAux		:= {}
+Local aAuxItm	:= {}
+Local aC		:= {}
+Local aH		:= {}
+Local cQry		:= ""
+Local lRet		:= .T.
+Local lAux		:= .T.
+Local nI		:= 0
+Local nJ		:= 0
+Local nItErro	:= 0
+Local nPos		:= 0
+Local nTotReg	:= 0
+Local nRegAtu	:= 0
+Local oModel, oAux, oStruct
+	
+	DbSelectArea('ZZB')
+	DbSetOrder(1)
+	
+	//Aqui ocorre o instanciamento do Modelo de dados (Model)
+	oModel := FWLoadModel('SF0403F')
+	
+	While .Not. ( (cAliasTrb)->(EoF()) )
+		nTotReg++
+		(cAliasTrb)->(DbSkip())
+	EndDo
+	
+	ProcRegua( nTotReg )
+	
+	DbSelectArea(cAliasTrb)
+	DbGotop()
+
+	While .Not. ( (cAliasTrb)->(EoF()) )
+		If lAbort
+			Return (Nil)
+		EndIf
+		
+		oModel:SetOperation(3)
+		
+		lRet := .T.
+		
+		aCposCab := {}
+		aCposDet := {}	
+		
+		aAdd( aCposCab, { 'ZZB_CODCUR'	, (cAliasTrb)->ZZB_CODCUR} )
+		aAdd( aCposCab, { 'ZZB_DESCUR'	, (cAliasTrb)->ZZB_DESCUR} )	
+		aAdd( aCposCab, { 'ZZB_CODDIS'	, (cAliasTrb)->ZZB_CODDIS} )
+		aAdd( aCposCab, { 'ZZB_DESDIS'	, (cAliasTrb)->ZZB_DESDIS} )
+		
+		cQry := " "
+		cQry += "SELECT MAX(ZZB_ITEM) SEQ FROM " + RETSQLNAME("ZZB") + " ZZB "
+		cQry += "WHERE ZZB_CODCUR  = '" + (cAliasTrb)->ZZB_CODCUR + "' " 
+		cQry += "AND ZZB_CODDIS = '" + (cAliasTrb)->ZZB_CODDIS + "' "
+		cQry += "AND ZZB.D_E_L_E_T_ = ' ' "
+		
+
+		TCQUERY cQry NEW ALIAS "TRBZZB"
+
+		DBSELECTAREA("TRBZZB")
+		cSeq := PADL(TRBZZB->SEQ,3)
+				
+		While .Not. ( (cAliasTrb)->(EoF()) ) .And. ( aCposCab[1][2] + aCposCab[3][2] == (cAliasTrb)->ZZB_CODCUR + (cAliasTrb)->ZZB_CODDIS )
+			aAuxItm := {}
+			aAdd( aAuxItm, { 'ZZB_ITEM'	,	SOMA1(cSeq)				} )
+			aAdd( aAuxItm, { 'ZZB_CODPRO'	,	(cAliasTrb)->ZZB_CODPRO	} )
+			aAdd( aAuxItm, { 'ZZB_DESPRO'	,	Posicione("SB1", 1, xFilial("SB1") + (cAliasTrb)->ZZB_CODPRO, "B1_DESC")} )
+			aAdd( aCposDet, aAuxItm )
+			
+			IncProc("Importanto " + Str(nRegAtu) + " de " + Str(nTotReg))
+			(cAliasTrb)->(DbSkip())
+		EndDo
+				
+		oModel:Activate()
+		
+		//Instanciamos apenas referentes aos Dados
+		oAux := oModel:GetModel('ZZBMASTER')
+	
+		//Obtemos a estrutura de dados
+		oStruct := oAux:GetStruct()
+		aAux    := oStruct:GetFields()
+		
+		If lRet
+			For nI := 1 To Len( aCposCab )
+				// Verifica se os campos passados existem na estrutura do cabeçalho
+				If ( nPos := aScan( aAux, { |x| AllTrim( x[3] ) == AllTrim( aCposCab[nI][1] ) } ) ) > 0
+					// É feita a atribuição do dado ao campo do Model do cabeçalho
+					If !( lAux := oModel:SetValue( "ZZBMASTER", aCposCab[nI][1], aCposCab[nI][2] ) )
+						// Caso a atribuição não possa ser feita, por algum motivo (validação, por exemplo)
+						// o método SetValue retorna .F.
+						lRet := .F.
+						Exit
+					EndIf
+				EndIf
+			Next
+		EndIf
+		
+		If lRet
+			// Instanciamos apenas a parte do modelo referente aos dados do item
+			oAux := oModel:GetModel( "ZZBDETAIL" )
+			
+			// Obtemos a estrutura de dados do item
+			oStruct := oAux:GetStruct()
+			aAux := oStruct:GetFields()
+			nItErro := 0
+			
+			For nI := 1 To Len( aCposDet )
+				// Incluímos uma linha nova
+				// ATENÇÃO: Os itens são criados em uma estrutura de grid (FORMGRID), portanto já é criada uma primeira linha
+				//branco automaticamente, desta forma começamos a inserir novas linhas a partir da 2ª vez
+				If nI > 1
+					// Incluímos uma nova linha de item
+					If ( nItErro := oAux:AddLine() ) <> nI
+						// Se por algum motivo o método AddLine() não consegue incluir a linha, 
+						// ele retorna a quantidade de linhas já 
+						// existem no grid. Se conseguir retorna a quantidade mais 1
+						lRet := .F.
+						Exit
+					EndIf
+				EndIf
+				
+				For nJ := 1 To Len( aCposDet[nI] )
+					// Verifica se os campos passados existem na estrutura de item
+					If ( nPos := aScan( aAux, { |x| AllTrim( x[3] ) == AllTrim( aCposDet[nI][nJ][1] ) } ) ) > 0
+						If !( lAux := oModel:SetValue( "ZZBDETAIL", aCposDet[nI][nJ][1], aCposDet[nI][nJ][2] ) )
+							// Caso a atribuição não possa ser feita, por algum motivo (validação, por exemplo)
+							// o método SetValue retorna .F.
+							lRet := .F.
+							nItErro := nI
+							Exit
+						EndIf
+					EndIf
+				Next
+			
+				If !lRet
+					Exit
+				EndIf
+			Next
+		EndIf
+		
+		If lRet
+			//Faz-se a validação dos dados, note que diferentemente das tradicionais "rotinas automaticas"
+			//Nesse momento os dados não são gravados, são somento validados.
+			If (lRet := oModel:VldData())
+				//Se os dados foram validados faz-se a gravação efetiva dos dados (commit)
+				oModel:CommitData()
+			EndIf
+		EndIf
+		
+		If !lRet
+		
+			//Se os dados não foram validados obtemos a descrição do erro para gerar LOG ou mensagem de aviso
+			aErro := oModel:GetErrorMessage()
+			//A estrutura do vetor com o erro é:
+			// [1] Identificador (ID) do formulario de origem
+			// [2] Identificador (ID) do campo de origem
+			// [3] Identificador (ID) do formulario de erro
+			// [4] Identificador (ID) do campo de erro
+			// [5] Identificador (ID) do erro
+			// [6] Mensagem do erro
+			// [7] Mensagem da solução
+			// [8] Valor Atribuido
+			// [9] Valor Anterior
+	
+			AutoGrLog("Id do Formulário de Origem:" + ' [' + AllToChar( aErro[1] ) + ']')
+			AutoGrLog("Id do Campo de Origem:     " + ' [' + AllToChar( aErro[2] ) + ']')
+			AutoGrLog("Id do Formulário de Erro:  " + ' [' + AllToChar( aErro[3] ) + ']')
+			AutoGrLog("Id do Campo de Erro:       " + ' [' + AllToChar( aErro[4] ) + ']')
+			AutoGrLog("Id do Erro:                " + ' [' + AllToChar( aErro[5] ) + ']')
+			AutoGrLog("Mensagem do Erro:          " + ' [' + AllToChar( aErro[6] ) + ']')
+			AutoGrLog("Mensagem da Solução:       " + ' [' + AllToChar( aErro[7] ) + ']')
+			AutoGrLog("Valor Atribuido:           " + ' [' + AllToChar( aErro[8] ) + ']')
+			AutoGrLog("Valor Anterior:            " + ' [' + AllToChar( aErro[9] ) + ']')
+	
+			MostraErro()
+		EndIf
+	
+		//Desativamos o Model
+		oModel:DeActivate()
+		
+		TRBZZB->( DbCloseArea() )
+	EndDo	
+
+Return lRet
+
+/*/{Protheus.doc} F0403LPRE
+	Função para pré-validação de linha, no componente de "Grid".
+
+@author franklin.oliveira
+@since 16/05/2016
+
+@param oModelGrid, object, Modelo de dados do objeto Grid
+@param nLinha, numeric, numero da linha posicionada
+@param cAcao, characters, Ação executada
+@param cCampo, characters, Campo onde se está atribuindo valor
+
+@type function
+/*/
+Static Function F0403LPRE(oModelGrid, nLinha, cAcao, cCampo )
+
+Local aArea		:= GetArea()
+Local lRet 		:= .T.
+Local oModel	:= oModelGrid:GetModel()
+Local nOper		:= oModel:GetOperation()
+	
+	// Valida se pode ou não apagar uma linha do Grid
+	If cAcao == 'DELETE' .AND. nOper == MODEL_OPERATION_UPDATE
+		lRet := .F.
+		Help( ,, 'Help',, 'Não permitido apagar linhas na alteração.' +;
+		CRLF + 'Você esta na linha ' + Alltrim( Str(nLinha) ), 1, 0 )
+	EndIf
+
+	RestArea(aArea)
+
+Return lRet
+
+/*/{Protheus.doc} fAjustZZB
+	Função para ajustes na tabela ZZB, campo ZZB_ITEM.
+
+@author franklin.oliveira
+@since 16/05/2016
+
+@type function
+/*/
+User Function fAjustZZB()
+
+Local aSay 		:= {}
+Local aButton 	:= {}
+Local cTitulo 	:= 'Ajusta ZZB'
+Local cDesc1 	:= 'Esta rotina fará o ajuste da tabela ZZB'
+Local lOk 		:= .T.
+Local nOpc 		:= 0
+
+	aAdd( aSay, cDesc1 )
+	aAdd( aButton, { 1, .T., { || nOpc := 1, FechaBatch() } } )
+	aAdd( aButton, { 2, .T., { || FechaBatch() } } )
+	
+	FormBatch( cTitulo, aSay, aButton )
+	
+	If nOpc == 1
+		Processa( { | | lOk := fAjusteZZB() },'Aguarde','Processando...',.F.)
+		
+		If lOk
+			ApMsgInfo( 'Processamento terminado com sucesso.', 'ATENÇÃO' )
+		Else
+			ApMsgStop( 'Processamento realizado com problemas.', 'ATENÇÃO' )
+		EndIf
+	EndIf
+
+Return (Nil)
+
+/*/{Protheus.doc} fAjusteZZB
+	Função para ajustes na tabela ZZB, campo ZZB_ITEM.
+
+@author franklin.oliveira
+@since 16/05/2016
+@version undefined
+
+@type function
+/*/
+Static Function fAjusteZZB()
+
+Local aArea		:= GetArea()
+Local cIndex	:= ""
+Local lRet		:= .T.
+Local cItem		:= 0
+
+	DbSelectArea("ZZB")
+	DbSetOrder(1)
+	
+	ProcRegua(RecCount())
+	
+	While !ZZB->( EoF() )
+		cIndex := ZZB->ZZB_FILIAL + ZZB->ZZB_CODCUR + ZZB->ZZB_CODDIS
+		cItem  := "001"
+	
+		While !ZZB->( EoF() ) .And. ( ZZB->ZZB_FILIAL + ZZB->ZZB_CODCUR + ZZB->ZZB_CODDIS == cIndex )
+			IncProc()
+			
+			Reclock("ZZB", .F.)
+				ZZB->ZZB_ITEM := cItem
+			MsUnlock()
+			
+			cItem := Soma1(cItem)
+
+			ZZB->( DbSkip() )
+		EndDo
+	EndDo
+	
+	RestArea(aArea)
+	
+Return lRet

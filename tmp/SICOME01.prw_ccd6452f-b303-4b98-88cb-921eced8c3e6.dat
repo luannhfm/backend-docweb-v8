@@ -1,0 +1,94 @@
+#Include 'TOTVS.ch'
+
+/*/{Protheus.doc} SICOME01
+	@description Faz a verificacao de produto estocavel ou nao com relacao a SA ou SC.
+	@type User Function
+	@author TOTVS
+	@since Mar/2012
+	@version 1.0
+	@param cTipo, Caracter, SA=Solicitacao ao armazem; SC=Solicitacao de Compra
+	@return lRet, Logico, .T. - Operacao permitida; .F. - Operacao NAO permitida
+	@history 22/07/2019, Rafael Karczevski, Usado para engatilhar campo de Data da ultima compra do produto.
+	@history 17/09/2019, Franklin de Brito de Oliveira, Removido o tratamento para consulta na tabela SBZ.
+	/*/
+User Function SICOME01(cTipo)
+
+	Local lRet 		:= .T.
+	Local cProduto 	:= &(ReadVar())//Traz o produto digitdo na SA ou SC
+	Local cEst		:= " "
+	Local nPos		:= 0
+	Local cAliasTMP := GetNextAlias()
+
+	/*
+	If Upper(Alltrim(GetMv("MV_ARQPROD"))) == "SB1"
+		cEst := GetAdvFVal("SB1","000",xFilial("SB1")+cProduto,1,0) //1=Sim(Estocavel) 2=Nao(Nao estocavel)
+	Else
+		cEst := GetAdvFVal("SBZ","BZ_XESTQ",xFilial("SBZ")+cProduto,1,0) //1=Sim(Estocavel) 2=Nao(Nao estocavel)
+	EndIf
+	*/
+	cEst := GetAdvFVal("SB1","B1_XESTQ",xFilial("SB1")+cProduto,1,0) //1=Sim(Estocavel) 2=Nao(Nao estocavel)
+	nPos := aScan(aHeader, {|x| x[1] = "Dt Ult Compr" })
+	nPos2 := aScan(aHeader, {|x| x[1] = "Vl Ult Compr" })
+	If nPos > 0 .and. nPos2 > 0
+		BeginSql Alias cAliasTMP
+			SELECT
+				MAX(D1_EMISSAO) AS DATA,
+				D1_VUNIT AS VALUNIT
+			FROM %Table:SD1% SD1
+			WHERE
+				SD1.D1_FILIAL = %Exp:xFilial("SD1")%
+				AND SD1.D1_COD = %Exp:cProduto%
+				AND SD1.D1_TIPO = 'N'
+				AND SD1.%NotDel%
+			GROUP BY D1_VUNIT
+			ORDER BY MAX(D1_EMISSAO) DESC
+		EndSql
+		(cAliasTMP)->(dbGoTop())
+		If !(cAliasTMP)->(Eof())
+			aCols[n][nPos] := sToD((cAliasTMP)->(DATA))
+			aCols[n][nPos2] := (cAliasTMP)->(VALUNIT)
+		Else
+			aCols[n][nPos] := sToD('        ')
+			aCols[n][nPos2] := 0
+		EndIf
+		(cAliasTMP)->(dbCloseArea())
+	EndIf
+	
+	If SuperGetMv("SI_PRODEST",.T.,.T.) //Indica se permite(.T.) ou nao(.F.) a inclusao de produto estocavel na SA ou SC. Por padrao .T.
+		Return(lRet)
+	EndIf
+
+	If cTipo == "SA" //Se for SA, aceito somente produto estocavel B1_XESTQ = 1-Sim
+		
+		If cEst == "2" //Se for nao estocavel, nao permito continuar
+			Aviso("Aviso",OemToAnsi("Produto não estocável não pode ser utilizado na SA, favor uilizar SC."),{"Ok"})
+			lRet := .F.
+		EndIf
+
+	ElseIf cTipo == "SC"//Se for SC, aceito somente produto nao estocavel B1_XESTQ = 2-Nao
+		
+		If cEst <> "2" //Se for estocavel, nao permito continuar.
+			Aviso("Aviso",OemToAnsi("Produto estocável não pode ser utilizado na SC, favor uilizar SA."),{"Ok"})
+			lRet := .F.
+		EndIf
+
+		// Retirado por Peder Munksgaard (Do.it Sistemas) em 28/02/2014
+		// Não há fundamentação para não permitir a entrada de dois produtos iguais em linhas distintas.
+		// Inclusive faz-se necessário caso tenhamos o mesmo produto com aplicações diferentes em que há
+		// necessidade de utilizar contas contábeis e centros de custos separados.
+		/*
+		//Nao permitir o mesmo produto duas vezes na SC
+		If Len(aCols) > 1
+			For nX :=1 to Len(aCols)
+				If cProduto == GDFieldGet("C1_PRODUTO",nX) .and. !aCols[nX][Len(aHeader)+1]
+					MsgInfo("Produto já informado anteriormente.","ATENÇÃO!!!")
+					lRet := .F.
+					Return(lRet)
+				EndIf
+			Next
+		EndIf
+		*/
+
+	EndIf
+
+Return(lRet)

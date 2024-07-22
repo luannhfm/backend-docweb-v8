@@ -1,0 +1,145 @@
+#include "totvs.ch"
+#include "restful.ch"
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} Lancamentos Contabeis
+DeclaraÃ§Ã£o do GET de Lancamentos ContÃ¡beis
+@author Walmir Junior
+@since 18/09/2020
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+WSRESTFUL lancontabilps DESCRIPTION 'endpoint Lancamentos Contabeis - VENUS ' FORMAT "application/json,text/html"
+    WSDATA Page              AS INTEGER OPTIONAL
+    WSDATA aQueryString      AS ARRAY    OPTIONAL
+    
+ 	WSMETHOD GET LancContabilPS;
+	    DESCRIPTION "Retorna uma lista de Lancamentos Contabeis";
+	    WSSYNTAX "/api/lancontabilps" ;
+        PATH "/api/lancontabilps" ;
+	    PRODUCES APPLICATION_JSON
+ 	
+END WSRESTFUL
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} GET LancContabilPS
+MÃ©todo GET com id LancContabilPS
+@author Walmir Junior
+@since 18/09/2020
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+WSMETHOD GET LancContabilPS QUERYPARAM Page WSREST lancontabilps
+Return getLancContabilPS(self)
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} GET getLancContabilPS
+FunÃ§Ã£o para tratamento da requisicao GET
+@author Walmir Junior
+@since 18/09/2020
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static Function getLancContabilPS( oWS )
+    Local lRet  as logical
+    Local oLanc as object
+    Local _aFilters     := {}
+    Local _nPosData     := 0
+    Local _nPosDtFn     := 0
+    Local _nPosFilial   := 0
+    Local _cINFils      := ""
+    Local _cFilIN       := ""
+    Local _nPosFils     := 0
+    Local _aFils        := {}
+    Local _nF           := 0
+    DEFAULT oWS:Page    := 1  
+    lRet                := .T.
+    
+
+    _aFilters := getFilters(oWS:aQueryString[1,2], "and")
+
+    _nPosData     := AScan(_aFilters, {|x| AllTrim(x[1]) == "(data"})
+    _nPosDtFn     := AScan(_aFilters, {|x| AllTrim(x[1]) == "data"})
+    _nPosFilial   := AScan(_aFilters, {|x| AllTrim(x[1]) == "filial"})
+    _nPosFilO     := AScan(_aFilters, {|x| AllTrim(x[1]) == "filial_original"})
+
+    //Tratativa para montar o filtro de filial original - Consulta por Centro de Custo da Unidade de Acesso do usuário.
+    _nPosFils := at('(filial_original',oWS:aQueryString[1,2])
+
+    //Obtem do aQueryString o filtro definido de filial_original
+    _cFilIN := SubStr(oWS:aQueryString[1,2],_nPosFils,(at(')',oWS:aQueryString[1,2],_nPosFils)-_nPosFils+1))
+
+    //Trata filtro de filial_original para forma de array
+    _aFils := getFilters(_cFilIN, " or ")
+
+    //Monta estrutura para aplicar filtro no SQL pelo Adapter
+    For _nF := 1 to Len(_aFils)
+        _cINFils += Iif(Empty(_cINFils),"'" + _aFils[_nF,2] + "'", ",'" + _aFils[_nF,2] + "'")
+    Next _nF
+
+    //Removo do aQueryString o filtro de filial original, para aplicar minha regra direto no Adapter 
+    //(da filial original designada ou do centro de custo da filial em qualquer outra filial)
+    oWS:aQueryString[1,2] := Iif(Len(_aFils) > 0, StrTran(oWS:aQueryString[1,2],"and " + _cFilIN,''), oWS:aQueryString[1,2])
+    
+    oLanc := LanContabilPSAdapter():new( 'GET' )
+    oLanc:setPage(oWS:Page)
+    oLanc:setPageSize(200)
+    oLanc:setUrlFilter(oWS:aQueryString)
+    oLanc:GetListLanCtbilPS(	Iif(_nPosFilial > 0,AllTrim(_aFilters[_nPosFilial,2]),''),;
+                                Iif(_nPosData > 0,AllTrim(_aFilters[_nPosData,2]),''),;
+                                Iif(_nPosDtFn > 0,AllTrim(_aFilters[_nPosDtFn,2]),''),;
+                                Iif(Empty(_cINFils),'',_cINFils))
+                                
+    //Se tudo ocorreu bem, retorna os dados via Json
+    If oLanc:lOk
+        oWS:SetResponse(EncodeUTF8(oLanc:getJSONResponse(), "cp1252"))
+    Else
+    //Ou retorna o erro encontrado durante o processamento
+        SetRestFault(oLanc:GetCode(),oLanc:GetMessage())
+        lRet := .F.
+    EndIf
+    //faz a desalocaÃ§Ã£o de objetos e arrays utilizados
+    oLanc:DeActivate()
+oLanc := nil
+   
+Return lRet
+
+/*/{Protheus.doc} getFilters
+Obter os filtros passados no aQueryString
+@type function
+@author Walmir Junior
+@since 17/03/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static Function getFilters(_pFilter, pSepara)
+Local _aRet 	:= {}
+Local _aFil		:= {}
+Local _aAux		:= {}
+Local _cFilter	:= AllTrim(subStr(_pFilter, 2, Len(_pFilter)))
+Local _nPosCtr	:= 1
+Local _nQtd		:= 0
+Local _nx		:= 0
+
+_cFilter	:= AllTrim(subStr(_cFilter, 1, Len(_cFilter)-1))
+_aFil 		:= StrTokArr2( _cFilter , pSepara )
+
+
+for _nx := 1 to Len(_aFil)
+
+	_aAux 		:= {}
+	_nPosCtr	:= 1
+	_nQtd		:= 0
+	
+	_aFil[_nx]	:= Alltrim(_aFil[_nx])
+	aAdd(_aAux, SubStr(_aFil[_nx],1,at(' ', _aFil[_nx],1)-1))
+
+	_nPosCtr	:= at("'",_aFil[_nx],(_nPosCtr + _nQtd + 1)) + 1
+	_nQtd		:= at("'",_aFil[_nx],_nPosCtr) - _nPosCtr
+	aAdd(_aAux,SubStr(_aFil[_nx],_nPosCtr, _nQtd))	
+	
+	aAdd(_aRet, _aAux)
+
+next _nx
+
+Return _aRet

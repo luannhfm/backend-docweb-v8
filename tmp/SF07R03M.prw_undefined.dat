@@ -1,0 +1,245 @@
+#INCLUDE 'PROTHEUS.CH'
+
+/*/{Protheus.doc} SF07R03M
+	Este relatório será utilizado pelo CRH para emitir a Relação de Empregados Ativos no Período.
+@author marcel.rodrigues
+@since 06/02/2018
+@version 1.0
+/*/
+
+User Function SF07R03M()
+	
+	Local cPerg		:= "SF07R03M"	
+	Local cCadastro	:= "Relação de Empregados Ativos no Período"
+	Local aSays		:= {}
+	Local aButtons	:= {}
+	Local nOpca 	:= 0
+		
+	AjustaSx1(cPerg)
+	Pergunte(cPerg, .F.)
+	
+	AADD(aSays, "Este programa irá realizar a Geração da ")
+	AADD(aSays, "Relação de Empregados Ativos no Período")
+
+	AADD(aButtons, {5, .T., {|| Pergunte(cPerg,.T. )}})
+	AADD(aButtons, {1, .T., {|o| nOpca := 1,FechaBatch()}})
+	AADD(aButtons, {2, .T., {|o| FechaBatch() }} )
+
+	FormBatch(cCadastro, aSays, aButtons)
+
+	If nOpca == 1
+
+		//Gera Excel
+		Processa({|| FGeraExcel()})
+			
+	EndIf
+
+Return
+
+
+Static Function FGeraExcel()
+
+	Local _cPlanilha	:= "Relação de Ativos"
+	Local _cTitulo		:= "Relação de Empregados Ativos no Período por Filial"
+	Local cAlTMP    	:= GetNextAlias()
+	Local cPlaNew		:= ''
+	Local oExcel 		:= FWMSEXCEL():New()
+
+	BeginSQL Alias cAlTMP
+
+		Column RA_DEMISSA as Date
+		Column RA_ADMISSA as Date
+
+		SELECT DISTINCT
+			SRA.RA_FILIAL    FILIAL,
+			SRA.RA_MAT       MATRICULA,
+			SRA.RA_NOMECMP   NOME,
+			SRA.RA_SEXO      SEXO,
+			CASE SRA.RA_RACACOR
+				WHEN '1'   THEN 'INDIGENA'
+				WHEN '2'   THEN 'BRANCA'
+				WHEN '4'   THEN 'NEGRA'
+				WHEN '6'   THEN 'AMARELA'
+				WHEN '8'   THEN 'PARDA'
+				WHEN '9'   THEN 'NAO INFORMADO'
+			END AS RACACOR,
+			CASE SRA.RA_TPCONTR
+				WHEN '1'   THEN 'INDETERMINADO'
+				WHEN '2'   THEN 'DETERMINADO'
+			END AS TPCONTRATO,
+			SRA.RA_ADMISSA   DTADMISSAO,
+			SRA.RA_DEMISSA   DTDEMISSAO,
+			SRA.RA_NASC      DTNASC,
+			SRA.RA_CIC       CPF,
+			SRJ.RJ_DESC      DESCFUNC,
+			SRA.RA_CATFUNC   CATFUNC,
+			(SELECT
+					TRIM(SX5.X5_DESCRI)
+
+				FROM %Table:SX5% SX5 
+
+				WHERE
+					TRIM(SX5.X5_FILIAL) = SUBSTR(SRA.RA_FILIAL, 1, 4) AND
+					SX5.X5_CHAVE = SRA.RA_CATFUNC AND
+					SX5.X5_TABELA = '28' AND
+					SX5.%NotDel%) AS DCATFUNC,
+			SRA.RA_SALARIO   SALARIO,
+			SRA.RA_ADCCONF   ADDCONF,
+			SQ3.Q3_DESCSUM   CARGO,
+			SRA.RA_HRSEMAN   HRSEMAN,
+			SRA.RA_HRSMES    HRMES,
+			SRA.RA_CC        CCUSTO,
+			CTT.CTT_DESC01   LOTACAO,
+			SRA.RA_ITEM      ITEMCTB,
+			CTD.CTD_DESC01   DESCITEM,
+			TRIM(SRA.RA_ENDEREC) || ',' || TRIM(SRA.RA_COMPLEM) ENDERECO,
+			SRA.RA_BAIRRO    BAIRRO,
+			SRA.RA_CEP       CEP,
+			(SELECT
+					SX5.X5_DESCRI
+
+				FROM %Table:SX5% SX5 
+
+				WHERE
+					TRIM(SX5.X5_FILIAL) = SUBSTR(SRA.RA_FILIAL, 1, 4) AND
+					SX5.X5_CHAVE = SRA.RA_GRINRAI AND
+					SX5.X5_TABELA = '26' AND
+					SX5.%NotDel%) AS GRINSTRUCAO,
+			SRA.RA_AFASFGT   CODAFAFGTS,
+			SRA.RA_RESCRAI   CODRESRAIS
+
+		FROM %Table:SRA% SRA
+
+		INNER JOIN %Table:SRJ% SRJ ON 
+			SRJ.RJ_FUNCAO 			= SRA.RA_CODFUNC AND
+			TRIM(SRJ.RJ_FILIAL)		= SUBSTR(SRA.RA_FILIAL, 1, 4) AND
+			SRJ.%NotDel%
+
+		INNER JOIN %Table:CTT% CTT ON 
+			CTT.CTT_CUSTO 			= SRA.RA_CC AND
+			TRIM(CTT.CTT_FILIAL) 	= SUBSTR(SRA.RA_FILIAL, 1, 4) AND
+			CTT.%NotDel%
+
+		INNER JOIN %Table:CTD% CTD ON 
+			CTD.CTD_ITEM 			= SRA.RA_ITEM AND
+			TRIM(CTD.CTD_FILIAL) 	= SUBSTR(SRA.RA_FILIAL, 1, 4) AND
+			CTD.%NotDel%
+
+		LEFT JOIN %Table:SQ3% SQ3 ON 
+			SRA.RA_CARGO 			= SQ3.Q3_CARGO AND
+			SQ3.%NotDel%
+
+		WHERE			
+			SRA.RA_MAT 				< '900000' AND
+			SRA.RA_ADMISSA 			<= %Exp:mv_par01% AND
+			(SRA.RA_DEMISSA > %Exp:mv_par01% OR SRA.RA_DEMISSA = ' ' ) AND
+			SRA.RA_FILIAL 			BETWEEN %Exp:mv_par02% AND %Exp:mv_par03% AND
+			SRA.RA_AFASFGT 			<> '5' AND
+			SRA.%NotDel% 
+
+		ORDER BY
+			SRA.RA_FILIAL,
+			SRA.RA_NOMECMP,
+			SRA.RA_MAT	
+
+	EndSQL
+
+	oExcel:AddworkSheet(_cPlanilha)
+	oExcel:AddTable (_cPlanilha,_cTitulo)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "FILIAL",						1, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "MATRICULA",						1, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "NOME",							1, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "SEXO",							1, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "RAÇA/COR",						1, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "TIPO DO CONTRATO",				1, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "DATA DE ADMISSÃO",				2, 4)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "DATA DE DEMISSAO",				2, 4)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "DATA DE NASCIMENTO",			2, 4)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "CPF",							1, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "DESCRIÇÃO FUNÇÃO",				1, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "CATEGORIA FUNÇÃO",				2, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "DESCRIÇÃO CATEGORIA FUNÇÃO",	1, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "SALÁRIO",						2, 3)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "ADICIONAL DE CONFIANÇA %",		2, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "CARGO",							1, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "HORAS SEMANAL",					2, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "HORAS MENSAL",					2, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "CENTRO DE CUSTO",				2, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "LOTAÇÃO",						1, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "ITEM CONTABIL",					2, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "DESCRIÇÃO ITEM",				1, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "ENDEREÇO",						1, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "BAIRRO",						1, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "CEP",							1, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "GRAU DE INSTRUÇÃO",				1, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "COD. AFASTAMENTO FGTS",			2, 1)
+	oExcel:AddColumn(_cPlanilha, _cTitulo, "COD. RESCISÃO FGTS",			2, 1)
+	
+	MemoWrite('C:\TEMP\SF07R03M.sql', GetLastQuery()[2])
+	dbSelectArea(cAlTMP)
+	(cAlTMP)->(DBGOTOP())
+	
+	While .Not. (cAlTMP)->( EOF())
+			
+		oExcel:AddRow(_cPlanilha,_cTitulo,{(cAlTMP)->FILIAL,;
+					(cAlTMP)->MATRICULA,;
+					(cAlTMP)->NOME,;
+					(cAlTMP)->SEXO,;
+					(cAlTMP)->RACACOR,;
+					(cAlTMP)->TPCONTRATO,;
+					STOD((cAlTMP)->DTADMISSAO),;
+					STOD((cAlTMP)->DTDEMISSAO),;
+					STOD((cAlTMP)->DTNASC),;
+					Transform((cAlTMP)->CPF,"@R 999.999.999-99"),;
+					(cAlTMP)->DESCFUNC,;
+					(cAlTMP)->CATFUNC,;
+					(cAlTMP)->DCATFUNC,;
+					(cAlTMP)->SALARIO,;
+					(cAlTMP)->ADDCONF,;
+					(cAlTMP)->CARGO,;
+					(cAlTMP)->HRSEMAN,;
+					(cAlTMP)->HRMES,;
+					(cAlTMP)->CCUSTO,;
+					(cAlTMP)->LOTACAO,;
+					(cAlTMP)->ITEMCTB,;
+					(cAlTMP)->DESCITEM,;
+					(cAlTMP)->ENDERECO,;
+					(cAlTMP)->BAIRRO,;
+					Transform((cAlTMP)->CEP,"@R 99999-999"),;
+					(cAlTMP)->GRINSTRUCAO,;
+					(cAlTMP)->CODAFAFGTS,;
+					(cAlTMP)->CODRESRAIS}) 
+					
+		(cAlTMP)->( DBSKIP() )
+		
+	EndDo
+	
+	(cAlTMP)->( DBCLOSEAREA() )
+	
+	oExcel:Activate()
+	cPlaNew := Upper(cGetFile('Arquivos XLS (*.xls) |*.xls|', 'Salvar Planilha Como',,'K:\UTIL\',.T.,nOR( GETF_LOCALHARD, GETF_LOCALFLOPPY, GETF_RETDIRECTORY ),.F.))
+	oExcel:GetXMLFile(cPlaNew + "Ativos.XML")
+	
+	MsgInfo("O Arquivo foi salvo em: " + cPlaNew + ".XML")
+		
+Return
+
+
+Static Function AjustaSx1(cPerg)
+	
+	Local aHelp := {}
+
+	AAdd(aHelp, {{"Informe a Data Final do Período Desejado"},	{""}, {""}})
+	AAdd(aHelp, {{"Da Filial ?" }, 								{""}, {""}})
+	AAdd(aHelp, {{"Ate a Filial ?" }, 							{""}, {""}})
+
+	//???????????????????????????????????
+	//?MV_PAR01  Contrato 				 ?
+	//?MV_PAR02  Data de Aplicacao 		 ?
+	//???????????????????????????????????
+	
+	u_SFPUTSX1( cPerg, "01","Data Final do Periodo ?		","","","mv_ch1","D",TamSX3("RA_DEMISSA")[1] ,0,0,"G","","","","","mv_par01","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")
+	u_SFPUTSX1( cPerg, "02","Da Filial ?					","","","mv_ch3","C",TamSX3("RA_FILIAL") [1] ,0,0,"G","","","","","mv_par02","","","","","","","","","","","","","","","","",aHelp[2,1],aHelp[2,2],aHelp[3,3],"")
+	u_SFPUTSX1( cPerg, "03","Ate a Filial ?				","","","mv_ch4","C",TamSX3("RA_FILIAL") [1] ,0,0,"G","","","","","mv_par03","","","","","","","","","","","","","","","","",aHelp[3,1],aHelp[3,2],aHelp[3,3],"")
+
+Return

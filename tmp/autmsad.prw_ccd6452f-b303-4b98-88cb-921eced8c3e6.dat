@@ -1,0 +1,126 @@
+#include "totvs.ch"
+#include "protheus.ch"
+#include "restful.ch"
+#include 'tbiconn.ch'
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} autmsad
+Declaração do ws autmsad
+@author Walmir Junior
+@since 11/09/2020
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+WSRESTFUL autmsad DESCRIPTION 'endpoint  Autentica AD API' FORMAT "application/json,text/html"
+    WSDATA Page              AS INTEGER	OPTIONAL
+    WSDATA aQueryString      AS ARRAY	OPTIONAL
+     
+ 	WSMETHOD POST Autent;
+	    DESCRIPTION "Verifica a autenticação do usuário no AD";
+	    WSSYNTAX "/api/sti/autmsad" ;
+        PATH "/api/sti/autmsad" ;
+	    PRODUCES APPLICATION_JSON
+ 	
+END WSRESTFUL
+//-------------------------------------------------------------------
+/*/{Protheus.doc} GET Autent
+Método GET Autent
+@author Walmir Junior
+@since 11/09/2020
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+WSMETHOD POST Autent QUERYPARAM Page WSREST autmsad
+Local _lPost    := .T.
+Local _cBdyJson := self:GetContent()
+Local _cJSON    := '{"itens":[{"info":"Usuário Não Autenticado!"}]}'
+Local _cDomain  := 'sfiemt.redeinterna.dr'
+Local _cDomEmail:= '@sfiemt.ind.br'
+Local cUserName := ""
+Local cPassword := ""
+Local _oJson    
+Local _res
+Local _cCodUsr  := ""
+Local _aUser    := {}
+
+Local _cToken   := "CHVE_TEST_t0k3z"
+
+_oJson := JsonObject():new()
+_res := _oJson:FromJson(_cBdyJson)
+cUserName := alltrim(_oJson['login'])
+cPassword := alltrim(_oJson['password'])
+
+If ADUserValid(alltrim(_cDomain), cUserName, cPassword)
+    PswOrder(2)
+    If  PswSeek(cUserName, .T.)
+        _cCodUsr    := PswRet(1,.F.)[1][1]
+        _aUser      := validaAcessoVenus(_cCodUsr)
+        If _aUser[1]
+            _cJSON    :=    '{  "itens":[{"t0k3z":"'+_cToken+;
+                                '", "codUsr":"'+_cCodUsr+;
+                                '", "nome":"'+UsrFullName(_cCodUsr)+;
+                                '", "perfil":"'+_aUser[2]+;
+                                '", "filiais":"'+_aUser[3]+;
+                                '", "info":"Usuário Autenticado"}]}'
+        Else
+            //Se não autenticou, tenta pelo cadastro do e-mail.
+            PswOrder(4)
+            If PswSeek(cUserName+_cDomEmail, .T.)
+                _cCodUsr    := PswRet(1,.F.)[1][1]
+                _aUser      := validaAcessoVenus(_cCodUsr)
+                If _aUser[1]
+                    _cJSON    :=    '{"itens":[{"t0k3z":"'+_cToken+;
+                                    '", "codUsr":"'+_cCodUsr+;
+                                    '", "nome":"'+UsrFullName(_cCodUsr)+;
+                                    '", "perfil":"'+_aUser[2]+;
+                                    '", "filiais":"'+_aUser[3]+;
+                                    '", "info":"Usuário Autenticado"}]}'
+                EndIf
+            EndIf
+        EndIf
+    Else
+        PswOrder(4)
+        If PswSeek(cUserName+_cDomEmail,.T.)
+            _cCodUsr    := PswRet(1,.F.)[1][1]
+            _aUser      := validaAcessoVenus(_cCodUsr)
+            If _aUser[1]
+                _cJSON    :=    '{"itens":[{"t0k3z":"'+_cToken+;
+                                '", "codUsr":"'+_cCodUsr+;
+                                '", "nome":"'+UsrFullName(_cCodUsr)+;
+                                '", "perfil":"'+_aUser[2]+;
+                                '", "filiais":"'+_aUser[3]+;
+                                '", "info":"Usuário Autenticado"}]}'
+            EndIf
+        EndIf
+    EndIf
+EndIf
+
+::SetResponse(EncodeUTF8(_cJSON, "cp1252"))
+
+FreeObj(_oJson)
+
+Return _lPost
+/*/{Protheus.doc} nomeStaticFunction
+    (long_description)
+    @type  Static Function
+    @author Walmir Junior
+    @since 10/02/2021
+    @version version
+    @param param_name, param_type, param_descr
+    @return return_var, return_type, return_description
+    @example
+    (examples)
+    @see (links_or_references)
+    /*/
+Static Function validaAcessoVenus(pCodUsr)
+Local _aRet := {.F.,"",""}
+
+DBSelectArea("ZAS")
+ZAS->(DbSetOrder(1)) //ZAS_FILIAL+ZAS_CODUSR+ZAS_CODSIS+ZAS_PERFIL
+If ZAS->( DbSeek( xFilial("ZAS") + pCodUsr + 'V' ) ) .AND. ZAS->ZAS_ATIVO
+    _aRet[1] := .T.
+    _aRet[2] := Alltrim(ZAS->ZAS_PERFIL)
+    _aRet[3] := AllTrim(ZAS->ZAS_FILACE)
+EndIf
+    
+Return _aRet

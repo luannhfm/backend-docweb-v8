@@ -1,0 +1,174 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} FATA321C
+	Ponto de entrada MVC da rotina de Atividades do vendedor - FATA321C
+
+@author Franklin B. Oliveira
+@since 21/02/2017
+
+@type function
+/*/
+User Function FATA321C()
+	
+Local aButtons 	:= {}
+Local aParam 	:= PARAMIXB
+Local cIdModel	:= ''
+Local cIdPonto	:= ''
+Local cCodVen	:= ""
+Local oObj, oGridAtiv, oFormRep		
+Local xRet		:= .T.
+
+	If aParam <> NIL
+		oObj := aParam[1]
+		cIdPonto := aParam[2]
+		cIdModel := aParam[3]
+	
+		Do Case
+			Case cIdPonto == "MODELPOS"				//Na validacao total do modelo
+				If SubStr(cFilAnt, 1, 4) == '03MT'
+					oGridAtiv := oObj:GetModel('MODEL_ATIV_GRID') //Modelo de dados da Grid: AD7 - Atividades
+					oFormRep := oObj:GetModel('MODEL_REP') //Modelo de dados do Form Principal
+					For nI := 1 To oGridAtiv:Length() //Varro todos os itens da Grid
+						oGridAtiv:GoLine(nI)
+						If oGridAtiv:GetValue('TIPO_ATIV', nI) == '1'  //Tipo de atividade igual á 1=Agendamento
+							If .Not.(oGridAtiv:IsDeleted(nI)) //Se NÃO for linha deletada
+								If oGridAtiv:GetValue('AD7_DATA', nI) > dDatabase .And. .Not. (oGridAtiv:GetValue('AD7_XLIDAV', nI))
+									cCodVen	:= oFormRep:GetValue('A3_COD')
+									Processa({|| lEnvCorr := fLidAvis(@oGridAtiv, nI, cCodVen)}, "Notificação por E-mail", "Aguarde, enviando e-mail para o lider de mercado...")
+								EndIf
+							EndIf
+						EndIf
+					Next nI
+				EndIf
+				xRet := .T.
+			Case cIdPonto == "FORMPOS"					//Na validação total do formulário
+				xRet := .T.
+			Case cIdPonto == "FORMLINEPRE"				//Antes da alteração da linha do formulário FWFORMGRID
+				xRet := .T.
+			Case cIdPonto == "FORMLINEPOS"				//Na validação total da linha do formulario FWFORMGRID
+				xRet := .T.
+			Case cIdPonto == "MODELCOMMITTTS"			//Após a gravação total do modelo e dentro da transacao
+				xRet := Nil
+			Case cIdPonto == "MODELCOMMITNTTS"			//Após a gravação total do modelo e fora da gravação
+				xRet := Nil
+			Case cIdPonto == "FORMCOMMITTTSPRE"		//Antes da gravação da tabela do formulário
+				xRet := .T.
+			Case cIdPonto == "FORMCOMMITTTSPOS"		//Após a gravação da tabela do formulário
+				xRet := Nil
+			Case cIdPonto == "MODELCANCEL"				//Na ação do botão Cancelar
+				xRet := .T.
+			Case cIdPonto == "MODELVLDACTIVE"			//Na ativação do modelo
+				xRet := .T.
+			Case cIdPonto == "MODELPRE"				//Antes da alteracao de qualquer campo
+				xRet := .T.
+			Case cIdPonto == "FORMPRE"					//Antes da alteracao de qualquer campo de formulário
+				xRet := .T.
+			Case cIdPonto == "FORMCANCEL"				//No cancelamento do botão
+				xRet := .T.
+			Case cIdPonto == "BUTTONBAR"				//Para inclusão de botões na ControlBar
+				aAdd(aButtons, {"Infor. Visitas", "NOTE", {|| U_SN7302F() }, "Informação de Visitas" })
+				xRet := aButtons
+		EndCase
+	
+	EndIf
+Return xRet
+
+/*/{Protheus.doc} fLidAvis
+	Função para envio de aviso de visita futura para o lider de mercado.
+	
+@author Franklin B. Oliveira
+@since 21/02/2017
+@param oGridAtiv, object, Grid de atividades
+@param nI, numeric, Linha posicionada na Grid de atividades
+@param cCodVen, characters, Código do vendedor
+@type function
+/*/
+Static Function fLidAvis(oGridAtiv, nI, cCodVen)
+
+Local cLidMerc	:= SuperGetMV("MV_XLIDMER")
+Local cEmlLidr	:= UsrRetMail(cLidMerc)
+Local cMens		:= ""
+Local cSubject	:= "Visita Futura Registrada: " + oGridAtiv:GetValue('AD7_XCOD', nI)
+Local lRetorno	:= .T.
+	
+	If Empty(cLidMerc)
+		ApMsgAlert("Não há lider de mercado definido nesta unidade operacional. Preencha o parâmetro [MV_XLIDMER].")
+		Return(Nil)
+	EndIf
+	
+	If Empty(cEmlLidr)
+		ApMsgAlert("Não há e-mail cadastrado para o usuário [" + UsrRetName(cLidMerc) + "].")
+		Return(Nil)
+	EndIf
+	
+	//  Monta mensagem em HTML para o corpo do E-mail
+	cMens := '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">' + CRLF
+	cMens += '<html lang="pt-br">' + CRLF
+	cMens += '<head>' + CRLF
+	cMens += '  <meta content="text/html; charset=iso-8859-1" http-equiv="Content-Type" name="GENERATOR">' + CRLF
+	cMens += '  <title>Aviso de visita futura</title>' + CRLF
+	cMens += '</head>' + CRLF
+	cMens += '<body bgproperties="fixed">' + CRLF
+	cMens += '	<p class="MsoNormal" style="text-align: left;" align="left">' + CRLF
+	cMens += '		<span style="font-family: &quot;Arial&quot;,&quot;sans-serif&quot;;">' + CRLF
+	cMens += '			<img id="_x0000_i1030" src="http://gps.totvs.com/workflow/titulo_wf_totvs.png" border="0" height="62" width="760">' + CRLF
+	cMens += '		</span>'+ CRLF
+	cMens += '	</p>'+ CRLF
+	cMens += '	<td style="padding: 0cm;">'+ CRLF
+	cMens += '		<p class="MsoNormal" align="left">'+ CRLF
+	cMens += '			<span style="font-size: 11pt; font-family:&quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(00,00,64);">'+ CRLF
+	cMens += '					<br>' + CRLF 
+	cMens += '					A : ' + Alltrim(UsrRetName(cLidMerc)) + ',' + CRLF 
+	cMens += '					<br>' + CRLF 
+	cMens += '					<br>' + CRLF
+	cMens += '					Foi registrada uma visita futura com os seguintes dados:' + CRLF
+	cMens += '					<br>' + CRLF
+	cMens += '					<table style="width:100%">' + CRLF
+	cMens += '						<tr>' + CRLF
+    cMens += '							<th>Filial</th>' + CRLF
+    cMens += '							<th>Assunto</th>' + CRLF
+    cMens += '							<th>Data</th>' + CRLF
+    cMens += '							<th>Hora Início</th>' + CRLF
+    cMens += '							<th>Hora Fim</th>' + CRLF
+    cMens += '							<th>Cliente</th>' + CRLF
+    cMens += '							<th>Loja</th>' + CRLF
+    cMens += '							<th>Nome Cliente</th>' + CRLF
+    cMens += '							<th>Vendedor</th>' + CRLF
+    cMens += '							<th>Nome Vendedor</th>' + CRLF
+    cMens += '						</tr>' + CRLF
+    
+    cMens += '						<tr>' + CRLF
+    cMens += '							<td>' + xFilial('AD7') + '</td>' + CRLF
+    cMens += '							<td>' + oGridAtiv:GetValue('AD7_TOPICO', nI) + '</td>' + CRLF
+    cMens += '							<td>' + DToC(oGridAtiv:GetValue('AD7_DATA', nI)) + '</td>' + CRLF
+    cMens += '							<td>' + oGridAtiv:GetValue('AD7_HORA1', nI) + '</td>' + CRLF
+    cMens += '							<td>' + oGridAtiv:GetValue('AD7_HORA2', nI) + '</td>' + CRLF
+    If .Not. Empty(oGridAtiv:GetValue('AD7_CODCLI', nI))
+		cMens += '							<td>' + oGridAtiv:GetValue('AD7_CODCLI', nI) + '</td>' + CRLF
+		cMens += '							<td>' + oGridAtiv:GetValue('AD7_LOJA', nI) + '</td>' + CRLF
+		cMens += '							<td>' + Posicione("SA1",1,xFilial("SA1")+oGridAtiv:GetValue('AD7_CODCLI', nI)+;	
+																oGridAtiv:GetValue('AD7_LOJA', nI),"A1_NOME") + '</td>' + CRLF
+    Else
+		cMens += '							<td>' + oGridAtiv:GetValue('AD7_PROSPE', nI) + '</td>' + CRLF
+		cMens += '							<td>' + Posicione("SUS", 1, xFilial("SUS") + oGridAtiv:GetValue('AD7_PROSPE', nI) + ;	
+																oGridAtiv:GetValue('AD7_LOJPRO', nI), "US_NOME") + '</td>' + CRLF
+    EndIf
+    cMens += '							<td>' + cCodVen + '</td>' + CRLF
+    cMens += '							<td>' + Posicione("SA3",1,xFilial("SA3")+cCodVen,"A3_NOME") + '</td>' + CRLF
+    cMens += '						</tr>' + CRLF
+    
+    cMens += '					</table>' + CRLF
+	cMens += '			</span>' + CRLF
+	cMens += '		</p>'+ CRLF
+	cMens += '	</td>'+ CRLF
+	cMens += '</body>'+ CRLF
+	cMens += '</html>'+ CRLF
+	
+	If .Not. (U_SFEnvEmail(, cEmlLidr, , , cSubject, cMens, , , .F. ))
+		ApMsgAlert("Não foi possível enviar e-mail de registro da visita futura.")
+		Return (Nil)
+	Else
+		(oGridAtiv:SetValue('AD7_XLIDAV', .T.))
+	EndIf
+
+Return (Nil)

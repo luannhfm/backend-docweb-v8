@@ -1,0 +1,340 @@
+#include 'protheus.ch'
+#include 'parmtype.ch'
+
+#define OPCAO_BAIXA_TITULO 3 
+#define OPCAO_CANCELAMENTO_BAIXA 5
+#define OPCAO_EXCLUSAO_BAIXA 6
+
+/*/{Protheus.doc} SF06A28X
+Cancelamento de renegociação.
+@type Function
+@author Walmir Junior
+@since 29/04/2019
+@see J2A044 -  FIEMT - Canc Rec Cartão .docx
+/*/
+User Function SF06A28X()
+Private _aSel 		:= {}
+Private lMsErroAuto	:= .F. 
+Private _oProc		:= Nil
+Private _lEnd		:= .F.
+
+_oProc := MSNewProcess():New({|_lEnd|fExCan(_oProc)}, 'Processando', 'Processando cancelamento da renegociação...')
+_oProc:Activate()	
+
+Return Nil 
+
+Static Function fExCan(_pProc)
+
+Local _aArea 	:= GetArea()
+Local _aVld		:= {}
+Local _aTitRen	:= {}
+Local _aTitDel	:= {}
+Local _cChvRen	:= ""
+Local _cMsEr	:= ""
+Local _lOk		:= .T.
+local lExibeMbrowse := .F.
+local nNumeroBaixa := 1
+local _nx := 1
+
+//Valida títulos de renegociação e em aberto.
+Processa({||_aVld := fVldRen()}, "Validando...", "Validando títulos da renegociação...")
+If !_aVld[1]
+	MsgAlert(_aVld[2], 'Atenção')
+	Return Nil
+EndIf
+
+//Monta chave da renegociação para buscar títulos renegociados.
+_cChvRen := SE1->E1_FILIAL + SE1->E1_PREFIXO + SE1->E1_NUM + SE1->E1_TIPO
+
+//Busca títulos de origem para cancelar baixa.
+Processa({||_aTitRen := fGetRen(_cChvRen)}, "Validando...", "Validando títulos origem...")
+
+_pProc:SetRegua1(Len(_aTitRen))
+
+Begin Transaction
+
+If Len(_aSel) == 0
+	MsgStop("Não foi possível obter os títulos da renegociação.", "Erro!")
+Else
+	//Desfaz baixa dos títulos de origem.
+	For _nx := 1 To Len(_aTitRen)
+		
+		_pProc:IncRegua1("Cancel bx... " + AllTrim(_aTitRen[_nx,1]) +"||"+ AllTrim(_aTitRen[_nx,2]) +"||"+;
+		 				AllTrim(_aTitRen[_nx,3]) +"||"+ AllTrim(_aTitRen[_nx,4]))
+		
+		nNumeroBaixa := fGetNumeroBaixa({_aTitRen[_nx,1], _aTitRen[_nx,2], _aTitRen[_nx,3], _aTitRen[_nx,4], _aTitRen[_nx,5]})
+		
+		_aBx := {}
+		AADD(_aBx , {"E1_FILIAL"    , _aTitRen[_nx,1]		, NIL})
+		AADD(_aBx , {"E1_PREFIXO"   , _aTitRen[_nx,2]		, NIL})
+		AADD(_aBx , {"E1_NUM"       , _aTitRen[_nx,3]		, NIL})
+		AADD(_aBx , {"E1_PARCELA"   , _aTitRen[_nx,4]		, NIL})
+		AADD(_aBx , {"E1_TIPO"      , _aTitRen[_nx,5]		, NIL})
+		AADD(_aBx , {"E1_CLIENTE"   , _aTitRen[_nx,7]		, NIL})
+		AADD(_aBx , {"E1_LOJA"      , _aTitRen[_nx,8]		, NIL})
+		
+		MSExecAuto({|a, b, c, d| Fina070(a, b, c, d)}, _aBx, OPCAO_CANCELAMENTO_BAIXA, lExibeMbrowse, nNumeroBaixa)
+		
+		If lMsErroAuto
+			_cMsEr	:= MostraErro()	
+			_lOk 	:= .F.
+			DisarmTransaction()
+			Break
+			Exit  
+		Endif
+			If !lMsErroAuto
+        		oFIEMT := FIEMT_SFFNBX1A_CTB():New()
+        		oFIEMT:Contabiliza(_aBx:= {_aBx},"Z02","C")
+    		EndIf
+		_lOk := .T.
+	Next _nx
+	
+	If _lOk
+		_pProc:SetRegua2(Len(_aSel))
+		For _nx := 1 To Len(_aTitRen)
+			dbGoto(_aTitRen[_nx,6])
+			RecLock("SE1", .F.)
+			//SE1->E1_XNLIQ := " "
+			SE1->E1_XCHVREN := " "
+			SE1->(MsUnLock())
+		Next
+		//Exclui títulos de renegociação.
+		For _nx := 1 To Len(_aSel)
+			DBSelectArea("SE1")
+			SE1->(DbSetOrder(1))
+			SE1->(DbGoTop())
+			
+			_aTitDel := {}
+			
+			If SE1->(DbSeek( _aSel[_nx, 1] + _aSel[_nx, 2] + _aSel[_nx, 3] + _aSel[_nx, 4] + _aSel[_nx, 5]))
+				_pProc:IncRegua2("Excluindo... " + AllTrim(SE1->E1_FILIAL) +'||'+ AllTrim(SE1->E1_PREFIXO) +'||'+;
+				 				AllTrim(SE1->E1_NUM) +'||'+ AllTrim(SE1->E1_PARCELA))
+				 				
+				AADD(_aTitDel , {"E1_FILIAL"    , SE1->E1_FILIAL	, NIL})
+				AADD(_aTitDel , {"E1_PREFIXO"   , SE1->E1_PREFIXO	, NIL})
+				AADD(_aTitDel , {"E1_NUM"       , SE1->E1_NUM		, NIL})
+				AADD(_aTitDel , {"E1_PARCELA"   , SE1->E1_PARCELA	, NIL})
+				AADD(_aTitDel , {"E1_TIPO"      , SE1->E1_TIPO		, NIL})
+				AADD(_aTitDel , {"E1_CLIENTE"   , SE1->E1_CLIENTE	, NIL})
+				AADD(_aTitDel , {"E1_LOJA"      , SE1->E1_LOJA		, NIL})
+				
+				MSExecAuto({|x, y| FINA040(x, y)}, _aTitDel, 5)
+				
+				If lMsErroAuto
+					_cMsEr	:= MostraErro()	
+					_lOk 	:= .F.
+					DisarmTransaction()
+					Break
+					Exit  
+				EndIf
+				
+			EndIf
+
+		Next _nx
+	ElseIf Len(_aTitRen) == 0
+		MsgAlert('Não foram localizados os títulos renegociados.', 'Atenção')
+	EndIf
+	
+	If !_lOk
+		MsgStop(_cMsEr, "Erro!")
+	EndIf
+	
+EndIf
+
+End Transaction
+
+RestArea(_aArea)
+
+Return Nil
+
+/*/{Protheus.doc} fGetRen
+Obtem os títulos renegociados.
+@type Function
+@author Walmir Junior
+@since 30/04/2019
+@return array, títulos renegociados
+/*/
+Static Function fGetRen(_cChvRen)
+Local _aRet := {}
+Local _cTMP := GetNextAlias()
+
+BeginSQL Alias _cTMP
+
+    Column E1_VENCTO as Date
+    Column E1_VENCREA as Date
+    Column E1_EMISSAO as Date
+    Column E1_BAIXA as Date
+
+    SELECT 
+        SE1.E1_FILIAL,        
+        SE1.E1_PREFIXO,
+        SE1.E1_NUM,
+        SE1.E1_PARCELA,
+        SE1.E1_TIPO,
+        SE1.E1_VENCTO,
+    	SE1.E1_VENCREA,
+    	SE1.E1_EMISSAO,
+    	SE1.E1_BAIXA,
+		SE1.R_E_C_N_O_,
+		SE1.E1_CLIENTE,
+		SE1.E1_LOJA
+    FROM %Table:SE1% SE1
+    WHERE 
+        SE1.E1_FILIAL   = %Exp:xFilial('SE1')% AND
+        SE1.E1_XCHVREN  = %Exp:_cChvRen% AND
+        SE1.%NotDel%
+    ORDER BY  
+    	SE1.E1_FILIAL,
+        SE1.E1_PREFIXO, 
+        SE1.E1_NUM, 
+        SE1.E1_PARCELA
+
+EndSQL
+
+dbSelectArea(_cTMP)
+
+(_cTMP)->(dbGoTop())
+
+While .not. (_cTMP)->(Eof())
+	aAdd(_aRet, {(_cTMP)->E1_FILIAL, (_cTMP)->E1_PREFIXO, (_cTMP)->E1_NUM, (_cTMP)->E1_PARCELA, (_cTMP)->E1_TIPO, (_cTMP)->R_E_C_N_O_,(_cTMP)->E1_CLIENTE,(_cTMP)->E1_LOJA})
+	(_cTMP)->(DBSkip())
+EndDo
+
+If Select(_cTMP) > 0
+	(_cTMP)->( DbCloseArea() )
+EndIf
+
+Return _aRet
+
+/*/{Protheus.doc} fVldRen
+Valida títulos renegociados.
+@type Function
+@author Walmir Junior
+@since 03/05/2019
+@return array, valido ou não.
+/*/
+Static Function fVldRen()
+Local _aRet := {.F., ""}
+Local _cTMP := GetNextAlias()
+
+If SE1->E1_PREFIXO != 'REN' .Or. (SE1->E1_PREFIXO == 'REN' .And. SE1->E1_SALDO != SE1->E1_VALOR)
+		_aRet[1] := .F.
+		_aRet[2] := "Operação permitida apenas para títulos de renegociação 'Em Aberto'."+;
+					" Verifique todos os títulos da renegociação."
+		Return _aRet
+EndIf
+
+//Busca todos os títulos da renegociação selecionada
+BeginSQL Alias _cTMP
+
+    SELECT 
+        SE1.E1_FILIAL,        
+        SE1.E1_PREFIXO,
+        SE1.E1_NUM,
+        SE1.E1_PARCELA,
+        SE1.E1_TIPO,
+        SE1.E1_VALOR,
+        SE1.E1_SALDO,
+        SE1.E1_SITUACA
+    FROM %Table:SE1% SE1
+    WHERE 
+        SE1.E1_FILIAL   = %Exp:SE1->E1_FILIAL%	AND
+        SE1.E1_PREFIXO	= %Exp:SE1->E1_PREFIXO%	AND
+        SE1.E1_NUM 		= %Exp:SE1->E1_NUM%		AND
+        SE1.E1_TIPO		= %Exp:SE1->E1_TIPO%	AND
+        SE1.%NotDel%
+    ORDER BY  
+    	SE1.E1_FILIAL,
+        SE1.E1_PREFIXO, 
+        SE1.E1_NUM, 
+        SE1.E1_PARCELA
+
+EndSQL
+
+dbSelectArea(_cTMP)
+
+(_cTMP)->(dbGoTop())
+
+While .not. (_cTMP)->(Eof())
+
+	If (_cTMP)->E1_PREFIXO != 'REN' .Or. ((_cTMP)->E1_PREFIXO == 'REN' .And. (_cTMP)->E1_SALDO != (_cTMP)->E1_VALOR)
+		_aRet[1] := .F.
+		_aRet[2] := "Operação permitida apenas para títulos de renegociação 'Em Aberto'."+;
+					" Verifique todos os títulos da renegociação."
+		Exit
+	EndIf
+	
+	If AllTrim((_cTMP)->E1_SITUACA) != '0'
+		_aRet[1] := .F.
+		_aRet[2] := "O título não está em carteira."+;
+					" Verifique todos os títulos da renegociação selecionada."
+		Exit
+	EndIf
+	
+	//Alimenta array private, para utilização posterior na exclusão dos títulos da renegociação.
+	aAdd(_aSel, {(_cTMP)->E1_FILIAL, (_cTMP)->E1_PREFIXO, (_cTMP)->E1_NUM, (_cTMP)->E1_PARCELA, (_cTMP)->E1_TIPO})
+	
+	(_cTMP)->(dbSkip())
+	
+	_aRet[1] := .T.
+	
+EndDo
+
+If Select(_cTMP) > 0
+	(_cTMP)->( DbCloseArea() )
+EndIf
+
+Return _aRet
+
+/*/{Protheus.doc} fGetNumeroBaixa
+Função para recuperar o numero da baixa REN que deverá ser estornada.
+@type function
+@author Franklin de Brito de Oliveira
+@since 08/06/2021
+@param aChaveTitulo, array, chave do titulo que será consultado.
+@return numeric, numero da baixa REN que deverá ser estornada.
+/*/
+static function fGetNumeroBaixa(aChaveTitulo)
+local aArea := GetArea()
+local cAliasSE5 := GetNextAlias()
+local nNumeroSequencial := 0
+local nNumeroBaixa := 1
+	beginSQL Alias cAliasSE5
+		SELECT
+			SE5.E5_FILIAL,
+			SE5.E5_PREFIXO,
+			SE5.E5_PARCELA,
+			SE5.E5_TIPO,
+			SE5.E5_CLIFOR,
+			SE5.E5_LOJA,
+			SE5.E5_DATA,
+			SE5.E5_VALOR,
+			SE5.E5_MOTBX,
+			SE5.E5_SEQ
+		FROM
+			%Table:SE5%  SE5
+		WHERE
+			SE5.%NotDel%
+			AND SE5.E5_FILIAL = %Exp:aChaveTitulo[1]%
+			AND SE5.E5_PREFIXO = %Exp:aChaveTitulo[2]%
+			AND SE5.E5_NUMERO = %Exp:aChaveTitulo[3]%
+			AND SE5.E5_PARCELA = %Exp:aChaveTitulo[4]%
+			AND SE5.E5_TIPO = %Exp:aChaveTitulo[5]%
+			AND SE5.E5_RECPAG = 'R'
+			AND SE5.E5_SITUACA <> 'C'
+   			AND se5.E5_DTCANBX = ' '
+    		AND se5.E5_TIPODOC NOT IN ('MT', 'JR', 'DC')
+		ORDER BY 
+			SE5.E5_SEQ
+	endSQL
+	RestArea(aArea)
+	
+	while !(cAliasSE5)->(Eof())
+		nNumeroSequencial++
+		if AllTrim((cAliasSE5)->E5_MOTBX)=="REN"
+			nNumeroBaixa := nNumeroSequencial
+		endIf
+		(cAliasSE5)->(DBSkip())
+	end
+
+return nNumeroBaixa

@@ -1,0 +1,168 @@
+#INCLUDE "TOTVS.CH"
+#INCLUDE "TRYEXCEPTION.CH"
+
+User Function SF07E01F()
+Local aArrSay	:= {}
+Local aArrBut	:= {}
+Local cArqTxt	:= ''
+Local lExefun	:= .F.
+Local cHrIni	:= ""
+
+Private aCampos	:= {}
+Private aDados	:= {}
+
+	Aadd(aArrSay, 'Esta rotina tem por objetivo atualizar o cadastro de funcionário, ')
+	Aadd(aArrSay, 'conforme arquivos de dados no formato csv.')
+	
+	Aadd(aArrBut, {1, .T., {|| lExeFun := .T., FechaBatch()}})
+	Aadd(aArrBut, {2, .T., {|| lExeFun := .F., FechaBatch()}})
+	
+	FormBatch('Projeto Alinhar', aArrSay, aArrBut)
+	
+	If lExefun
+		cHrIni := Time()
+		Processa( {|| lExefun := LeArq()}, "Aguarde...", "Lendo arquivo de importação")
+		If lExefun
+			Processa({|| ExImp()}, "Aguarde...", "Atualizando funcionário")
+			 MsgInfo("Processamento Concluido!","[Fonte: " + FunName() + "]" + CRLF +;
+			 		"Inicio da execução: " + cHrIni + CRLF +;
+			 		"Fim da execução...: " + TIME() + CRLF +;
+			 		"Tempo de execução.: " + ElapTime( cHrIni, TIME() ); 
+			 		)
+		EndIf
+		
+	EndIf
+	
+Return
+
+Static Function LeArq()
+Local cArq		:= cGetFile("*.csv|*.csv","Texto (CSV)", 1, "C:\", .f., GETF_LOCALHARD, .f.)
+Local cLinha	:= ""
+Local lPrim		:= .T.
+Local lCont		:= .T.
+Local nPos		:= 0
+Local nLast		:= 0
+Local nItm		:= 0
+
+    If !File(cArq)
+        MsgStop("Não foi possivel localizar o arquivo!","[Fonte SF07A03X]")
+        lCont := .f.
+    EndIf
+
+    If lCont
+
+        FT_FUSE(cArq)
+        FT_FGOTOP()
+        
+        nLast := FT_FLastRec()
+        ProcRegua(nLast)
+        
+        While !FT_FEOF() .and. lCont
+            cLinha := FT_FREADLN()
+            If lPrim
+                aCampos := Separa(cLinha,";",.t.)
+                lPrim := .f.
+                For nX := 1 to Len(aCampos) 
+                    If !(SubStr(aCampos[nX],1,2) == SubStr("SRA",2,2))
+                        lCont := .f.
+                        MsgStop("Arquivo invalido para esta operação!")
+                        exit
+                    EndIf
+                Next nX
+            Else
+            	nItm++
+            	IncProc( StrZero(nItm, 4) +  " de " + StrZero(nLast, 4) )
+                aLinha := Separa(cLinha,";",.t.)
+            	nPos := AScan(aCampos, {|x| AllTrim(x) == "RA_DATAALT"})
+
+            	If nPos > 0
+            		aLinha[nPos] := SToD(aLinha[nPos]) 
+            	EndIf
+            	
+            	nPos := AScan(aCampos, {|x| AllTrim(x) == "RA_SALARIO"})
+
+            	If nPos > 0
+            		aLinha[nPos] := StrTran( StrTran( aLinha[nPos], ".", ""), ",", "." )
+            		aLinha[nPos] := Val( aLinha[nPos] ) 
+            	EndIf
+            	
+            	Aadd(aDados, aLinha)
+            EndIf
+
+            FT_FSKIP()
+        EndDo
+    EndIf
+Return lCont
+
+Static Function ExImp()    
+Local aCabec	:= {}
+Local cMsgLog	:= ""
+Local cFile 	:= dToS(Date()) + StrTran(Time(),":") + "_SF07E01F"
+Local nPosFaix	:= 0
+Local nPosNive	:= 0
+Local nPosCarg	:= 0
+Local nPosFunc	:= 0
+Local nPosCcon	:= 0
+Local nY		:= 0
+Local nX		:= 0
+
+Private lMsErroAuto		:= .F.
+Private lAutoErrNoFile	:= .T.
+
+    	nPosFili := AScan(aCampos, {|x| AllTrim(x) == "RA_FILIAL"})
+    	nPosMatr := AScan(aCampos, {|x| AllTrim(x) == "RA_MAT"})
+    	nPosFaix := AScan(aCampos, {|x| AllTrim(x) == "RA_TABFAIX"})
+        nPosNive := AScan(aCampos, {|x| AllTrim(x) == "RA_TABNIVE"})
+        nPosCarg := AScan(aCampos, {|x| AllTrim(x) == "RA_CARGO"})
+        nPosFunc := AScan(aCampos, {|x| AllTrim(x) == "RA_CODFUNC"})
+        nPosCcon := AScan(aCampos, {|x| AllTrim(x) == "RA_XCARCON"})
+        
+        nHdlLog := fCreate("C:\TEMP\" + cFile + "_LOG.TXT")
+    	
+    	ProcRegua(Len(aDados))
+    	
+    	For nY := 1 to Len(aDados)
+    		lMsErroAuto		:= .F.
+    		lAutoErrNoFile	:= .T.
+    		aCabec := {}
+    		IncProc( StrZero(nY, 4) +  " de " + StrZero(Len(aDados), 4) )
+    		cMsgLog := "Processando registro " + StrZero(nY, 4) +  " de " + StrZero(Len(aDados), 4) + CRLF
+    		fWrite(nHdlLog, cMsgLog)
+    		For nX := 1 to Len(aCampos)
+    			If nX == nPosFaix .And. ( Alltrim(aDados[nY][nX]) == '' .Or. Alltrim(aDados[nY][nX]) == '0' .Or. Alltrim(aDados[nY][nX]) == '#N/D' ) 
+            		Loop 
+            	ElseIf nX == nPosNive .And. ( Alltrim(aDados[nY][nX]) == '' .Or. Alltrim(aDados[nY][nX]) == '0' .Or. Alltrim(aDados[nY][nX]) == '#N/D' ) 
+            		Loop 
+            	ElseIf nX == nPosCarg .And. ( Alltrim(aDados[nY][nX]) == '' .Or. Alltrim(aDados[nY][nX]) == '0' .Or. Alltrim(aDados[nY][nX]) == '#N/D' ) 
+            		Loop 
+            	ElseIf nX == nPosFunc .And. ( Alltrim(aDados[nY][nX]) == '' .Or. Alltrim(aDados[nY][nX]) == '#N/D' ) 
+            		Loop
+            	ElseIf nX == nPosCcon .And. ( Alltrim(aDados[nY][nX]) == '' .Or. Alltrim(aDados[nY][nX]) == '#N/D' ) 
+            		Loop 
+            	Else
+            		If aCampos[nX] == 'RA_CARGO' .And. Len(aDados[nY][nX]) < TAMSX3("RA_CARGO")[1]
+            			aDados[nY][nX] := StrZero(Val(aDados[nY][nX]), TAMSX3("RA_CARGO")[1])
+            		ElseIf aCampos[nX] == 'RA_CODFUNC' .And. Len(aDados[nY][nX]) < TAMSX3("RA_CODFUNC")[1]
+            			aDados[nY][nX] := StrZero(Val(aDados[nY][nX]), TAMSX3("RA_CODFUNC")[1])
+            		ElseIf aCampos[nX] == 'RA_XCARCON' .And. Len(aDados[nY][nX]) < TAMSX3("RA_XCARCON")[1]
+            			aDados[nY][nX] := StrZero(Val(aDados[nY][nX]), TAMSX3("RA_XCARCON")[1])
+            		EndIf
+            		aAdd(aCabec,{ aCampos[nX], aDados[nY][nX], Nil })
+            	EndIf
+    		Next nX
+    		
+    		cRegErr := aCabec[nPosFili][2] + "/" + aCabec[nPosMatr][2]
+    		
+    		MSExecAuto({|x,y,k,w| GPEA010(x,y,k,w)}, NIL, NIL, aCabec, 4)
+
+    		If lMsErroAuto
+    			cMsgErr := ""
+    			fWrite(nHdlLog, "Erro ao processar o registro: " + cRegErr + ": " + CRLF)
+    			aLogErr := GetAutoGrLog()
+    				For nA := 1 To Len(aLogErr)
+    					fWrite(nHdlLog, aLogErr[nA] + CRLF)
+    				Next nA
+    		EndIf
+    	Next nY
+    	fClose(nHdlLog)
+Return Nil

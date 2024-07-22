@@ -1,0 +1,374 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "PARMTYPE.CH"
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<SN062DX>                                                   |
+|Controle de [PERIODOS & CALENDARIOS] de Pagamento do Pronatec             |
+|                                                                          |
+|    ATENCAO:                                                              |
+|    --------                                                              |
+|    Para utilizar a faciliade verifique o criacao e declaracao do         |
+|    parametros: conforme segue:                                           |
+|    MV_XDBNOME := "MSSQL/sige"   - Identificacao do DataBase SIGE         |
+|    MV_XSRVEND := "10.52.28.17"  - Endereco IP de aceso ao DataBase SIGE  |
+|    MV_XSRVPOR := 7890           - Porta de Acesso do DataBase SIGE       |
+|    Tais parametros seram utilizadas pela rotina de Integracao com        |
+|    sistema legado SIGE na rotina de funcao de integracao GetMatric()     |
+|    descrita do programa SN0699X.PRG.                                     |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<20/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@return                                                                   |
+|<   _lReturn  (L) - (.T.) - A consulta encontrou dados                    |
+|                    (.F.) - A consulta NAO encontrou dados.               |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|@review                                                                   |
+|<>                                                                        |
+|@Author<>                                                                 |
+|@since<>                                                                  |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function SN062DX()
+Local _cAlias  	:= "ZP4"
+Local _cTitle  	:= "Período & Calendário"
+Local _oBrowse 	:= FWMBrowse():New()
+Private aRotina	:= MenuDef()
+_oBrowse:SetAlias(_cAlias)
+_oBrowse:SetDescription(_cTitle)
+//-- Define a Legenda para modelo
+_oBrowse:AddLegend("ZP4_XSTATU == 'S' "		,"BLUE"		,"Sem Calend. Definido")
+_oBrowse:AddLegend("ZP4_XSTATU == 'C' "		,"GREEN" 	,"Calendario Definido" )
+_oBrowse:AddLegend("ZP4_XSTATU == 'E' "		,"RED"		,"Encerrado"		   )
+_oBrowse:Activate()
+Return NIL
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<MenuDef>                                                   |
+|Definicao do MenuDef                                                      |
+|@Author<Antonio Dantas>                                                   |
+|@since<20/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@return                                                                   |
+|<   _aRotina (a) - Vetor com as opcoes de Menu                            |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function MenuDef()
+Local _aRotina 		:= {}
+ADD OPTION _aRotina TITLE "Pesquisar"	 ACTION "PESQBRW"         	OPERATION 1 ACCESS 0
+ADD OPTION _aRotina TITLE "Visualizar" 	 ACTION "VIEWDEF.SN062DX" 	OPERATION 2 ACCESS 0
+ADD OPTION _aRotina TITLE "Incluir"    	 ACTION "VIEWDEF.SN062DX" 	OPERATION 3 ACCESS 0
+ADD OPTION _aRotina TITLE "Alterar"		 ACTION "VIEWDEF.SN062DX" 	OPERATION 4 ACCESS 0
+ADD OPTION _aRotina TITLE "Excluir"   	 ACTION "VIEWDEF.SN062DX" 	OPERATION 5 ACCESS 0
+ADD OPTION _aRotina TITLE "Imprimir"   	 ACTION "VIEWDEF.SN062DX" 	OPERATION 8 ACCESS 0  
+//-- Opcoes customizadas
+ADD OPTION _aRotina TITLE "Solicitação ao DR"			ACTION "u_SN0623X()" 	OPERATION 2 ACCESS 0 
+ADD OPTION _aRotina TITLE "Libera Matriculas p/Pgto"	ACTION "u_SN062CX()" 	OPERATION 2 ACCESS 0   
+ADD OPTION _aRotina TITLE "Confirma Pagtos Manuais"		ACTION "u_SN062HX()" 	OPERATION 2 ACCESS 0  
+Return _aRotina
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<MenuDef>                                                   |
+|Definicao do ModelDef                                                     |
+|@Author<Antonio Dantas>                                                   |
+|@since<20/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@return                                                                   |
+|<   _oModel (o) - Objeto com a Definicao do Modelo                        |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function ModelDef()
+Local _oStruZP4 := FWFormStruct(1,"ZP4")
+Local _oStruZP5 := FWFormStruct(1,"ZP5")
+Local _oModel   := Nil
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Definicao e Tratamento do Modelo                                    |
+//|  New("SN062DXP"), refere-se ao nome do Ponto de Entrada PADRAO      |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_oModel		:= MPFormModel():New("SN062DXP",/*PreValid*/, {|_oMod| fVldForM(_oMod)}, {|_oMod| fGravar(_oMod)} )
+_oModel:AddFields("ZP4MASTER"	, /*cOwner*/	,_oStruZP4)
+_oModel:AddGrid("ZP5DETAIL"		, "ZP4MASTER"	,_oStruZP5,	{|_oMdlGrd, _nLin, _cAction, _cField| fVldLine(_oMdlGrd,_nLin,_cAction,_cField)})
+_oModel:SetPrimaryKey({"ZP4_FILIAL","ZP4_XCOD"})
+_oModel:SetRelation("ZP5DETAIL", {{"ZP5_FILIAL", "FwxFilial('ZP5')"},{"ZP5_XPERIO", "ZP4_XCOD"}},ZP5->(IndexKey(1)))
+_oModel:SetDescription("Controle de Período & Sessão")
+_oModel:GetModel("ZP4MASTER"):SetDescription("Período")
+_oModel:GetModel("ZP5DETAIL"):SetDescription("Calendários")
+
+Return _oModel
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<MenuDef>                                                   |
+|Definicao do ViewDef                                                      |
+|@Author<Antonio Dantas>                                                   |
+|@since<20/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@return                                                                   |
+|<   _oView (o) - Objeto com a Definicao do Visao do Modelo                |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function ViewDef()
+Local _oStruZP4 := FWFormStruct(2,"ZP4",/*{|_cFild| xDefFilds(_cFild)}*/)
+Local _oStruZP5 := FWFormStruct(2,"ZP5",/*{|_cFild| xDefFilds(_cFild)}*/)
+Local _oModel   := FWLoadModel("SN062DX")
+Local _oView    := FWFormView():New()
+Local _nOpc     := _oModel:GetOperation()
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//|  Remove os campos do Formulario                                     |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+//-- Calendario
+_oStruZP5:RemoveField("ZP5_FILIAL")
+_oStruZP5:RemoveField("ZP5_XPERIO")
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//|  Monta Box Horizontal - Superior                                    |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_oView:SetModel(_oModel)
+_oView:CreateHorizontalBox("SUPERIOR",50)
+//-- 1.1) ZP4 - Periodos
+_oView:CreateVerticalBox("ZP4_CAD",100,"SUPERIOR")
+_oView:AddField("VIEW_ZP4",_oStruZP4,"ZP4MASTER")
+_oView:EnableTitleView("VIEW_ZP4","Períodos")
+_oView:SetOwnerView("VIEW_ZP4","ZP4_CAD")
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//|  Monta Box Horizontal - Inferior                                    |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_oView:CreateHorizontalBox("INFERIOR",50)
+//-- 1.2) ZP5 - Calendarios
+_oView:CreateVerticalBox("ZP5_CAD",100,"INFERIOR")
+_oView:AddGrid("VIEW_ZP5",_oStruZP5,"ZP5DETAIL", /*bLinePre*/ , { |oModelGrid| fVldLine(oModelGrid) }/*bLinePost*/, /*bPreVal*/, /*bPosVal*/, /*BLoad*/)
+_oView:EnableTitleView("VIEW_ZP5","Calendários")
+_oView:SetOwnerView("VIEW_ZP5","ZP5_CAD")
+//-- Torna o Campo Seguencia "Auto Incremental
+_oView:AddIncrementField("VIEW_ZP5","ZP5_XSEG")
+//-- Removes os campos da Grid
+_oStruZP5:RemoveField("ZP5_FILIAL")
+_oStruZP5:RemoveField("ZP5_XPERIO")
+
+Return _oView
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<VldCalend>                                                 |
+|Funcao de Validacao do Formulario e Chamada de Rotinas de Pre-Gracacao    |
+|das Tabelas co-Relacionadas                                               |
+|@Author<Antonio Dantas>                                                   |
+|@since<31/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<      _oModel (o) - Objeto [oModel] - Formulario a ser validado          |
+|>                                                                         |
+|@return                                                                   |
+|<     _lReturn (l) - (.t.) Validacao OK, pode proceguir acao              |
+|                     (.f.) Validacao Negativa, impedi a acao              |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fVldForM(_oModel)
+Local _lReturn  	:= .t.
+Local _nOper		:= _oModel:GetOperation()   
+Local _oStruZP4 	:= _oModel:GetModel("ZP4MASTER")
+Local _cPeriodo 	:= _oStruZP4:GetValue("ZP4_XCOD")
+Local _nVlrHora		:= _oStruZP4:GetValue("ZP4_XVLRHR")
+do Case
+	Case _nOper == 3	//-- Incluir
+		//-- Modifica a Condicao (STATUS) do Periodo para: [C=Calendário Definido]
+		fLibPer(_oModel)    
+	Case _nOper == 4	//-- Alterar
+		&&-- Help(,,"HELP",, "Executa Validacoes Antes da Alteracao!",1,0)
+		If U_fIVCal("V" , "INI" , .T.) .AND. U_fIVCal("V" , "FIM" , .T.)
+			_lReturn := .T.
+		Else
+			_lReturn := .F.
+		EndIf
+	Case _nOper == 5	//-- Excluir
+		Help(,,"HELP",, "Período com MATRICULAS vinculadas não pode ser excluida!",1,0)    
+		_lReturn := u_fExZP7OK({{"ZP7_XPERIO",_cPeriodo}})
+	Case _nOper == 8	//-- Imprimir
+		&&-- Help(,,"HELP",, "Executa Validacoes Antes de Imprimir!",1,0)
+		_lReturn  := .t.
+	Case _nOper == 9	//-- Copiar
+		&&-- Help(,,"HELP",, "Antes de Copiar!",1,0)
+		_lReturn  := .t.
+Endcase
+Return _lReturn  
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fLibPer>                                                   |
+| Funcao para Tratar arquivo de Periodos apos a inclussao do Calendario/   |
+| sessao modifica o STATUS para "Calendario Definido"                      |
+|@Author<Antonio Dantas>                                                   |
+|@since<05/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<      _oModel (o) - Objeto [oModel] - Formulario a ser validado          |
+|>                                                                         |
+|@return                                                                   |
+|<      DEFAULT .t.                                                        |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fLibPer(_oModel)
+Local _aArea		:= GetArea()
+Local _oMdlPer		:= _oModel:GetModel("ZP4MASTER")
+//-- Modifica a Condicao (STATUS) do Periodo para: [C=Calendário Definido]
+_oMdlPer:SetValue("ZP4_XSTATU","C")
+RestArea(_aArea)
+Return .t.
+     
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<VldCalend>                                                 |
+| Validacao das Linhas (Calendarios) do Periodo                            |
+| das Tabelas co-Relacionadas                                              |
+|@Author<Antonio Dantas>                                                   |
+|@since<20/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<   _oMdlGrd (o) - oModelGrid                                             |
+|       _nLin (n) - Numero da Linha do Grid "Apos Carregado o Model"       |
+|    _cAction (c) - Acao a Ser realizada                                   |
+|     _cField (c) - Nome do campo afetado.                                 |
+|>                                                                         |
+|@return                                                                   |
+|<     _lReturn (l) - (.t.) Pode Executar a Acao                           |
+|                     (.f.) Nao Pode executar a Acao                       |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fVldLine(_oMdlGrd,_nLin,_cAction,_cField)
+Local _lReturn 		:= .T.       
+Local _oModel      	:= FWModelActive() 
+Local _oMdlSeq		:= _oModel:GetModel("ZP5DETAIL")	//-- Sessao   
+Local _aHearSeq 	:= _oMdlSeq:aHeader
+Local _aColsSeq		:= _oMdlSeq:aCols  
+Local _N			:= _oMdlSeq:NLine					//-- Posicao do Ponteiro na Sessao 
+Local _nPStat		:= aScan(_aHearSeq,{|X| UPPER(AllTrim(X[2]))=="ZP5_XSTATU"})
+Local _cStatus		:= _aColsSeq[_N,_nPStat]
+If _cAction == "DELETE"
+	_lReturn  := (_cStatus == "A")
+ 	If !_lReturn 
+  		Help(,,"Help",,"Calendário já foi movimentado, não pode ser Excluido!",1,0)
+  	Endif
+Endif
+Return _lReturn     
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGravar>                                                   |
+|Funcao de Controel de Gravacao: Chamada as Funcoes de Validacao das       |
+|Acoes do Formulario                                                       |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<10/10/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<    _oModel (o) - Objeto do Modelo Principal                             |
+|>                                                                         |
+|@return                                                                   |
+|<     _lReturn (l) - (.t.) Pode Executar a Acao                           |
+|                     (.f.) Nao Pode executar a Acao                       |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGravar(_oModel)
+Local _lReturn  	:= .t.
+Local _nOper		:= _oModel:GetOperation()   
+Local _oStruZP4 	:= _oModel:GetModel("ZP4MASTER")
+Local _cPeriodo 	:= _oStruZP4:GetValue("ZP4_XCOD")
+//-- Inicializa o Objeto do Calendario 
+Local _oMdlSeq		:= _oModel:GetModel("ZP5DETAIL")	//-- Calendario 
+Local _aHearSeq 	:= _oMdlSeq:aHeader
+Local _aColsSeq		:= _oMdlSeq:aCols  
+Local _nPosSeq		:= _oMdlSeq:NLine					//-- Posicao do Ponteiro na Sessao 
+Local _nPosSt		:= aScan(_aHearSeq,{|X| UPPER(AllTrim(X[2]))=="ZP5_XSTATU"})
+Local _nPosSq		:= aScan(_aHearSeq,{|X| UPPER(AllTrim(X[2]))=="ZP5_XSEG"})
+//--
+Local _c5Status		:= _aColsSeq[_nPosSeq,_nPosSt] 
+Local _cCalenda		:= _aColsSeq[_nPosSeq,_nPosSq]
+do Case
+	Case _nOper == 3		//-- Incluir
+		_lReturn  := .t.
+	Case _nOper == 4		//-- Alterar
+		_lReturn  := .t.     
+		//+--------------------------------------------------------------------------+
+		//| Esta tentando EXCLUIR um CALENDARIO na alteracao de um PERIODO 
+		//+--------------------------------------------------------------------------+
+		If _aColsSeq[_nPosSeq,Len(_aColsSeq[_nPosSeq])] 
+			_lReturn := u_fExZP7OK({{"ZP7_XPERIO",_cPeriodo},{"ZP7_XSEG",_cCalenda} })	
+			If !_lReturn
+				Help(,,"HELP",, "Período/Calendário com MATRICULAS vinculadas não pode ser excluida!",1,0)    
+			Else
+				dbSelectArea("ZP6")
+				ZP6->(dbSetOrder(2))
+				If (ZP6->(dbSeek(FwxFilial("ZP6")+_cPeriodo+_cCalenda)))
+					_lReturn := .f. 
+					Help(,,"HELP",, "Exclua primeiro as sessões do Calendário!",1,0)    
+				Endif 
+			Endif 
+		Endif 
+	Case _nOper == 5		//-- Excluir
+		_lReturn  := .t.
+		If _c5Status == "E"
+			Help(,,"HELP",,"Calendario já foi encerrado não pode ser Excluido",1,0)    
+			_lReturn  := .f.
+		Endif     
+		dbSelectArea("ZP6")
+		ZP6->(dbSetOrder(2))
+		If ZP6->(dbSeek(FwxFilial("ZP6")+_cPeriodo+_cCalenda))
+			_lReturn := .f. 
+			Help(,,"HELP",, "Exclua primeiro as sessões do Calendário!",1,0)    
+		Endif 
+Endcase
+If _lReturn
+	FWFormCommit(_oModel)
+Endif 	
+Return _lReturn  

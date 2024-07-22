@@ -1,0 +1,148 @@
+#Include 'Protheus.ch'
+#Include 'FWMVCDEF.CH'
+
+/*/{Protheus.doc} SF99A01S
+Função Criada para Controlar as Integraçoes
+@type function
+@author Sergio Ricardo Leite Salustiano
+@since 30/11/2020
+/*/
+User Function SF99A01S()
+
+	Local oBrowse
+	oBrowse:= FWMBrowse():New()
+	oBrowse:SetAlias('ZDM')
+	oBrowse:SetDescription('Controle de Integracao')
+	oBrowse:AddLegend("ZDM_STATUS=='0'", "GREEN", "Aguardando execução")
+	oBrowse:AddLegend("ZDM_STATUS=='1'", "RED", "Executando")
+	oBrowse:AddLegend("ZDM_STATUS=='2'", "YELLOW", "Finalizada")
+	oBrowse:AddLegend("ZDM_STATUS=='3'", "ORANGE", "Falhou")
+	oBrowse:AddLegend("ZDM_STATUS=='4'", "BLUE", "Bloqueada")
+	oBrowse:AddLegend("ZDM_STATUS=='5'", "GRAY", "Não Entregue")
+	oBrowse:AddLegend("ZDM_STATUS=='6'", "BROWN", "Recusada")
+	oBrowse:Activate()
+
+Return Nil
+
+/*/{Protheus.doc} MenuDef
+Define as operações que serão realizadas pela aplicação.
+@author Sergio Ricardo Leite Salustiano
+@since 08/01/2021
+@return array, array com a definição do menu
+@type function
+/*/
+Static Function MenuDef()
+
+	Local aRotina := {}
+
+	ADD OPTION aRotina Title 'Visualizar' Action 'VIEWDEF.SF99A01S' OPERATION 2 ACCESS 0
+	ADD OPTION aRotina Title 'Imprimir'   Action 'VIEWDEF.SF99A01S' OPERATION 8 ACCESS 0
+	ADD OPTION aRotina Title 'Integrar'   Action 'U_SF73A04F'      OPERATION 4 ACCESS 0
+
+Return aRotina
+
+/*/{Protheus.doc} ModelDef
+Define a regra de negócios da aplicação.
+@author Sergio Ricardo Leite Salustiano
+@since 08/01/2021
+@return Object, Retorna o objeto de modelo de dados (Model) gerado na função.
+@type function
+/*/
+Static Function ModelDef()
+
+	Local oStruZDM :=FWFormStruct(1,'ZDM')
+	Local oModel
+
+	oModel := MPFormModel():New('SF99A01M')
+	oModel:AddFields('ZDMMASTER',/*cOwner*/,oStruZDM)
+	oModel:SetDescription('Log de Integracao')
+	oModel:GetModel('ZDMMASTER'):SetDescription('Log de Integracao')
+	oModel:SetPrimaryKey( { "ZDM_FILIAL", "ZDM_CODIGO"} )
+
+Return oModel
+
+/*/{Protheus.doc} ViewDef
+Contém a definição de toda a parte visual da aplicação.
+@author Sergio Ricardo Leite Salustiano
+@since 08/01/2021
+@return Object, Retorna o objeto de interface (View) gerado na função.
+@type function
+/*/
+Static Function ViewDef()
+
+	Local oModel   := FWLoadModel('SF99A01S')
+	Local oStruZDM := FWFormStruct(2,'ZDM')
+	Local oView
+
+	oView := FWFormView():New()
+	oView:SetModel(oModel)
+	oView:AddField('VIEW_ZDM', oStruZDM, 'ZDMMASTER')
+	oView:CreateHorizontalBox('TELA',100)
+	oView:SetOwnerView('VIEW_ZDM','TELA')
+
+Return oView
+
+/*/{Protheus.doc} F99A01S1
+Função para incluir um novo registro na tabela ZDM que deverá
+ser integrado com outro sistema.
+@author Franklin de Brito de Oliveira
+@since 08/01/2021
+@return logical, Indica se foi possível incluir novo registro na tabela ZDM
+@param cFunCod, characters, nome da Função
+@param cChavePri, characters, Chave primária do registro na tabela
+@param cJSONData, characters, JSON padrão do registro
+@type function
+/*/
+User Function F99A01S1(cFunCod, cChavePri, cJSONData)
+	Local aArea		:= GetArea()
+	Local aFields	:= {}
+	Local cAliasZDN	:= GetNextAlias()
+	Local lRet		:= .T.
+	Local nX		:= 0
+	Local oMdlZDM
+
+	Default cChavePri 	:= ""
+	Default cFunCod 	:= ""
+	Default cJSONData 	:= ""
+
+	If Empty(cChavePri)
+		lRet		:= .F.
+	ElseIf Empty(cFunCod)
+		lRet		:= .F.
+	Else
+		BeginSql Alias cAliasZDN
+			SELECT
+				DISTINCT ZDN_FILIAL, ZDN_CODIGO, ZDN_FUNCOD, ZDN_CODINT
+			FROM
+				%Table:ZDN% ZDN
+			WHERE
+				ZDN.%NotDel%
+				AND TRIM(ZDN.ZDN_FUNCOD) = %Exp:cFunCod%
+			ORDER BY ZDN_FILIAL, ZDN_FUNCOD, ZDN_CODINT
+		EndSql
+		oMdlZDM := FWLoadModel("SF99A01S")
+		oMdlZDM:SetOperation(MODEL_OPERATION_INSERT)
+		oMdlZDM:Activate()
+		While !(cAliasZDN)->(Eof())
+			aAdd(aFields, {"ZDM_TRDATA", Date()})
+			aAdd(aFields, {"ZDM_TRHORA", Time()})
+			aAdd(aFields, {"ZDM_CHVORI", cChavePri})
+			aAdd(aFields, {"ZDM_DEPARA", (cAliasZDN)->ZDN_CODIGO})
+			aAdd(aFields, {"ZDM_CODINT", (cAliasZDN)->ZDN_CODINT})
+			aAdd(aFields, {"ZDM_MSGORI", cJSONData})
+			oAux := oMdlZDM:GetModel("ZDMMASTER")
+			For nX := 1 To Len(aFields)
+				If !( lAux := oMdlZDM:SetValue("ZDMMASTER", aFields[nX][1], aFields[nX][2]) )
+					lRet := .F.
+				EndIf
+			Next nX
+			If (lRet := oMdlZDM:VldData())
+				oMdlZDM:CommitData()
+			EndIf
+			(cAliasZDN)->(DbSkip())
+		EndDo
+		oMdlZDM:DeActivate()
+	EndIf
+	RestArea(aArea)
+
+Return lRet

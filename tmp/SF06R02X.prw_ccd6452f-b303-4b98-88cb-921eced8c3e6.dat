@@ -1,0 +1,500 @@
+#Include 'Protheus.ch'
+#Include 'FWPrintSetup.ch'
+#Include 'RptDef.ch'
+
+
+//-------------------------------------------------------------
+/*/{Protheus.doc} SF06R02X
+Imprime comprovante de pagamento realizado via CNAB Modelo 1
+
+@author Allan da Silva Faria
+@since 06/07/2016
+@version 1.0
+@param nRecNo, numérico, (Descrição do parâmetro)
+/*/
+//-------------------------------------------------------------
+User Function SF06R02X(nRecNo)
+
+Local oPrinter	:= Nil																//-- Objeto de impressão			
+Local oSetup	:= Nil																//-- Objeto de configuração da impressão
+Local cSession	:= GetPrinterSession()												//-- Sessão do usuário logado
+Local cPerg 	:= "SF06R02X"														//-- Pergunda
+Local cRelName	:= "Comprovante de Pagamento Mod1"									//-- Nome do relatório
+Local cFilePrint:= "SF06R02X"														//-- Nome do arquivo de relatório a ser criado
+Local lAdjust	:= .F.																//-- Possibilita ajustes de impressão
+Local nFlags	:= PD_ISTOTVSPRINTER+PD_DISABLEORIENTATION+PD_DISABLEPAPERSIZE		//-- Opções para setup de impressão
+Local aOrdem	:= {"Padrão"}														//-- Array com ordem de impressão do relatório
+Local aDevice	:= {"DISCO","SPOOL","EMAIL","EXCEL","HTML","PDF"}					//-- Array com dispositivos para impressão do relatório
+Local cDevice	:= ""																//-- Dispositivo selecionado para impressão
+Local nPrintType:= 6																//-- Tipo da impressora	
+Local nOrient	:= 1
+
+Private lExistCPG := .F.															//-- Controla de existe comprovante de pagamento.
+Private nPag	  := 0																//-- Numero de paginas	
+
+//------------------------------------------
+//-- Valida de Cadastro de pergunta existe
+//-- caso não existe ele cadastra.
+//------------------------------------------
+PergDef(@cPerg)
+Pergunte(cPerg,.F.)
+
+//------------------------------------------
+//-- Caso seja passado recno como parâmetro
+//------------------------------------------
+If (nRecNo # Nil)
+
+	dbSelectArea("SE2")
+	SE2->(dbGoTo(nRecNo))
+
+	mv_par01 := SE2->E2_FORNECE
+	mv_par02 := SE2->E2_LOJA
+	mv_par03 := SE2->E2_FORNECE
+	mv_par04 := SE2->E2_LOJA
+	mv_par05 := SE2->E2_PREFIXO
+	mv_par06 := SE2->E2_PREFIXO
+	mv_par07 := SE2->E2_NUM
+	mv_par08 := SE2->E2_NUM
+	mv_par09 := SE2->E2_PARCELA
+	mv_par10 := SE2->E2_PARCELA
+	mv_par11 := SE2->E2_NUMBOR
+	mv_par12 := SE2->E2_NUMBOR
+
+EndIf 
+
+//-- Orientação da impressão 1= Retrado 2= Paisagem
+cDevice		:= If(Empty(fwGetProfString(cSession,"PRINTTYPE","SPOOL",.T.)),"PDF",fwGetProfString(cSession,"PRINTTYPE","SPOOL",.T.))
+nLocal		:= If(fwGetProfString(cSession,"LOCAL","SERVER",.T.)=="SERVER",1,2 )
+nPrintType	:= aScan(aDevice,{|x| x == cDevice })     
+
+oSetup		:= FWPrintSetup():New (nFlags,cRelName)
+
+oSetup:SetPropert(PD_PAPERSIZE		, 2)
+oSetup:SetPropert(PD_PRINTTYPE   	, nPrintType)
+oSetup:SetPropert(PD_ORIENTATION 	, nOrient)
+oSetup:SetPropert(PD_DESTINATION 	, nLocal)
+oSetup:SetPropert(PD_MARGIN			, {0,0,0,0})
+
+oSetup:SetUserParms({|| Pergunte(cPerg,.T.)})
+
+oPrinter	:= FWMSPrinter():New(cFilePrint, nPrintType, lAdjust, /*cPathDest*/, .T.,,oSetup)
+
+If oSetup:Activate() == PD_OK
+
+	oPrinter:lServer := oSetup:GetProperty(PD_DESTINATION) == AMB_SERVER	
+	oPrinter:SetDevice(oSetup:GetProperty(PD_PRINTTYPE))
+	oPrinter:SetPortrait()
+	oPrinter:SetPaperSize(oSetup:GetProperty(PD_PAPERSIZE))
+	oPrinter:SetCopies(Val(oSetup:cQtdCopia))
+			
+	If oSetup:GetProperty(PD_PRINTTYPE) == IMP_SPOOL
+	
+		oPrinter:nDevice		:= IMP_SPOOL
+		oPrinter:cPrinter		:= oSetup:aOptions[PD_VALUETYPE]
+	
+	Else 
+	
+		oPrinter:nDevice		:= IMP_PDF
+		oPrinter:cPathPDF		:= oSetup:aOptions[PD_VALUETYPE]
+		oPrinter:SetViewPDF(.T.)
+	
+	Endif
+			
+	//-----------------------------------
+	//-- Processa os dados para Impressão
+	//-----------------------------------
+	RptStatus({|lEnd| CursorWait(),ProcDef(lEnd,oPrinter),CursorArrow() },"Imprimindo Comprovante...") 
+
+	If lExistCPG
+		oPrinter:Preview()
+	Else
+		Aviso("COMPROVANTE","Nenhum comprovante de pagamento a ser impresso!",{"OK"},1)
+	EndIf
+	
+Else
+	oPrinter:Cancel()
+EndIf
+
+Return Nil
+
+
+//-------------------------------------------------------------
+/*/{Protheus.doc} ProcDef
+Processa os dados e chama a impressão do comprovante de
+pagamento.
+
+@author Allan da Silva Faria
+@since 08/07/2016
+@version 1.0
+@param lEnd		, Lógico, Indica se relaforio foi encessado pelo usuário.
+@param oPrinter	, objeto, Objeto de impressão
+/*/
+//-------------------------------------------------------------
+Static Function ProcDef(lEnd,oPrinter)
+
+Local aArea	  := SaveArea1({"SA2","SA6"})
+Local cArqTmp := GetNextAlias()
+Local nTam_cp := TamSX3("E5_VALOR")[1]
+Local nDes_cp := TamSX3("E5_VALOR")[2]
+
+If Select(cArqTmp)>0
+	dbSelectArea(cArqTmp)
+	(cArqTmp)->(dbCloseArea())
+EndIf
+
+//------------------------------------------
+//-- Filtra e Monta Arquivo de trabalho
+//------------------------------------------
+BeginSQL Alias cArqTmp
+
+	column E2_VLCRUZ	as Numeric(nTam_cp,nDes_cp)
+	column E5_VALOR 	as Numeric(nTam_cp,nDes_cp)
+	column E5_VLJUROS	as Numeric(nTam_cp,nDes_cp)
+	column E5_VLMULTA	as Numeric(nTam_cp,nDes_cp)	 
+	column E5_VLOCRRE	as Numeric(nTam_cp,nDes_cp)
+	column E5_VLDESCO	as Numeric(nTam_cp,nDes_cp)
+
+	SELECT 
+	  SE2.E2_FILIAL   AS FILIAL,
+	  SE2.E2_FORNECE  AS FORNECEDOR,
+	  SE2.E2_LOJA     AS LOJA,
+	  SE2.E2_PREFIXO  AS PREFIXO,
+	  SE2.E2_NUM      AS TITULO,
+	  SE2.E2_PARCELA  AS PARCELA,
+	  SE2.E2_VENCTO   AS VENCTO,
+	  SE2.E2_IDCNAB   AS IDCNAB,
+	  SE2.E2_CODBAR   AS CODBARRAS,
+	  SE2.E2_VLCRUZ   AS VALOR,
+	  SE5.E5_DATA     AS DATAPAGO,
+	  SE5.E5_BANCO    AS BANCO,
+	  SE5.E5_AGENCIA  AS AGENCIA,
+	  SE5.E5_CONTA    AS CONTA,
+	  SE5.E5_VALOR    AS VALORPAGO,
+	  SE5.E5_VLJUROS  AS JURO,
+	  SE5.E5_VLMULTA  AS MULTA,
+	  SE5.E5_VLCORRE  AS CORRECAO,
+	  SE5.E5_VLDESCO  AS DESCONTO,
+	  SE5.E5_XAUTENT  AS AUTENTICACAO,
+	  SE5.E5_XBCOPAG  AS BCOBENEF,
+	  SE5.E5_XAGEPAG  AS AGEBENEF,
+	  SE5.E5_XCTAPAG  AS CTABENEF,
+	  SEA.EA_MODELO   AS MODELO,
+	  SEA.EA_TIPOPAG  AS TIPOPAG
+	FROM %table:SE2% SE2
+	INNER JOIN %table:SE5% SE5
+	 ON (SE5.E5_FILIAL = SE2.E2_FILIAL AND SE5.E5_CLIFOR = SE2.E2_FORNECE AND SE5.E5_LOJA = SE2.E2_LOJA 
+	    AND SE5.E5_PREFIXO = SE2.E2_PREFIXO AND SE5.E5_NUMERO = SE2.E2_NUM AND SE5.E5_PARCELA = SE2.E2_PARCELA AND SE5.E5_TIPO = SE2.E2_TIPO)
+	INNER JOIN %table:SEA% SEA
+	  ON (SE2.E2_FILIAL = SEA.EA_FILIAL AND SE2.E2_FORNECE = SEA.EA_FORNECE AND SE2.E2_PREFIXO = SEA.EA_PREFIXO AND SE2.E2_NUM = SEA.EA_NUM 
+	      AND SE2.E2_PARCELA = SEA.EA_PARCELA AND SE2.E2_NUMBOR = SEA.EA_NUMBOR)
+	WHERE SE2.%notDel%
+	  AND SE5.%notDel%
+	  AND SEA.%notDel%
+	  AND SE2.E2_FILIAL = %xFilial:SE2%
+	  AND SE2.E2_FORNECE  BETWEEN %exp:mv_par01%   AND %exp:mv_par03%
+	  AND SE2.E2_LOJA     BETWEEN %exp:mv_par02%   AND %exp:mv_par04%
+	  AND SE2.E2_PREFIXO  BETWEEN %exp:mv_par05%   AND %exp:mv_par06%
+	  AND SE2.E2_NUM      BETWEEN %exp:mv_par07%   AND %exp:mv_par08%
+	  AND SE2.E2_PARCELA  BETWEEN %exp:mv_par09%   AND %exp:mv_par10%
+	  AND SE2.E2_NUMBOR   BETWEEN %exp:mv_par11%   AND %exp:mv_par12%
+	  AND SE2.E2_SALDO = 0
+	  AND SE5.E5_XAUTENT <> ' '
+	  //AND SE5.E5_TIPODOC = 'VL'
+	  AND SE5.E5_SITUACA = ' '
+	  AND SEA.EA_CART = 'P';
+
+EndSQL
+
+dbSelectArea(cArqTmp)
+(cArqTmp)->(dbGoTop())
+
+SetRegua((cArqTmp)->(LastRec()))
+
+dbSelectArea("SA6")
+SA6->(dbSetOrder(1))
+
+dbSelectArea("SA2")
+SA2->(dbSetOrder(1))
+
+//------------------------------------------
+//-- Loop Impressão de uma comprovante 
+//-- para cada pagamento
+//------------------------------------------
+Do While ((cArqTmp)->(!EOF()) .AND. .Not. lEnd)
+	
+	//----------------------------
+	//-- Posiciona Banco 
+	//----------------------------
+	SA6->(dbSeek(FWxFilial("SA6") + (cArqTmp)->(BANCO + AGENCIA + CONTA)))
+
+	//----------------------------
+	//-- Posiciona Fornecedor 
+	//----------------------------	
+	SA2->(dbSeek(FWxFilial("SA2") + (cArqTmp)->(FORNECEDOR + LOJA)))
+
+	//-----------------------------
+	//-- Função Imprime Comprovante
+	//-----------------------------
+	PrintDef(oPrinter,cArqTmp)
+
+	lExistCPG:= .T.
+	IncRegua()
+
+	(cArqTmp)->(dbSkip())	
+EndDo
+
+If Select(cArqTmp)>0
+	dbSelectArea(cArqTmp)
+	(cArqTmp)->(dbCloseArea())
+EndIf
+
+RestArea1(aArea)
+Return Nil
+
+
+//-------------------------------------------------------------
+/*/{Protheus.doc} PrintDef
+Primime o Comprovante - Lay-Out
+
+@author Allan da Silva Faria
+@since 08/07/2016
+@version 1.0
+@param oPrinter, objeto	 , Objeto de impressão
+@param cArqTmp , Caracter, Nome do arquivo temporario
+/*/
+//-------------------------------------------------------------
+Static Function PrintDef(oPrinter,cArqTmp)
+
+Local nMargDir	:= 15					//-- Margem direita
+Local nMargEsq	:= 20					//-- Margem Esquerda
+Local nCol1Dir	:= 498-nMargDir   		
+Local nCol2Dir	:= 540-nMargDir
+Local nMaxLin	:= 800					//-- Numero máximo de linhas
+Local nMaxCol	:= 600					//-- Numero máximo de colunas
+
+Local oFontA1	:= TFont():New('Arial',,7,,.T.)
+Local oFontA2	:= TFont():New('Arial',,9,,.T.)
+Local oFontA3	:= TFont():New('Arial',,12,,.T.)
+Local oFontA4	:= TFont():New('Arial',,10,,.T.)
+Local oFontA5	:= TFont():New('Arial',,9,,.F.)
+Local oFontA6	:= TFont():New('Arial',,16,,.T.)
+Local li		:= 10
+
+Local cDescComp := ""		//-- Descrição do Comprovante
+
+oPrinter:StartPage()
+
+//----------------------------------------------------------
+//-- Impressão do Cabelhado Padrão da FIEMT
+//----------------------------------------------------------
+oPrinter:Box(li+5, nMargDir, li+50, nMargDir+75)
+oPrinter:SayBitmap(li+6, nMargDir+1, "lgrl01.bmp", 70, 40 )
+
+oPrinter:Box(li+5, nMargDir+75, li+50, nCol1Dir-5)
+oPrinter:SayAlign(li+20, nMargDir+200, "Comprovante De Pagamento", oFontA3, nMaxCol-nMargEsq, 200, 2, 0)
+
+oPrinter:Box(li+5, nCol1Dir-5, li+50, nMaxCol-nMargEsq)
+oPrinter:SayAlign(li+10, nCol1Dir, "Filial ............: "	, oFontA1, 200, 200, , 0)
+oPrinter:SayAlign(li+20, nCol1Dir, "Dt. Emissão : "			, oFontA1, 200, 200, , 0)
+oPrinter:SayAlign(li+30, nCol1Dir, "Emissor ......: "		, oFontA1, 200, 200, , 0)
+oPrinter:SayAlign(li+40, nCol1Dir, "Folha ...........: "	, oFontA1, 200, 200, , 0)
+
+oPrinter:SayAlign(li+10, nCol2Dir, cFilant						, oFontA1, 200, 200, , 0)
+oPrinter:SayAlign(li+20, nCol2Dir, DToC( dDataBase )			, oFontA1, 200, 200, , 0)
+oPrinter:SayAlign(li+30, nCol2Dir, UsrRetName( RetCodUsr() )	, oFontA1, 200, 200, , 0)
+oPrinter:SayAlign(li+40, nCol2Dir, AllTrim(STR(++nPag))			, oFontA1, 200, 200, , 0)
+
+oPrinter:Line(li+50, nMargDir, li+50, nMaxCol-nMargEsq, , "-8")
+
+//----------------------------------------------------------
+//-- Descrição do Banco de Origem
+//----------------------------------------------------------
+oPrinter:SayAlign(li+065, nMargDir+2	, SA6->A6_COD + "-" + SA6->A6_NOME, oFontA6, nMaxCol-nMargEsq, 200, 2, 0)
+
+//----------------------------------------------------------
+//-- Descrição do Comprovante de Pagamento
+//----------------------------------------------------------
+cDescComp := FWGetSX5("59",PADR((cArqTmp)->TIPOPAG,Len(SX5->X5_CHAVE)))[1,4] + " - " + FWGetSX5("58",PADR((cArqTmp)->MODELO,Len(SX5->X5_CHAVE)))[1,4]
+oPrinter:SayAlign(li+080, nMargDir+2	, "Comprovante de " + cDescComp, oFontA4, nMaxCol-nMargEsq, 200, 2, 0)
+
+oPrinter:SayAlign(li+089, nMargDir+2	, "Via Protheus", oFontA5, nMaxCol-nMargEsq, 200, 2, 0)
+
+//----------------------------------------------------------
+//-- Impressão DADOS DO EMITENTE 
+//----------------------------------------------------------
+oPrinter:SayAlign(li+110, nMargDir+2	, "DADOS DO EMITENTE", oFontA4, nMaxCol-nMargEsq, 200, 2, 0)
+oPrinter:Box(li+120, nMargDir, li+138	, nMaxCol-nMargEsq)
+
+oPrinter:SayAlign(li+120, nMargDir+2	, "Razão Social : "		, oFontA2, 200, 200, , 0)
+oPrinter:SayAlign(li+120, nMargDir+370	, "Número Inscrição : "	, oFontA2, 200, 200, , 0)
+oPrinter:SayAlign(li+128, nMargDir+2	, "Conta Origem : "		, oFontA2, 200, 200, , 0)
+
+oPrinter:SayAlign(li+120, nMargDir+053	, FWFilRazSocial(), oFontA5, 300, 008, , 0)
+oPrinter:SayAlign(li+120, nMargDir+437	, PicCGC(SM0->M0_CGC), oFontA5, 300, 008, , 0)
+oPrinter:SayAlign(li+128, nMargDir+056	, AllTrim(SA6->A6_AGENCIA)+ "-" + AllTrim(SA6->A6_DVAGE) + "/" + AllTrim(SA6->A6_NUMCON)+ "-" + AllTrim(SA6->A6_DVCTA), oFontA5, 200, 200, , 0)
+
+//----------------------------------------------------------
+//-- Impressão DADOS DO FAVORECIDO 
+//----------------------------------------------------------
+oPrinter:SayAlign(li+140, nMargDir+2	, "DADOS DO FAVORECIDO", oFontA4, nMaxCol-nMargEsq, 200, 2, 0)
+oPrinter:Box(li+150, nMargDir, li+168	, nMaxCol-nMargEsq)
+
+oPrinter:SayAlign(li+150, nMargDir+2	, "Nome Destinatário : "	, oFontA2, 200, 200, , 0)
+oPrinter:SayAlign(li+150, nMargDir+370	, "Número Inscrição : "		, oFontA2, 200, 200, , 0)
+
+If (AllTrim((cArqTmp)->MODELO) $  "|13|16|17|18|21|30|31|")
+	oPrinter:SayAlign(li+158, nMargDir+2	, "Código de Barras : "		, oFontA2, 200, 200, , 0)
+Else
+	oPrinter:SayAlign(li+158, nMargDir+2	, "Conta Destino : "		, oFontA2, 200, 200, , 0)
+EndIf
+
+oPrinter:SayAlign(li+150, nMargDir+072	,SubStr(SA2->A2_NOME,1,70), oFontA5, 300, 008, , 0)
+oPrinter:SayAlign(li+150, nMargDir+437	,PicCGC(SA2->A2_CGC), oFontA5, 100, 008, , 0)
+
+If (AllTrim((cArqTmp)->MODELO) $  "|13|16|17|18|21|30|31|")
+	oPrinter:SayAlign(li+158, nMargDir+068	, AllTrim((cArqTmp)->CODBARRAS) , oFontA5, 200, 200, , 0)
+Else
+	oPrinter:SayAlign(li+158, nMargDir+057	, AllTrim((cArqTmp)->BCOBENEF)+"/"+AllTrim((cArqTmp)->AGEBENEF)+ "/" + AllTrim((cArqTmp)->CTABENEF), oFontA5, 200, 200, , 0)
+EndIf
+
+//----------------------------------------------------------
+//-- Impressão DADOS DA OPERAÇÃO
+//----------------------------------------------------------
+oPrinter:SayAlign(li+170, nMargDir+2	, "DADOS DA OPERAÇÃO", oFontA4, nMaxCol-nMargEsq, 200, 2, 0)
+oPrinter:Box(li+180, nMargDir, li+198	, nMaxCol-nMargEsq)
+
+oPrinter:SayAlign(li+180, nMargDir+2	, "Data Vencimento : "		, oFontA2, 200, 200, , 0)
+oPrinter:SayAlign(li+180, nMargDir+370	, "Valor Lançamento : "		, oFontA2, 200, 200, , 0)
+oPrinter:SayAlign(li+188, nMargDir+2	, "Data Efetivação : "		, oFontA2, 200, 200, , 0)
+oPrinter:SayAlign(li+188, nMargDir+370	, "Valor Efetivação : "		, oFontA2, 200, 200, , 0)
+
+oPrinter:SayAlign(li+180, nMargDir+066	, DTOC(SToD((cArqTmp)->VENCTO))	, oFontA5, 300, 008, , 0)
+oPrinter:SayAlign(li+180, nMargDir+439	, "R$ " + Transform((cArqTmp)->VALOR,X3Picture("E1_VALOR")), oFontA5, 100, 008, , 0)
+
+oPrinter:SayAlign(li+188, nMargDir+063	, DTOC(SToD((cArqTmp)->DATAPAGO)), oFontA5, 300, 008, , 0)
+oPrinter:SayAlign(li+188, nMargDir+434	, "R$ " + Transform((cArqTmp)->VALORPAGO,X3Picture("E1_VALOR")), oFontA5, 100, 008, , 0)
+
+//----------------------------------------------------------
+//-- Impressão AUTENTICAÇÃO
+//----------------------------------------------------------
+oPrinter:SayAlign(li+200, nMargDir+2	, "AUTENTICAÇÃO", oFontA4, nMaxCol-nMargEsq, 200, 2, 0)
+oPrinter:Box(li+210, nMargDir, li+228	, nMaxCol-nMargEsq)
+
+oPrinter:SayAlign(li+210, nMargDir+2	, "Número :  " + (cArqTmp)->AUTENTICACAO	, oFontA2, 200, 200, , 0)
+oPrinter:SayAlign(li+218, nMargDir+2	, "Obs.: autenticação gerada pelo arquivo de retorno do sistema bancário. "		, oFontA2, 350, 008, , 0)
+
+//----------------------------------------------------------
+//-- Impressão HISTORICO
+//----------------------------------------------------------
+oPrinter:SayAlign(li+230, nMargDir+2	, "HISTÓRICO", oFontA4, nMaxCol-nMargEsq, 200, 2, 0)
+oPrinter:Box(li+240, nMargDir, li+258	, nMaxCol-nMargEsq)
+
+oPrinter:SayAlign(li+240, nMargDir+2	, "Operação realizada com sucesso conforme as informações fornecidas via arquivo de retorno (CNAB). "		, oFontA2, 350, 008, , 0)
+oPrinter:SayAlign(li+248, nMargDir+2	, "Verifique em seu extrato a confirmação dessa operação. "		, oFontA2, 350, 008, , 0)
+
+oPrinter:EndPage()
+Return Nil
+
+
+//-------------------------------------------------------------
+/*/{Protheus.doc} PergDef
+Valida se pergunta existe na SX1, caso não existe
+cadastra as perguntas.
+
+@author Allan da Silva Faria
+@since 06/07/2016
+@version 1.0
+@param cPerg, character, Nome da Pergunda 
+/*/
+//--------------------------------------------------------------
+Static Function PergDef(cPerg)
+
+Local aHelpPor := {}
+
+cPerg := PADR(cPerg,Len(SX1->X1_GRUPO))
+
+//---------------------------------------
+//-- Help
+//---------------------------------------
+aAdd(aHelpPor,SepS2A("Informar o fornecedor inicial que deseja imprimir o comprovante de pagamento. Caso queira imprimir todos os fornecedores, deixe o campo em branco. Utilize <F3> para escolher."))
+aAdd(aHelpPor,SepS2A("Informar o loja do fornecedor inicial que deseja imprimir o comprovante de pagamento. Caso queira imprimir todos os fornecedores, deixe o campo em branco."))
+aAdd(aHelpPor,SepS2A("Informar o fornecedor final que deseja imprimir o comprovante de pagamento. Caso queira imprimir todos os fornecedores, informar ZZZZZZ. Utilize <F3> para escolher."))
+aAdd(aHelpPor,SepS2A("Informar o loja do fornecedor final que deseja imprimir o comprovante de pagamento. Caso queira imprimir todos os fornecedores, informar ZZZZZZ."))
+aAdd(aHelpPor,SepS2A("Informar o prefixo inicial dos títulos que deseja imprimir o comprovante de pagamento. Caso queira imprimir todos os prefixos, deixe o campo em branco."))
+aAdd(aHelpPor,SepS2A("Informar o prefixo final dos títulos que deseja imprimir o comprovante de pagamento. Caso queira imprimir todos os prefixos, informar ZZZ."))
+aAdd(aHelpPor,SepS2A("Informar o título inicial que deseja imprimir no comprovante de pagamento. Caso queira imprimir todos os títulos, deixe o campo em branco."))
+aAdd(aHelpPor,SepS2A("Informar o título final que deseja imprimir o comprovante de pagamento. Caso queira imprimir todos os títulos, informar ZZZZZZ."))
+aAdd(aHelpPor,SepS2A("Informar a parcela inicial dos títulos deseja imprimir o comprovante de pagamento. Caso queira imprimir todos as parcelas, deixe o campo em branco."))
+aAdd(aHelpPor,SepS2A("Informar a parcela final dos títulos deseja imprimir o comprovante de pagamento. Caso queira imprimir todos as parcelas, informar ZZZ."))
+aAdd(aHelpPor,SepS2A("Informar o borderô inicial que deseja imprimir o comprovante de pagamento. Caso queira imprimir todos borderôs, deixe o campo em branco."))
+aAdd(aHelpPor,SepS2A("Informar o borderô final que deseja imprimir o comprovante de pagamento. Caso queira imprimir todos borderôs, informar ZZZ."))
+
+//---------------------------------------
+//-- Cadastra perguntas
+//---------------------------------------
+u_SFPUTSX1(cPerg,"01","Do Fornecedor?"	,"","","mv_ch1","C",TamSX3("E2_FORNECE")[1]	,00,00,"G","","SA2"	,"","","mv_par01",,,,,,,,,,,,,,,,,aHelpPor[01],,,)
+u_SFPUTSX1(cPerg,"02","Da Loja?"		,"","","mv_ch2","C",TamSX3("E2_LOJA")[1]	,00,00,"G","","  "	,"","","mv_par02",,,,,,,,,,,,,,,,,aHelpPor[02],,,)
+u_SFPUTSX1(cPerg,"03","Até Fornecedor?"	,"","","mv_ch3","C",TamSX3("E2_FORNECE")[1]	,00,00,"G","","SA2"	,"","","mv_par03",,,,,,,,,,,,,,,,,aHelpPor[03],,,)
+u_SFPUTSX1(cPerg,"04","Até Loja?"		,"","","mv_ch4","C",TamSX3("E2_LOJA")[1]	,00,00,"G","","  "	,"","","mv_par04",,,,,,,,,,,,,,,,,aHelpPor[04],,,)
+u_SFPUTSX1(cPerg,"05","Do Prefixo?"		,"","","mv_ch5","C",TamSX3("E2_PREFIXO")[1]	,00,00,"G","","  "	,"","","mv_par05",,,,,,,,,,,,,,,,,aHelpPor[05],,,)
+u_SFPUTSX1(cPerg,"06","Até Prefixo?"	,"","","mv_ch6","C",TamSX3("E2_PREFIXO")[1]	,00,00,"G","","  "	,"","","mv_par06",,,,,,,,,,,,,,,,,aHelpPor[06],,,)
+u_SFPUTSX1(cPerg,"07","Do Título?" 		,"","","mv_ch7","C",TamSX3("E2_NUM")[1]		,00,00,"G","","  "	,"","","mv_par07",,,,,,,,,,,,,,,,,aHelpPor[07],,,)
+u_SFPUTSX1(cPerg,"08","Até Título?"		,"","","mv_ch8","C",TamSX3("E2_NUM")[1]		,00,00,"G","","  "	,"","","mv_par08",,,,,,,,,,,,,,,,,aHelpPor[08],,,)
+u_SFPUTSX1(cPerg,"09","Da Parcela?" 	,"","","mv_ch9","C",TamSX3("E2_PARCELA")[1]	,00,00,"G","","  "	,"","","mv_par09",,,,,,,,,,,,,,,,,aHelpPor[09],,,)
+u_SFPUTSX1(cPerg,"10","Até Parcela?"	,"","","mv_cha","C",TamSX3("E2_PARCELA")[1]	,00,00,"G","","  "	,"","","mv_par10",,,,,,,,,,,,,,,,,aHelpPor[10],,,)
+u_SFPUTSX1(cPerg,"11","Do Borderô?" 	,"","","mv_chb","C",TamSX3("E2_NUMBOR")[1]	,00,00,"G","","  "	,"","","mv_par11",,,,,,,,,,,,,,,,,aHelpPor[11],,,)
+u_SFPUTSX1(cPerg,"12","Até Dorderô?"	,"","","mv_chd","C",TamSX3("E2_NUMBOR")[1]	,00,00,"G","","  "	,"","","mv_par12",,,,,,,,,,,,,,,,,aHelpPor[12],,,)
+
+Return Nil
+
+
+//------------------------------------------------------
+/*/{Protheus.doc} SepS2A
+Transforma help de pergunta de string para array
+
+@author Edimar Tinti
+@since 25/04/2016
+@version 1.0
+@param cStr, character, help em string
+@return Array, Help da pergunta em array
+/*/
+//------------------------------------------------------
+Static Function SepS2A(cStr)
+
+Local aRet	:= StrToArray(cStr," ")
+Local nMax	:= 39
+Local nCnt	:= 0
+Local nLen	:= 0
+
+cStr := ""
+For nCnt:=1 To Len(aRet)
+	If Len(cStr) + Len(aRet[nCnt]) > nMax + nLen
+ 		cStr += CHR(13)
+ 		nLen := Len(cStr)
+ 	EndIf
+ 	cStr += AllTrim(aRet[nCnt])+" "
+Next nCnt
+aRet:= StrToArray(cStr,CHR(13))
+Return(aRet)
+
+
+//------------------------------------------------------
+/*/{Protheus.doc} PicCGC
+Retorna CNPJ/CPF com o seu defico mascara.
+
+@author Allan da Silva Faria
+@since 08/07/2016
+@version 1.0
+@param cCGC, character, CNPJ/CPF sem mascará
+@return Caracter, CNPJ/CPF formatado
+/*/
+//------------------------------------------------------
+Static Function PicCGC(cCGC)
+
+If (Len(AllTrim(cCGC)) == 11)  		//-- CPF
+	cCGC := Transform(cCGC,"@R 999.999.999-99")
+ElseIf (Len(AllTrim(cCGC)) == 14)	//-- CNPJ
+	cCGC := Transform(cCGC,"@R 99.999.999/9999-99")
+EndIf
+
+Return(cCGC)

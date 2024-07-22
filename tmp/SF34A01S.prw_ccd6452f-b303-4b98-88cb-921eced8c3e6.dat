@@ -1,0 +1,485 @@
+#include 'protheus.ch'
+#include 'parmtype.ch'
+#Include 'Topconn.ch'
+
+user function SF34A01S()
+	Local _cQuery  	:= ' '
+	Local nLinha 	:= '000'
+	Local _lOk   	:= .T.
+	Local aItens 	:= {}
+	Local aCab   	:= {}
+	Local aDados    := {}
+	Local aDadosC   := {}
+	Local _cFilial 	:= ' '
+	Local _Lote  	:= "FOL"
+	Local _cCCC		:= " "
+	Local _cCCD     := " "
+	Local _cItemC   := " "
+	Local _cItemD   := " "
+	Local nX        := 0
+	Local _cEmpr    := SubStr(FWCodEmp(), 2, 1)
+	//Local _cMesAno  := SUBSTR(dtos(dDataBase),5,2) + SUBSTR(dtos(dDataBase),1,4)
+	Local _cMesAno  := '092021'
+	Local _cTipo    := '1'
+	Local _cLote    := '999999'
+	Local _cHist    := ' '
+	Local _cCtaAnt  := ' '
+	Local _SomaCta  := 0
+
+
+	Local _cDbSql		:= 'MSSQL/RM_V26'
+	Local _cSrvSql	    := 'SRVP12HML'
+	//Local _cDbSql		:= 'MSSQL/RM_TESTE1'
+	//Local _cSrvSql		:= 'SRVP12DEV'
+	Local nHndERP       := AdvConnection()
+
+	PRIVATE lMsErroAuto
+
+	//--------------------------------
+	//Monta Historico
+	//--------------------------------
+	if(_cTipo == '1')
+		_cHist := 'FOLHA DE PAGAMENTO MES '+ UPPER(MesExtenso(SUBSTR(_cMesAno,1,2))) + '/' + SUBSTR(_cMesAno,3,4)
+		_Lote  := 'FOL'
+
+	elseif (_cTipo == '2')
+		_cHist := 'PROVISAO 13 MES '+ UPPER(MesExtenso(SUBSTR(_cMesAno,1,2))) + '/' + SUBSTR(_cMesAno,3,4)
+		_Lote  := 'PROV13'
+
+	elseif(_cTipo == '3')
+		_cHist := 'PROVISAO FERIAS MES '+ UPPER(MesExtenso(SUBSTR(_cMesAno,1,2))) + '/' + SUBSTR(_cMesAno,3,4)
+		_Lote  := 'PROVF'
+
+	EndIf
+
+
+	//--------------------------------
+	//Conecta Banco RM
+	//--------------------------------
+	nHndSql := TcLink(_cDbSql,_cSrvSql,7890)
+	ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Conectando ao Banco RM Folha")
+
+	If nHndSql < 0
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Erro ("+ str(nHndSql,4) +") ao conectar com "+ _cDbSql +" em "+ _cSrvSql)
+	Endif
+
+	If .Not. TCSetConn(nHndSql)
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Houve problema na troca de conexao para o Ambiente, contate o Administrador")
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Processo Finalizado")
+		Return
+	EndIf
+
+	ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": MSSQL Server conectado - Handler"+ str(nHndSql,4))
+
+//-----------------------------------
+//Agrupado DEBITO NAO ACEITA CENTRO
+//-----------------------------------
+	If Select("TMPA") > 0
+		DbSelectarea("TMPA")
+		TMPA->(DbCloseArea())
+	Endif
+
+	_cQuery := " SELECT DEBITO,SUM(VALOR) AS VALTOT FROM  [dbo].[ZMDINTEGRACONT]	"
+	_cQuery += " WHERE	ANOMES = '" + _cMesAno + "' "
+	//_cQuery += " AND CODCOLIGADA = '" + _cEmpr + "' "
+	_cQuery += " AND COLIGADADESTINO = '" + _cEmpr + "' "
+	//_cQuery += " AND COMPLEMENTOHIST LIKE '1002%'  "
+	_cQuery += " AND TIPO =  '" + _cTipo + "' "
+	//_cQuery += " AND ID NOT IN ('4054', '2263') "
+	_cQuery += " AND SUBSTRING(DEBITO,1,1) IN ('1','2') "
+	_cQuery += " AND CODLOTE = '" + _cLote + "' " 
+	_cQuery += " GROUP BY DEBITO "
+	_cQuery += " ORDER BY DEBITO "
+
+	TCQUERY _cQuery NEW ALIAS "TMPA"
+
+	If (TCSQLExec(_cQuery) < 0)
+		TMPA->(DbCloseArea())
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": TCSQLError() " + TCSQLError())
+		Return
+	EndIf
+
+	DbSelectArea("TMPA")
+	TMPA->( DbGoTop() )
+
+	If .Not. TMPA->( Eof() )
+
+		While .Not. TMPA->( EOF() )
+
+			If(_cEmpr = '1')
+				_cFilial := '01MT    '
+			elseif(_cEmpr = '2')
+				_cFilial := '02MT    '
+			elseif(_cEmpr = '3')
+				_cFilial := '03MT    '
+			elseif(_cEmpr = '4')
+				_cFilial := '04MT    '
+			elseif(_cEmpr = '5')
+				_cFilial := '05MT    '
+			ENDIF
+
+			aAdd(aDados,{ _cFilial,_cMesAno, " ", " ", TMPA->DEBITO,TMPA->VALTOT,_cTipo})
+
+			TMPA->( DbSkip() )
+
+		ENDDO
+
+		TMPA->(DbCloseArea())
+	ENDIF
+
+
+//-----------------------------------
+//Agrupado DEBITO ACEITA CENTRO
+//-----------------------------------	
+
+	If Select("TMP") > 0
+		DbSelectarea("TMP")
+		TMP->(DbCloseArea())
+	Endif
+
+	_cQuery := " SELECT TIPO,CODCCUSTO,CODITEMCONTABIL,DEBITO,SUM(VALOR) AS VALTOT FROM  [dbo].[ZMDINTEGRACONT]	"
+	_cQuery += " WHERE	ANOMES = '" + _cMesAno + "' "
+	_cQuery += " AND COLIGADADESTINO = '" + _cEmpr + "' "
+	//_cQuery += " AND COMPLEMENTOHIST LIKE '1002%'  "
+	_cQuery += " AND CODLOTE = '" + _cLote + "' "  //AND COMPLEMENTOHIST LIKE '1002%'  "
+	_cQuery += " AND TIPO =  '" + _cTipo + "' "
+	_cQuery += " AND SUBSTRING(DEBITO,1,1) NOT IN ('1','2') "
+	//_cQuery += " AND ID NOT IN ('4054', '2263') "
+	_cQuery += " GROUP BY TIPO,CODCCUSTO,CODITEMCONTABIL,DEBITO "
+	_cQuery += " ORDER BY DEBITO "
+
+	TCQUERY _cQuery NEW ALIAS "TMP"
+
+	If (TCSQLExec(_cQuery) < 0)
+		TMP->(DbCloseArea())
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": TCSQLError() " + TCSQLError())
+		Return
+	EndIf
+
+	DbSelectArea("TMP")
+	TMP->( DbGoTop() )
+
+	If .Not. TMP->( Eof() )
+
+		/*aCab := {{'DDATALANC'    ,dDataBase               ,NIL},;
+			{'CLOTE'        	 ,_Lote                   ,NIL},;
+			{'CSUBLOTE'    		 ,'001'                   ,NIL},;
+			{'CDOC'         	 , STRZERO( seconds() ,6) ,NIL},;
+			{'CPADRAO'      	 ,''                      ,NIL},;
+			{'NTOTINF'      	 ,0                       ,NIL},;
+			{'NTOTINFLOT'   	 ,0                       ,NIL} }*/
+
+
+		While .Not. TMP->( EOF() )
+
+			If(_cEmpr = '1')
+				_cFilial := '01MT    '
+			elseif(_cEmpr = '2')
+				_cFilial := '02MT    '
+			elseif(_cEmpr = '3')
+				_cFilial := '03MT    '
+			elseif(_cEmpr = '4')
+				_cFilial := '04MT    '
+			elseif(_cEmpr = '5')
+				_cFilial := '05MT    '
+			ENDIF
+
+			aAdd(aDados,{ _cFilial,_cMesAno, TMP->CODCCUSTO, TMP->CODITEMCONTABIL, TMP->DEBITO,TMP->VALTOT,TMP->TIPO})
+
+			TMP->( DbSkip() )
+
+		ENDDO
+
+		TMP->(DbCloseArea())
+	EndIf //Alterado
+
+
+//-------------------------------------
+//Credito nao Aceita Item
+//-------------------------------------
+	If Select("TMPCA") > 0
+		DbSelectarea("TMPCA")
+		TMPCA->(DbCloseArea())
+	Endif
+
+	_cQuery1 := " SELECT CREDITO,SUM(VALOR) AS VALTOT FROM  [dbo].[ZMDINTEGRACONT]	"
+	_cQuery1 += " WHERE	ANOMES = '" + _cMesAno + "' "
+	//_cQuery1 += " AND CODCOLIGADA = '" + _cEmpr + "' "
+	_cQuery1 += " AND COLIGADADESTINO = '" + _cEmpr + "' "
+	//_cQuery1 += " AND COMPLEMENTOHIST LIKE '1002%' "
+	//_cQuery1 += " AND COMPLEMENTOHIST LIKE '1002%'  "
+	_cQuery1 += " AND TIPO =  '" + _cTipo + "' "
+	_cQuery1 += " AND SUBSTRING(CREDITO,1,1) IN ('1','2') "
+	//_cQuery1 += " AND ID NOT IN ('4054', '2263') "
+	_cQuery1 += " AND CODLOTE = '" + _cLote + "' " 
+	_cQuery1 += " GROUP BY CREDITO "
+	_cQuery1 += " ORDER BY CREDITO "
+
+	TCQUERY _cQuery1 NEW ALIAS "TMPCA"
+
+	If (TCSQLExec(_cQuery) < 0)
+		TMPCA->(DbCloseArea())
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": TCSQLError() " + TCSQLError())
+		Return
+	EndIf
+
+
+	DbSelectArea("TMPCA")
+	TMPCA->( DbGoTop() )
+
+	While .Not. TMPCA->( EOF() )
+
+		If(_cEmpr = '1')
+			_cFilial := '01MT    '
+		elseif(_cEmpr = '2')
+			_cFilial := '02MT    '
+		elseif(_cEmpr = '3')
+			_cFilial := '03MT    '
+		elseif(_cEmpr = '4')
+			_cFilial := '04MT    '
+		elseif(_cEmpr = '5')
+			_cFilial := '05MT    '
+		ENDIF
+
+		aAdd(aDadosC,{ _cFilial,_cMesAno, " ", " ", TMPCA->CREDITO,TMPCA->VALTOT,_cTipo})
+		//ConOut(Str(TMP->ID))
+		TMPCA->( DbSkip() )
+	ENDDO
+
+	TMPCA->(DbCloseArea())
+
+
+
+//-----------------------------------
+//CREDITO
+//-----------------------------------
+
+	If Select("TMPC") > 0
+		DbSelectarea("TMPC")
+		TMP->(DbCloseArea())
+	Endif
+
+	_cQuery1 := " SELECT TIPO,CODCCUSTO,CODITEMCONTABIL,CREDITO,SUM(VALOR) AS VALTOT FROM  [dbo].[ZMDINTEGRACONT]	"
+	_cQuery1 += " WHERE	ANOMES = '" + _cMesAno + "' "
+	_cQuery1 += " AND COLIGADADESTINO = '" + _cEmpr + "' "
+	//_cQuery1 += " AND CODLOTE = '999999' " // AND COMPLEMENTOHIST LIKE '1002%' "
+	//_cQuery1 += " AND COMPLEMENTOHIST LIKE '1002%'  "
+	_cQuery1 += " AND TIPO =  '" + _cTipo + "' "
+	_cQuery1 += " AND SUBSTRING(CREDITO,1,1) NOT IN ('1','2') "
+	//_cQuery1 += " AND ID NOT IN ('4054', '2263') "
+	_cQuery1 += " AND CODLOTE = '" + _cLote + "' " 
+	_cQuery1 += " GROUP BY TIPO,CODCCUSTO,CODITEMCONTABIL,CREDITO "
+	_cQuery1 += " ORDER BY CREDITO "
+
+	TCQUERY _cQuery1 NEW ALIAS "TMPC"
+
+	If (TCSQLExec(_cQuery) < 0)
+		TMP->(DbCloseArea())
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": TCSQLError() " + TCSQLError())
+		Return
+	EndIf
+
+
+	DbSelectArea("TMPC")
+	TMPC->( DbGoTop() )
+
+	While .Not. TMPC->( EOF() )
+
+		If(_cEmpr = '1')
+			_cFilial := '01MT    '
+		elseif(_cEmpr = '2')
+			_cFilial := '02MT    '
+		elseif(_cEmpr = '3')
+			_cFilial := '03MT    '
+		elseif(_cEmpr = '4')
+			_cFilial := '04MT    '
+		elseif(_cEmpr = '5')
+			_cFilial := '05MT    '
+		ENDIF
+
+		aAdd(aDadosC,{ _cFilial,_cMesAno, TMPC->CODCCUSTO, TMPC->CODITEMCONTABIL, TMPC->CREDITO,TMPC->VALTOT,TMPC->TIPO})
+		//ConOut(Str(TMP->ID))
+		TMPC->( DbSkip() )
+	ENDDO
+
+	TMPC->(DbCloseArea())
+
+
+	//TcUnLink(nHndSql)
+
+	// Volta para conexão ERP
+	tcSetConn( nHndERP )
+	conout( "Banco = " + TcGetDB() )
+
+
+//-------------------------------------------------
+//Inserir a Contabilização
+//-------------------------------------------------
+
+	DbSelectArea("CT1")
+	DBSetOrder(1)
+
+	For nX := 1 to LEN(aDados)
+
+		_cCCC	  := " "
+		_cCCD     := " "
+		_cItemC   := " "
+		_cItemD   := " "
+    //--------------------------------------------
+	//VALIDA AMARRACAO
+	//--------------------------------------------
+	/*if(     aDados[nX][3] <> '13040117' )/*.AND. aDados[nX][4] <> '2130303020100');
+	 .AND. (aDados[nX][3] <> '1301120204' .AND. aDados[nX][4] <> '2130703010101');
+	 .AND. (aDados[nX][3] <> '1301120208' .AND. aDados[nX][4] <> '2130710010104');
+	 .AND. (aDados[nX][3] <> '13040101'   .AND. aDados[nX][4] <> '2130310010101');
+	 .AND. (aDados[nX][3] <> '13040104'   .AND. aDados[nX][4] <> '2130201010201');
+	 .AND. (aDados[nX][3] <> '13040107'   .AND. aDados[nX][4] <> '2130304010100');
+	 .AND. (aDados[nX][3] <> '13040108'   .AND. aDados[nX][4] <> '2110201010401');
+	 .AND. (aDados[nX][3] <> '13040110'   .AND. aDados[nX][4] <> '2130201020201');
+	 .AND. (aDados[nX][3] <> '13040111'   .AND. aDados[nX][4] <> '2130304010151');
+	 .AND. (aDados[nX][3] <> '13040112'   .AND. aDados[nX][4] <> '2130304010152');
+	 .AND. (aDados[nX][4] <> '2130301010201')
+	 /*.AND. (aDados[nX][3] <> '1301120202' .AND. aDados[nX][4] <> '2130401020401');
+	 .AND. (aDados[nX][3] <> '13040108')*/
+
+
+	 
+		If DbSeek(_cFilial + aDados[nX][5])
+			If(CT1->CT1_ACCUST = '1')
+				_cCCD := aDados[nX][3]
+			else
+				_cCCD := " "
+			ENDIF
+
+			If(CT1->CT1_ACITEM = '1')
+				_cItemD := aDados[nX][4]
+			else
+				_cItemD := " "
+			ENDIF
+		ENDIF
+
+		nLinha := Soma1(nLinha)
+		aAdd(aItens,{{'CT2_FILIAL'  , _cFilial   			, NIL},;
+			{'CT2_LINHA'   , nLinha              			, NIL},;
+			{'CT2_MOEDLC'  ,'01'                 			, NIL},;
+			{'CT2_DC'      ,'1'                  			, NIL},;
+			{'CT2_DEBITO'  , FWCutOff(aDados[nX][5],.T.)    , NIL},;
+			{'CT2_CREDIT'  , " "                 			, NIL},;
+			{'CT2_CCC'     , " "                 			, NIL},;
+			{'CT2_ITEMC'   , " "                 			, NIL},;
+			{'CT2_CCD'     , FWCutOff(_cCCD,.T.)   			, NIL},;
+			{'CT2_ITEMD'   , FWCutOff(_cItemD,.T.) 			, NIL},;
+			{'CT2_VALOR'   , aDados[nX][6]               	, NIL},;
+			{'CT2_ORIGEM'  ,'MSEXECAUT'          			, NIL},;
+			{'CT2_HP'      ,''                   			, NIL},;
+			{'CT2_HIST'    , _cHist              			, NIL} } )
+
+
+
+		ConOut(nLinha)
+
+//		ENDIF
+
+	NEXT nX
+
+
+
+//------------------------------------------------------------
+//Contabiliza Credito
+//------------------------------------------------------------
+	For nX := 1 to LEN(aDadosC)
+
+		_cCCC	  := " "
+		_cCCD     := " "
+		_cItemC   := " "
+		_cItemD   := " "
+
+//--------------------------------------------
+	//VALIDA AMARRACAO
+	//--------------------------------------------
+	/*if(    aDados[nX][3] <> '13040117') .AND. aDados[nX][4] <> '2130303020100');
+    .AND. (aDados[nX][3] <> '1301120204' .AND. aDados[nX][4] <> '2130703010101'); 
+	.AND. (aDados[nX][3] <> '1301120208' .AND. aDados[nX][4] <> '2130710010104');
+	.AND. (aDados[nX][3] <> '13040101'   .AND. aDados[nX][4] <> '2130310010101');
+	.AND. (aDados[nX][3] <> '13040104'   .AND. aDados[nX][4] <> '2130201010201');
+	.AND. (aDados[nX][3] <> '13040107'   .AND. aDados[nX][4] <> '2130304010100');
+	.AND. (aDados[nX][3] <> '13040108'   .AND. aDados[nX][4] <> '2110201010401');
+	.AND. (aDados[nX][3] <> '13040110'   .AND. aDados[nX][4] <> '2130201020201');
+	.AND. (aDados[nX][3] <> '13040111'   .AND. aDados[nX][4] <> '2130304010151');
+	.AND. (aDados[nX][3] <> '13040112'   .AND. aDados[nX][4] <> '2130304010152');
+	.AND. (aDados[nX][4] <> '2130301010201')
+	/*.AND. (aDados[nX][3] <> '1301120202' .AND. aDados[nX][4] <> '2130401020401');
+	.AND. (aDados[nX][3] <> '13040108')*/
+
+	 
+		If DbSeek(_cFilial + aDadosC[nX][5])
+			If(CT1->CT1_ACCUST = '1')
+				_cCCC := aDadosC[nX][3]
+			else
+				_cCCD := " "
+			ENDIF
+
+			If(CT1->CT1_ACITEM = '1')
+				_cItemC := aDadosC[nX][4]
+			else
+				_cItemC := " "
+			ENDIF
+		ENDIF
+
+		nLinha := Soma1(nLinha)
+		aAdd(aItens,{{'CT2_FILIAL'  , _cFilial   			, NIL},;
+			{'CT2_LINHA'   , nLinha              			, NIL},;
+			{'CT2_MOEDLC'  ,'01'                 			, NIL},;
+			{'CT2_DC'      ,'2'                  			, NIL},;
+			{'CT2_DEBITO'  , " "                 			, NIL},;
+			{'CT2_CREDIT'  , FwCutOff(aDadosC[nX][5],.T.)   , NIL},;
+			{'CT2_CCC'     , FwCutOff(_cCCC,.T.)  			, NIL},;
+			{'CT2_ITEMC'   , FwCutOff(_cItemC,.T.) 			, NIL},;
+			{'CT2_CCD'     , " "		         			, NIL},;
+			{'CT2_ITEMD'   , " "		         			, NIL},;
+			{'CT2_VALOR'   , aDadosC[nX][6]             	, NIL},;
+			{'CT2_ORIGEM'  ,'MSEXECAUT'          			, NIL},;
+			{'CT2_HP'      ,''                   			, NIL},;
+			{'CT2_HIST'    , _cHist              			, NIL} } )
+
+
+		ConOut(nLinha)
+//ENDIF
+	NEXT nX
+		aCab := {{'DDATALANC'    ,dDataBase               ,NIL},;
+			{'CLOTE'        	 ,_Lote                   ,NIL},;
+			{'CSUBLOTE'    		 ,'001'                   ,NIL},;
+			{'CDOC'         	 , STRZERO( seconds() ,6) ,NIL},;
+			{'CPADRAO'      	 ,''                      ,NIL},;
+			{'NTOTINF'      	 ,0                       ,NIL},;
+			{'NTOTINFLOT'   	 ,0                       ,NIL} }
+
+	//Begin Transaction
+	MSExecAuto( {|X,Y,Z| CTBA102(X,Y,Z)} ,aCab ,aItens, 3)
+	MostraErro()
+
+	If lMsErroAuto <> Nil
+		If !lMsErroAuto
+			_lOk := .T.
+			MsgInfo('Inclusão com sucesso!')
+			If !IsBlind()
+				MsgInfo('Inclusão com sucesso!')
+			EndIf
+			//DisarmTransaction()
+		Else
+			_lOk := .F.
+			//MostraErro()
+			MsgAlert('Erro na inclusao!')
+			If !IsBlind()
+				MsgAlert('Erro na inclusao!')
+			Endif
+		EndIf
+	EndIf
+	//End Transaction
+
+	//NEXT nX
+
+
+
+
+Return

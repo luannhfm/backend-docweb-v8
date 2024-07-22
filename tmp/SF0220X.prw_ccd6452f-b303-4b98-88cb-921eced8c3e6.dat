@@ -1,0 +1,142 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} SF0220X
+@author Newton Silva - J2A Consultoria
+@since 05/12/2016
+@version 1.0
+@description Descrição de aprovação e Reprovação do TR
+/*/
+User Function SF0220X(_pNSC)
+	Local _lRet := .T.
+	Local _oDlg
+	Local _oLbx
+	Local _oGrp1
+	Local _cNumFilial := SC1->C1_FILIAL+' - '+AllTrim(SM0->M0_FILIAL)
+	Local _cNumSC	:= SC1->C1_NUM
+	Local _cItemSC	:= SC1->C1_ITEM
+	Local _oPanel1
+	Local _aVetor 	:= {}
+	
+	// Termo de Referencia
+	DbSelectArea('ZF6')
+	ZF6->(dbSetOrder(1))
+	IF ZF6->(dbSeek(xFilial('ZF6')+SC1->C1_NUM))
+		while !ZF6->(Eof()) .and. SC1->C1_NUM == ZF6->ZF6_NUMSC
+			If ( ZF6->ZF6_STTR == 'N' )//TR em Analise
+				aAdd( _aVetor, { ZF6->ZF6_NUMSC, ;
+					Trim(ZF6->ZF6_PROCES), ; //"Anexo TR"
+					DtoC(ZF6->ZF6_DATA), ;
+					Oemtoansi(ZF6->ZF6_HORA), ;
+					Trim(Oemtoansi(ZF6->ZF6_JUST)), ;
+					ZF6->ZF6_USUARI } )
+		   						 
+			Elseif ( ZF6->ZF6_STTR == 'A' )//TR Aprovado
+		   	   //ZF6_NUMSC, CODIGO,PROCES,DATA,HORA,USUARI
+				aAdd( _aVetor, { ZF6->ZF6_NUMSC, ;
+					Trim(ZF6->ZF6_PROCES), ; //"TR Aprovado"
+					DtoC(ZF6->ZF6_DATA), ;
+					Oemtoansi(ZF6->ZF6_HORA), ;
+					Trim(Oemtoansi(ZF6->ZF6_JUST)), ;
+					ZF6->ZF6_USUARI } )
+		   		
+			ElseIf ( ZF6->ZF6_STTR == 'R' )//TR Reprovado
+		   	   //ZF6_NUMSC, CODIGO,PROCES,DATA,HORA,USUARI
+				aAdd( _aVetor, { ZF6->ZF6_NUMSC, ;
+					Trim(ZF6->ZF6_PROCES), ; //"TR Reprovado"
+					DtoC(ZF6->ZF6_DATA), ;
+					Oemtoansi(ZF6->ZF6_HORA), ;
+					Trim(Oemtoansi(ZF6->ZF6_JUST)), ;
+					ZF6->ZF6_USUARI } )
+					
+			ElseIf ( ZF6->ZF6_STTR == 'E' )//TR Estornado
+		   	   //ZF6_NUMSC, CODIGO,PROCES,DATA,HORA,USUARI
+				aAdd( _aVetor, { ZF6->ZF6_NUMSC, ;
+					Trim(ZF6->ZF6_PROCES), ; //"TR Reprovado"
+					DtoC(ZF6->ZF6_DATA), ;
+					Oemtoansi(ZF6->ZF6_HORA), ;
+					Trim(Oemtoansi(ZF6->ZF6_JUST)), ;
+					ZF6->ZF6_USUARI } )
+			Endif
+		   
+		   
+			ZF6->(dbSkip())
+		EndDo
+	Endif
+   
+	DEFINE MSDIALOG _oDlg TITLE "Justificativas da Analise" FROM 0,0 To 45,88 OF oMainWnd
+          
+	_oPanel1 := TPanel():New(0,0,"",_oDlg,NIL,.T., .F.,NIL,NIL,0,30,.T.,.F.)
+	_oPanel1:Align := CONTROL_ALIGN_TOP
+	
+	
+	@ 04, 006 SAY "Filial:"	 	 SIZE 70,7 PIXEL OF _oPanel1   
+	@ 18, 006 SAY "Num. SC:"	 SIZE 70,7 PIXEL OF _oPanel1   
+	@ 18, 095 SAY "Item SC:"	 SIZE 70,7 PIXEL OF _oPanel1  
+	
+	@ 03, 030 MSGET _cNumFilial 	When .F.	SIZE 130,7 PIXEL OF _oPanel1
+	@ 17, 030 MSGET _cNumSC 		When .F. 	SIZE 060,7 PIXEL OF _oPanel1
+	@ 17, 120 MSGET _cItemSC 		When .F.	SIZE 040,7 PIXEL OF _oPanel1
+	
+	//@ 03,01 TO 10,10 OF _oDlg
+	_oGrp1 := TGroup():New(03,01,22,43,"Justificativas da Analise do TR",_oDlg,,,.F.)
+	//247
+	@ 50,12 LISTBOX _oLbx FIELDS HEADER "N. Documento", "Processo", "Data", "Hora", "Justificativa","Usuário" SIZE 327,250 PIXEL OF _oGrp1
+	If Len(_aVetor) > 0
+		//Antes de exibir, ordena por data/hora
+		aSort( _aVetor, , , {|x,y| x[3]+x[4] < y[3]+y[4] } )
+		_oLbx:SetArray(_aVetor)
+		_oLbx:bLine 	:= {|| {_aVetor[_oLbx:nAt,1],;
+			_aVetor[_oLbx:nAt,2],;
+			_aVetor[_oLbx:nAt,3],;
+			_aVetor[_oLbx:nAt,4],;
+			_aVetor[_oLbx:nAt,5],;
+			_aVetor[_oLbx:nAt,6]}}
+	Endif
+	_oLbx:bLDblClick := {|| LoadRowsJ(_aVetor[_oLbx:nAt,5])}
+	ACTIVATE MSDIALOG _oDlg CENTER ON INIT EnchoiceBar(_oDlg,{||_oDlg:End()},{||_oDlg:End()},,)
+
+Return _lRet
+//Processa({|| LoadRowsJ(oBrw, @aRow,_pNSC),
+Static Function LoadRowsJ(_cTxt)
+	Local _lRet := .T.
+	Local _oDlg
+	Local _oGet
+	
+	//+-------------+
+	//|	Monta Tela	|
+	//+-------------+
+	DEFINE DIALOG _oDlg FROM 0,0 TO 250,400 TITLE "Justificativa Completa da Analise" OF oMainWnd PIXEL
+	
+	@ 002,002 GROUP TO 022,200 LABEL "" OF _oDlg PIXEL
+	
+	@ 009,004 Say "Descrição completa da Justificativa " SIZE 197,008 OF _oDlg PIXEL //COLOR CLR_HBLUE
+	
+	@ 024,004 Get _oGet Var _cTxt SIZE 198,062 MEMO OF _oDlg PIXEL
+
+	@ 108,103 BUTTON "Ok" SIZE 030,013 PIXEL OF _oDlg ACTION ( _oDlg:End() )
+	
+	_oGet:lReadOnly := .T. //Habilita apenas Visualizacao
+	
+	ACTIVATE MSDIALOG _oDlg
+		
+Return _lRet
+/*
+	Private _cAliasZF6  := GetNextAlias()
+	Procregua(0)
+	IncProc()
+	ProcessMessages()
+	If ValType(oBrw) == "O"
+		If Empty(aRow)
+			aRow := {{"","","","","",CTOD("  /  /  "),"","",""}}
+			oBrw:BHeaderClick := {|| Nil}
+			oBrw:bLDblClick := {|| Nil}
+			oBrw:cToolTip:="Vazio"
+		Else
+			oBrw:BHeaderClick := {|o,n| oX:=o, nX:=n, TWBOrder(oX,nX)}
+			oBrw:bLDblClick := {|o,c| iif(c==1, DocView(oBrw), Nil)} //Detalhes
+			oBrw:cToolTip:="Linhas: ("+AllTrim(Transform(Len(aRow),"@E 999,999,999"))+") Ordem: Padrão"
+		Endif
+		oBrw:SetArray(aRow)
+		oBrw:Refresh()
+	Endif
+Return(Nil)*/

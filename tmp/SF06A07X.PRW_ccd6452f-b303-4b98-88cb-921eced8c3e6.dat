@@ -1,0 +1,396 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "PARMTYPE.CH"
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"
+#INCLUDE "AP5MAIL.CH"
+
+/*/{Protheus.doc} SF06A07X
+(long_description)
+@author j2a.luizjunior
+@since 30/09/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+//Walmir Junior - Fonte da rotina de Transferência de Carteira.
+User Function SF06A07X
+
+	Local   cFiltro  := ""
+	Local   cBordero := ""
+	Local   dVencDE  := ""
+	Local   dVencAte := ""		
+	Local   cRotina  := ""	
+	Local   cFilComp := ""	
+	Local   aCoors   := FWGetDialogSize(oMainWnd)
+	Local   dEm40dia := dDatabase - 40
+	Private dEm180d  := dDatabase - 180
+	Private oDMark   := Nil     
+	Private aTSel    := {}
+	Private aRotina	 := MenuDef()	
+	Private cPerg    := "SF06A07X"
+	Private oMarkSE1 := Nil
+	
+	CriaSX1(cPerg)
+	If !Pergunte(cPerg,.T.)
+		Return(Nil)
+	EndIf		
+
+	cBordero := MV_PAR01
+	dVencDE  := MV_PAR02
+	dVencAte := MV_PAR03
+	
+	If Empty(cBordero) .And. Empty(dVencDE) .And. Empty(dVencAte)	
+		Aviso("Atenção", "Favor informar o Bordero ou o Vencimento!", {"Ok"}, 1)	
+	EndIf
+	
+	If !Empty(cBordero)
+	
+		cFiltro += " SE1->E1_NUMBOR = '" + cBordero + "' "
+		
+	EndIf
+	
+	If !Empty(dVencDE) .And. !Empty(dVencAte)		
+		If !Empty(cBordero)
+			cFiltro += " .And. "
+		EndIf	
+		cFiltro += " SE1->E1_VENCREA >= '" + DToS(dVencDE) + "' .And. SE1->E1_VENCREA <= '" + DToS(dVencAte) + "' "	
+	EndIf	
+	
+	//cFilComp := " .And. SE1->E1_VENCREA <= '"+ DToS(dEm40dia) +"' .And. SE1->E1_FILIAL = '"+xFilial("SE1")+"' .And. SE1->E1_SALDO > 0 .And. ( (SE1->E1_SITUACA != '0') .And. (SE1->E1_SITUACA != 'F') .And. (SE1->E1_SITUACA !='G'))"
+	
+	//Walmir Junior 30/01/2016 - Alterados os critérios para atender ao critérios:
+	//								*Títulos vencidos a mais de 40 dias.
+	//								*Títulos vencidos a menos de 180 dias.
+	//								*Saldo maior que zero.
+	//								*Títulos em situação 0 - Carteira, 1 - Cobrança Simples, 4 - Envio a Cerceirizada, 8 - Envio ao SPC
+	//cFilComp := " .And. SE1->E1_VENCREA <= '"+ DToS(dEm40dia) +"' .And. SE1->E1_FILIAL = '"+xFilial("SE1")+"' .And. SE1->E1_SALDO > 0 .And. ( (SE1->E1_SITUACA == '4') .Or. (SE1->E1_SITUACA == '8') )"
+	cFilComp := "  .And. SE1->E1_VENCREA <= '"+ DToS(dEm40dia)+;
+				"' .And. SE1->E1_VENCREA >	'"+ DToS(dEm180d) +;
+				"' .And. SE1->E1_FILIAL = '"  + xFilial("SE1")+;
+				"' .And. SE1->E1_SALDO > 0 "+;
+				"  .And. ( (SE1->E1_SITUACA == '4') .Or. (SE1->E1_SITUACA == '8') .Or. (SE1->E1_SITUACA == '0').Or. (SE1->E1_SITUACA == '1'))"
+
+	If !ChkDados(cBordero,dVencDE,dVencAte)
+		Help(" ",1,"RECNO")
+		Return
+	EndIf	
+	
+	oGTit := MSDialog():New( aCoors[1],aCoors[2],aCoors[3],aCoors[4]," Titulo da Operadora  de Cartão ",,,.F.,,,,,,.T.,,,.T. )
+	
+	oMarkSE1 := FWMarkBrowse():New()
+	oMarkSE1:SetOwner(oGTit)
+	
+	oMarkSE1:SetAlias("SE1") 
+	oMarkSE1:SetDescription("Contas a Receber")
+	oMarkSE1:SetProfileID("1")
+	oMarkSE1:ForceQuitButton()		
+	oMarkSE1:SetFilterDefault(cFiltro + cFilComp)			
+	oMarkSE1:SetFieldMark("E1_OK")
+	oMarkSE1:SetOnlyFields({"E1_FILIAL","E1_CLIENTE","E1_LOJA","E1_PREFIXO","E1_NUM","E1_PARCELA","E1_TIPO","E1_EMISSAO","E1_VENCTO","E1_BAIXA","E1_VALOR","E1_SALDO","E1_NOMCLI"}) 
+	oMarkSE1:SetMenuDef("")
+	oMarkSE1:SetAfterMark({|| AFTERMARK(@oMarkSE1) })
+	oMarkSE1:SetAllMark(  {|| ALLMARK(@oMarkSE1)   })								
+	oMarkSE1:Activate()
+	
+	oGTit:Activate(,,,.T.)
+	
+Return
+
+/*/{Protheus.doc} MenuDef
+(long_description)
+@author j2a.luizjunior
+@since 04/10/2016
+@version 1.0
+@return ${return}, ${return_description}
+@example
+(examples)//
+@see (links_or_references)
+/*/
+Static Function MenuDef()
+	
+	Public  bProcessa := {|| ProcRot()}
+	Private aRotina   := {{"Processa","Eval(bProcessa)",0,6}}
+	
+Return(aRotina)
+
+/*/{Protheus.doc} PROCROT
+(long_description)
+@author j2a.luizjunior
+@since 04/10/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function PROCROT
+	MsgRun(OemToAnsi("Realizando transferencia,Aguarde..."),"",{|| CursorWait(),TRANSFA060(),CursorArrow()})
+Return
+
+/*/{Protheus.doc} TRANSFA060
+(long_description)
+@type function
+@author Luiz
+@since 04/10/2016
+@version 1.0
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function TRANSFA060()
+
+	If Len(aTSel) = 0
+		Aviso("Atenção", "Favor selecionar registro para transferencia!", {"Ok"}, 1)
+		Return
+	EndIf	
+	
+	For nX := 1 To Len(aTSel)
+	
+		DbSelectArea("SE1")
+		DbGoTo(aTSel[nX][1])
+		PROCFA060("SE1",aTSel[nX][1],2,.T.)
+		
+	Next nX
+	
+Return
+
+/*/{Protheus.doc} PROCFA060
+(long_description)
+@author j2a.luizjunior
+@since 03/10/2016
+@version 1.0
+@param ${param}, ${param_type}, ${param_descr}
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function PROCFA060(cAlias,nReg,nOpcx,lAutomato)	
+	
+	Local cFilBor := ""	
+	
+	oGTit:End()
+	
+	DbSelectArea("SE1")
+	If !Empty(SE1->E1_NUMBOR) .And. Fa150PesqBord(SE1->E1_NUMBOR,@cFilBor)
+		cChavEA	 := cFilBor+E1_NUMBOR+E1_PREFIXO+E1_NUM+E1_PARCELA+E1_TIPO
+	Else
+		cChavEA	 := xFilial("SEA")+E1_NUMBOR+E1_PREFIXO+E1_NUM+E1_PARCELA+E1_TIPO
+	EndIf	
+	
+	DbSelectArea("SEA")
+	If DbSeek(cChavEA)
+		If RecLock("SEA",.F.)		
+			SEA->(DbDelete())			
+			SEA->(MsUnlock())			
+		EndIf
+	EndIf
+	
+	RecLock("SE1")
+	VAR_IXB         := SE1->E1_PORTADO // Guardo portador anterior, para possivel utilizacao no LP
+	SE1->E1_PORTADO := ""
+	SE1->E1_AGEDEP  := ""
+	SE1->E1_SITUACA := "0"
+	SE1->E1_CONTRAT := ""
+	SE1->E1_NUMBCO  := ""
+	SE1->E1_MOVIMEN := Ctod("  /  /  ")
+	SE1->E1_CONTA	:= ""
+	
+	SE1->E1_NUMBOR  := " "
+	SE1->E1_DATABOR := Ctod("  /  /  ")
+	
+	SE1->(MsUnlock())	
+
+Return
+
+/*/{Protheus.doc}  AFTERMARK
+(long_description)
+@type function
+@author Luiz
+@since 04/10/2016
+@version 1.0
+@param oMark, objeto, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function  AFTERMARK(oMark)
+
+	Local cMarca  := oMark:Mark()
+	Local nPosDel := 0
+	
+	If oMark:IsMark(cMarca)		
+		aAdd(aTSel,{Recno()})
+	Else
+		nPosDel := aScan(aTSel,{|x| x[1] = Recno()})
+		If nPosDel > 0
+			aDel(aTSel,nPosDel)
+			aSize(aTSel,Len(aTSel)-1)
+		EndIf
+	EndIf
+
+	If cMarca != SE1->E1_OK		
+		If SE1->(MsRLock())
+			SE1->E1_OK := "  "
+		EndIf		
+	Else	
+		If SE1->(MsRLock())
+			SE1->E1_OK := cMarca
+		EndIf		
+	EndIf
+
+Return
+
+/*/{Protheus.doc} ALLMARK
+(long_description)
+@type function
+@author Luiz
+@since 04/10/2016
+@version 1.0
+@param oMark, objeto, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ALLMARK(oMark)
+
+	Local cMarca  := oMark:Mark()
+	Local nPosRec := 0 
+	
+	oMark:AllMark()	
+	
+	If oMark:lInvert
+	
+		DbSelectArea("SE1")
+		SE1->(DbGoTop())
+		While !SE1->(Eof())
+		
+			If oMark:IsMark(cMarca)					
+				//For nU := 1 To Len(aTSel)			
+					nPosRec := aScan(aTSel,{|x| x[1] == Recno()})					
+					If nPosRec = 0
+						aAdd(aTSel,{Recno()})
+					EndIf				
+				//Next nU			
+			Else				
+				nPosDel := aScan(aTSel,{|x| x[1] == Recno()})
+				If nPosDel > 0
+					aDel(aTSel,nPosDel)
+					aSize(aTSel,Len(aTSel)-1)
+				EndIf			
+			EndIf
+
+			If cMarca != SE1->E1_OK		
+				If SE1->(MsRLock())
+					SE1->E1_OK := "  "
+				EndIf		
+			Else	
+				If SE1->(MsRLock())
+					SE1->E1_OK := cMarca
+				EndIf		
+			EndIf				
+		
+			SE1->(DbSkip())
+		EndDo
+	
+	EndIf		
+
+Return
+
+/*/{Protheus.doc} CriaSx1
+(long_description)
+@author Luiz Junior
+@since 12/05/2015
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function CriaSx1
+
+	Local aHelp := {}
+	
+	//-> Texto do help em português,inglês, espanhol
+	AAdd(aHelp, {{"Bordero"  }       ,{""},{""}})
+	AAdd(aHelp, {{"Do Vencimento?"}  ,{""},{""}})
+	AAdd(aHelp, {{"Até Vencimento?"} ,{""},{""}})
+	
+	u_SFPUTSX1(cPerg,"01","Bordero"         ,"","","mv_ch1" ,"C",06,00,00,"G","",""    ,"","","mv_par01",""   ,"","","",""   ,"","","","","","","","","","","" ,aHelp[1,1] ,aHelp[1,2] ,aHelp[1,3] ,"")
+	u_SFPUTSX1(cPerg,"02","Do Vencimento?"  ,"","","mv_ch2" ,"D",08,00,00,"G","",""    ,"","","mv_par02",""   ,"","","",""   ,"","","","","","","","","","","" ,aHelp[2,1] ,aHelp[2,2] ,aHelp[2,3] ,"")
+	u_SFPUTSX1(cPerg,"03","Até Vencimento?" ,"","","mv_ch3" ,"D",08,00,00,"G","",""    ,"","","mv_par03",""   ,"","","",""   ,"","","","","","","","","","","" ,aHelp[3,1] ,aHelp[3,2] ,aHelp[3,3] ,"")
+
+Return
+
+/*/{Protheus.doc} ChkDados
+(long_description)
+@author j2a.luizjunior
+@since 25/10/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ChkDados(pBor,pVDE,pVAte)
+
+	Local cBordero := pBor
+	Local dVencDE  := pVDE 
+	Local dVencAte := pVAte
+	Local cAlias   := GetNextAlias()
+	Local lRet     := .T.
+	Local cSql     := ""
+	Local dEm40dia := dDatabase - 40
+	
+	If Select(cAlias) > 0
+		(cAlias)->(DbCloseArea())
+	EndIf
+	
+	If !Empty(cBordero)
+		cSql += " AND E1_NUMBOR   = '" + cBordero       + "' "
+	EndIf
+	
+	If !Empty(dVencDE) .And. !Empty(dVencAte)
+		cSql += " AND E1_VENCREA >= '" + DToS(dVencDE)  + "' "
+		cSql += " AND E1_VENCREA <= '" + DToS(dVencAte) + "' "		
+	EndIf
+	
+	cSql += " AND  E1_VENCREA  <=   '" + DToS(dEm40dia) + "' "
+	cSql += " AND  E1_VENCREA  >    '" + DToS(dEm180d) + "' "
+	  
+    cSql += " AND  E1_SALDO    > 0   "
+	//cSql += " AND  E1_NUMBOR   != ' ' " 
+	cSql += " AND  E1_DATABOR  != ' ' "
+	cSql += " AND  E1_SITUACA  IN ('0','1','4','8') "
+	
+	cSql := "%" + cSql + "%"
+	
+	BeginSql Alias cAlias 
+	
+		SELECT E1_NUM
+		FROM   %TABLE:SE1%
+		WHERE  E1_FILIAL = %xFilial:SE1%
+		AND    %NOTDEL% 		
+		%Exp:cSql%
+		ORDER BY E1_NUM 
+		
+	EndSql
+	
+	If Empty((cAlias)->E1_NUM)
+		lRet := .F.
+	EndIf
+
+Return lRet

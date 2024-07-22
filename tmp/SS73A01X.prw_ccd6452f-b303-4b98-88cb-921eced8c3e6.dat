@@ -1,0 +1,124 @@
+#Include 'Protheus.ch'
+/*
+Walmir Junior
+17/08/2018
+Função para edição de campos específicos em propostas aprovadas.
+*/
+User Function SS73A01X()
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SS73A01X")
+	Local _cAprv := GetNewPar("MV_XATAPRV", "")
+	Local _oDlg
+	Local _oGetFPg //ADY_XFORPG
+	Local _oGetCPg //ADY_CONDPG
+
+	Local _btConfirm
+	Local _btCancel
+
+
+	Private _cValFPg := ADY->ADY_XFORPG //Space(TamSX3("ADY_XFORPG")[1])
+	Private _cValCPg := ADY->ADY_CONDPG //Space(TamSX3("ADY_XFORPG")[1])
+
+	Private _cChvCN9	:= ""
+	Private _lSitCtr	:= .T.
+
+
+
+	If RetCodUsr() $ _cAprv .AND. fVldAlt(ADY->ADY_FILIAL , ADY->ADY_PROPOS)
+
+		DEFINE MSDIALOG _oDlg TITLE 'Alteração - Aprovada' FROM 000, 000 TO 120, 200 COLORS 0, 16777215 PIXEL
+		@ 005, 005 Say "Forma Pagam."                                   Size 040, 008	Of _oDlg PIXEL
+		@ 005, 050 MsGet 		_oGetFPg Var _cValFPg	F3 "ZC"			SIZE 050, 012 	OF _oDlg PICTURE "@!" VALID ExistCpo("SX5", "ZC" + _cValFPg) PIXEL //Forma Pagam.
+		@ 020, 005 Say "Cond. Pagto"                                    Size 040, 008 	Of _oDlg PIXEL
+		@ 020, 050 MsGet		_oGetCPg Var _cValCPg 	F3 "SE4"		SIZE 050, 012 	OF _oDlg PICTURE "@!" VALID ExistCpo("SE4", _cValCPg) PIXEL //Cond. Pagto 
+
+		@ 040, 010 BUTTON _btConfirm	PROMPT "OK"		 	ACTION(fGrvADY(_cValFPg, _cValCPg), _oDlg:End())	SIZE 037, 012 OF _oDlg PIXEL
+		@ 040, 055 BUTTON _btCancel		PROMPT "Cancelar"	ACTION(_oDlg:End())	SIZE 037, 012 OF _oDlg PIXEL
+
+		ACTIVATE MSDIALOG _oDlg CENTERED
+
+	ElseIf !_lSitCtr
+		Alert("[ATENÇÃO] Esta rotina só é permitida para Propostas vinculadas a Contratos com situação 'Em Elaboração'.")
+	Else
+		Alert("[ATENÇÃO] Seu usuário não tem permissão para executar esta operação.")
+	EndIf
+
+Return
+
+/*
+Walmir Junior
+20/08/2018
+Validações para edição de proposta aprovada.
+*/
+Static Function fVldAlt(_pFil, _pPrp)
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SS73A01X")
+	Local _lRet			:= .F.
+	Local _cQry 		:= ""
+
+	_cQry += " Select CN9.CN9_FILIAL, CN9.CN9_NUMERO, CN9.CN9_REVISA, CN9.CN9_SITUAC " 
+	_cQry += " From "+RetSqlName("ADY")+" ADY INNER JOIN "
+	_cQry += " "+RetSqlName("AD1")+" AD1 ON AD1.D_E_L_E_T_ = ' ' AND ADY.ADY_FILIAL = AD1.AD1_FILIAL AND ADY.ADY_OPORTU = AD1.AD1_NROPOR AND ADY.ADY_REVISA = AD1.AD1_REVISA INNER JOIN "
+	_cQry += " "+RetSqlName("CN9")+" CN9 ON CN9.D_E_L_E_T_ = ' ' AND AD1.AD1_FILIAL = CN9.CN9_FILIAL AND AD1_NROPOR = CN9.CN9_XOPORT AND AD1.AD1_REVISA = CN9.CN9_XREVOP "
+	_cQry += " Where "
+	_cQry += " ADY.D_E_L_E_T_ = ' ' AND "
+	_cQry += " ADY.ADY_FILIAL = '"+_pFil+"' AND "
+	_cQry += " ADY.ADY_PROPOS = '"+_pPrp+"' "
+
+	dbUseArea(.T.,"TOPCONN",TcGenQry( ,, _cQry ),"QRYTRB",.F.,.T.)
+	MemoWrite("D:\TEMP\"+FunName()+"_"+ProcName()+".txt" , _cQry)
+
+	If QRYTRB->(!Eof())
+		_cChvCN9 :=	QRYTRB->(CN9_FILIAL+CN9_NUMERO+CN9_REVISA)
+		If (QRYTRB->CN9_SITUAC $ "02")
+			_lRet := .T.
+		Else
+			_lSitCtr := .F.
+		EndIf 
+	Else
+		_lSitCtr := .F.
+		_lRet := .F.
+	EndIf
+
+	If Select('QRYTRB') > 0
+		DbSelectArea('QRYTRB')
+		QRYTRB->( dbCloseArea() )
+	EndIf
+
+Return _lRet
+
+/*
+Walmir Junior
+20/08/2018
+Persistir a alteração efetuada pelo usuário.
+*/
+Static Function fGrvADY(_pFor, _pCnd)
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SS73A01X")
+	Local _cFilial	:= ADY->ADY_FILIAL 
+	Local _cProp 	:= ADY->ADY_PROPOS
+
+	DBSelectArea("ADY")
+	DBSetOrder(1)
+
+	If ADY->(DBSeek(_cFilial+_cProp))
+		RecLock("ADY", .F.)
+		ADY->ADY_XFORPG := _pFor
+		ADY->ADY_CONDPG := _pCnd
+		ADY->(MsUnLock())
+
+		//Adição de tratativa para ajustar as informações no Contrato.
+		DBSelectArea("CN9")
+		DBSetOrder(1)
+		If !Empty(_cChvCN9) .And. CN9->(DBSeek(_cChvCN9))
+			RecLock("CN9", .F.)
+			CN9->CN9_XTPPAG := _pFor
+			CN9->CN9_CONDPG := _pCnd
+			CN9->(MsUnLock())	
+		EndIf
+
+		Aviso("ATUALIZADO!", "Informações atualizadas com Sucesso!", {"Ok"})
+	EndIf
+
+Return .T.
+

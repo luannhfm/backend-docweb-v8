@@ -1,0 +1,99 @@
+#Include 'Protheus.ch'
+
+User Function GPMEDARR()
+
+Local aArea		:= GetArea()
+Local _cAux		:= GETMV('MV_FOLMES')
+Local _cAux1		:= ''
+Local _cPerIni	:= ""
+Local _cPerFim	:= ""
+Local _dData1		:= CTOD('//')
+Local _cVB			:= ""
+Local _cPer		:= ""
+Local _nVal		:= 0.0
+Local _cDataAfa	:= ''
+Local _nCont		:= 0
+Private _cMat		:= SRA->RA_MAT
+Private _cFilial	:= SRA->RA_FILIAL
+
+_cAux := '01/'+SubStr(_cAux,5,2)+'/'+SubStr(_cAux,1,4)
+_cDataAfa := BuscaAfa(_cAux)
+
+If AllTrim(_cDataAfa) = '' .OR. SRA->RA_SITFOLH = 'D'
+
+	RestArea(aArea)
+	Return
+
+EndIf
+
+IF VAL(SUBSTR(_cDataAfa,7,2)) > 15
+
+	_cAux1		:= '01/'+SubStr(_cDataAfa,5,2)+'/'+SubStr(_cDataAfa,1,4)
+	_cPerIni 	:= MESANO(MONTHSUB(ctod(_cAux1),12))
+	_cPerFim 	:= MESANO(ctod(_cAux1))
+
+ELSE
+
+	_cAux1		:= dtoc(MONTHSUB(CTOD('01/'+SubStr(_cDataAfa,5,2)+'/'+SubStr(_cDataAfa,1,4)),1))
+	_cPerIni 	:= MESANO(MONTHSUB(ctod(_cAux1),12))
+	_cPerFim 	:= MESANO(ctod(_cAux1))
+
+ENDIF
+
+nQualMed[5] := IIF(DateDiffMonth(sra->ra_admissa,_cAux1) > 12,12,DateDiffMonth(sra->ra_admissa,_cAux1))
+aLM :={}
+
+cQuery := "SELECT RD.RD_PD VERBA,RD.RD_DATARQ PER,RD.RD_VALOR VALOR FROM "+RetSqlName("SRD")+" RD INNER JOIN "+RetSqlName("SRV")+" RV ON RD.RD_PD = RV.RV_COD "
+cQuery += "WHERE RD.RD_MAT = '"+_cMat+"' AND RD.RD_FILIAL = '"+_cFilial+"' AND (RD.RD_DATARQ >= '"+_cPerIni+"' AND RD.RD_DATARQ <= '"+_cPerFim+"') AND RV.RV_MEDAVI = 'S' AND RD.D_E_L_E_T_ <> '*' "
+cQuery += "ORDER BY RD.RD_DATARQ, RD.RD_PD"
+
+cQuery := ChangeQuery( cQuery )
+dbUseArea( .T., "TOPCONN", TCGenQry(,,cQuery), "TBMED", .T., .T. )
+
+While TBMED->(!EOF())
+	_dData1 := LASTDAY(CTOD('01/'+SUBSTR(TBMED->PER,5,2)+'/'+SUBSTR(TBMED->PER,1,4)))
+	_cVB	:= TBMED->VERBA
+	_cPer	:= TBMED->PER
+	_nVal	:= TBMED->VALOR
+	
+	Aadd(aLM,{_cVB,_cPer,0,_nVal,'V',_dData1} )
+	_nCont := (_nCont + 1)
+	
+	TBMED->(DbSkip())
+EndDo
+
+TBMED ->(DBCLOSEAREA())
+
+RestArea(aArea)
+
+Return
+
+
+/*-------------------------------------------------------------|
+|																		|
+| Retorna a data de inicio do afastamento de maternidade		|
+|																		|
+|-------------------------------------------------------------*/
+Static Function BuscaAfa(cDataAux)
+
+Local _dDt1 	:= DTOS(CTOD(cDataAux))
+Local _cData 	:= ''
+
+cQry1 := "SELECT R8_FILIAL,R8_MAT,R8_TIPO,R8_DATAINI,R8_DATAFIM FROM "+RetSqlName("SR8")+" "
+cQry1 += "WHERE R8_MAT = '"+_cMat+"' AND R8_FILIAL = '"+_cFilial+"' AND R8_DATAFIM >= '"+_dDt1+"' AND R8_TIPO = 'Q' AND D_E_L_E_T_ <> '*' "
+cQry1 += "ORDER BY R8_DATAFIM DESC"
+
+cQuery := ChangeQuery( cQry1 )
+dbUseArea( .T., "TOPCONN", TCGenQry(,,cQry1), "TBAFA", .T., .T. )
+
+While TBAFA->(!EOF())
+	
+	_cData := TBAFA->R8_DATAINI
+
+ 	TBAFA->(DbSkip())
+EndDo
+
+TBAFA->(DbCloseArea())
+
+Return _cData
+

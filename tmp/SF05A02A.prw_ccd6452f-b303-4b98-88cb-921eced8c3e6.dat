@@ -1,0 +1,457 @@
+#include 'protheus.ch' //Inclui as bibliotecas
+#include 'totvs.ch'    ///////////////////////
+#include 'rwmake.ch'   ///////////////////////
+#include 'font.ch'     ///////////////////////
+#include 'colors.ch'   ///////////////////////
+#include 'tbiconn.ch'  ///////////////////////
+
+/*/{Protheus.doc} SF05A02A
+//TODO Função que cria a grid de dados e chama as outras.
+@author Pedro H. M. Storino
+@since 23/05/2019
+@version 1.0
+@type function
+/*/
+
+user function SF05A02A() //Função que cria a grid de dados e chama as outras
+
+	//PREPARE ENVIRONMENT EMPRESA '99' FILIAL '01' USER 'Administrador' PASSWORD ''
+	Private _aAlterFld := {}
+	private oBrwZ00,;  //Objeto que irá armazenar a grid
+	        no  := 0,; //Zera o contador de campos validados
+	        nz,;       //Armazena se o 'CPF' possui duplicidade
+	        cErrHtml,; //Armazena o texto da tela de erro
+	        ncv := 0,; //Armazena o contador de campos validados
+	        nVal,;     //Armazena o resultado da função 'ValdCPF()', 0 = válido, 1 = inválido
+	        cTab
+
+	        aCoBrwZ00  := {} //Array que vai armazenar as colunas da grid
+	        aHoBrwZ00  := {} //Array que irá armazenar o cabeçalho da grid
+	        
+	        aTam       := {{TamSX3('Z00_CPF'),;  //Pega o tamanho do campo "Z00_CPF"
+	                        TamSX3('Z00_NOME'),; //Pega o tamanho do campo "Z00_NOME"
+	                        TamSX3('Z00_LOJA'),; //Pega o tamanho do campo "Z00_LOJA"
+	                        TamSX3('Z00_IND')}}  //Pega o tamanho do campo "Z00_IND"
+
+	        cGetCPF    := space(aTam[1][1][1]) //Cria espaços de acordo com "Z00_CPF"
+	        cGetNome   := space(aTam[1][2][1]) //Cria espaços de acordo com "Z00_NOME"
+	        cGetLoja   := space(aTam[1][3][1]) //Cria espaços de acordo com "Z00_LOJA"
+	        cGetInd    := space(aTam[1][4][1]) //Cria espaços de acordo com "Z00_IND"
+	        dGetDtNasc := ctod(" ")            //Cria a variável com a estrutura de data
+
+	        //nOpc       := GD_INSERT+GD_DELETE+GD_UPDATE //Variável com as permissões da grid
+	        nOpc       := GD_UPDATE //Variável com as permissões da grid
+            lCond      := .F.                           //Condição de duplicidade
+
+            oFont      := TFont():New('Courier new',,-14,.T.) //Armazena o fonte das janelas
+            
+          //Variável com o texto em formato HTML
+            cTextHtml  := "<h3>Deseja realmente salvar?</h3>" + CRLF
+            cTextHtml  += "<p>Todos os campos foram validados, deseja prosseguir?</p>" + CRLF
+            
+          //Variável com o título
+            cTitHtml   := "<h1>Cadastro de Clientes - Park</h1>" + CRLF
+            cTitHtml   += "<p>Por favor, preencha os campos, 'Nome', 'Dt. Nasc.' em todas as linhas, e," + CRLF
+            cTitHtml   += "opcionalmente os campos 'Indústria', 'CPF'</p>" + CRLF + CRLF
+            cTitHtml   += "<p>Obs: O registro só será salvo no banco se o campo 'CPF' estiver preenchido</p>"
+
+            aTam := nil //Limpa o array de tamanhos
+    
+  //Definição da janela "oDlg1" onde fica o grupo "oGrp1"
+    DEFINE MsDialog oDlg1 From 092, 232 To 482, 937 Title "Clientes - Park" Pixel Style DS_MODALFRAME
+    
+    oSay1 := TSay():New(02,05,{||cTitHtml},oDlg1,,oFont,,,,.T.,,,300,070,,,,,,.T.)
+    
+  //Definição do grupo "oGrp1" fica a grid
+    oGrp1 := TGroup():New(074, 004, 192, 349, "Obrigatório: Nome/Dt. Nasc", oDlg1, CLR_BLACK, CLR_WHITE, .T., .F.)
+    
+  //Cria o botão de limpar que chama função "fAddAcols()" que cria novamente os campos
+    //TButton():New(060, 214, "Limpar/Tudo", oGrp1, {|| fAddAcols()} , 037, 012,,,, .T.,, "",,,, .F.)
+    
+  //Cria o botão de salvar que chama a função "ValdCp()" que valida o registro
+    TButton():New(060, 259, "Salvar", oGrp1, {|| ValdCp()}    , 037, 012,,,, .T.,, "",,,, .F.)
+    
+  //Cria o botão de sair que fecha a janela principal "oDlg1"
+  //TButton():New(060, 302, "Sair", oGrp1, {|| Close(oDlg1)}, 037, 012,,,, .T.,, "",,,, .F.)
+
+    MHoBrwZ00() //Função que cria o cabeçalho da grid
+    
+    fAddAcols() //Chama a função que cria as colunas
+    
+  //Criação do objeto do tipo grid
+    oBrwZ00 := MsNewGetDados():New(084, 007, 187, 346, nOpc, 'AllwaysTrue()', 'AllwaysTrue()', '+Field1+Field2',_aAlterFld, , 999,;
+                                                                'AllwaysTrue()', '', 'AllwaysTrue()', oGrp1, aHoBrwZ00, aCoBrwZ00)
+    
+    oBrwZ00:Enable() //Ativa o objeto do tipo grid "oBrwZ00"
+
+    ACTIVATE MSDIALOG oDlg1 CENTERED //Ativa a janela "oDlg1"
+
+    //RESET ENVIRONMENT
+
+return
+
+/*/{Protheus.doc} fAddAcols
+//TODO Função que cria as colunas da grid.
+@author Pedro H. M. Storino
+@since 23/05/2019
+@version 1.0
+@type function
+/*/
+
+static function fAddAcols() //Função que cria as colunas da grid
+
+	aCoBrwZ00 := {}   //Reseta o array de colunas
+	//oBrwZ00:Refresh() //Atualiza o objeto da grid
+	
+	dbSelectArea("ZH0")
+	ZH0->(dbSetOrder(1))
+	ZH0->(dbGoTop())
+		
+	if ZH0->(dbSeek(xFilial("ZH0")+SL1->L1_NUM))
+	  //Laço de repetição de 1 até a quantidade de linhas da grid de produtos do venda direta
+		while ZH0->ZH0_FILIAL = xFilial("ZH0") .and. ZH0->ZH0_NUMORC = SL1->L1_NUM
+		
+			Aadd(aCoBrwZ00, {cGetCPF, cGetNome, dGetDtNasc, cGetInd, cGetLoja, Posicione("SA1", 1, XFILIAL("SA1") + cGetInd + cGetLoja, "A1_XCNAEIN"), ZH0->(Recno()), .F.})
+			
+			ZH0->(dbSkip())
+		enddo
+		
+	endif
+	
+    //oBrwZ00:SetArray(aCoBrwZ00,.F.) //Seta o array "aCoBrwZ00" para ser usado na grid   
+    //oBrwZ00:Refresh()               //Atualiza o objeto
+
+return
+
+/*/{Protheus.doc} MHoBrwZ00
+//TODO Função que cria o cabeçalho da grid.
+@author Pedro H. M. Storino
+@since 23/05/2019
+@version 1.0
+@type function
+/*/
+
+static function MHoBrwZ00() //Função que cria o cabeçalho da grid
+	
+    DbSelectArea("SX3") //Seleciona a tabela "SX3" como area ativa
+    DbSetOrder(1)       //Seleciona o índice 1 da "SX3" X3_ARQUIVO
+    DbSeek("Z00")       //Procura na tabela X3_ARQUIVO = "Z00"
+    
+  //Laço de repetição, enquanto não chegar no fim do arquivo e X3_ARQUIVO = "Z00"
+    while !eof() .and. X3_ARQUIVO == "Z00"
+
+      //Condição para adicionar a estrutura do campo no cabeçalho, se está sendo usado e não é "Z00_COD"
+        If X3Uso(SX3->X3_USADO) .and. cNivel >= SX3->X3_NIVEL //.and. SX3->X3_CAMPO != "Z00_COD"
+        	
+          //Adiciona no array, título, campo, máscara, tamanho, decimal e o tipo
+            aadd(aHoBrwZ00, {Trim(X3Titulo()), SX3->X3_CAMPO, SX3->X3_PICTURE, SX3->X3_TAMANHO, SX3->X3_DECIMAL, "", "", SX3->X3_TIPO, "", "" } )
+            Aadd(_aAlterFld, SX3->X3_CAMPO)
+        endIf
+
+        DbSkip() //Passa para o próximo título
+
+    end
+    
+    aadd(aHoBrwZ00, {"Recno", "RECNO", "", 14, 0, "", "", "N", "", ""})
+    
+return
+
+/*/{Protheus.doc} ValdCp
+//TODO Função para validar os campos da grid.
+@author Pedro H. M. Storino
+@since 23/05/2019
+@version 1.0
+@type function
+/*/
+
+static function ValdCp() //Função para validar os campos da grid
+	
+    DbSelectArea("Z00") //Seleciona a 'Z00' como área atual
+	DbSelectArea("ZH0") //Seleciona a 'ZH0' como área atual
+	DbSetOrder(1)       //Seleciona o índice 1, filial + cpf
+
+	for nc := 1 to len(oBrwZ00:aCols) //Laço de repetição até a última linha da grid
+		
+	    nVal := ValdCPF(oBrwZ00:aCols[nc][1]) //Chama a função "ValdCPF()" com o CPF de parâmetro
+	    
+	    if !empty(oBrwZ00:aCols[nc][3]) //Checa se o campo 'Dt. Nasc' está preenchido
+	    	
+	        ncv++ //incrementa contador de campos validados
+	        
+	    else
+	    
+	      //Cria mensagem de erro do campo 'Dt. Nasc.'
+	    	cErrHtml := "<h3>Registro Inválido!</h3>" + CRLF
+	        cErrHtml += "<p>O campo 'Dt. Nasc.' não está preenchido.</p>" + CRLF + CRLF
+	        cErrHtml += "<p>Linha da ocorrência: " + cValToChar(nc) + "</p>"
+	        
+	        exit //Sai do laço de repetição
+	    
+	    end
+	    
+	    if !empty(oBrwZ00:aCols[nc][1])              .and.; //Checa se o campo 'CPF' não está vazio
+	       len(alltrim(oBrwZ00:aCols[nc][1])) == 11  .and.; //Checa se o 'CPF' possui 11 caracteres
+		   at("-", oBrwZ00:aCols[nc][1])      == 0   .and.; //Checa se no 'CPF' não há nenhum '-'
+		   nVal == 0 //Checa se o resultado da função 'ValdCPF()' 0 = válido, 1 = inválido
+
+	       ncv++
+
+	    elseif !empty(oBrwZ00:aCols[nc][1])          .and.; //Checa se o campo 'CPF' não está vazio
+		       nVal != 0 //Checa o resultado da função 'ValdCPF()' 0 = válido, 1 = inválido
+		    
+		  //Cria mensagem de erro do campo 'CPF'
+	    	cErrHtml := "<h3>Registro Inválido!</h3>" + CRLF
+	        cErrHtml += "<p>O campo 'CPF' não está válido.</p>" + CRLF + CRLF
+	        cErrHtml += "<p>Linha da ocorrência: " + cValToChar(nc) + "</p>"
+	        
+	        exit //Sai do laço de repetição
+	    
+	    end
+	    
+	    if !empty(oBrwZ00:aCols[nc][2]) //Checa se o campo 'Nome' não está vazio
+	    	
+	        ncv++ //Incrementa contador de campos validados
+	        
+	    else
+	    	
+	      //Cria mensagem de erro do campo 'Nome'
+	    	cErrHtml := "<h3>Registro Inválido!</h3>" + CRLF           
+	        cErrHtml += "<p>O campo 'Nome.' não está preenchido.</p>" + CRLF + CRLF
+	        cErrHtml += "<p>Linha da ocorrência: " + cValToChar(nc) + "</p>"
+	        
+	        exit //Sai do laço de repetição
+	    
+	    end
+	    
+	    if !empty(oBrwZ00:aCols[nc][2]) .and.; //Checa se o campo 'Nome' não está vazio
+	       !empty(oBrwZ00:aCols[nc][3]) .and.; //Checa se o campo 'Dt. Nasc.' não está vazio
+		    empty(oBrwZ00:aCols[nc][1])        //Checa se o campo 'CPF' está vazio
+		    
+		    ncv++ //Incrementa contador de campos validados
+		    
+		end
+		
+		if ncv = 3//Checa se o contador de campos validados é igual a 3, 2-Obg, 1-Opc
+		
+			no++ //incrementa contador de linhas validadas
+		
+		end
+		
+		ncv := 0 //Zera o contador de campos
+
+	next
+	
+  //Checa se o o contador de campos validados é igual a quantidade de linhas no array
+  //if no == len(oBrwZ00:aCols)
+
+		for nd := 1 to len(oBrwZ00:aCols) //Laço de repetição até o último registro da grid
+			
+		  //Laço de repetição para comparar os CPFs das linhas
+			for nf := 1 to len(oBrwZ00:aCols)
+
+				if !empty(oBrwZ00:aCols[nd][1])                  .and.; //Checa se o CPF da linha nd não está vazio
+				   !empty(oBrwZ00:aCols[nf][1])                  .and.; //Checa se o CPF da linha nf não está vazio
+				   oBrwZ00:aCols[nd][1] == oBrwZ00:aCols[nf][1]  .and.; //Checa se está na mesma linha
+				   oBrwZ00:aCols[nd]    != oBrwZ00:aCols[nf]            //Checa se os CPFs são iguais
+				   
+				 //Cria mensagem de erro do campo 'CPF', com duplicidade
+				   cErrHtml := "<h3>Registro Inválido!</h3>" + CRLF             
+				   cErrHtml += "<p>O campo 'CPF' encontra-se com duplicidade.</p>" + CRLF + CRLF
+				   cErrHtml += "<p>Linhas da ocorrência: " + cValToChar(nd) + ", " + cValToChar(nf) + "</p>"
+
+				   lCond := .T. //Variável de condição recebe verdadeiro
+
+				   nf := len(oBrwZ00:aCols) //nf recebe o número de linhas da grid para sair do loop
+				   nd := len(oBrwZ00:aCols) //nd recebe o número de lihhas da grid para sair do loop
+
+				endif
+
+			next
+
+		next
+
+  //endif
+  	
+  	if lCond == .F. .and. no == len(oBrwZ00:aCols) //Checa se todos os campos foram validados
+  		
+  	  //Cria a janela de confirmação do registro
+  		DEFINE MsDialog oDlg2 From 092, 232 To 232, 530 Title "Salvar - Registro" Pixel Style DS_MODALFRAME
+  	  //Cria o texto da janela de registro
+  		oSay := TSay():New(02,05,{||cTextHtml},oDlg2,,oFont,,,,.T.,,,140,100,,,,,,.T.)
+		oDlg2:lEscClose := .T. //Permite usar o esc
+		
+	  //Cria o botão para confirmar
+	    oButton := TButton():New(050, 076, "Confirmar", oDlg2, {|| Close(oDlg2), Close(oDlg1), nz := 1}, 037, 012,,,, .T.,, "",,,, .F.)
+	  //Cria o botão para cancelar
+	    oButton := TButton():New(050, 036, "Cancelar", oDlg2, {|| Close(oDlg2)}, 037, 012,,,, .T.,, "",,,, .F.)
+	    
+		ACTIVATE MSDIALOG oDlg2 CENTERED //Ativa a janela
+  	
+  	end
+  	
+	if lCond == .F. .and. no == len(oBrwZ00:aCols) .and. nz == 1 //Checa se não há duplicidade e se todas as linhas estão validadas
+
+		for ne := 1 to len(oBrwZ00:aCols) //Laço para salvar somente as linhas que possuem o 'CPF'
+			
+			if !empty(oBrwZ00:aCols[ne][2]) .and.; //Checa se o campo 'Nome' não está vazio
+			   !empty(oBrwZ00:aCols[ne][3])        //Checa se o campo 'CPF' não está vazio
+			   
+			   ZH0->(DbGoTo(oBrwZ00:aCols[ne][7]))
+			   RecLock("ZH0", .F.) //'Trava' na tabela 'ZH0' para registro
+			   
+			   ZH0->ZH0_CPFCLI    := ALLTRIM(oBrwZ00:aCols[ne][1]) //Salva o 'CPF'
+			   ZH0->ZH0_NOMCLI    := ALLTRIM(oBrwZ00:aCols[ne][2]) //Salva o 'Nome'
+			   ZH0->ZH0_DTNASC    := oBrwZ00:aCols[ne][3]          //Salva a 'Dt. Nasc.'
+			   
+			   MsUnlock() //Destrava a 'ZH0'
+			   			
+			end
+			
+			if !empty(oBrwZ00:aCols[ne][3])             .and.; //Checa se o campo 'Dt. Nasc.' não está vazio
+			   !empty(oBrwZ00:aCols[ne][1])             .and.; //Checa se o campo 'CPF' não está vazio
+		       !empty(oBrwZ00:aCols[ne][2])             .and.; //Checa se o campo 'Nome' não está vazio
+		       len(alltrim(oBrwZ00:aCols[ne][1])) == 11 .and.; //Checa se o campo 'CPF' é igual a 11 caracteres
+		       at("-", oBrwZ00:aCols[ne][1])      == 0  .and.; //Checa se não há nehum '-' no campo 'CPF'
+		       !Z00->(DBSeek(xFilial() + oBrwZ00:aCols[ne][1]))
+		       
+		       RecLock("Z00", .T.) //'Trava' na tabela 'Z00' para a inclusão
+		       
+		     //Checa se os campos 'Indústria' e 'Loja' não estão vazios
+		       if !empty(oBrwZ00:aCols[ne][4]) .and. !empty(oBrwZ00:aCols[ne][5])
+		       
+		         	Z00->Z00_IND 	:= ALLTRIM(oBrwZ00:aCols[ne][4])  //Salva o campo 'Indústria'
+		         	Z00->Z00_LOJA 	:= ALLTRIM(oBrwZ00:aCols[ne][5]) //Salva o campo 'Loja'
+		         	Z00->Z00_CNAEIN := ALLTRIM(oBrwZ00:aCols[ne][6]) //Salva o campo 'CNAEIN'
+		       
+		       end
+		       
+		       Z00->Z00_NOME     := ALLTRIM(oBrwZ00:aCols[ne][2]) //Salva 'Nome'
+		       Z00->Z00_CPF      := ALLTRIM(oBrwZ00:aCols[ne][1]) //Salva 'CPF'
+		       Z00->Z00_DTNASC   := oBrwZ00:aCols[ne][3]          //Salva a 'Dt. Nasc.'
+		       
+		       MsUnLock() //'Destrava' a 'Z00'
+
+		    end
+
+	    next
+
+	endif
+
+	if lCond != .F. .or. no != len(oBrwZ00:aCols) //Checa se os campos não foram validados
+		
+	  //Cria a janela de erro
+		DEFINE MsDialog oDlg2 From 092, 232 To 282, 530 Title "Erro - Registro" Pixel Style DS_MODALFRAME
+	  //Cria o texto da janela de erro
+		oSay := TSay():New(02,05,{||cErrHtml},oDlg2,,oFont,,,,.T.,,,140,100,,,,,,.T.)
+	    oDlg2:lEscClose := .T. //Permite fechar a janela com o 'ESC'
+	  //Cria o botão de confirmação
+		oButton := TButton():New(070, 056, "Ok", oDlg2, {|| Close(oDlg2)}, 037, 012,,,, .T.,, "",,,, .F.)
+		
+		ACTIVATE MSDIALOG oDlg2 CENTERED //Ativa a janela
+
+    end
+
+	no    := 0
+	lCond := .F.
+
+return
+
+/*/{Protheus.doc} ValdCPF
+//TODO Função que valida o 'CPF'.
+@author Pedro H. M. Storino
+@since 23/05/2019
+@version 1.0
+@type function
+/*/
+
+static function ValdCPF(cCPF) //Função que valida o 'CPF'
+	
+	local nDigit  := nil,; //Variável que recebe um único dígito do 'CPF'
+	      cCPFt   := nil,; //Variável que recebe uma cópia do 'CPF'
+	      nFDigit := 0,;   //Variável que recebe o primeiro dígito
+	      nLDigit := 0,;   //Variável que recebe o segundo dígito
+	      nTimer  := 1,;   //Variável que recebe um contador, dividindo o primeiro e segundo dígito
+	      nCount  := 10,;  //Variável que vai ser usada no laço de repetição dos dois dígitos
+	      aDigit  := {}    //Array que vai armazenar o 'CPF' em formato numérico
+	
+	cCpf  := alltrim(cCPF) //É tirado todos os espaços a mais do 'CPF'
+	
+	cCPFt := cCPF //'cCPFt' recebe uma cópia do 'CPF'
+	
+	if len(cCPF) == 11 //Checa se o 'CPF' possui 11 caracteres
+	
+		for nt := 0 to 9 //Laço que vai checar se todos os dígitos repetem
+		
+			cCPFt := (strtran(cCPFt, cvaltochar(nt), "")) //Substitui o contador pela string vazia
+		
+			if cCPFt == "" //Checa se a variável 'cCPFt' é uma string vazia
+			
+				return 1 //Retorna 1, 0 = válido, 1 = inválido
+			
+			else
+			
+				cCPFt := cCPF //'cCPFt' recebe novamente uma cópia do 'CPF'
+			
+			end
+			
+		next
+		
+		for nt := 1 to 11 //Laço de repetição que percorre todo o 'CPF'
+		
+			nDigit := val(left(cCPF, 1))                     //Recebe o primeiro dígito convertido para númerico
+			aadd(aDigit, nDigit)                             //Adiciona o 'nDigit' no array do 'CPF'
+			cCPF := strtran(cCPF, cvaltochar(nDigit), "",,1) //Procura 'nDigit' na string e o substitui por um espaço vazio
+			
+		next
+		
+		while nTimer <= 2 //Laço de reperição para encontrar os dois dígitos do 'CPF'
+		
+			for nt := 1 to nCount //Laço de repetição iniciando de 1 até 10 e depois de 1 até 11
+				
+				if nTimer == 1 //Checa se é o primeiro dígito
+				
+					nFDigit := aDigit[nt] * nCount + nFDigit //Fórmula para descobrir o primeiro dígito
+				
+				else //Checa se é o segundo dígito
+				
+					nLDigit := aDigit[nt] * nCount + nLDigit //Mesma fórmula, mas o laço agora é 11
+				
+				end
+				
+				nCount-- //Contador diminui
+				
+				if nCount == 1 //Checa se o contador é igual a 1
+				
+				    nt++ //Incrementa o contador e sai do laço
+				    
+				end
+				
+			next
+		
+		nCount := 11 //Contador recebe 11
+		nTimer++ //'nTimer' agora é 2
+		
+		enddo
+	
+		nFDigit := Mod(nFDigit*10, 11) //Descobre o primeiro dígito
+		nLDigit := Mod(nLDigit*10, 11) //Descobre o segundo dígito
+		
+		if nFDigit == 10 //Checa se o resto da divisão do primeiro dígito é 10
+		
+			nFDigit := 0 //É atribuído o valor de 0 no primeiro dígito
+			
+		elseif nLDigit == 10//Checa se resto da divisão do último dígito é igual a 10
+		
+			nLDigit := 0 //É atribuído o valor de 0 no último dígito
+		
+		end
+
+		if nFDigit == aDigit[10] .and. nLDigit == aDigit[11] //Checa se 'nFDigit' e 'nLDigit' são iguais aos últimos dígitos
+
+			return 0 //Retorna 0 = válido, 1 = inválido
+
+		end
+
+	end
+
+return 1 //Retorna 1 = inválido, 0 = válido

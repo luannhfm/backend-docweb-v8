@@ -1,0 +1,167 @@
+#Include "Protheus.CH"
+#Include "RWMAKE.CH"
+
+/*/{Protheus.doc} SFATFR2J
+Função para impressão de etiquetas de patrimonio
+	
+@author 	José Leite de Barros Neto
+@since 		31/10/2013
+@version	1.0		
+
+@return Nil, Nulo
+
+@example
+
+@see
+
+/*/
+User Function SFATFR2J()
+	
+	Local cAlias 	:= ""
+	Local cBase	:= ""
+	Local cCodBar := ""
+	Local cPorta 	:= "LPT1" // PORTA DA IMPRESSORA
+	
+	Private cPerg		:= "XSFATFR2"
+	Private cCodEmp 	:= FWCodEmp()
+	Private cCadastro	:= "Impressão de etiquetas"
+	Private aSays		:= {}
+	Private aButtons	:= {}
+	Private nOpca 	:= 0
+	
+	// Funcao para criacao das perguntas.
+	fCriaSx1()
+
+	// Forca o usuario a preencher as perguntas.
+	If .Not. Pergunte(cPerg,.t.)
+		Return
+	EndIf
+	
+	AADD(aSays,"Este programa irá realizar a impressão das etiquetas de patrimônio")
+
+	AADD(aButtons, { 5,.T.,{|| Pergunte(cPerg,.T. )}})
+	AADD(aButtons, { 1,.T.,{|o| nOpca := 1,FechaBatch()}})
+	AADD(aButtons, { 2,.T.,{|o| FechaBatch() }} )
+
+	FormBatch( cCadastro, aSays, aButtons )
+
+	If nOpca == 1
+
+		If MsgYesNo("Confirma impressão da etiqueta ?","Confirmar")
+		
+			getData(@cAlias)
+			
+			While .Not. (cAlias)->( EOF() )
+			
+				cBase	 := AllTrim( (cAlias)->( ND_CBASE ) )
+				cCodBar := AllTrim( (cAlias)->( ND_CBASE ) )
+				
+				// Parametros
+				MSCBPRINTER("TLP 2844",cPorta, ,, .f., , , , , ,.T., )
+							
+				// DefiniÃ§Ã£o da velocidade de impressao
+				MSCBBEGIN(1,6)
+									
+				If cCodEmp == "01" //FIEMT
+				
+					MSCBSAY(34,02,"FIEMT")
+					
+				ElseIf cCodEmp == "02" //SESI
+				
+					MSCBSAY(34,02,"SESI")
+				
+				ElseIf cCodEmp == "03" //SENAI
+				
+					MSCBSAY(34,02,"SENAI")
+				
+				ElseIf cCodEmp == "04" //IEL
+					
+					MSCBSAY(34,02,"IEL")
+				
+				ElseIf cCodEmp == "05" //CONDOMINIO
+				
+					MSCBSAY(34,02,"CONDOMINIO")
+				
+				EndIf
+				
+				//Dados para impressao das linhas
+				MSCBSAY(37,05,cBase,"N","2","2,1")
+				
+				//Codigo de Barras			
+				MSCBSAYBAR(33,08,cCodBar,'N','MB07',12,.f.,.f.,,,3,2)
+				
+				MSCBEND()
+				
+				MSCBCLOSEPRINTER()
+			
+				(cAlias)->( DbSkip() )
+			End
+			
+		EndIf
+	
+	EndIf
+
+Return( Nil )
+
+/** {Protheus.doc} getData
+Funcao para filtrar os dados
+
+@param: 	<Nil>
+@author: 	Jose Leite de Barros Neto
+@since: 	01/11/2013
+@Uso: 		SESI
+*/	
+Static Function getData(cAlias)
+
+	cAlias := GetNextAlias()
+
+	BeginSql Alias cAlias
+	
+		SELECT ND_CBASE, ND_ITEM, ND_CODRESP, RD0_NOME, RD0_TIPO, //  -- 1 = Interno / 2 = Externo
+				N1_DESCRIC, N1_LOCAL
+			
+		FROM %Table:SND% SND
+	 
+		INNER JOIN %Table:RD0% RD0 ON RD0_FILIAL = %xFilial:RD0% AND RD0_CODIGO = ND_CODRESP AND RD0.%NotDel%
+		INNER JOIN %Table:SN1% SN1 ON  N1_FILIAL = %xFilial:SN1% AND N1_CBASE = ND_CBASE AND N1_ITEM = ND_ITEM AND SN1.%NotDel%
+	
+		WHERE 	ND_FILIAL = %xFilial:SND%	
+				AND ND_CODRESP BETWEEN %Exp:MV_PAR01% AND %Exp:MV_PAR02%
+				AND ND_CBASE BETWEEN %Exp:MV_PAR03% AND %Exp:MV_PAR04%
+				AND ND_STATUS = '1' 
+				AND SND.%NotDel% 
+				AND N1_LOCAL BETWEEN %Exp:MV_PAR05% AND %Exp:MV_PAR06% 
+				
+		ORDER BY ND_CBASE
+
+	EndSql
+	
+	MemoWrite("c:/pLog/Etiqueta_Patrimonio.sql",  GetLastQuery()[2])
+
+Return( cAlias )
+
+/** {Protheus.doc} fCriaSx1
+Funcao para gerar a pergunta
+
+@param: 	<Nil>
+@author: 	Jose Leite de Barros Neto
+@since: 	01/11/2013
+@Uso: 		SESI
+*/	
+Static Function fCriaSx1()
+
+	//MV_PAR01  Responsavel de   
+	//MV_PAR02  Responsavel ate
+	//MV_PAR03  Codigo Bem de
+	//MV_PAR04  Codigo Bem ate
+	//MV_PAR05  Local de
+	//MV_PAR06  Local ate  
+
+	u_SFPUTSX1( cPerg, "01","Responsavel de  "		,"","","mv_ch1","C",TamSX3("RD0_CODIGO")[1]	,0,0,"G","","RD0"			,"","","mv_par01","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "02","Responsavel ate "		,"","","mv_ch2","C",TamSX3("RD0_CODIGO")[1]	,0,0,"G","","RD0"			,"","","mv_par02","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "03","Codigo Bem de"		,"","","mv_ch3","C",TamSX3("N1_CBASE")[1]		,0,0,"G","","SN1"			,"","","mv_par03","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "04","Codigo Bem ate"		,"","","mv_ch4","C",TamSX3("N1_CBASE")[1]		,0,0,"G","","SN1"			,"","","mv_par04","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "05","Local de       "		,"","","mv_ch5","C",TamSX3("N1_LOCAL")[1]		,0,0,"G","","SN1LOC"		,"","","mv_par05","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "06","Local ate      "		,"","","mv_ch6","C",TamSX3("N1_LOCAL")[1]		,0,0,"G","","SN1LOC"		,"","","mv_par06","","","","","","","","","","","","","","","","",{},{},{})
+	
+Return( Nil )

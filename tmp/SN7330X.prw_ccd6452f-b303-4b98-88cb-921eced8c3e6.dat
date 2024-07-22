@@ -1,0 +1,493 @@
+#Include 'Protheus.ch'
+Static _Retorno
+/*/{Protheus.doc} <SN7330X>
+----------------------------------------------------------------------------------------------------------------
+	Objetivo;
+  	- Consulta Especifica [ADZSIG] na Proposta Comercial do SENAI para buscar turmas de cursos no SGE.
+  
+	Restrições;
+  	- Somente para unidades do SENAI.
+  	- Clientes do tipo Pessoa Juridica.
+
+@type Function
+@author Jonas Nascimento 
+@since 14/10/2015
+@version<1.00>
+@return Logic, Se a consulta foi concluída com exito.
+@history 28/05/2019, Franklin de Brito de Oliveira, Ajuste para a consulta considerar o padrão MVC
+	da rotina FATA600. 
+
+----------------------------------------------------------------------------------------------------------------
+/*/                     
+User Function SN7330X()
+/*	
+	Local _aHeardNew	:= aClone(aHeader)
+	Local _aColsNew		:= aClone(aCols)
+	Local _nP01			:= aScan(_aHeardNew,{|X| UPPER(AllTrim(X[2]))=="ADZ_PRODUT"})
+	Local _cADZ_PROD	:= _aColsNew[N,_nP01]
+	Local _cPrdSige		:= fSeekPrdSG(_cADZ_PROD) //Retorna o codigo do produto do SIGE associado ao produto no Protheus.
+	Local _lRet			:= .T.
+*/
+Local _cADZ_PROD	:= FwFldGet("ADZ_PRODUT")
+Local _cPrdSige		:= fSeekPrdSG(_cADZ_PROD) //Retorna o codigo do produto do SIGE associado ao produto no Protheus.
+Local cVarPos		:= &(ReadVar())
+Local _lRet			:= .T.
+	
+	//Teste :: NAO REMOVA ::
+	//ETLSige()
+	
+	If Empty(_cPrdSige)
+		Aviso(FunName()+"/"+ProcName(),"Este produto não está associado a um produto no SGE!",{"OK"},3)
+		_lRet := .F.
+	Else
+		VAR_IXB := cVarPos
+		_lRet := U_fLstTurm(_cPrdSige)
+	EndIf	
+
+Return _lRet
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fSeekPrdSG>
+  Objetivo;
+   Função retorna o código do produto Protheus [B1_COD] se for informado o 2º pa-
+   râmetro, senão retorna codigo do produto SIGE [B1_XPRDSIG] vinculado ao Produ-
+   to Protheus.
+  Parâmetros;
+   - 1º parâmetro código do produto Protheus B1_COD.
+   - 2º parâmetro código do produto SIGE B1_XPRDSIG.
+
+@author<Jonas Nascimento>
+@since<14/10/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function fSeekPrdSG(_cADZ_PROD, _cPrdSige)
+	Local _cSql		:= ""
+	Local _aArea2	:= GetArea()
+	Local _cAlias2	:= GetNextAlias()
+	Local _cPrd		:= "" //Código do produto Protheus [B1_COD] ou SIGE [B1_XPRDSIG] ou SGE [B1_XPRDSGE]. 
+	
+	_cSql := " SELECT "+CRLF
+	_cSql += "   B1_XPRDSIG, B1_XPRDSGE, B1_COD "+CRLF
+	_cSql += " FROM "+CRLF
+	_cSql += "   "+RetSqlName(+"SB1")+" "+CRLF
+	_cSql += " WHERE "+CRLF
+	_cSql += "   D_E_L_E_T_ = ' ' "+CRLF
+	_cSql += "   AND B1_FILIAL = '"+xFilial("SB1")+"' "+CRLF
+	
+	If Empty(_cPrdSige)
+		_cSql += "   AND B1_COD = '"+AllTrim(_cADZ_PROD)+"' "+CRLF
+	ElseIf !Empty(_cPrdSige)
+		_cSql += "   AND B1_XPRDSIG = '"+AllTrim(cValToChar(_cPrdSige))+"' OR B1_XPRDSGE = '"+ AllTrim(cValToChar(_cPrdSige)) +"' "+CRLF
+	EndIf
+	
+	MemoWrite("C:\temp\fSeekPrdSG.txt", _cSql)
+	dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)),_cAlias2,.F.,.F.)
+	
+	If !(_cAlias2)->(EOF())
+		If .Not. Empty((_cAlias2)->B1_XPRDSGE)
+			_cPrd := iif(Empty(_cPrdSige), (_cAlias2)->B1_XPRDSGE, (_cAlias2)->B1_COD)
+		Else
+			_cPrd := iif(Empty(_cPrdSige), (_cAlias2)->B1_XPRDSIG, (_cAlias2)->B1_COD)
+		EndIf
+	EndIf
+
+	(_cAlias2)->(dbclosearea())
+	RestArea(_aArea2)
+
+Return _cPrd
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fLstTurm>
+  Objetivo;
+   Consultar no BD do SIGE as turmas em seus referidos cursos, com pelo menos
+   uma vaga disponível.
+  Parâmetros;
+   - 1º parâmetro código do produto SIGE.
+   - 2º parâmetro código da turma SIGE.
+
+@author<Jonas Nascimento>
+@since<16/10/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+
+	Utilizado por;
+	- Na função [SN7330X.prw].
+	- ADZ_XTURMA Validacao do Usuário U_fLstTurm(M->ADZ_XTURMA).
+	- Na validação da linha ADZ, via PE [FT600LOK.prw] função [fVldPrdG()].
+	- AD1_STATUS Validação do Usuário U_fPrdGenr(M->AD1_STATUS) -> [SS7398X.prw].
+@history 
+--------------------------------------------------------------------------------
+*/
+User Function fLstTurm(_cPrdSige, _cCodTurma)
+	
+	Local _cSql		:= ""
+	Local _cAliasRM	:= GetNewPar("MV_XSGEABD", "")
+	Local _cPrdSGE 	:= _cPrdSige
+	
+	Private _lRet	:= .T.
+	Private _aArea	:= GetArea()
+	Private _cAlias	:= GetNextAlias()
+		
+	If Select(_cAlias) > 0
+		DbSelectarea(_cAlias)
+		(_cAlias)->(DbCloseArea())
+	EndIf
+		
+	If .Not. Empty(_cAliasRM)
+			
+		If Empty(_cCodTurma)
+			_cSql := "SELECT DISTINCT "+CRLF
+			_cSql += "	CODIGO_UNIDADE_OPERACIONAL, "+CRLF
+			_cSql += "	UNIDADE_OPERACIONAL, "+CRLF
+			_cSql += "	CODIGO_CURSO CODIGO_PRODUTO, "+CRLF
+			_cSql += "	COD_SIGE, "+CRLF
+			_cSql += "	CURSO NOME_PRODUTO, "+CRLF
+			_cSql += "	MODALIDADE, "+CRLF
+			_cSql += "	TURMA CODIGO_TURMA, "+CRLF
+			_cSql += "	CURSO NOME_TURMA, "+CRLF
+			_cSql += "	COD_MODULO, "+CRLF
+			_cSql += "	MODULO, "+CRLF
+			_cSql += "	DATA_INICIAL DATA_ABERTURA, "+CRLF
+			_cSql += "	DATA_FINAL DATA_ENCERRAMENTO, "+CRLF
+			_cSql += "	HORA_INICIO, "+CRLF
+			_cSql += "	HORA_FINAL, "+CRLF
+			_cSql += "	VAGAS_ABERTAS, "+CRLF
+			_cSql += "	VAGAS_DISPONIVEIS, "+CRLF
+			_cSql += "	CASE WHEN TURMA = 'A' THEN 'Em Aberto' ELSE TURMA END STATUS_TURMA "+CRLF
+			_cSql += "FROM "+CRLF
+			_cSql += "	RM.VISAO_CRM_TURMA"+ _cAliasRM + CRLF
+			_cSql += "WHERE "+CRLF
+			_cSql += "	CODIGO_UNIDADE_OPERACIONAL = '"+ cFilAnt +"' "+CRLF
+			If Len(AllTrim(_cPrdSGE)) > 4
+				_cSql += "	AND CODIGO_CURSO = '"+ AllTrim(_cPrdSGE) +"' "+CRLF
+			Else
+				_cSql += "	AND COD_SIGE = '"+ AllTrim(_cPrdSGE) +"' "+CRLF
+			EndIf
+			_cSql += "ORDER BY HORA_INICIO, HORA_FINAL "+CRLF
+		ElseIf !Empty(_cCodTurma)
+			_cSql := "SELECT DISTINCT "+CRLF
+			_cSql += "	CODIGO_CURSO CODIGO_PRODUTO, VAGAS_DISPONIVEIS "+CRLF
+			_cSql += "FROM "+CRLF
+			_cSql += "	RM.VISAO_CRM_TURMA"+ _cAliasRM +CRLF
+			_cSql += "WHERE "+CRLF
+			_cSql += "	CODIGO_UNIDADE_OPERACIONAL = '"+ cFilAnt +"' "+CRLF
+			_cSql += "	AND TURMA = '"+ AllTrim(_cCodTurma) +"' "+CRLF
+		EndIf
+			
+		MemoWrite("C:\temp\SN7330X_TURMA.txt", _cSql)
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+			
+		If !(_cAlias)->(EOF())
+			_lRet := .F.
+			If Empty(_cCodTurma)
+				_lRet := fseekSIGE()
+			ElseIf !Empty(_cCodTurma)
+				/*
+				_aHeardNew	:= aClone(aHeader)
+				_aColsNew		:= aClone(aCols)
+				_nP01			:= aScan(_aHeardNew,{|X| UPPER(AllTrim(X[2]))=="ADZ_QTDVEN"})
+				_nP02			:= aScan(_aHeardNew,{|X| UPPER(AllTrim(X[2]))=="ADZ_PRODUT"})
+				_nP03			:= aScan(_aHeardNew,{|X| UPPER(AllTrim(X[2]))=="ADZ_XTURMA"})
+				_cADZ_PROD	:= _aColsNew[N,_nP02]
+				_nQtdCont		:= 0 //Variavel usada na contagem da qtd do produto.
+				_cPrdSGE		:= (_cAlias)->CODIGO_PRODUTO
+				*/	
+				oModel 		:= FWModelActive()
+				oModelADZ	:= oModel:GetModel("ADZPRODUTO")
+				_cADZ_PROD	:= oModelADZ:GetValue("ADZ_PRODUT")
+				_nQtdCont	:= 0 //Variavel usada na contagem da qtd do produto.
+				_cPrdSGE	:= (_cAlias)->CODIGO_PRODUTO	
+				
+				//Valida codigo da turma. Relacionamento verdadeiro TurmaSGE filho de ProdutoSGE [B1_XPRDSGE] relacionado a ProdutoProtheus [B1_COD]
+				If Empty(fSeekPrdSG( , _cPrdSGE))	
+					_lRet := .F.
+					Aviso(FunName()+"/"+ProcName(),"Turma ["+ _cCodTurma +"] inválida para o Produto ["+ _cADZ_PROD +"]!",{"OK"},3)
+				Else
+					//Verifica se Produto retornado é igual produto posicionado
+					If _cADZ_PROD == fSeekPrdSG( , _cPrdSGE)
+						_lRet := .T.
+						//Valida quantidade do produto [ADZ_QTDVEN] com quantidade de Vagas Disponíveis no SGE.
+						//For _nX := 1 To Len(_aColsNew)
+						nLin := oModelADZ:GetLine()
+						For _nX := 1 To oModelADZ:Length()
+							oModelADZ:GoLine(_nX)
+							If oModelADZ:GetValue("ADZ_PRODUT") == _cADZ_PROD .AND. oModelADZ:GetValue("ADZ_XTURMA") == _cCodTurma
+								_nQtdCont += oModelADZ:GetValue("ADZ_QTDVEN")
+								If _nQtdCont > (_cAlias)->VAGAS_DISPONIVEIS 
+									_lRet := .F.
+									Aviso(FunName()+"/"+ProcName(),"Quantidade do produto ["+ _cADZ_PROD +;
+									"] deve ser menor ou igual a quantidade de Vagas Disponíveis na Turma ["+ _cCodTurma +"]!",{"OK"},3)
+									Exit
+								EndIf 
+							EndIf
+						Next _nX
+						oModelADZ:GoLine(nLin)
+					Else
+						_lRet := .F.
+						Aviso(FunName()+"/"+ProcName(),"Turma ["+ _cCodTurma +"] não associado ao Produto ["+ _cADZ_PROD +"]!",{"OK"},3)
+					EndIf
+				EndIf
+			EndIf
+		Else
+			Aviso(FunName()+"/"+ProcName(),"Cód. de Turma inválido!",{"OK"},3)
+			_lRet := .F.
+		EndIf
+	Else
+		Aviso(FunName()+"/"+ProcName(),"Favor verificar o Parametro de Configuracao do SGE - MV_XSGEABD!",{"OK"},3)
+		_lRet := .F.
+	EndIf
+	
+Return _lRet
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fSeekSIGE>
+  Objetivo;
+   Janela da Consulta Específica.
+
+@author<Jonas Nascimento>
+@since<16/10/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+
+	Utilizado por;
+	- Consulta padrão de ADZ_XTURMA.
+
+--------------------------------------------------------------------------------
+*/
+Static Function fSeekSIGE()
+	Local _btConfirm
+	Local _btCancel
+	Private _oBroTurma
+	Private _aBroTurma := {}
+	Static _oDlg
+
+	DEFINE MSDIALOG _oDlg TITLE 'Turmas do SGE' FROM 000, 000 TO 350, 1160 COLORS 0, 16777215 PIXEL
+		fwBrowse1() //Cria a GRID
+		//@ 003, 005 SAY _oSay1 PROMPT "Descrição bla bla" SIZE 132, 007 OF _oDlg COLORS 0, 16777215 PIXEL
+		@ 158, 005 BUTTON _btConfirm	PROMPT "OK"		 	ACTION(fTurmaOk())	SIZE 037, 012 OF _oDlg PIXEL
+		@ 158, 050 BUTTON _btCancel		PROMPT "Cancelar"	ACTION(_oDlg:End())	SIZE 037, 012 OF _oDlg PIXEL
+	ACTIVATE MSDIALOG _oDlg CENTERED
+
+Return _lRet
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fTurmaOk>
+  Objetivo;
+   Ação do duplo clique no grid.
+
+@author<Jonas Nascimento>
+@since<16/10/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+
+	Utilizado por;
+	- fwBrowse1.
+
+--------------------------------------------------------------------------------
+*/
+Static Function fTurmaOk()
+/*	
+	Local _nP01 := aScan(aHeader,{|X| UPPER(AllTrim(X[2]))=="ADZ_XMODUL"})
+	Local _nP02 := aScan(aHeader,{|X| UPPER(AllTrim(X[2]))=="ADZ_XDTINI"})
+	Local _nP03 := aScan(aHeader,{|X| UPPER(AllTrim(X[2]))=="ADZ_XDTFIM"})
+	
+	_Retorno 		:= _aBroTurma[_oBroTurma:nAt,3] //Cod Turma
+	aCols[n,_nP01] 	:= _aBroTurma[_oBroTurma:nAt,5] //Cod Modulo
+	aCols[n,_nP02] 	:= _aBroTurma[_oBroTurma:nAt,7] //Dt. Inicio da turma
+	aCols[n,_nP03] 	:= _aBroTurma[_oBroTurma:nAt,8] //Dt. Final da turma
+	
+	_lRet 			:= .T.
+	_oDlg:End()
+*/
+Local _oModel		:= FwModelActive()
+Local _oModelADZ	:= _oModel:GetModel("ADZPRODUTO")
+
+	VAR_IXB := _aBroTurma[_oBroTurma:nAt,3]								//Cod Turma
+	//_oModelADZ:LoadValue("ADZ_XMODUL", _aBroTurma[_oBroTurma:nAt,5])	//Cod Modulo
+	_oModelADZ:LoadValue("ADZ_XPRDSG", _aBroTurma[_oBroTurma:nAt,7])	//Dt. Inicio da turma
+	_oModelADZ:LoadValue("ADZ_XCHMOD", _aBroTurma[_oBroTurma:nAt,8])	//Dt. Final da turma
+	
+	_lRet := .T.
+	_oDlg:End()
+	
+Return
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fTurmaOk>
+  Objetivo;
+   Cria grid na MSDIALOG (fSeekSIGE).
+
+@author<Jonas Nascimento>
+@since<16/10/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+
+	Utilizado por;
+	- fSeekSIGE.
+
+--------------------------------------------------------------------------------
+*/
+Static Function fwBrowse1()
+	/* Popula Array da GRID */
+	While !(_cAlias)->(EOF())
+		AADD(_aBroTurma, {	AllTrim(cValToChar((_cAlias)->CODIGO_PRODUTO)),;
+								AllTrim((_cAlias)->NOME_PRODUTO),;
+								AllTrim(cValToChar((_cAlias)->CODIGO_TURMA)),;
+								AllTrim((_cAlias)->NOME_TURMA),;
+								AllTrim(cValToChar((_cAlias)->COD_MODULO)),;
+								AllTrim((_cAlias)->MODULO),;
+						 		(_cAlias)->DATA_ABERTURA,;
+								(_cAlias)->DATA_ENCERRAMENTO,;
+								AllTrim((_cAlias)->HORA_INICIO),;
+								AllTrim((_cAlias)->HORA_FINAL),;
+								(_cAlias)->VAGAS_ABERTAS,;
+								(_cAlias)->VAGAS_DISPONIVEIS,;
+								AllTrim((_cAlias)->STATUS_TURMA)})
+		(_cAlias)->(dbSkip())
+	EndDo
+	/* Cria a GRID */																																																			   //Cod. |Curso|Cod.|Turma|Abertura|Encerramento|Aula Ini|Aula Fim|Vagas Abertas|Vagas Disponiveis|Status Turma|														
+	@ 010, 004 LISTBOX _oBroTurma Fields HEADER "Cod.", "Curso", "Cod.", "Turma", "Cod.", "Módulo", "Abertura", "Encerramento", "Aula Ini", "Aula Fim", "Vagas Abertas", "Vagas Disponíveis", "Status Turma" SIZE 573, 142 OF _oDlg PIXEL ColSizes 18,  135,  22,  135,  30,     43,         22,     24,     42,          52,             35						
+	_oBroTurma:SetArray(_aBroTurma)
+	_oBroTurma:bLine := {|| {	_aBroTurma[_oBroTurma:nAt,1],;
+										_aBroTurma[_oBroTurma:nAt,2],;
+										_aBroTurma[_oBroTurma:nAt,3],;
+										_aBroTurma[_oBroTurma:nAt,4],;
+										_aBroTurma[_oBroTurma:nAt,5],;
+										_aBroTurma[_oBroTurma:nAt,6],;
+										_aBroTurma[_oBroTurma:nAt,7],;
+										_aBroTurma[_oBroTurma:nAt,8],;
+										_aBroTurma[_oBroTurma:nAt,9],;
+										_aBroTurma[_oBroTurma:nAt,10],; 
+										_aBroTurma[_oBroTurma:nAt,11],;
+										_aBroTurma[_oBroTurma:nAt,12],;
+										_aBroTurma[_oBroTurma:nAt,13]}}
+								
+	_oBroTurma:bLDblClick := {|| fTurmaOk(), _oBroTurma:DrawSelect()} //Duplo clique
+Return
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fTurmaOk>
+  Objetivo;
+   Função para retornar o código da turma na Consulta Especifica.
+
+@author<Jonas Nascimento>
+@since<16/10/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+
+	Utilizado por;
+	- Consulta Específica SXB - [ADZSIG].
+
+--------------------------------------------------------------------------------
+*/
+User Function fRetTurm()
+				
+Return (_Retorno)
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fTurmaOk>
+  Objetivo;
+   Função p/ retornar todas as turmas em arquivo txt, finalidade TESTE.
+
+@author<Jonas Nascimento>
+@since<14/10/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function ETLSige(_cPrdSige)
+	Local _nHndSql		:= 0
+	Local _nHErp 		:= AdvConnection()
+	Local _cDbSql		:= SuperGetMV("MV_XDBSIGE")
+	Local _cSrvSql		:= SuperGetMV("MV_XSRVSIG")
+	Local _cSql			:= ""
+	Local _aArea		:= GetArea()
+	Local _cAlias	:= GetNextAlias()
+
+	//Conecta no Sige
+	_nHndSql := TcLink(_cDbSql,_cSrvSql,7890)
+
+	If _nHndSql < 0
+		Aviso(FunName()+"/"+ProcName(),"Erro ("+ str(_nHndSql,4) +") ao estabelecer conexão com SIGE.",{"OK"},3)
+	Else
+		_cSql := "SELECT "+CRLF
+		_cSql += "	CODIGO_UNIDADE_OPERACIONAL, "+CRLF
+		_cSql += "	UNIDADE_OPERACIONAL, "+CRLF
+		_cSql += "	CODIGO_PRODUTO, "+CRLF
+		_cSql += "	NOME_PRODUTO, "+CRLF
+		_cSql += "	CODIGO_TURMA, "+CRLF
+		_cSql += "	NOME_TURMA, "+CRLF
+		_cSql += "	DATA_ABERTURA, "+CRLF
+		_cSql += "	DATA_ENCERRAMENTO, "+CRLF
+		_cSql += "	VAGAS_ABERTAS, "+CRLF
+		_cSql += "	VAGAS_DISPONIVEIS, "+CRLF
+		_cSql += "	HORA_INICIO, "+CRLF
+		_cSql += "	HORA_FINAL, "+CRLF
+		_cSql += "	STATUS_TURMA "+CRLF
+		_cSql += "FROM "+CRLF
+		_cSql += "	VISAO_TURMA_CRM "+CRLF
+		_cSql += "ORDER BY UNIDADE_OPERACIONAL, CODIGO_PRODUTO, CODIGO_TURMA, HORA_INICIO "+CRLF
+		MemoWrite("C:\temp\SN73J01X.txt", _cSql)
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+		
+		_cSql := ""
+		
+		While !(_cAlias)->(EOF())
+			_cSql += AllTrim(cValToChar((_cAlias)->CODIGO_UNIDADE_OPERACIONAL))+"|"+;
+					AllTrim(cValToChar((_cAlias)->UNIDADE_OPERACIONAL))+"|"+;
+					AllTrim(cValToChar((_cAlias)->CODIGO_PRODUTO))+"|"+;
+					AllTrim((_cAlias)->NOME_PRODUTO)+"|"+;
+					AllTrim(cValToChar((_cAlias)->CODIGO_TURMA))+"|"+;
+					AllTrim((_cAlias)->NOME_TURMA)+"|"+;
+					AllTrim((_cAlias)->DATA_ABERTURA)+"|"+;
+					AllTrim((_cAlias)->DATA_ENCERRAMENTO)+"|"+;
+					AllTrim((_cAlias)->HORA_INICIO)+"|"+;
+					AllTrim((_cAlias)->HORA_FINAL)+"|"+;
+					cValToChar((_cAlias)->VAGAS_ABERTAS)+"|"+;
+					cValToChar((_cAlias)->VAGAS_DISPONIVEIS)+"|"+;
+					AllTrim((_cAlias)->STATUS_TURMA)+CRLF
+			MemoWrite("C:\temp\ETL_Sige.txt", _cSql)
+		
+			(_cAlias)->(dbSkip())
+		EndDo
+	EndIf
+	
+	If Select(_cAlias) > 0
+		(_cAlias)->(dbCloseArea())
+		RestArea(_aArea)	
+	EndIf
+	
+	TcUnlink(_nHndSql)	//Encerra conexão com SIGE
+	tcSetConn(_nHErp)	//Seta a conexão do BD do Protheus
+
+Return

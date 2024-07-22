@@ -1,0 +1,106 @@
+#Include 'Protheus.ch'
+#Include 'FwMVCDef.ch'
+
+/*/{Protheus.doc} FT600UTRIGGER
+Gatilhos nas grids de Produtos e Acessórios da Proposta Comercial.
+@type Function
+@author Alan Teles de Oliveira
+@since 10/01/2019
+@version 12.1.17
+@param cFieldDom, character, Nome do campo de domínio do gatilho.
+@param cFieldCDom, character, Nome do campo que receberá o valor de retorno do gatilho.
+@param cMdlDetail, character, Nome da ModelGrid que está executando o gatilho.	
+@param uValue, variant,	Conteúdo previsto para ser levado ao contra domínio.
+@return variant, O tipo do conteúdo do retorno deve obedecer ao tipo de dado válido para o contra domínio
+@obs Utilizado para aplicar as regras de desconto customizado.
+@see http://tdn.totvs.com/pages/releaseview.action?pageId=312154895
+@history 26/02/2019, Alan Teles de Oliveira, regra de gatilho dos campos de valor de desconto e porcentagem de desconto.
+@history 26/03/2019, Alan Teles de Oliveira, reestruturação do gatilho de campos da proposta comercial.
+/*/
+User Function FT600UTRIGGER()
+
+	Local aArea 		:= GetArea()
+	Local cFieldDom		:= ParamIXB[1]
+	Local cFieldCDom 	:= ParamIXB[2]
+	Local cMdlDetail 	:= ParamIXB[3]
+	Local uValue 		:= ParamIXB[4]
+	Local cIdProd  		:= ''
+	Local cCodEnt		:= ''
+	Local cLojEnt		:= ''
+	Local nPerDesc		:= 0
+	Local nPrcVen		:= 0
+	local nPrcTab := 0
+	local nQuant := 0
+	Local oModel		:= Nil
+	Local oMdlADY		:= Nil
+	Local oMdlPos		:= Nil
+	Local uRet 			:= Nil
+
+	oModel		:= FwModelActive()
+	oMdlPos		:= oModel:GetModel(cMdlDetail)
+	oMdlADY		:= oModel:GetModel('ADYMASTER')
+	uRet 		:= uValue
+	cIdProd 	:= oMdlPos:GetValue("ADZ_PRODUT")
+	cCodEnt		:= oMdlADY:GetValue("ADY_CODIGO")
+	cLojEnt		:= oMdlADY:GetValue("ADY_LOJA")
+
+	Do Case 
+		Case cFieldDom == 'ADZ_TABAGR'
+			if cFieldCDom == 'ADZ_TOTAL'
+				If SubStr(cFilAnt, 1, 4) == '03MT'
+					nPrcTab := fPrcTab()
+				else
+					nPrcTab :=  u_fInicPRC(oMdlPos:GetValue("ADZ_TABAGR"))
+				EndIf
+				//Se o item não possuir um preço de tabela, zero todos os valores
+				If nPrcTab == 0
+					oMdlPos:LoadValue("ADZ_PRCTAB", 0)
+					oMdlPos:LoadValue("ADZ_PRCVEN", 0)
+					oMdlPos:LoadValue("ADZ_VALDES", 0)
+					oMdlPos:LoadValue("ADZ_DESCON", 0)
+					uRet := 0
+				Else
+					nPerDesc := NoRound(u_fPutDesc(cFilAnt, cIdProd, cCodEnt, cLojEnt))
+					nPrcVen	:= NoRound((nPrcTab * (1 - ( nPerDesc/100 ))), GetSX3Cache("ADZ_PRCVEN","X3_DECIMAL"))
+					nQuant := oMdlPos:GetValue("ADZ_QTDVEN")
+					oMdlPos:LoadValue("ADZ_PRCTAB", nPrcTab)
+					oMdlPos:SetValue("ADZ_PRCVEN", nPrcVen)
+					oMdlPos:LoadValue("ADZ_DESCON", nPerDesc)
+					oMdlPos:LoadValue("ADZ_VALDES", Round(((nPrcTab - nPrcVen) * nQuant), GetSX3Cache("ADZ_VALDES","X3_DECIMAL")))
+					uRet := nQuant * oMdlPos:GetValue("ADZ_PRCVEN")
+				EndIf
+			endif
+	EndCase
+
+	RestArea(aArea)
+
+Return uRet
+
+/*/{Protheus.doc} fPrcTab
+Tela para informar o valor a ser preenchido no campo ADZ_PRCTAB quando SENAI.
+@type function
+@author Alan Teles de Oliveira
+@since 26/03/2016
+@version 12.1.17
+@return numeric, preço da tabela
+/*/
+Static Function fPrcTab()
+
+    Local cMsg      := ''
+    Local nVlTotal  := 0
+    Local nRet 		:= 0
+	Local oDlg      := Nil
+    Local bChOk     := Nil
+
+    cMsg        := 'Informe o valor desejado como preço de tabela.'
+    bChOk       := {|| If(nVlTotal > 0, (nRet := nVlTotal, oDlg:End()) , MsgInfo('Deve ser informado o preço de tabela para o produto.', 'Atenção - FT600UTRIGGER'))}
+    oDlg        := MsDialog():New(092, 232, 317, 696, 'Valor da Tabela de Preço - SENAI.',,,, DS_MODALFRAME, CLR_BLACK, CLR_WHITE,,, .T.)
+    oPnlInfo    := TPanel():New(0, 0, cMsg,   oDlg,, .F., .F.,,, 226, 106)
+	
+	TSay():New(031, 013, {||cMsg},  									oPnlInfo,,, .F., .F., .F., .T., CLR_BLACK, CLR_WHITE, 167, 008)
+    TSay():New(066, 016, {||"Valor:"},  								oPnlInfo,,, .F., .F., .F., .T., CLR_BLACK, CLR_WHITE, 032, 008)
+	TGet():New(066, 064, {|u| If(PCount()>0, nVlTotal := u, nVlTotal)},	oPnlInfo, 060, 008, GetSx3Cache('ADZ_PRCTAB', 'X3_PICTURE'),, CLR_BLACK, CLR_WHITE,,,, .T., "",,, .F., .F.,, .F., .F., "", "nVlTotal",,)
+
+    oDlg:Activate(EnchoiceBar(oDlg, bChOk, {||},,,,, .F., .F., .F.))
+
+Return nRet

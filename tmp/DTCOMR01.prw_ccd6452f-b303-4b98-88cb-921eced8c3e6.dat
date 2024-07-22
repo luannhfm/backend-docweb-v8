@@ -1,0 +1,1892 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RwMake.CH"
+#Include "REPORT.CH"
+#include "Fileio.ch"
+
+/*/{Protheus.doc} DTCOMR01
+	Função responsável pela geração do Mapa Comparativo de Preços
+@author Do.It MG
+@since 13/03/2014
+
+@type function
+@history 13/06/2019, Franklin de Brito de Oliveira, Adicionado validação para seleção do vencedor quando o tipo de impressão for 1 - Menor Preço
+@history 09/10/2019, Franklin de Brito de Oliveira, Correções diversas na motagem do arquivo
+/*/
+User Function DTCOMR01()
+
+Local cFornVenc		:= ""
+Local aCbx			:= {}
+Local cQuery		:= ""
+Local aDados		:= {}              //Array com os dados a serem impressos no relatorio
+Local cTmp			:= GetNextAlias()  //tabela temporaria
+Local nItem			:= 0
+Local nVezes		:= 0
+
+Local nVlrUntRes	:= 0
+Local nVlrResult	:= 0
+Local nVlrUntTot	:= 0
+Local nVlrTotal		:= 0 
+Local cVlrTotal		:= ""
+Local nPosInicial	:= 1
+Local cItemSC1  	:= ""
+Local cProdSC8  	:= ""
+Local nRegSC8   	:= SC8->( Recno() )
+Local nCont			:= 0
+Local nMenVal 		:= 0
+Local nTotal  		:= 0
+
+Private nTotRes		:= 0
+Private cNumSC8		:= SC8->C8_NUM
+Private _dDtAnalise	:= CTOD('  /  /  ')
+Private _nTipo		:= 0
+Private cOrd		:= ""
+Private aVenc		:= {}
+Private aObs		:= {}
+
+Aadd( aCbx, OemToAnsi("MENOR PREÇO"    ))
+Aadd( aCbx, OemToAnsi("MEDIA DE PREÇOS" ))
+Aadd( aCbx, OemToAnsi("VENCEDOR" ))
+
+//--------------------------------------
+// Seleção de cálculo
+//---------------------------------------------------------
+
+DEFINE MSDIALOG oDlg FROM  94,1 TO 200,293 TITLE OemToAnsi( "Seleção de geração da coluna Media de Preço" ) PIXEL
+
+@ 09,15 Say OemToAnsi("Tipo:") SIZE 150,7 OF oDlg PIXEL
+
+@ 22,10 COMBOBOX oCbx VAR cOrd ITEMS aCbx SIZE 100,36 PIXEL OF oDlg
+
+DEFINE SBUTTON FROM 15,115 TYPE 1 ENABLE OF oDlg ACTION ( _nTipo := oCbx:nAt, oDlg:End() )
+DEFINE SBUTTON FROM 35,115 TYPE 2 ENABLE OF oDlg ACTION ( _nTipo := 0, oDlg:End() )
+
+ACTIVATE MSDIALOG oDlg CENTERED
+
+If _nTipo == 0
+	Return
+EndIf
+
+cQuery := " SELECT SC1.C1_NUM "+CRLF
+cQuery += " 	,SC1.C1_ITEM "+CRLF
+cQuery += " 	,SC8.C8_NUM "+CRLF
+cQuery += " 	,SC8.C8_ITEM "+CRLF
+cQuery += " 	,SC8.C8_PRODUTO "+CRLF
+cQuery += " 	,SC8.C8_UM "+CRLF
+cQuery += " 	,SC8.C8_QUANT "+CRLF
+cQuery += " 	,SC8.C8_FORNECE "+CRLF
+cQuery += " 	,SC8.C8_LOJA "+CRLF
+cQuery += " 	,SA2.A2_NOME "+CRLF
+cQuery += " 	,SC8.C8_PRECO "+CRLF
+cQuery += " 	,SC8.C8_TOTAL "+CRLF
+cQuery += " 	,SC8.C8_DATPRF "+CRLF
+cQuery += " 	,SC8.C8_EMISSAO "+CRLF
+cQuery += " 	,SY1.Y1_NOME "+CRLF
+cQuery += " 	,SC1.R_E_C_N_O_ SC1_RECNO "+CRLF
+cQuery += " 	,SC8.C8_NUMPED "+CRLF
+cQuery += " 	,COALESCE(TRIM(COI.COI_DTHANL), COK.COK_DTHATL) COI_DTHANL "+CRLF
+cQuery += " 	,COI.COI_DTHCOT "+CRLF
+cQuery += " FROM  " + RetSqlName("SC8") + " SC8 "+CRLF
+cQuery += " INNER JOIN  " + RetSqlName("SC1") + " SC1 ON SC1.D_E_L_E_T_ = ' ' "+CRLF
+cQuery += " 	AND SC1.C1_FILIAL = SC8.C8_FILIAL "+CRLF
+cQuery += " 	AND SC1.C1_NUM = SC8.C8_NUMSC "+CRLF
+cQuery += " 	AND SC1.C1_ITEM = SC8.C8_ITEMSC "+CRLF
+cQuery += " INNER JOIN  " + RetSqlName("SA2") + " SA2 ON SA2.D_E_L_E_T_ = ' ' "+CRLF
+cQuery += " 	AND SA2.A2_FILIAL = '" + xFilial("SA2") + "' "+CRLF
+cQuery += " 	AND SA2.A2_COD = SC8.C8_FORNECE "+CRLF
+cQuery += " 	AND SA2.A2_LOJA = SC8.C8_LOJA "+CRLF
+cQuery += " LEFT JOIN  " + RetSqlName("SY1") + " SY1 ON SY1.D_E_L_E_T_ = ' ' "+CRLF
+cQuery += " 	AND SY1.Y1_FILIAL = '" + xFilial("SY1") + "'"+CRLF
+cQuery += " 	AND SY1.Y1_COD = SC1.C1_XCODCOM "+CRLF
+cQuery += " LEFT JOIN  " + RetSqlName("COI") + " COI ON COI.D_E_L_E_T_ = ' ' "+CRLF
+cQuery += " 	AND COI.COI_FILIAL = SC8.C8_FILIAL "+CRLF
+cQuery += " 	AND COI.COI_NUMSC = SC8.C8_NUMSC "+CRLF
+cQuery += " 	AND COI.COI_ITEM = SC8.C8_ITEMSC "+CRLF
+
+cQuery += " LEFT JOIN " + RetSqlName("COK") + " COK ON COK.D_E_L_E_T_ = ' '  "+CRLF
+cQuery += "     AND COK_FILIAL=C8_FILIAL AND COK_NUMSC=C8_NUMSC AND COK_ITEM=C8_ITEM "+CRLF
+cQuery += "     AND COK_FORNEC=C8_FORNECE AND COK_LOJA=C8_LOJA AND COK_DOCATL=C8_NUM "+CRLF
+
+cQuery += " WHERE SC8.D_E_L_E_T_ = ' ' "+CRLF
+cQuery += " 	AND SC8.C8_FILIAL = '" + SC8->C8_FILIAL +"'"+CRLF
+cQuery += " 	AND SC8.C8_NUM = '" + cNumSC8 + "'"+CRLF
+cQuery += " ORDER BY SC1.C1_NUM "+CRLF
+cQuery += " 	,SC1.C1_ITEM "+CRLF
+cQuery += " 	,SC1.C1_PRODUTO "+CRLF
+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",cQuery )//Salva cQry montada
+
+cQuery := ChangeQuery( cQuery )
+
+dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery), cTmp, .T., .T. )
+
+TcSetField( cTmp, "C8_QUANT"  , "N", TamSX3("C8_QUANT"  )[1], TamSX3("C8_QUANT")[2] )
+TcSetField( cTmp, "C8_PRECO"  , "N", TamSX3("C8_PRECO"  )[1], TamSX3("C8_PRECO")[2] )
+TcSetField( cTmp, "C8_TOTAL"  , "N", TamSX3("C8_TOTAL"  )[1], TamSX3("C8_TOTAL")[2] )
+TcSetField( cTmp, "C8_DATPRF" , "D", TamSX3("C8_DATPRF" )[1]                        )
+TcSetField( cTmp, "C8_EMISSAO", "D", TamSX3("C8_EMISSAO")[1]                        )
+
+If (cTmp)->( Eof() )
+	
+	Alert( "Não há dados para emissão do relatorio!" )
+	
+	(cTmp)->( dbCloseArea() )
+	
+	SC8->( dbGoTo( nRegSC8 ) )
+	
+	Return .t.
+	
+EndIf
+
+DbSelectArea("SC1")
+SC1->( dbSetOrder( 1 ) )
+
+// array com todos os preços do item
+// usado posteriormente para gerar o array de vencedor
+_aItPrc := {}
+
+While (cTmp)->( !Eof() )	
+	
+	cFornVenc := ""
+	
+	SC1->( dbGoTo( (cTmp)->SC1_RECNO ) )
+	
+	If cItemSC1 # (cTmp)->C1_ITEM
+		_aItPrc := {}
+	//If (cProdSC8) # (cTmp)->( C8_PRODUTO )
+		nCont := 1
+		nItem += 1
+				
+		// Alteração - Peder Munksgaard (Do.it Sistemas) - 05/12/2014
+		// Contemplar a analise já realizada.
+		If _nTipo == 2 // media
+			nMenVal := 0
+			nTotal  := 0
+		ElseIf _nTipo == 3 // vencedor
+			If !Empty((cTmp)->C8_NUMPED) .And. (cTmp)->C8_NUMPED <> 'XXXXXX'
+				nMenVal := (cTmp)->C8_PRECO
+				nTotal  := (cTmp)->C8_TOTAL
+			Else
+				nMenVal := 0
+				nTotal  := 0
+			EndIf
+		ElseIf _nTipo == 1 // menor
+			nMenVal := 0
+			nTotal  := 0
+		Endif
+		//
+		
+		cDescricao := EncodeUTF8(iif( Empty( SC1->C1_XXDESCR ), SC1->C1_DESCRI, SC1->C1_XXDESCR ))
+		
+		//Substituir os caracteres < e >, caso exista
+		cDescricao := StrTran(  StrTran(cDescricao, ">", "%&gt;") , "<", "&gt;")
+		
+		IF !Empty((cTmp)->C8_NUMPED)
+			_dDtAnalise := SubStr((cTmp)->COI_DTHANL,1,10)
+		Endif
+
+		Aadd( aDados, { (cTmp)->C1_NUM,;                              //1
+		(cTmp)->C8_NUM,;                                              //2
+		(cTmp)->C8_PRODUTO,;                                          //3
+		StrTran( StrTran( cDescricao, CRLF, ""), "  ", ""),;          //4
+		(cTmp)->C8_UM,;                                               //5
+		Transform( (cTmp)->C8_QUANT, PesqPict("SC8","C8_QUANT") ),;   //6
+		"",;                                                          //7
+		"",;                                                          //8
+		"",;                                                          //9
+		"",;                                                          //10
+		"",;                                                          //11
+		(cTmp)->C8_DATPRF,; 			                                  //12
+		StrZero(nItem, 4 ),;                                          //13
+		(cTmp)->C8_EMISSAO,;                                          //14
+		(cTmp)->Y1_NOME,;                                             //15
+		_dDtAnalise } )                                               //16
+		
+		If _nTipo = 1 .OR. _nTipo = 3 // Menor ou vencedor
+			fPegaObs(aObs,SC8->C8_FILIAL,(cTmp)->C8_NUM,(cTmp)->C8_ITEM)
+		EndIF	
+		nPosInicial := Len( aDados )
+	
+	EndIf
+	
+	If Empty((cTmp)->C8_NUMPED) .OR. (cTmp)->C8_NUMPED = "XXXXXX"
+		_nVenc := 1
+	Else
+		_nVenc := 0
+	EndIf
+	
+	If _nTipo <> 1 .Or. (_nTipo == 1 .And. (cTmp)->C8_PRECO > 0)
+		Aadd(_aItPrc, {(cTmp)->C8_FORNECE, Alltrim((cTmp)->A2_NOME), (cTmp)->C8_TOTAL, (cTmp)->C8_PRECO, StrZero(nItem, 4 ), _nVenc } )
+	EndIf
+	
+	cItemSC1 := (cTmp)->C1_ITEM
+	cProdSC8 := (cTmp)->C8_PRODUTO
+	if nCont > 1
+		Aadd( aDados, aClone( aDados[Len( aDados )] ) )
+	EndIf
+	
+	//Aviso("VarInfo", VarInfo("aDados",aDados,,.F.) , {"ok"},3 )
+	
+	aDados[Len( aDados )][07] := (cTmp)->C8_FORNECE          			                   	// Cod. Fornecedor
+	aDados[Len( aDados )][08] := (cTmp)->C8_LOJA                      			         	// Loja
+	aDados[Len( aDados )][09] := Alltrim((cTmp)->A2_NOME)                      				// Nome
+	aDados[Len( aDados )][10] := Transform( (cTmp)->C8_PRECO, PesqPict("SC8","C8_PRECO") ) // Valor Unitário
+	aDados[Len( aDados )][11] := Transform( (cTmp)->C8_TOTAL, PesqPict("SC8","C8_TOTAL") ) // Valor Total
+	aDados[Len( aDados )][12] := Dtoc( (cTmp)->C8_DATPRF )                            		// Necessidade
+	aDados[Len( aDados )][13] := StrZero(nItem, 4 )                             				// Item
+	
+	nVlrUntTot += (cTmp)->C8_PRECO
+	nVlrTotal  += (cTmp)->C8_TOTAL
+	nVezes     += iif((cTmp)->C8_PRECO > 0,1,0)
+	
+	// Alteração - Peder Munksgaard (Do.it Sistemas) - 04/12/2014
+	// Mudança na forma de considerar o 'Menor Preço' quando cotação já estiver analisada.
+	
+	//Escolhe o vencedor sempre pelo menor valor
+	If _nTipo = 1 .AND. (cTmp)->C8_PRECO > 0 .and.  ((cTmp)->C8_PRECO < nMenVal .Or. nMenVal == 0)
+		nMenVal := (cTmp)->C8_PRECO
+		nTotal  := (cTmp)->C8_TOTAL
+		cFornVenc := Iif(_nTipo == 1 .or._nTipo == 3,(cTmp)->A2_NOME,'')
+	EndIF
+	
+    If _nTipo = 3 .AND. !Empty((cTmp)->C8_NUMPED) .And. (cTmp)->C8_NUMPED <> 'XXXXXX'	
+		nMenVal := (cTmp)->C8_PRECO
+		nTotal  := (cTmp)->C8_TOTAL
+		cFornVenc := (cTmp)->A2_NOME
+	EndIF
+	
+	If _nTipo == 2
+		nVlrUntRes := ( nVlrUntTot / nVezes )
+		nVlrResult := ( nVlrTotal  / nVezes )
+	Else
+	    // Alteração Peder Munksgaard (Do.it Sistemas) - 04/12/2014
+		If _nTipo = 1 .AND. (cTmp)->C8_PRECO > 0 .And. (nVlrUntRes == 0 .Or. nVlrUntRes > (cTmp)->C8_PRECO)
+			nVlrUntRes := (cTmp)->C8_PRECO
+			nVlrResult := (cTmp)->C8_TOTAL
+		EndIf
+		
+		If _nTipo = 3 .AND. !Empty((cTmp)->C8_NUMPED) .And. (cTmp)->C8_NUMPED <> 'XXXXXX'
+			nVlrUntRes := (cTmp)->C8_PRECO
+			nVlrResult := (cTmp)->C8_TOTAL
+		EndIf
+		//		
+	EndIf
+	
+	(cTmp)->( dbSkip() )
+	
+	//If (cTmp)->(C8_PRODUTO) # (cProdSC8) .Or. (cTmp)->( Eof() )
+	If (cTmp)->C1_ITEM # (cItemSC1) .Or. (cTmp)->( Eof() )
+		
+		if _nTipo == 1
+			// ordeno pelo valor total
+			aSort(_aItPrc ,,, {|x,y| x[3] < Y[3] } )
+		Elseif _nTipo == 3
+			aSort(_aItPrc ,,, {|x,y| x[6] < Y[6] } )
+		EndIf
+
+		If _nTipo == 1 .OR. (_nTipo == 3 .AND. _aItPrc[1,6] = 0)
+           // Paulo Schwind - 05/08/2019 -  Estava ocorrendo erro quando existia valor = 0
+           // Faz a verificação antes de usar os vetores 
+		    //IF LEN(aVenc) > 0 .OR. LEN(_aItPrc) > 0
+		    If LEN(_aItPrc) > 0
+			  _nPFor := aScan(aVenc, {|x,y| x[4] == _aItPrc[1,1] } )
+			  If _nPFor > 0
+			     aVenc[_nPFor,2] += ";" + _aItPrc[1,5]
+			    	aVenc[_nPFor,3] +=  _aItPrc[1,3]
+			  Else
+			     aAdd(aVenc,{Padr( _aItPrc[1,2], 60 ),_aItPrc[1,5], _aItPrc[1,3], _aItPrc[1,1] })
+			  EndIf
+		    ENDIF	
+		EndIf
+
+		//--- Resultado Final
+		
+		Aadd( aDados, aClone( aDados[nPosInicial] ) )
+		
+		cVlrTotal := Transform( nVlrTotal, PesqPict( "SC8", "C8_TOTAL", 14) )
+		
+		aDados[Len( aDados )][07] := ""                                                       					// Cod. Fornecedor
+		aDados[Len( aDados )][08] := ""                                                        					// Loja
+		aDados[Len( aDados )][09] := Space( 20 ) + "R  E  S  U  L  T  A  D  O"                   				// Fornecedor
+		aDados[Len( aDados )][10] := Padl( Transform( nVlrUntRes, PesqPict( "SC8", "C8_PRECO") ), 20 ) 			// Valor Unitário
+		aDados[Len( aDados )][11] := Transform( nVlrResult, PesqPict( "SC8", "C8_TOTAL") ) 						// Valor Total
+		aDados[Len( aDados )][13] := aDados[Len( aDados )][13]                                            		// Item
+		nTotRes    += nVlrResult		          
+		nVlrUntTot := 0
+		nVlrTotal  := 0
+		nVezes     := 0
+		nVlrUntRes := 0
+		nVlrResult := 0
+		
+	EndIf
+		
+	nCont++
+End
+
+(cTmp)->( dbCloseArea() )
+
+SC8->( dbGoTo( nRegSC8 ) )
+
+fProExcel(aDados)
+
+Return(Nil)
+
+//Função para retornar um array com as observações cadastradas nos itens no ato da análise
+Static Function fPegaObs(aObsIt,cFiliCot,cNumCt,cItemCt)
+	Local aArea  := GetArea()  
+	Local cNomFor := ""
+	Local _aAreaSC8 := {"SC8", SC8->(IndexOrd()), SC8->(Recno()) }
+	
+	dbSelectArea("SC8")
+	SC8->(dbSetOrder())
+	SC8->(dbGoTop())
+	If SC8->( dbSeek(cFiliCot+cNumCt) )
+		While cFiliCot+cNumCt == SC8->(C8_FILIAL + C8_NUM)
+			If SC8->C8_ITEM = cItemCt .AND. !Empty(SC8->C8_OBS)
+				cNomFor := Posicione("SA2", 1, xFilial("SA2")+SC8->C8_FORNECE+SC8->C8_LOJA, "A2_NOME")
+				Aadd(aObsIt,{cNomFor,cItemCt, SC8->C8_OBS })
+			EndIf
+			SC8->(dbSkip())
+		EndDo
+	EndIf
+	
+	dbSelectArea(_aAreaSC8[1]) ; SC8->(dbSetOrder(_aAreaSC8[2])) ; SC8->(dbGoTo(_aAreaSC8[3]))
+Return
+
+// Montagem do arquivo Planilha do Excel
+Static Function fProExcel(aDados)
+Local cPatNew, cPlaNew
+
+Local cPlaTmp := CriaTrab(, .F.) + '.txt'
+Local nHdlPla := FCreate(cPlaTmp)
+Local cCamLoc := SuperGetMV("MV_LOCMAP",.T.,"C:\MapadePrecos\")
+
+If nHdlPla < 0
+	MsgStop("Não foi possível criar arquivo de planilha")
+	Return(Nil)
+EndIf
+
+//Gera Arquivo XML
+FGeraXml(nHdlPla, aDados)
+
+//Fecha Arquivo Temporario
+FClose(nHdlPla)
+
+//Cria arquivo excel no local escolhido pelo usuario
+If _nTipo == 1
+	cCriterio := "Menor_Preco"
+ElseIf _nTipo == 2
+	cCriterio := "Media_De_Precos"
+ElseIf _nTipo == 3
+	cCriterio := "Vencedor"
+EndIf
+
+_cArqXml := cCamLoc+'Mapa_de_Preco_Cotacao_'+SC8->C8_NUM+'_'+cCriterio+'.xml'
+_cArqPdf := cCamLoc+'Mapa_de_Preco_Cotacao_'+SC8->C8_NUM+'_'+cCriterio+'.pdf'
+If File(_cArqXml)
+	If FErase(_cArqXml) <> 0
+		MsgAlert("Falha ao tentar apagar a versão anterior do arquivo " + CRLF + ;
+		fGetErro(Ferror()) + CRLF + "Verifique se o arquivo "+ _cArqXml +" está aberto" )
+		Return
+	EndIf
+EndIf
+
+If File(_cArqPdf)
+	If FErase(_cArqPdf) <> 0
+		MsgAlert("Falha ao tentar apagar a versão anterior do arquivo " + CRLF + ;
+		fGetErro(Ferror()) + CRLF + "Verifique se o arquivo "+ _cArqPdf +" está aberto" )
+		Return
+	EndIf
+EndIf
+
+cPlaNew := cCamLoc+'Mapa_de_Preco_Cotacao_'+SC8->C8_NUM+'_'+cCriterio
+
+fErase(cPlaNew)
+
+If ! Empty(cPlaNew)
+	
+	cPlaNew := IIf(rAt('.XML', cPlaNew) == 0, cPlaNew + '.xml', cPlaNew)
+	cPatNew := IIf(rAt('\', cPlaNew) == 0,      '', SubStr(cPlaNew, 1, rAt('\', cPlaNew)))
+	cPlaNew := IIf(rAt('\', cPlaNew) == 0, cPlaNew, SubStr(cPlaNew, rAt('\', cPlaNew) + 1))
+	
+	FRename(cPlaTmp, cPlaNew)
+	CPYS2T(cPlaNew, cPatNew, .F.)
+	FErase(cPlaNew)
+	
+	If ! ApOleClient('MsExcel')
+		//MsgStop('Excel nao instalado, o arquivo foi salvo em:' + CRLF + cPatNew, "Atenção")
+		MsgStop('Excel nao instalado', "Atenção")
+	Else
+		Processa({||fGeraPdf(cPatNew,cPlaNew)},'Gerando PDF...')
+	EndIf
+	
+	// se não conseguiu gerar o pdf pergunta se deseja abrir a pasta onde gerou o excel
+	If !File(_cArqPdf)
+		_cMsgAv := "Não foi possivel gerar o pdf da cotação." + CRLF
+		_cMsgAv += "Arquivo excel gerado em:" + CRLF + cPatNew + CRLF + "O que deseja fazer?"
+		_nAv := Aviso( "Arquivo xml", _cMsgAv ,{"Abrir pasta","Cancelar"} , 3 )
+		If _nAv == 1
+			WinExec('explorer /select, "'+cPatNew + cPlaNew+'"')
+		EndIf
+	EndIf
+	
+Endif
+
+Return(Nil)
+
+Static Function fGetErro(_nErro)
+	Local _cRet := ""
+	
+	Do Case
+		Case _nErro = 1
+			_cRet := cValToChar(_nErro) + " Arquivo não localizado. "
+		Case _nErro = 13
+			_cRet := cValToChar(_nErro) + " Acesso negado. "
+		Case _nErro = 516
+			_cRet := cValToChar(_nErro) + " Arquivo em uso por outro processo. "
+		Otherwise
+			_cRet := cValToChar(_nErro) + " Erro desconhecido. (vide FError() TDN) "
+	EndCase
+	
+Return(_cRet)
+
+Static Function fGeraPdf(cCaminho,cArquivo)
+Local cMacro 		:= ""
+Local cCamVbs   	:= cCaminho+"FSEST888.vbs"
+Local nArq  		:= FCreate(cCamVbs)
+Local cArqPdf     := cCaminho+StrTran(cArquivo,'.xml','.pdf')
+Local lAbriu      := .F.
+Local nCont       := 0    
+Local cCamLoc     := SuperGetMV("MV_LOCMAP",.T.,"C:\MapadePrecos\")
+
+IF nArq != -1
+	MakeDir(cCamLoc)
+	cMacro+= 'Set ExcelApp = CreateObject("Excel.Application")'+CRLF
+	cMacro+= 'ExcelApp.Application.Visible = False'+CRLF
+	cMacro+= 'Set ExcelBook = ExcelApp.Workbooks.Open("'+cCaminho+cArquivo+'", True)'+CRLF
+	cMacro+= 'Set myDoc = ExcelBook.Worksheets(1)'+CRLF
+	cMacro+= 'myDoc.ExportAsFixedFormat EXCEL_PDF, "'+cArqPdf+'"'+CRLF
+	cMacro+= 'ExcelBook.Close SaveChanges=True'
+	FWrite(nArq,cMacro)
+	FClose(nArq)
+	ShellExecute("open",cCamVbs,"","",2)
+	Sleep(10000)
+	While !lAbriu .And. nCont <= 100
+		nCont++
+		If File(cArqPdf)
+			lAbriu := .T.
+			ShellExecute("open",cArqPdf,"","",3)
+		EndIF
+	EndDo
+	
+EndIF
+RETURN
+
+
+
+//===========================================================
+// Monta arquivo XML do Excel
+//===========================================================
+Static Function FGeraXml(nHdlPla, aDados)
+
+Local cXmls := ""
+Local nItem := "0001"
+Local nQtdFor := 0
+Local nI := 0
+Local aForQtd := {}
+Local nIndex	:= 16
+Local cNumLin	:= "500000000"
+Local cColun	:= "500000000"
+Local cIndexF	:= "6"
+Local nIniFor	:= 1
+Local aDados2 := {}
+Local aJaFiz		:= {}
+Local aArea := {}
+Local lEptMtv	:= .F.
+Local nAjusta  := 0 // - ET
+Local ix1, ix2, ixt
+Local nRw  := 0
+Local cVenc := ""
+Private cCriterio := ""
+
+If _nTipo == 1 // Menor
+	cCriterio := OemToAnsi("MENOR PRE&Ccedil;O")
+ElseIf _nTipo == 2
+	cCriterio := OemToAnsi("MEDIA DE PRE&Ccedil;OS")
+ElseIf _nTipo == 3
+	cCriterio := OemToAnsi("VENCEDOR")
+EndIf
+
+//---
+cXmls += '<?xml version="1.0"?>' + CRLF
+cXmls += '<?mso-application progid="Excel.Sheet"?>' + CRLF
+cXmls += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"' + CRLF
+cXmls += ' xmlns:o="urn:schemas-microsoft-com:office:office"' + CRLF
+cXmls += ' xmlns:x="urn:schemas-microsoft-com:office:excel"' + CRLF
+cXmls += ' xmlns:dt="uuid:C2F41010-65B3-11d1-A29F-00AA00C14882"' +CRLF
+cXmls += ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"' + CRLF
+cXmls += ' xmlns:html="http://www.w3.org/TR/REC-html40">' + CRLF
+cXmls += ' <DocumentProperties xmlns="urn:schemas-microsoft-com:office:office">' + CRLF
+cXmls += '  <Author>luis.magalhaes</Author>' + CRLF
+cXmls += '  <LastAuthor>doit</LastAuthor>' + CRLF
+cXmls += '  <LastPrinted>2011-03-31T19:44:29Z</LastPrinted>' + CRLF
+cXmls += '  <Created>2008-12-23T20:20:02Z</Created>' + CRLF
+cXmls += '  <LastSaved>2014-07-09T13:06:28Z</LastSaved>' + CRLF
+cXmls += '  <Company>SFIEMT</Company>' + CRLF
+cXmls += '  <Version>14.00</Version>' + CRLF
+cXmls += ' </DocumentProperties>' + CRLF
+cXmls += ' <OfficeDocumentSettings xmlns="urn:schemas-microsoft-com:office:office">' + CRLF
+cXmls += '  <AllowPNG/>' + CRLF
+cXmls += ' </OfficeDocumentSettings>' + CRLF
+cXmls += ' <ExcelWorkbook xmlns="urn:schemas-microsoft-com:office:excel">' + CRLF
+cXmls += '  <WindowHeight>10000</WindowHeight>' + CRLF //8580
+cXmls += '  <WindowWidth>11340</WindowWidth>' + CRLF
+cXmls += '  <WindowTopX>480</WindowTopX>' + CRLF
+cXmls += '  <WindowTopY>30</WindowTopY>' + CRLF
+cXmls += '  <TabRatio>606</TabRatio>' + CRLF
+cXmls += '  <ProtectStructure>False</ProtectStructure>' + CRLF
+cXmls += '  <ProtectWindows>False</ProtectWindows>' + CRLF
+cXmls += ' </ExcelWorkbook>' + CRLF
+cXmls += ' <Styles>' + CRLF
+cXmls += '  <Style ss:ID="Default" ss:Name="Normal">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial"/>' + CRLF
+cXmls += '   <Interior/>' + CRLF
+cXmls += '   <NumberFormat/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s18" ss:Name="Moeda">' + CRLF
+cXmls += '   <NumberFormat' + CRLF
+cXmls += '    ss:Format="_(&quot;R$ &quot;* #,##0.00_);_(&quot;R$ &quot;* \(#,##0.00\);_(&quot;R$ &quot;* &quot;-&quot;??_);_(@_)"/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m57039812">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Left" ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+                              
+// - ET 05/09/14
+cXmls += '  <Style ss:ID="s217">'+CRLF
+cXmls += '   <Alignment ss:Horizontal="Right" ss:Vertical="Center" ss:WrapText="1"/>'+CRLF
+cXmls += '   <Borders>'+CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>'+CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>'+CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>'+CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>'+CRLF
+cXmls += '   </Borders>'+CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Bold="1"/>'+CRLF
+cXmls += '   <Interior/>'+CRLF
+cXmls += '   <NumberFormat ss:Format="0"/>'+CRLF
+cXmls += '   <Protection/>'+CRLF
+cXmls += '  </Style>'+CRLF
+
+cXmls += '  <Style ss:ID="m58403476">'+CRLF
+cXmls += '   <Alignment ss:Horizontal="Left" ss:Vertical="Center" ss:WrapText="1"/>'+CRLF
+cXmls += '   <Borders>'+CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>'+CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>'+CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>'+CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>'+CRLF
+cXmls += '   </Borders>'+CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Bold="1"/>'+CRLF
+cXmls += '   <Interior/>'+CRLF
+cXmls += '   <NumberFormat ss:Format="0"/>'+CRLF
+cXmls += '   <Protection/>'+CRLF
+cXmls += '  </Style>'+CRLF
+
+cXmls += '  <Style ss:ID="m58403516">'+CRLF
+cXmls += '   <Alignment ss:Horizontal="Left" ss:Vertical="Bottom"/>'+CRLF
+cXmls += '   <Borders>'+CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>'+CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>'+CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>'+CRLF
+cXmls += '   </Borders>'+CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>'+CRLF
+cXmls += '   <Protection/>'+CRLF
+cXmls += '  </Style>'+CRLF
+//Final                 
+
+cXmls += '<Style ss:ID="s193">                                                                              '+CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>                                       '+CRLF
+cXmls += '   <Borders>                                                                                      '+CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>                          '+CRLF
+cXmls += '   </Borders>                                                                                     '+CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>                                      '+CRLF
+cXmls += '   <Protection/>                                                                                  '+CRLF
+cXmls += '  </Style>                                                                                        '+CRLF
+cXmls += '<Style ss:ID="s171">                                                                              '+CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>                                       '+CRLF
+cXmls += '   <Borders/>                                                                                     '+CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>                                      '+CRLF
+cXmls += '   <Protection/>                                                                                  '+CRLF
+cXmls += '</Style>                                                                                          '+CRLF
+cXmls += '<Style ss:ID="s173" ss:Parent="s18">                                                              '+CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>                                       '+CRLF
+cXmls += '   <Borders/>                                                                                     '+CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>                                      '+CRLF
+cXmls += '   <NumberFormat ss:Format="&quot;R$ &quot;#,##0.00_);[Red]\(&quot;R$ &quot;#,##0.00\)"/>         '+CRLF
+cXmls += '   <Protection/>                                                                                  '+CRLF
+cXmls += '</Style>                                                                                          '+CRLF
+cXmls += '<Style ss:ID="s191" ss:Parent="s18">                                                              '+CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>                                       '+CRLF
+cXmls += '   <Borders>                                                                                      '+CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>                         '+CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>                           '+CRLF
+cXmls += '   </Borders>                                                                                     '+CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>                                      '+CRLF
+cXmls += '   <NumberFormat ss:Format="&quot;R$ &quot;#,##0.00_);[Red]\(&quot;R$ &quot;#,##0.00\)"/>         '+CRLF
+cXmls += '   <Protection/>                                                                                  '+CRLF
+cXmls += ' </Style>                                                                                         '+CRLF
+cXmls += ' <Style ss:ID="s174" ss:Parent="s18">                                                             '+CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>                                       '+CRLF
+cXmls += '   <Borders>                                                                                      '+CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2"/>                         '+CRLF
+cXmls += '   </Borders>                                                                                     '+CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>                                      '+CRLF
+cXmls += '   <Protection/>                                                                                  '+CRLF
+cXmls += ' </Style>                                                                                         '+CRLF
+cXmls += ' <Style ss:ID="s194">                                                                             '+CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>                                       '+CRLF
+cXmls += '   <Borders>                                                                                      '+CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>                          '+CRLF
+cXmls += '   </Borders>                                                                                     '+CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>                                      '+CRLF
+cXmls += '   <Protection/>                                                                                  '+CRLF
+cXmls += ' </Style>                                                                                         '+CRLF
+cXmls += ' <Style ss:ID="s192" ss:Parent="s18">                                                             '+CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>                                       '+CRLF
+cXmls += '   <Borders>                                                                                      '+CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>                         '+CRLF
+cXmls += '   </Borders>                                                                                     '+CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>                                      '+CRLF
+cXmls += '   <NumberFormat ss:Format="&quot;R$ &quot;#,##0.00_);[Red]\(&quot;R$ &quot;#,##0.00\)"/>         '+CRLF
+cXmls += '   <Protection/>                                                                                  '+CRLF
+cXmls += ' </Style>                                                                                         '+CRLF
+cXmls += '  <Style ss:ID="m68480736">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior/>' + CRLF
+cXmls += '   <NumberFormat ss:Format="0"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m68480756">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m68480776">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m68480796">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m68480816">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m68480836">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m68480856">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m68480876">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior/>' + CRLF
+cXmls += '   <NumberFormat ss:Format="#,##0"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m68480896">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m68480916">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m57081344">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Right" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Bold="1"/>' + CRLF
+cXmls += '   <Interior ss:Color="#BFBFBF" ss:Pattern="Solid"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m57081344doit">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Bold="1"/>' + CRLF
+cXmls += '   <Interior ss:Color="#BFBFBF" ss:Pattern="Solid"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m57081364">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Bold="1"/>' + CRLF
+cXmls += '   <Interior ss:Color="#BFBFBF" ss:Pattern="Solid"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m57081384">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Right" ss:Vertical="Top" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior/>' + CRLF
+cXmls += '   <NumberFormat ss:Format="0"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m57081384Cen">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Left" ss:Vertical="Top" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior/>' + CRLF
+cXmls += '   <NumberFormat ss:Format="0"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m57081384doit">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Left" ss:Vertical="Top" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior/>' + CRLF
+cXmls += '   <NumberFormat ss:Format="0"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m57081404">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m57081424">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m57081444">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m57081464">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m139908640">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Bold="1"/>' + CRLF
+cXmls += '   <Interior ss:Color="#C0C0C0" ss:Pattern="Solid"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m139908660">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Bold="1"/>' + CRLF
+cXmls += '   <Interior ss:Color="#C0C0C0" ss:Pattern="Solid"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m139908680">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Bold="1"/>' + CRLF
+cXmls += '   <Interior ss:Color="#C0C0C0" ss:Pattern="Solid"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m139908700">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Bold="1"/>' + CRLF
+cXmls += '   <Interior ss:Color="#C0C0C0" ss:Pattern="Solid"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m139908720">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Bold="1"/>' + CRLF
+cXmls += '   <Interior ss:Color="#C0C0C0" ss:Pattern="Solid"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m139908740">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Bold="1"/>' + CRLF
+cXmls += '   <Interior ss:Color="#C0C0C0" ss:Pattern="Solid"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="m139884532">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="18" ss:Bold="1"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s62">' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s63">' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s64">' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s65">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="18" ss:Bold="1"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s66">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="18" ss:Bold="1"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s67">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Bold="1"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s68">' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s70">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s85">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Right" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9" ss:Bold="1"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s87">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Right" ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s88">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s89">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9" ss:Bold="1"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s90">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Right" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9" ss:Bold="1"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s91">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Bottom" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="8"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s93">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s96">' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s97">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Right" ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s99">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Bold="1"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s102">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s103">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s105">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Bold="1"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s107">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Right" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9" ss:Bold="1"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s108">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Right" ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s109">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s110">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="18" ss:Bold="1"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s112">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Bold="1"/>' + CRLF
+cXmls += '   <Interior ss:Color="#BFBFBF" ss:Pattern="Solid"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s116">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Bold="1"/>' + CRLF
+cXmls += '   <Interior ss:Color="#BFBFBF" ss:Pattern="Solid"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s117">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Bold="1"/>' + CRLF
+cXmls += '   <Interior ss:Color="#BFBFBF" ss:Pattern="Solid"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s117doit">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Bold="1"/>' + CRLF
+cXmls += '   <Interior ss:Color="#BFBFBF" ss:Pattern="Solid"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s120">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Bold="1"/>' + CRLF
+cXmls += '   <Interior ss:Color="#BFBFBF" ss:Pattern="Solid"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s122">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s125">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s126">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s126doit">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s127">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s159">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s160">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Bold="1"/>' + CRLF
+cXmls += '   <Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s161">' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial Narrow" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s162">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s177">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Left" ss:Vertical="Justify" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s179" ss:Parent="s18">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s180" ss:Parent="s18">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"' + CRLF
+cXmls += '     ss:Color="#000000"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior/>' + CRLF
+cXmls += '   <NumberFormat ss:Format="&quot;R$&quot;\ #,##0.00"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s181" ss:Parent="s18">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Interior/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s210">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Left" ss:Vertical="Justify"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s211" ss:Parent="s18">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Bold="1"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s212">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s213">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s214" ss:Parent="s18">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <NumberFormat ss:Format="&quot;R$ &quot;#,##0.00_);[Red]\(&quot;R$ &quot;#,##0.00\)"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s215" ss:Parent="s18">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s216">' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s218">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s299">' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '   	<Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   	<Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s218doit">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s219">' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s188">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s220">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Bottom" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s221">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s223">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Center" ss:Vertical="Bottom"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s224">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Bottom" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s226">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Bottom" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders/>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s226doit">' + CRLF
+cXmls += '   <Alignment ss:Vertical="Bottom" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s227">' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '  <Style ss:ID="s231">' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += '<Style ss:ID="CellForVenc">' + CRLF
+cXmls += '   <Alignment ss:Horizontal="Left" ss:Vertical="Center" ss:WrapText="1"/>' + CRLF
+cXmls += '   <Borders>' + CRLF
+cXmls += '    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>' + CRLF
+cXmls += '   </Borders>' + CRLF
+cXmls += '   <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11"/>' + CRLF
+cXmls += '   <Protection/>' + CRLF
+cXmls += '  </Style>' + CRLF
+cXmls += ' </Styles>' + CRLF
+cXmls += ' <Worksheet ss:Name="Plan1" ss:Protected="1">' + CRLF
+cXmls += '  <Names>' + CRLF
+//nRw := Len(aObs)+64
+//Alterado em 04/09/14 - ET
+/* Alterado em 07/04/2017 - Franklin B. Oliveira
+	Correção no cálculo da área de impressão.
+*/
+If Empty(aObs) .And. Empty(aVenc)
+	nRw := Len(aDados) + 20
+Else
+	nRw := Len(aObs) //Linhas da observação
+	nRw += Len(aVenc)//Linhas do vencedor
+	nRw += Len(aDados)//Linhas dos itens
+	nRw += 24 //Linhas fixas
+EndIf
+
+//Final
+cXmls += '   <NamedRange ss:Name="Print_Area" ss:RefersTo="=Plan1!R1C1:R'+cValToChar(nRw)+'C9"/>' + CRLF
+cXmls += '  </Names>' + CRLF
+cXmls += '  <Table ss:ExpandedColumnCount="'+cColun+'" ss:ExpandedRowCount="'+ cNumLin +'" x:FullColumns="1"' + CRLF
+cXmls += '   x:FullRows="1" ss:StyleID="s62">' + CRLF
+cXmls += '   <Column ss:StyleID="s62" ss:AutoFitWidth="0" ss:Width="65"/>' + CRLF
+cXmls += '   <Column ss:StyleID="s62" ss:AutoFitWidth="0" ss:Width="65"/>' + CRLF
+cXmls += '   <Column ss:StyleID="s62" ss:AutoFitWidth="0" ss:Width="57"/>' + CRLF
+cXmls += '   <Column ss:StyleID="s62" ss:AutoFitWidth="0" ss:Width="125"/>' + CRLF
+cXmls += '   <Column ss:StyleID="s62" ss:AutoFitWidth="0" ss:Width="333"/>' + CRLF
+cXmls += '   <Column ss:StyleID="s62" ss:AutoFitWidth="0" ss:Width="240"/>' + CRLF
+cXmls += '   <Column ss:StyleID="s62" ss:AutoFitWidth="0" ss:Width="88"/>' + CRLF
+cXmls += '   <Column ss:StyleID="s62" ss:AutoFitWidth="0" ss:Width="135"/>' + CRLF
+cXmls += '   <Column ss:StyleID="s62" ss:Hidden="1" ss:AutoFitWidth="0" ss:Width="111"/>' + CRLF
+cXmls += '   <Row ss:AutoFitHeight="0" ss:Height="0.75">' + CRLF
+cXmls += '    <Cell ss:StyleID="s63"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s64"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s64"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s65"><Data ss:Type="String">' + OemToAnsi("Mapa Comparativo de Pre&ccedil;os") + '</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s66"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s66"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s66"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s67"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s68"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '   </Row>' + CRLF
+cXmls += '   <Row ss:AutoFitHeight="0">' + CRLF
+cXmls += '    <Cell ss:MergeAcross="2" ss:MergeDown="3" ss:StyleID="s70"><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:MergeAcross="3" ss:MergeDown="6" ss:StyleID="m139884532"><Data' + CRLF
+cXmls += '      ss:Type="String">' + OemToAnsi("Mapa Comparativo de Pre&ccedil;os") + '</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s85"><ss:Data ss:Type="String"' + CRLF
+cXmls += '      xmlns="http://www.w3.org/TR/REC-html40"><B> </B><Font></Font></ss:Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:MergeDown="1" ss:StyleID="s87"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s88"/>' + CRLF
+cXmls += '   </Row>' + CRLF
+cXmls += '   <Row ss:AutoFitHeight="0" ss:Height="6.75">' + CRLF
+cXmls += '    <Cell ss:Index="8" ss:StyleID="s89"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:Index="10" ss:StyleID="s88"/>' + CRLF
+cXmls += '   </Row>' + CRLF
+cXmls += '   <Row ss:AutoFitHeight="0" ss:Height="11.25">' + CRLF
+cXmls += '    <Cell ss:Index="8" ss:StyleID="s90"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s91"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s88"/>' + CRLF
+cXmls += '   </Row>' + CRLF
+cXmls += '   <Row ss:AutoFitHeight="0" ss:Height="11.25">' + CRLF
+cXmls += '    <Cell ss:Index="8" ss:StyleID="s90"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s91"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s88"/>' + CRLF
+cXmls += '   </Row>' + CRLF
+cXmls += '   <Row ss:AutoFitHeight="0" ss:Height="16.5">' + CRLF
+cXmls += '    <Cell ss:MergeAcross="2" ss:StyleID="s93"><Data ss:Type="String">SIGA/DTCOMR01/v.11</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:Index="8" ss:StyleID="s96"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s97"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '   </Row>' + CRLF
+cXmls += '   <Row ss:AutoFitHeight="0" ss:Height="16.5">' + CRLF
+cXmls += '    <Cell ss:MergeAcross="2" ss:StyleID="s99"><ss:Data ss:Type="String"' + CRLF
+cXmls += '      xmlns="http://www.w3.org/TR/REC-html40"><B>Hora:</B><Font> '+Time()+'</Font></ss:Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:Index="8" ss:StyleID="s102"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s103"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '   </Row>' + CRLF
+cXmls += '   <Row ss:AutoFitHeight="0" ss:Height="16.5">' + CRLF
+cXmls += '    <Cell ss:MergeAcross="2" ss:StyleID="s105"><ss:Data ss:Type="String"' + CRLF
+cXmls += '      xmlns="http://www.w3.org/TR/REC-html40"><B>Empresa:</B><Font>'+ AllTrim(SM0->M0_NOME) +'</Font><B></B><Font> </Font><B>Filial:</B><Font>'+AllTrim(FWFilName( cEmpAnt, SC8->C8_FILIAL ))+'</Font></ss:Data><NamedCell' + CRLF  // - ET 09/09/14
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:Index="8" ss:StyleID="s107"><ss:Data ss:Type="String"' + CRLF
+cXmls += '      xmlns="http://www.w3.org/TR/REC-html40"><B>Impress&atilde;o:</B><Font> '+DTOC(dDataBase)+'</Font></ss:Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s108"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '   </Row>' + CRLF
+cXmls += '   <Row ss:AutoFitHeight="0" ss:Height="15">' + CRLF
+cXmls += '    <Cell ss:StyleID="s109"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s103"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s103"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s110"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s110"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s110"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s110"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s110"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s97"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '   </Row>' + CRLF
+cXmls += '   <Row ss:AutoFitHeight="0" ss:Height="15">' + CRLF
+cXmls += '    <Cell ss:MergeAcross="1" ss:StyleID="s112"><Data ss:Type="String">Solicita&ccedil;&atilde;o de Compra</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s116"><Data ss:Type="String">Cota&ccedil;&atilde;o</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:MergeAcross="1" ss:StyleID="s117"><Data ss:Type="String">Crit&eacute;rio de Sele&ccedil;&atilde;o</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:MergeAcross="1" ss:StyleID="s117"><Data ss:Type="String">Elaborado por</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s117doit"><Data ss:Type="String">Data de An&aacute;lise</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s120"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '   </Row>' + CRLF
+cXmls += '   <Row ss:AutoFitHeight="0" ss:Height="15">' + CRLF
+cXmls += '    <Cell ss:MergeAcross="1" ss:StyleID="s122"><Data ss:Type="String">'+aDados[1][1]+'</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s126"><Data ss:Type="String">'+aDados[1][2]+'</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:MergeAcross="1" ss:StyleID="s125"><Data ss:Type="String">'+cCriterio+'</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:MergeAcross="1" ss:StyleID="s125"><Data ss:Type="String">'+aDados[1][15]+'</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s126doit"><Data ss:Type="String">'+Iif(Valtype(aDados[1][16]) = 'D',DtoC(aDados[1][16]),aDados[1][16])+'</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s127"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '   </Row>' + CRLF
+//Itens
+cXmls += '   <Row ss:AutoFitHeight="0" ss:Height="15"/>' + CRLF;;
+cXmls += '   <Row ss:AutoFitHeight="0" ss:Height="15">' + CRLF
+cXmls += '    <Cell ss:MergeDown="3" ss:StyleID="m139908640"><Data ss:Type="String">Item</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:MergeDown="3" ss:StyleID="m139908660"><Data ss:Type="String">Qtde.</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:MergeDown="3" ss:StyleID="m139908680"><Data ss:Type="String">UM</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:MergeDown="3" ss:StyleID="m139908700"><Data ss:Type="String">C&oacute;digo</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:MergeDown="3" ss:StyleID="m139908720"><Data ss:Type="String">Produto/Servi&ccedil;o</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:MergeDown="3" ss:StyleID="m139908740"><Data ss:Type="String">Fornecedor</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:MergeDown="3" ss:StyleID="m57081344doit"><Data ss:Type="String">Vlr.Unitario</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:MergeDown="3" ss:StyleID="m57081344doit"><Data ss:Type="String">Valor Total</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s159"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '   </Row>' + CRLF
+cXmls += '   <Row ss:AutoFitHeight="0" ss:Height="15">' + CRLF
+cXmls += '    <Cell ss:Index="9" ss:StyleID="s160"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '   </Row>' + CRLF
+cXmls += '   <Row ss:AutoFitHeight="0" ss:Height="15">' + CRLF
+cXmls += '    <Cell ss:Index="9" ss:StyleID="s161"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '   </Row>' + CRLF
+cXmls += '   <Row ss:AutoFitHeight="0" ss:Height="15">' + CRLF
+cXmls += '    <Cell ss:Index="9" ss:StyleID="s162"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '   </Row>' + CRLF
+nI := 1
+While nI <= Len(aDados)	
+	If SubStr(aDados[nI][13],1,4) == nItem
+		nQtdFor++
+		nI++
+	Else
+		Aadd(aForQtd,{SubStr(aDados[nI-1][13],1,4),nQtdFor})
+		nQtdFor := 0
+		nItem := Soma1(nItem)
+	EndIf
+EndDo
+
+If nI > Len(aDados)
+	Aadd(aForQtd,{SubStr(aDados[nI-1][13],1,4),nQtdFor})
+EndIf
+
+aDados2 := aClone(aDados)
+
+For ix1 := 1 To Len(aDados)
+	
+	nNumItem := aScan(aForQtd,{|x| x[1] == SubStr(aDados[ix1][13],1,4)})
+	                                                             
+	///Ajustar altura da linha conforme descrição do produto expandindo na celula de resultado - ET
+	//nAjusta  := (Len(AllTrim(aDados[ix1][4])) * 0.3)  			// Celula de Resultado fica com altura menor
+	nAjusta  := Max((Len(AllTrim(aDados[ix1][4])) * 0.3), 47)  	// Celula de resultdao mantem a proporção das outras celulas
+	
+	If nNumItem != 0 .And. aScan(aJaFiz,{|x| x[1] == aDados[ix1][13]}) == 0
+		//Abertura da primeira linha do primeiro item 
+		//Linha de ajustes movita para loop ix2 quando for dados de resultado - ET
+		//cXmls += '	<Row ss:AutoFitHeight="1" ss:Height="'+cValToChar(len(AllTrim(aDados[ix1][4])) * 0.3)+'">' + CRLF 
+		cXmls += '	<Row ss:AutoFitHeight="1" ss:Height="47">' + CRLF
+		cXmls += '		<Cell ss:MergeDown="' + cValToChar(aForQtd[nNumItem,2]-1) + '" ss:StyleID="m57081384Cen"><Data ss:Type="String">'+AllTrim(aDados[ix1][13])+'</Data><NamedCell' + CRLF //ITEM
+		cXmls += '			ss:Name="Print_Area"/></Cell>' + CRLF
+		cXmls += '		<Cell ss:MergeDown="' + cValToChar(aForQtd[nNumItem,2]-1) + '" ss:StyleID="m57081384Cen"><Data ss:Type="String">'+AllTrim(aDados[ix1][6])+'</Data><NamedCell' + CRLF // QUANTIDADE
+		cXmls += '			ss:Name="Print_Area"/></Cell>' + CRLF
+		cXmls += '		<Cell ss:MergeDown="' + cValToChar(aForQtd[nNumItem,2]-1) + '" ss:StyleID="m57081384Cen"><Data ss:Type="String">'+AllTrim(aDados[ix1][5])+'</Data><NamedCell' + CRLF // UM
+		cXmls += '			ss:Name="Print_Area"/></Cell>' + CRLF
+		cXmls += '		<Cell ss:MergeDown="' + cValToChar(aForQtd[nNumItem,2]-1) + '" ss:StyleID="m57081384Cen"><Data ss:Type="String">'+AllTrim(aDados[ix1][3])+'</Data><NamedCell' + CRLF // CODIGO
+		cXmls += '			ss:Name="Print_Area"/></Cell>' + CRLF
+		cXmls += '		<Cell ss:MergeDown="' + cValToChar(aForQtd[nNumItem,2]-1) + '" ss:StyleID="m57081384doit"><Data ss:Type="String">'+AllTrim(aDados[ix1][4])+'</Data><NamedCell' + CRLF // PRODUTO/SERVIÇO
+		cXmls += '			ss:Name="Print_Area"/></Cell>' + CRLF
+      //Primeiro fornecedor
+		cXmls += '		<Cell ss:StyleID="m57081384doit"><Data ss:Type="String">'+AllTrim(aDados[ix1][9])+'</Data><NamedCell' + CRLF // FORNECEDOR
+		cXmls += '			ss:Name="Print_Area"/></Cell>' + CRLF
+		cXmls += '		<Cell ss:StyleID="m57081384"><Data ss:Type="String">'+AllTrim(aDados[ix1][10])+'</Data><NamedCell' + CRLF // VALOR UNIT
+		cXmls += '			ss:Name="Print_Area"/></Cell>' + CRLF
+		cXmls += '		<Cell ss:StyleID="m57081384"><Data ss:Type="String">'+AllTrim(aDados[ix1][11])+'</Data><NamedCell' + CRLF // VALOR TOTAL
+		cXmls += '			ss:Name="Print_Area"/></Cell>' + CRLF
+		cXmls += '		<Cell ss:StyleID="m57081384"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+		cXmls += '	</Row>' + CRLF
+		//				 ITEM	        |   FORNECEDOR  | LOJA
+		aAdd(aJaFiz, {aDados[ix1][13], aDados[ix1][7], aDados[ix1][8]})
+		
+		If aForQtd[nNumItem][2] > 1
+			nIniFor	:= 1
+			
+			For ix2 := nIniFor To Len(aDados2)
+				If (aDados2[ix2][13] == aDados[ix1][13]) .And. aScan(aJaFiz,{|x| x[1] == aDados2[ix2][13] .and. x[2] == aDados2[ix2][7] .and. x[3] == aDados2[ix2][8]}) == 0
+				
+					//Ajuste altura da linha descrição do produto ET
+					If AllTrim(aDados2[ix2,9]) == "R  E  S  U  L  T  A  D  O"
+						cXmls += '	<Row ss:AutoFitHeight="1" ss:Height="'+cValToChar(nAjusta)+'">' + CRLF 
+					Else	
+						cXmls += '   <Row ss:AutoFitHeight="1" ss:Height="47">' + CRLF
+					Endif                                                                            
+					
+					cXmls += '    <Cell ss:Index="'+cIndexF+'" ss:StyleID="m57081384doit"><Data ss:Type="String">'+AllTrim(aDados2[ix2][9])+'</Data><NamedCell' + CRLF // FORNECEDOR
+					cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+					cXmls += '    <Cell ss:StyleID="m57081384"><Data ss:Type="String">'+Alltrim(aDados2[ix2][10])+'</Data><NamedCell' + CRLF // VALOR UNIT
+					cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+					cXmls += '    <Cell ss:StyleID="m57081384"><Data ss:Type="String">'+Alltrim(aDados2[ix2][11])+'</Data><NamedCell' + CRLF // VALOR TOTAL
+					cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+					cXmls += '    <Cell ss:StyleID="m57081384"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+					cXmls += '   </Row>' + CRLF
+					aAdd(aJaFiz,{aDados2[ix2][13], aDados2[ix2][7], aDados2[ix2][8]})
+				EndIf
+			Next ix2
+		EndIf
+	EndIf
+	
+	nIndex += aForQtd[nNumItem][2] + 1
+	
+Next ix1
+
+//Total - ET 08/09/14
+
+nI := 0  
+aEval(aVenc, {|x| nI+=x[3]})
+
+cXmls += '   <Row ss:AutoFitHeight="0" ss:Height="47">' + CRLF
+cXmls += '    <Cell ss:MergeAcross="4" ss:StyleID="m58403516"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:MergeAcross="1" ss:StyleID="m58403476"><Data ss:Type="String">T O T A L   D A    C O M P R A </Data><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s217"><Data ss:Type="String">'+Transform(nTotRes, "@E 999,999,999.99")+'</Data><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s174"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '   </Row>' + CRLF
+
+//Rodape
+//Alterado em 04/09/14 - ET
+If Len(aVenc) > 0
+	For ixt := 1 To Len(aVenc)
+		_cStrAux := ""
+		If _nTipo = 1 // Menor preco
+			_cStrAux := "Menor pre&ccedil;o para"
+		ElseIf _nTipo = 3 // vencedor
+			_cStrAux := "Venceu"
+		EndIf
+		
+		If Len(aVenc[ixt][2]) >= 100
+			cXmls += '   <Row ss:AutoFitHeight="0"><Cell ss:MergeAcross="6" ss:StyleID="s218doit"><Data ss:Type="String">'+ Alltrim(aVenc[ixt][1]) +' '+_cStrAux+' o(s) item(s) :</Data><NamedCell ss:Name="Print_Area"/></Cell><Cell ss:StyleID="s219"><NamedCell ss:Name="Print_Area"/></Cell></Row>' + CRLF
+			For nI := 1 To Len(aVenc[ixt][2]) Step 100
+				cVenc := Trim(SubStr(aVenc[ixt][2],nI,99))
+				If Len(cVenc) < 99
+					cVenc += " Total: R$"+ Alltrim(Transform(aVenc[ixt][3],PesqPict("SC8","C8_TOTAL")))
+				Endif	
+				cXmls += '   <Row ss:AutoFitHeight="0">' + CRLF
+				cXmls += '    <Cell ss:MergeAcross="6" ss:StyleID="s218doit"><Data ss:Type="String">'+ cVenc + '</Data><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+				cXmls += '    <Cell ss:StyleID="s219"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+				cXmls += '   </Row>' + CRLF
+			Next nI
+		Else
+			cXmls += '   <Row ss:AutoFitHeight="0">' + CRLF
+			
+			cXmls += '    <Cell ss:MergeAcross="7" ss:StyleID="CellForVenc"><Data ss:Type="String">'+ Alltrim(aVenc[ixt][1]) + ' '+;
+				_cStrAux+' o(s) item(s) :'+ aVenc[ixt][2] + ' Total: R$'+ Alltrim(Transform(aVenc[ixt][3],PesqPict("SC8","C8_TOTAL")))+;
+				'</Data><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+			cXmls += '   </Row>' + CRLF
+		EndIf
+	Next ixt
+Else
+	cXmls += '   <Row ss:AutoFitHeight="0">' + CRLF
+	
+	cXmls += '    <Cell ss:MergeAcross="6" ss:StyleID="s218doit"><Data ss:Type="String">' +; 
+	'Vencedor n&atilde;o definido ainda.'+'</Data><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+	
+	cXmls += '    <Cell ss:StyleID="s219"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+	cXmls += '   </Row>' + CRLF
+EndIf
+//Final	
+
+cXmls += '   <Row ss:AutoFitHeight="0">' + CRLF
+cXmls += '    <Cell ss:Index="6" ss:StyleID="s159"><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s159"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s193"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '   </Row>' + CRLF
+
+//Observações
+
+For nI := 1 To Len(aObs)
+	
+	cXmls += '   <Row ss:AutoFitHeight="0">' + CRLF
+
+	If nI == 1
+		cXmls += '    <Cell ss:MergeAcross="6" ss:StyleID="s218doit"><Data ss:Type="String">Observa&ccedil;&otilde;es:</Data><NamedCell' + CRLF //s224
+		cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+		cXmls += '    <Cell ss:StyleID="s226doit"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF //s223
+		cXmls += '		</Row>'
+		If !leptMtv 
+			cXmls += '   <Row ss:AutoFitHeight="0">' + CRLF
+			cXmls += '    <Cell ss:MergeAcross="6" ss:StyleID="s218doit"><Data ss:Type="String">'+ Alltrim(aObs[nI][1]) +' - Item:'+ Alltrim(aObs[nI][2]) +' - '+Alltrim(aObs[nI][3])+'</Data><NamedCell' + CRLF
+			cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+		Else
+			cXmls += '    <Cell ss:StyleID="s218doit"><Data ss:Type="String"></Data><NamedCell' + CRLF
+			cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+		EndIf
+	Else	
+		If !leptMtv 
+			cXmls += '    <Cell ss:MergeAcross="6" ss:StyleID="s218doit"><Data ss:Type="String">'+ Alltrim(aObs[nI][1]) +' - Item:'+ Alltrim(aObs[nI][2]) +' - '+Alltrim(aObs[nI][3])+'</Data><NamedCell' + CRLF
+			cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+		Else
+			cXmls += '    <Cell ss:StyleID="s226doit"><Data ss:Type="String"></Data><NamedCell' + CRLF
+			cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+		EndIf
+	EndIf
+
+	cXmls += '    <Cell ss:StyleID="s226doit"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF //s223
+	cXmls += '   </Row>' + CRLF
+Next nI
+
+cXmls += '   <Row ss:AutoFitHeight="0">' + CRLF
+cXmls += '    <Cell ss:MergeAcross="6" ss:StyleID="s218doit"><Data ss:Type="String"></Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s219"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '   </Row>' + CRLF
+cXmls += '   <Row ss:AutoFitHeight="0" ss:Height="13.5">' + CRLF
+cXmls += '    <Cell ss:StyleID="s227"><Data ss:Type="String">*Vlr.Unitario</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:MergeAcross="6" ss:StyleID="m57039812"><Data ss:Type="String">'+GetNewPar("DT_MAPAR")+'</Data><NamedCell' + CRLF
+cXmls += '      ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '    <Cell ss:StyleID="s231"><NamedCell ss:Name="Print_Area"/></Cell>' + CRLF
+cXmls += '   </Row>' + CRLF
+cXmls += '  </Table>' + CRLF
+cXmls += '  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">' + CRLF
+cXmls += '   <PageSetup>' + CRLF
+cXmls += '    <Layout x:Orientation="Landscape"/>' + CRLF
+cXmls += '    <Header x:Margin="0.51181102362204722"/>' + CRLF
+cXmls += '    <Footer x:Margin="0.39370078740157483"/>' + CRLF
+cXmls += '    <PageMargins x:Bottom="0.47244094488188981" x:Left="0.15748031496062992"' + CRLF
+cXmls += '     x:Right="0.15748031496062992" x:Top="0.98425196850393704"/>' + CRLF
+cXmls += '   </PageSetup>' + CRLF
+cXmls += '   <Print>' + CRLF
+cXmls += '    <ValidPrinterInfo/>' + CRLF
+cXmls += '    <PaperSizeIndex>9</PaperSizeIndex>' + CRLF
+cXmls += '    <Scale>69</Scale>' + CRLF
+cXmls += '    <HorizontalResolution>600</HorizontalResolution>' + CRLF
+cXmls += '    <VerticalResolution>600</VerticalResolution>' + CRLF
+cXmls += '   </Print>' + CRLF
+cXmls += '   <Zoom>75</Zoom>' + CRLF
+cXmls += '   <PageBreakZoom>100</PageBreakZoom>' + CRLF
+cXmls += '   <Selected/>' + CRLF
+cXmls += '   <DoNotDisplayGridlines/>' + CRLF
+cXmls += '   <TopRowVisible>4</TopRowVisible>' + CRLF
+cXmls += '   <Panes>' + CRLF
+cXmls += '    <Pane>' + CRLF
+cXmls += '     <Number>3</Number>' + CRLF
+cXmls += '     <ActiveRow>30</ActiveRow>' + CRLF
+cXmls += '     <ActiveCol>7</ActiveCol>' + CRLF
+cXmls += '    </Pane>' + CRLF
+cXmls += '   </Panes>' + CRLF
+cXmls += '   <ProtectObjects>False</ProtectObjects>' + CRLF
+cXmls += '   <ProtectScenarios>False</ProtectScenarios>' + CRLF
+cXmls += '   <EnableSelection>UnlockedCells</EnableSelection>' + CRLF
+cXmls += '  </WorksheetOptions>' + CRLF
+cXmls += ' </Worksheet>' + CRLF
+cXmls += '</Workbook>' + CRLF
+//---
+FWrite(nHdlPla, cXmls)
+
+Return cXmls

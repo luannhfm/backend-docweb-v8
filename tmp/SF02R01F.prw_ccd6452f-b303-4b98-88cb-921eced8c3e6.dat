@@ -1,0 +1,167 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} SF02R01F
+	Relatório dos pedidos de compra em aberto.
+	
+@author Franklin de Brito de Oliveira
+@since 13/06/2017
+
+@type function
+/*/
+User Function SF02R01F()
+Local oReport
+
+	If TRepInUse()	
+		AjustaSX1()
+		Pergunte(FunName(), .F.)	
+		oReport := ReportDef()	
+		oReport:PrintDialog()	
+	EndIf
+	
+Return (Nil)
+
+/*/{Protheus.doc} ReportDef
+	Função responsável pelas definições do relatório.
+
+@author Franklin de Brito de Oliveira
+@since 13/06/2017
+
+@type function
+/*/
+Static Function ReportDef()
+Local cTitle	:= "Relatorio dos pedidos de compra em aberto"
+Local cDescrip	:= "Este relatorio ira imprimir a relacao de pedidos de compra em aberto conforme os parametros solicitados." 
+Local oReport
+Local oSection
+Local oBreak
+
+	oReport := TReport():New(FunName(), cTitle, FunName(), {|oReport| PrintReport(oReport)}, cDescrip)
+	oReport:HideParamPage()
+	oSection := TRSection():New(oReport, "Pedido", {"SC7"}, {"Pedido"})
+	TRCell():New(oSection, "C7_FILIAL" , "SC7")
+	TRCell():New(oSection, "C7_NUM"    , "SC7")
+	TRCell():New(oSection, "C7_EMISSAO", "SC7")
+	TRCell():New(oSection, "C7_FORNECE", "SC7")
+	TRCell():New(oSection, "C7_LOJA"   , "SC7")
+	TRCell():New(oSection, "C7_ITEM"   , "SC7")
+	TRCell():New(oSection, "C7_PRODUTO", "SC7")
+	TRCell():New(oSection, "C7_UM"     , "SC7")
+	TRCell():New(oSection, "C7_QUANT"  , "SC7")
+	TRCell():New(oSection, "C7_PRECO"  , "SC7")
+	TRCell():New(oSection, "C7_TOTAL"  , "SC7")
+	oBreak := TRBreak():New(oSection, oSection:Cell("C7_NUM"), "Sub Total Pedido")
+	TRFunction():New(oSection:Cell("C7_TOTAL"), NIL, "SUM", oBreak)
+
+Return (oReport)
+
+/*/{Protheus.doc} PrintReport
+	Função responsável pela seleção dos dados e impressão do relatório.
+	Parâmetros:
+	MV_PAR01 - Emissão de? 
+	MV_PAR02 - Emissão até?
+	MV_PAR03 - Filial de?
+	MV_PAR04 - Filial até?
+	
+@author Franklin de Brito de Oliveira
+@since 13/06/2017
+@param oReport, object, Objeto Treport para impressão do relatório.
+@type function
+/*/
+Static Function PrintReport(oReport)
+Local aIndexKey	:= {}
+Local cAliasSC7 := "SC7"
+Local cIndice	:= ""
+Local cWhere	:= ""
+Local oSection 	:= oReport:Section(1)
+
+	/* Array com ordens do relatório */
+	AAdd( aIndexKey, "SC7.C7_FILIAL, SC7.C7_NUM" )
+	
+	/* Montagem do Where */
+	If !Empty(MV_PAR03) 
+		cWhere := " AND SC7.C7_FILIAL >= '" + MV_PAR03 + "' "
+	EndIf
+	
+	If !Empty(MV_PAR04)
+		cWhere += " AND SC7.C7_FILIAL <= '" + MV_PAR04 + "' "
+	EndIf
+	
+	If !Empty(MV_PAR01)
+		cWhere += " AND SC7.C7_EMISSAO >= " + DToS(MV_PAR01)
+	EndIf
+	
+	If !Empty(MV_PAR02)
+		cWhere += " AND SC7.C7_EMISSAO <= " + DToS(MV_PAR02)
+	EndIf
+	
+	cWhere := "%" + cWhere + "%"
+	
+	/* Montagem da ordem do relatório */
+	cIndice := (aIndexKey[oReport:Section(1):nOrder])
+	cIndice := '%'+ cIndice + '%'
+	
+	cAliasSC7 := GetNextAlias()
+	
+	//Transforma parametros do tipo Range em expressao SQL para ser utilizada na query
+	MakeAdvplExpr(oReport:uParam)
+	oSection:BeginQuery()				
+	
+	BeginSql Alias cAliasSC7		
+		SELECT SC7.C7_FILIAL, 
+			SC7.C7_NUM, 
+			SC7.C7_EMISSAO, 
+			SC7.C7_FORNECE, 
+			SC7.C7_LOJA,
+			SC7.C7_ITEM, 
+			SC7.C7_PRODUTO, 
+			SC7.C7_UM, 
+			SC7.C7_QUANT, 
+			SC7.C7_PRECO, 
+			SC7.C7_TOTAL
+		FROM %Table:SC7% SC7
+		WHERE SC7.%NotDel% 
+			//---Pedido Pendente
+			AND SC7.C7_QUJE 	= 0
+			AND SC7.C7_QTDACLA 	= 0
+			AND SC7.C7_XSTATUS 	= ' '
+			AND SC7.C7_DTEMIPT 	= ' '
+			AND SC7.C7_RESIDUO 	= ' '
+			AND SC7.C7_CONTRA 	= ' '
+			AND SC7.C7_CONAPRO	<> 'B'
+			//---Pedido Pendente
+			%Exp:cWhere%
+		ORDER BY %Exp:cIndice%
+	EndSql	
+	
+	MemoWrite( "C:\temp\" + FunName() + ".txt", GetLastQuery()[2] )
+
+	oReport:Section(1):EndQuery()
+	oReport:SetMeter((cAliasSC7)->(LastRec()))
+	oReport:Section(1):Print()
+
+Return (Nil)
+
+/*/{Protheus.doc} AjustaSX1
+	Função para criação e ajuste do arquivo de perguntas (parâmetros).
+
+@author Franklin de Brito de Oliveira
+@since 13/06/2017
+
+@type function
+/*/
+Static Function AjustaSX1()
+Local cPerg := FunName()	
+	
+	u_SFPUTSX1(cPerg, "01", "Emissão de?       ", "Emissão de?       ", "Emissão de?       ", "mv_ch1", "D", 8, 0, , "G", "", "", "", "", "mv_par01",;
+	 "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "")
+	
+	u_SFPUTSX1(cPerg, "02", "Emissão até?       ", "Emissão até?       ", "Emissão até?    ", "mv_ch2", "D", 8, 0, , "G", "", "", "", "", "mv_par02",;
+	"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "")
+	
+	u_SFPUTSX1(cPerg, "03", "Filial de?       ", "Filial de?       ", "Filial de?       ", "mv_ch3", "C", 8, 0, , "G", "", "SM0", "", "", "mv_par03",;
+	"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "")
+	
+	u_SFPUTSX1(cPerg, "04", "Filial até?       ", "Filial até?       ", "Filial até?     ", "mv_ch4", "C", 8, 0, , "G", "", "SM0", "", "", "mv_par04",;
+	"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "")
+
+Return (Nil)

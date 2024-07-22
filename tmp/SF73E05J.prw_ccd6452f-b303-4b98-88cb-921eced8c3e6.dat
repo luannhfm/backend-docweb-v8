@@ -1,0 +1,167 @@
+#Include 'Protheus.ch'
+#Include 'Topconn.ch'
+
+/*/{Protheus.doc} SF73E05J
+Consulta especifica para retornar as viabilidades compartilhadas
+Utilizada somente no SENAI DR
+Campo - ADZ_XCODVI 
+Consulta especifica - ADZZCG
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	08/11/2016
+@version 	1.0
+@return 	_cReturn, Codigo da Viabilidade Compartilhada
+/*/
+
+Static _cReturn
+
+User Function SF73E05J()
+	
+	Local _lReturn		:= .T.	
+	Local _btConfirm 	:= Nil
+	Local _btCancel  	:= Nil
+	Private _oBroViab	:= Nil
+	Private _aBroViab	:= {}
+	Static _oDlg
+	
+	//Abre tela de Viabilidades Compartilhadas
+	DEFINE MSDIALOG _oDlg TITLE 'Viabilidades Compartilhadas' FROM 000, 000 TO 350, 1160 COLORS 0, 16777215 PIXEL
+		@ 158, 005 BUTTON _btConfirm	PROMPT "OK"		 	ACTION(fViabOk())		SIZE 037, 012 OF _oDlg PIXEL
+		@ 158, 050 BUTTON _btCancel		PROMPT "Cancelar"	ACTION(_oDlg:End())	SIZE 037, 012 OF _oDlg PIXEL
+		//Carrega Lista
+		fLista()
+	ACTIVATE MSDIALOG _oDlg CENTERED
+	
+	If ValType(_oDlg) = "O"
+		_oDlg:FreeChildren()
+		FreeObj(_oDlg)
+	EndIf
+	
+Return _lReturn
+
+
+/*
+{Protheus.doc} <fViabOk>
+Funcao executada na escolha da viabilidade - tudook
+
+@author	Jose Leite de Barros Neto
+@since		08/11/2016
+@version	1.00
+*/
+Static Function fViabOk()
+	
+	_cReturn := _aBroViab[_oBroViab:nAt,2] //Codigo da viabilidade
+	_oDlg:End()
+	
+Return
+
+
+/*
+{Protheus.doc} <fLista>
+Carrega a lista com as viabilidades compartilhadas
+
+@author	Jose Leite de Barros Neto
+@since		08/11/2016
+@version	1.00
+*/
+Static Function fLista()
+	
+	Local _aHeader		:= aClone(aHeader)
+	Local _aCols			:= aClone(aCols)
+	Local _nUnidEx		:= aScan(_aHeader,{|X| UPPER(AllTrim(X[2]))=="ADZ_XUNEXE"})
+	Local _cUnidEx		:= _aCols[N,_nUnidEx]
+	Local _cOpor			:= IIF(INCLUI,M->ADY_OPORTU,ADY->ADY_OPORTU)
+	Local _cRvOp			:= IIF(INCLUI,M->ADY_REVISA,ADY->ADY_REVISA)
+	Local _cQuery		:= ""
+	
+	If Select("TRA") > 0
+		DbSelectarea("TRA")
+		TRA->(DbCloseArea())
+	EndIf
+	
+	_cQuery := "SELECT * "+ CRLF
+	_cQuery += "FROM "+ RetSQLName("ZCG") + " "+ CRLF
+	_cQuery += "WHERE ZCG_FILIAL 	= '"+ _cUnidEx +"'	"+ CRLF
+	_cQuery += "AND ZCG_XFILOR 		= '"+ cFilAnt +"'	"+ CRLF
+	_cQuery += "AND ZCG_XOPOR 		= '"+ _cOpor +"'	"+ CRLF
+	_cQuery += "AND ZCG_XREVOP 		= '"+ _cRvOp +"'	"+ CRLF
+	_cQuery += "AND D_E_L_E_T_ 		<> '*'"
+	
+	TCQUERY _cQuery NEW ALIAS "TRA"
+	
+	While .Not. TRA->(EOF())
+		
+		DbSelectArea('ZCG')
+		DbSetOrder(1) //ZCG_FILIAL+ZCG_CODIGO
+		If ZCG->(DbSeek( TRA->ZCG_FILIAL + TRA->ZCG_CODIGO ))
+		
+			aAdd(_aBroViab,{	ZCG->ZCG_FILIAL,;
+									ZCG->ZCG_CODIGO,;
+									DtoC(ZCG->ZCG_DATA),;
+									Transform(ZCG->ZCG_HORA,"@R 99:99:99"),;
+									ZCG->ZCG_CLIENT,;
+									ZCG->ZCG_LOJA,;
+									Alltrim(ZCG->ZCG_NOME),;
+									ZCG->ZCG_QTDCS,;
+									AllTrim(ZCG->ZCG_CURSO),;
+									AllTrim(ZCG->ZCG_DESCMO),;
+									AllTrim(ZCG->ZCG_XOPOR),;
+									AllTrim(ZCG->ZCG_XREVOP),;
+									AllTrim(ZCG->ZCG_XFILOR)})
+		EndIf
+		ZCG->(DbCloseArea())
+		TRA->(DbSkip())
+	End
+	
+	TRA->(DbCloseArea())
+	
+	If Len(_aBroViab) <= 0
+		aAdd(_aBroViab,{	"",;
+								"",;
+								"",;
+								"",;
+								"",;
+								"",;
+								"",;
+								0,;
+								"",;
+								"",;
+								"",;
+								"",;
+								""})
+	EndIf
+
+	@ 010, 004 LISTBOX _oBroViab Fields HEADER "Filial", "Cod. Viabilidade", "Data", "Hora", "Cliente", "Loja", "Nome", "Qtde.", "Curso", "Modalidade", "Oport.", "Rev. Opor.", "Filial Orig." SIZE 573, 142 OF _oDlg PIXEL;
+		 ColSizes 12, 12, 10, 10, 8, 6, 60, 16, 30, 8, 4, 12
+	_oBroViab:SetArray(_aBroViab)
+	_oBroViab:bLine := {|| {	_aBroViab[_oBroViab:nAt,1],;
+									_aBroViab[_oBroViab:nAt,2],;
+									_aBroViab[_oBroViab:nAt,3],;
+									_aBroViab[_oBroViab:nAt,4],;
+									_aBroViab[_oBroViab:nAt,5],;
+									_aBroViab[_oBroViab:nAt,6],;
+									_aBroViab[_oBroViab:nAt,7],;
+									_aBroViab[_oBroViab:nAt,8],;
+									_aBroViab[_oBroViab:nAt,9],;
+									_aBroViab[_oBroViab:nAt,10],; 
+									_aBroViab[_oBroViab:nAt,11],;
+									_aBroViab[_oBroViab:nAt,12],;
+									_aBroViab[_oBroViab:nAt,13]}}
+								
+	_oBroViab:bLDblClick := {|| fViabOk()}
+	
+Return
+
+
+/*
+{Protheus.doc} <SF73E05Z>
+Funcao para retornar o codigo da viabilidade
+
+@author 	Jose Leite de Barros Neto
+@since		08/11/2016
+@version	1.00
+*/
+User Function SF73E05Z()
+	
+Return(_cReturn)

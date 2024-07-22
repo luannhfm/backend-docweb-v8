@@ -1,0 +1,2673 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "MSOLE.CH"
+#DEFINE oleWdFormatDocument "0"
+#DEFINE oleWdFormatHTML "102"
+#DEFINE oleWdFormatPDF "17"
+
+/*
+{Protheus.doc} <SS6925X>
+Funcao para Gerar no PDF o Contrato de Venda; Rotina de Integração
+PROTHEUS x WORD gera a partir de TEMPLATE Contrato.
+@type function
+@author Jonas Nascimento
+@since 08/07/2015
+@history 14/10/2015, Franklin de Brito de Oliveira,  #001 Alterado para permitir impressão apenas dos contratos com a situação Emitido.
+*/
+User Function SS6925X()	//User Function SS7329X()
+	Local _lRet			:= .T.
+	Local _cMsgErro		:= ""
+
+	dbSelectArea("CN1")
+	CN1->(dbSetOrder(1))
+	If CN1->(dbSeek(xFilial("CN1")+CN9->CN9_TPCTO))
+		If CN1->CN1_ESPCTR == "2"	//Contrato de Venda
+			If CN9->CN9_SITUAC == '03' .AND. CN9->CN9_XMINUT == 'N' 							//#001
+				FWMsgRun(,{||fExpCtr()},"Gerando o doc. WORD do Contrato.", "Aguarde...")
+			Else
+				If !CN9->CN9_SITUAC == '03'														//#001
+					_cMsgErro := "Permitido somento p/ contratos em situação 03-Emitido"
+					_lRet := .F.
+				ElseIf CN9->CN9_XMINUT <> 'N'
+					_cMsgErro := "Minutas do Cliente devem ser impressas diretamente no Word"
+					_lRet := .F.
+				EndIf
+			EndIf
+		Else
+			_cMsgErro := "Impressão válida somente para Contrato de Venda!"
+			_lRet := .F.
+		EndIf
+	Else
+		_cMsgErro := "Tipo de Contrato não encontrado!"
+		_lRet := .F.
+	EndIf
+
+	If !_lRet
+		Aviso(FunName()+"/"+ProcName(), _cMsgErro, {"OK"})
+	EndIf
+
+Return _lRet
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fExpCtr>
+	Carrega as DocVariables, Instancia modelo do Word, executa macros e Gera
+	Contrato de Venda em PDF.
+
+@author Jonas Nascimento
+@since 08/07/2015
+@version<1.00>
+@see
+--------------------------------------------------------------------------------
+*/
+
+/*
+Alterações realizadas:
+	22/09/2015 - Franklin B Oliveira:
+		->Alterado o Valor das variáveis _cCtrAsDt e _cCtrAsDtE.
+		*Valor Anterior :CN9->CN9_DTASSI
+		*Valor Atual	:CN9_XDTDIG
+		
+	23/09/2015 - Franklin B Oliveira:
+		->Alterado o valor o array _aCondPg, passou a considerar a data da proposta
+		para o cálculo do vencimento das parcelas.
+	
+	#003 02/10/2015 - Jonas Nascimento J2A
+		->Descrição ao abortar estava errada, refenciando a Representantes qdo o correto é Produto.
+		
+	#004 02/10/2015 - Jonas Nascimento J2A
+		->Devido a vários formatos de exibição de Produtos, terá uma macro para cada tipo de formato.
+		
+	#005 09/10/2015 - Franklin B Oliveira:
+		->Adicionado tratamento para imprimir numero do Banco/Agencia/Conta para depósito/tranferencia.
+	
+	#006 14/10/2015 - Franklin B Oliveira:
+		->Adicionado DocVariables referente endereço de cobrança
+		
+	#007 14/10/2015 - Franklin B Oliveira:
+		->Caso o contrato não tenha planilha (tabela CNA), as datas de inicio e fim da execução deverão ser 
+		informados no cabeçalho do contrato (tabela CN9).
+
+	#008 22/10/2015 - Franklin B Oliveira:
+		->Adicionado tratamento para minuta 01, onde não haverá tabela de pagamento, será substituido pela 
+		informação do dia de pagamento.
+		
+	#009 13/11/2015 - Franklin B Oliveira:
+		->Adicionado DocVariable referente descrição da condição de pagamento
+	
+	#010 17/11/2015 - Franklin B Oliveira:
+		->Minuta 01 - Contrato de prestação de serviços, Clausula Quarta: é nessesário que sejam impressos todos
+		os produtos informados na proposta, assim foi criada nova função baseada na função objetos do contrato
+		fSql("003"), mas sem a clausula "Distinct" e com novas macros.
+		
+	#011 17/11/2015 - Franklin B Oliveira:
+		->Passo a adicionar o Texto CNPJ, quando o cliente for PJ ou CPF quando for PF
+	
+	#012 18/01/2016 - Franklin B Oliveira
+		->Adicionado Complemento no nome do contratante; a tabela genérica responsável pelo complemento é a tabela "Z1".
+		Criada a função fCompEmp() para pesquisar e retornar este complemento.
+		
+	#013 18/01/2016 - Franklin B Oliveira
+		-> Adicionado o código C.E.I. do contratante. a informação será preenchida no cabeçalho da oportunidade,
+		tabela "AD1", campo "AD1_XCEI"
+		
+	#014 18/01/2016 - Franklin B Oliveira
+		-> Alterado o campo responsável pelo numero do contrato, o mesmo será preenchido conforme o campo "CN9_XNROCV".
+		Obs.: Utilizado apenas na impressão.
+	
+	#015 18/01/2016 - Franklin B Oliveira
+		->Adicionado Órgão Expedidor do documento de identidade do representante do contratante. Oriundo do campo 
+		"U5_XORGEXP", tabela "SU5".
+		
+	#016 15/02/2016 - Franklin B Oliveira
+		->Adicionado validação na conexão com o microsoft word.
+		
+	#017 15/02/2016 - Franklin B Oliveira
+		->Alterado o Valor das variáveis _cCtrAsDt, _cCtrAsDtE 
+		*Valor Anterior :CN9->CN9_XDTDIG
+		*Valor Atual	:CN9->CN9_DTULST
+	
+	#018 15/03/2016 - Franklin B. Oliveira
+		->Adicionado totalizador de vacinas na Cláusula Primeira, item 1.2. 
+		
+	#019 16/03/2016 - Franklin B. Oliveira
+		->Alterado Clausula Quinta - da forma de pagamento, item 5.3: Virá da proposta comercial (Campo ADY_XTPCOB) se:
+			-Cobrança físia;
+			-Cobrança eletrônica;
+	#020 21/03/2016 - Franklin B. Oliveira
+		-> Adicionado totalizador de vacinas por unidade executora, item 8.2.
+		
+*/
+Static Function fExpCtr()
+	Local _aArea		:= GetArea()														// Armazena area atual
+	Local _aASM0		:= SM0->(GetArea())
+	Local _cCtrAno		:= cValToChar(Year(CN9->CN9_DTINIC))								// Ano do contrato
+
+	/* Dados do CONTRATADO */
+	Local _CtadoNome	:= ""			//Nome do Contratado
+	Local _cCompCtoNome	:= fCompEmp()	//Complemento do nome do contratado #012
+	Local _CtadoCNPJ	:= ""			//CNPJ do Contratado
+	Local _CtadoEnde	:= ""			//Endereço do Contratado
+	Local _CtadoCEP		:= ""			//CEP do Contratado
+	Local _CtadoBair	:= ""			//Bairro do Contratado
+	Local _CtadoMuni	:= ""			//Município do Contratado
+	Local _CtadoUF		:= ""			//UF do Contratado
+	Local _CtadoTel		:= ""			//Tel do Contratado
+
+	/* Dados do CONTRATANTE  */
+	Local _CtateNome	:= ""
+	Local _CtateCNPJ	:= ""
+	Local _CtateInsE	:= ""
+	Local _CtateCEI		:= Posicione("AD1", 1, xFilial("AD1") + CN9->CN9_XOPORT + CN9->CN9_XREVOP, "AD1_XCEI")	//Código C.E.I.     #013
+	Local _CtateCEP		:= ""
+	Local _CtateBair	:= ""
+	Local _CtateMuni	:= ""
+	Local _CtateUF		:= ""
+	Local _CtateTel		:= ""
+	Local _CtateRG	:= ""
+	Local _CtateCEnd	:= ""																		//Complemento do Endereco
+	Local _CtateCEmp	:= ""																		//CNPJ da Empresa que o Cliente Trabalha
+	Local _CtateNEmp	:= ""																		//Nome da Empresa que o Cliente Trabalha
+	Local _CtateEInd	:= ""																		//Texto quando o Empregado é da Industria
+
+	Local _aASA1		:= {}																		//Area SA1
+
+	/* Dados do CONTRATO */
+	Local _cCtrObjto	:= MSMM(CN9->CN9_CODOBJ)													//Objeto do Contrato
+	Local _cCtrVDtIn	:= dToC(CN9->CN9_DTINIC)													//Data inicial da vigência do Contrato
+	Local _cCtrVDtFi	:= dToC(CN9->CN9_DTFIM)														//Data final da vigência do Contrato
+	Local _cCtrEDtIn	:= ""																		//CNA_DTINI
+	Local _cCtrEDtFi	:= ""																		//CNA_DTFIM
+	Local _cCtrEDesc	:= ""
+	Local _cCtrMForo	:= ""
+	Local _cDiaPgto		:= Posicione("AD1", 1, xFilial("AD1") + CN9->CN9_XOPORT + CN9->CN9_XREVOP, "AD1_XDIAPG")
+	Local _cCtrAsDt		:= dToC(CN9->CN9_DTULST)													//#017 - Data da assinatura do contrato
+	Local _cCtrAsDtE	:= fDtExt(CN9->CN9_DTULST)													//#017 - Data da assinatura do contrato por extenso
+	Local _cCondPgto	:= Posicione("SE4", 1, xFilial("SE4") + CN9->CN9_CONDPG, "E4_DESCRI")		//Descrição da Condição de pagamento
+	Local _lUnidOper	:= .F.																		//O contrato será executado por outras unidades operacionais
+	Local _lFilAtend	:= .F. 																		//Existem Unidades diferentes do cliente Atendidas
+	Local _lDadosBan	:= .F.																		//Imprime dados bacários (Banco/Agencia/Conta)
+	Local _cCtrModPl	:= ""																		//Tipo/Modalidade do Plano dos Clubes
+	Local _cCtrCatPl	:= ""																		//Categoria Plano dos Clubes
+	Local _cCtrPerPl	:= ""																		//Periodo Plano dos Clubes
+	Local _cCtrVCart	:= "R$ "+Alltrim(Transform (SuperGetMv("MV_XVALCAR",,""),"@E 999,999,999.99"))	//Valor da Carteira de Usuário
+	Local _cCtrECart	:= Extenso((SuperGetMv("MV_XVALCAR",,"")),.F.,1)										//Valor da Carteira de Usuário por Extenso
+
+	// Endereço de Cobrança
+	Local _cEndCobr		:= ""																		//Endereço de cobrança do Contratante
+	//#019
+	//Local _cBaiCobr		:= ""																		//Bairro de cobrança do Contratante
+	//Local _cCEPCoBr		:= ""																		//CEP de cobrança do Contratante
+	//Local _cCidCobr 	:= ""																		//Cidade de cobrança do Contratante
+	//Local _cEstCobr 	:= ""																		//Estado de cobrança do Contratante
+	//Local _cContCobr 	:= ""
+	//Local _cCargCobr 	:= ""
+	//Local _cMailCobr 	:= ""
+	//Local _cFoneCobr	:= ""
+	//Local _cDescCdPg	:= ""
+	//
+	Local _cArqNome		:= "GCT"+Alltrim(CN9->CN9_XNROCV)+DTOS(dDataBase)+StrTran(Time(),":","")
+	Local _nCtaA 		:= 0
+	Local _cValorVar	:= ""
+	Local nVlIni 		:= 0
+
+	/* Dados do Representante do Contratante */
+	Private _CtadoRNom	:= ""		//Nome do Representante do Contratante
+	Private _CtadoRCPF	:= ""		//CPF do Representante do Contratante
+	Private _CtadoRRG	:= ""		//RG do Representante do Contratante
+
+	/*Verifica se o arquivo é HTML ou DOT*/
+	Private _lHtm	:= .F.
+	Private _oProcess
+
+	/* Dados do Contrato */
+	Private _cCtrNr		:= CN9->CN9_NUMERO																						// Número do Contrato
+	Private _cNrCtrVen	:= CN9->CN9_XNROCV																						// Número do Contrato de Venda	#014
+	Private _cFilCtr	:= CN9->CN9_FILIAL																						// Filial do contato
+	Private _cCtrNrRev	:= AllTrim(CN9->CN9_REVISA)
+
+	//Número da revisão do Contrato [rodapé da minuta].
+	Private _cCtrVIni	:= "R$ "+Alltrim(Transform(iif(nVlIni > 0, nVlIni, CN9->CN9_VLINI),"@E 999,999,999.99"))	//Valor Inicial do Contrato
+
+	Private _cCtrVIniE	:= Extenso(iif(nVlIni > 0, nVlIni, CN9->CN9_VLINI),.F.,1)									//Valor Inicial do Contrato por Extenso
+
+	Private _dDataIniP	:= Posicione("AD1", 1, xFilial("AD1") + CN9->CN9_XOPORT + CN9->CN9_XREVOP, "AD1_DTASSI")				//Data de inicio para gerar as parcelas
+	Private _aCondPg	:= Condicao(iif(nVlIni > 0, nVlIni, CN9->CN9_VLINI), CN9->CN9_CONDPG, , CN9->CN9_DTULST)			//Gera as parcelas atraves da [Cond. Pagto]
+	Private _cUnidOper	:= "" 																									//Texto com dados das filiais executoras
+	Private _cFilAtend	:= ""																									//Texto com dados das filiais do cliente atendidas
+	Private _cCtrFPgto	:= ""																									//Texto com a descrição da forma de pagamento
+	Private _cNumBanco	:= ""
+	Private _cCodProp   := ""
+	Private cRevProp := ""
+	Private _cCodTes	:= ""
+	Private _cNumAgenc	:= ""																									//Numero da agência para depósito/transferência
+	Private _cNumConta	:= ""																									//Numero da conta para depósito/transferência
+	Private _nQtdTotVac	:= 0																									//#018 - Quantidade total de vacinas
+	Private _cMunUnExec	:= ""																									//#018	- Municípo das unidades executoras
+
+	/*Variaveis de controle p/ Gerar a Impressão*/
+	Private _oHtml
+	Private _aProdMsg	:= {}
+	Private _hWord							// Cria a conecção com Word
+	Private _aMacroExc	:= {}									// Lista de macros do Word a serem invocadas pelo ADVPL
+	Private _cPathDOT	:= SuperGetMv("MV_XGCTDOT",,"")
+	Private _cPathDOC	:= SuperGetMv("MV_XGCTDOC",,"")
+	Private _cPathREP	:= SuperGetMv("MV_XGCTREP",,"")
+	Private _cArqDOT	:= fRetMinuta() 						//fRetMinuta() Substituiu o parametro MV_XGCTPRO
+	Private _aParamVLD 	:= {{ "_cPathDOT"	,"MV_XGCTDOT - Repositorio DOT docs de Integracao WORD (GCT)" 		},;
+		{ "_cPathDOC"	,"MV_XGCTDOC - Repositorio DOC docs de Integracao WORD (GCT)" 		},;
+		{ "_cPathREP"	,"MV_XGCTREP - Repositorio LOCAL p/emissao dos documentos (GCT)" 	}}
+	Private _cPathHtm := ""
+
+	//Verifica se o Tipo de Contrato possui Minuta
+	dbSelectArea("CN1")
+	CN1->(dbSetOrder(1))
+	If CN1->(dbSeek(xFilial("CN1")+CN9->CN9_TPCTO))
+		If Empty(CN1->CN1_XMINUT)
+			Aviso(FunName()+"/"+ProcName(),"Tipo de Contrato ["+CN9->CN9_TPCTO+"] não possui minuta!"+CRLF+"Verifique do Cadastro de Tipo de Contrato",{"OK"})
+			Return .f.
+		Else
+			dbSelectArea("ZG3")
+			ZG3->(dbSetOrder(2))
+			If !ZG3->(dbSeek(xFilial("ZG3")+CN1->CN1_XMINUT+'1')) //Verifica se a Minuta está Ativa
+				Aviso(FunName()+"/"+ProcName(),"Minuta ["+CN1->CN1_XMINUT+"] não está Ativa!"+CRLF+"Verifique do Cadastro Minutas",{"OK"})
+				Return .f.
+			EndIf
+		EndIf
+	EndIf
+
+	nVlIni := fSql("001")
+
+	If Type('nVlIni') = 'u'
+		nVlIni := 0
+	EndIf
+
+	//+---------------------------------------------------------------------+
+	//| Regra de Tratamento da integracao WORD FIEMT                        |
+	//| 1) O Documento TEMPLATE será copiado para a unidade LOCAL da maquina|
+	//|    do operador, para possibilitar a geração do documento de         |
+	//|    "impressão" ou de remessa ao cliente. O documento TEMPLATE será  |
+	//|    indicado no parâmetro [MV_XGCTDOT] é copiado para unidade        |
+	//|    compartilhada LOCAL indicada no parâmetro [MV_XGCTREP].          |
+	//| 2) Será gerada uma copia do documento de remessa na unidade LOCAL   |
+	//|    do operador para uso futuro o documento gerado na unidade        |
+	//|    compartilhada LOCAL será utilizado para remessa "Impressão".     |
+	//|    Este documento será gerado com nome                              |
+	//|    "GCTCCCCCCCCCCCCCCCAAAAMMDDHHMMSS.DOC", onde:                    |
+	//|                GCT - Prefixo                                        |
+	//|    CCCCCCCCCCCCCCC - Numero do Contrato                             |
+	//|               AAAA - Ano de Emissão                                 |
+	//|                 MM - Mês da Emissão                                 |
+	//|                 DD - Dia da Emissão                                 |
+	//|                 HH - Hora da Emissão                                |
+	//|                 MM - Minuta da Emissão                              |
+	//|                 SS - Segundo da Emissão                             |
+	//| 3) Para garantir AUDITORIA; Após a geração do documento de remessa  |
+	//|    "impressão" será feita uma copia do mesmo para diretório do      |
+	//|    servidor indicado no parâmetro [MV_XGCTDOC]                      |
+	//+---------------------------------------------------------------------+
+
+	//+---------------------------------------------------------------------+
+	//| Valida se foi encontrado o arquivo .dot (modelo do Word) a ser usa- |
+	//| do como template para gerar a impressão do contrato.                |
+	//+---------------------------------------------------------------------+
+	If Empty(_cArqDOT)
+		Return .f.
+	Else
+		If SubStr(_cArqDOT,Len(_cArqDOT)-3, 4) == "html"
+			_lHtm := .T.
+		EndIf
+	EndIf
+
+	//+---------------------------------------------------------------------+
+	//| Valida se os parametros necerssarios a emissão do documentos        |
+	//| Integração PROTHEUS x WORD estão preenchidos.                       |
+	//+---------------------------------------------------------------------+
+	_nCtaA := 0
+	For _nCtaA := 1 To Len(_aParamVLD)
+		_cValorVar	:= &(_aParamVLD[_nCtaA,1])
+		If _cValorVar == ""
+			Aviso(FunName()+"/"+ProcName(),"Integração não pode ser realizada pois o parametro ["+_aParamVLD[_nCtaA,2]+"] não esta preenchido",{"OK"})
+			Return .f.
+		Endif
+	Next _nCtaA
+
+
+	//#016
+	//+---------------------------------------------------------------------+
+	//| Exibe ou oculta a janela principal da aplicacao Word  			    |
+	//+---------------------------------------------------------------------+
+	If !_lHtm
+		_hWord := OLE_CreateLink()
+		OLE_SetProperty( _hWord, oleWdVisible, .F. )
+	Else  //Cria arquivo html
+		_cPathHtm := _cPathDOT
+		fcriaHtm(_cPathHtm,_cArqDOT)
+	EndIf
+
+	//+---------------------------------------------------------------------+
+	//| Verifica se foi possível conectar ao Microsoft Word				    |
+	//+---------------------------------------------------------------------+
+	If !_lHtm
+		If _hWord == "-1"
+			Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel estabelecer comunicação com o Microsoft Word",{"OK"})
+
+			RestArea(_aArea)
+			Return .F.
+		EndIf
+	EndIf
+
+	//+---------------------------------------------------------------------+
+	//| Verifica se o arquivo existe na estacao. Se existir APAGA           |
+	//+---------------------------------------------------------------------+
+	If !_lHtm
+		If File(_cPathREP+_cArqDOT)
+			FErase(_cPathREP+_cArqDOT)
+		Endif
+	EndIf
+
+	//+---------------------------------------------------------------------+
+	//| Copia o TEMPLATE "DOT" para repositorio LOCAL                       |
+	//+---------------------------------------------------------------------+
+	If !_lHtm
+		If !CpyS2T(_cPathDOT+_cArqDOT,_cPathREP,.T.)
+			Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel copiar TEMPLATE para gerar a integração!",{"OK"})
+			RestArea(_aArea)
+			Return .F.
+		EndIf
+	EndIf
+
+	//+---------------------------------------------------------------------+
+	//| Abre o NOVO documento do WORD para preencher as Variaveis           |
+	//+---------------------------------------------------------------------+
+	If !_lHtm
+		OLE_NewFile(_hWord,_cPathREP+_cArqDOT)
+	EndIf
+
+	If !_lHtm
+		If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TBPRODVLR01")}) > 0 .OR. aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TBPRODVLR02")}) > 0
+			If !fSql("008")
+				Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o(s) Produto(s) do Contrato!",{"OK"})
+
+				OLE_CloseFile(_hWord)
+				OLE_CloseLink(_hWord)
+
+				If File(_cPathREP+_cArqDOT)
+					FErase(_cPathREP+_cArqDOT)
+				Endif
+
+				RestArea(_aArea)
+
+				Return .f.
+			Endif
+		Endif
+	EndIf
+
+	//+---------------------------------------------------------------------+
+	//| Dados do Contrato                                                  |
+	//+---------------------------------------------------------------------+
+	If !_lHtm
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoNr"						, _cNrCtrVen	)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoAno"						, _cCtrAno		)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoObjeto"					, _cCtrObjto	)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoValorInicial"			, _cCtrVIni		)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoValorInicialExtenso"		, _cCtrVIniE	)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoVigenciaDtIni"			, _cCtrVDtIn	)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoVigenciaDtFim"			, _cCtrVDtFi	)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoExecucaoDtIni"			, _cCtrEDtIn	)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoExecucaoDtFim"			, _cCtrEDtFi	)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoExecucaoDescritivo"		, _cCtrEDesc	)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoAssinaturaData"			, _cCtrAsDt		)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoAssinaturaDataExtenso"	, _cCtrAsDtE	)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoNumeroRevisao"			, _cCtrNrRev	)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoDiaPgto"					, _cDiaPgto		)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoDiaPgtoExtenso"			, AllTrim(Extenso(_cDiaPgto, .T.)) )
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoCondPgto"				, _cCondPgto	)
+		_cTpCob := "."
+	Else
+		_oHtml:ValByName("Doc_ContratoNr"						, _cNrCtrVen	)
+		_oHtml:ValByName("Doc_ContratoAno"						, _cCtrAno		)
+		_oHtml:ValByName("Doc_ContratoObjeto"					, _cCtrObjto	)
+		_oHtml:ValByName("Doc_ContratoValorInicial"				, _cCtrVIni		)
+		_oHtml:ValByName("Doc_ContratoValorInicialExtenso"		, _cCtrVIniE	)
+		_oHtml:ValByName("Doc_ContratoVigenciaDtIni"			, _cCtrVDtIn	)
+		_oHtml:ValByName("Doc_ContratoVigenciaDtFim"			, _cCtrVDtFi	)
+		_oHtml:ValByName("Doc_ContratoExecucaoDtIni"			, _cCtrEDtIn	)
+		_oHtml:ValByName("Doc_ContratoExecucaoDtFim"			, _cCtrEDtFi	)
+		_oHtml:ValByName("Doc_ContratoExecucaoDescritivo"		, _cCtrEDesc	)
+		_oHtml:ValByName("Doc_ContratoAssinaturaData"			, _cCtrAsDt		)
+		_oHtml:ValByName("Doc_ContratoAssinaturaDataExtenso"	, _cCtrAsDtE	)
+		_oHtml:ValByName("Doc_ContratoNumeroRevisao"			, _cCtrNrRev	)
+		_oHtml:ValByName("Doc_ContratoDiaPgto"					, _cDiaPgto		)
+		_oHtml:ValByName("Doc_ContratoDiaPgtoExtenso"			, AllTrim(Extenso(_cDiaPgto, .T.)) )
+		_oHtml:ValByName("Doc_ContratoCondPgto"				, _cCondPgto	)
+		_cTpCob := "."
+	EndIf
+
+	If fSql("006")
+
+		If !_lHtm
+			OLE_SetDocumentVar(_hWord,"Doc_ContratoFormaPgto"			, AllTrim(_cCtrFPgto))
+			OLE_SetDocumentVar(_hWord,"Doc_ContratanteEmail" 			, _cTpCob	)
+		Else
+			_oHtml:ValByName("Doc_ContratoFormaPgto"			, AllTrim(_cCtrFPgto))
+			_oHtml:ValByName("Doc_ContratanteEmail" 			, _cTpCob	)
+		EndIf
+
+	EndIf
+
+	//Tipo/Modalidade do Plano dos Clubes
+	If CN9->CN9_XTPPL == "1"
+		_cCtrModPl := "FAMILIAR"
+	ElseIf CN9->CN9_XTPPL == "2"
+		_cCtrModPl := "INDIVIDUAL"
+	Else
+		_cCtrModPl := ""
+	EndIf
+
+	If !_lHtm
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoModalidade"			, _cCtrModPl	)
+	Else
+		_oHtml:ValByName("Doc_ContratoModalidade"			, _cCtrModPl	)
+	EndIf
+
+	//Categoria Plano dos Clubes
+	If CN9->CN9_XCATPL == "1"
+		_cCtrCatPl := "COMUNIDADE"
+	ElseIf CN9->CN9_XCATPL == "2"
+		_cCtrCatPl := "INDUSTRIA"
+	Else
+		_cCtrCatPl := ""
+	EndIf
+
+	If !_lHtm
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoCatPlano"				, _cCtrCatPl	)
+	Else
+		_oHtml:ValByName("Doc_ContratoCatPlano"				, _cCtrCatPl	)
+	EndIf
+
+	//Periodo Plano dos Clubes
+	If CN9->CN9_XPERPL == "1"
+		_cCtrPerPl := "MENSAL"
+	ElseIf CN9->CN9_XPERPL == "2"
+		_cCtrPerPl := "TRIMESTRAL"
+	ElseIf CN9->CN9_XPERPL == "3"
+		_cCtrPerPl := "SEMESTRAL"
+	ElseIf CN9->CN9_XPERPL == "4"
+		_cCtrPerPl := "ANUAL"
+	Else
+		_cCtrPerPl := ""
+	EndIf
+
+	If !_lHtm
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoPeriodoPlano"			, _cCtrPerPl	)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoValorCarteira"			, _cCtrVCart	)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoValorCarteiraExtenso"	, _cCtrECart	)
+	Else
+		_oHtml:ValByName("Doc_ContratoPeriodoPlano"			, _cCtrPerPl	)
+		_oHtml:ValByName("Doc_ContratoValorCarteira"			, _cCtrVCart	)
+		_oHtml:ValByName("Doc_ContratoValorCarteiraExtenso"	, _cCtrECart	)
+	EndIf
+
+	//#005 - Impresão de Banco/Agencia/Conta, caso exitam na proposta
+	If !_lHtm
+		If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TXTDadosBan")}) > 0
+			_lDadosBan := fSql("007")
+			OLE_SetDocumentVar(_hWord, "ImpDadosBanc"				, _lDadosBan	)
+			OLE_SetDocumentVar(_hWord, "Doc_ContratoBancoPgto"		, _cNumBanco	)
+			OLE_SetDocumentVar(_hWord, "Doc_ContratoAgenciaPgto"	, _cNumAgenc	)
+			OLE_SetDocumentVar(_hWord, "Doc_ContratoContaPgto"		, _cNumConta	)
+			OLE_ExecuteMacro(_hWord, "TXTDadosBan")
+		EndIf
+	EndIf
+
+	//+---------------------------------------------------------------------+
+	//| Mensagem [ZG4] do Produto [SB1]                                     |
+	//+---------------------------------------------------------------------+
+	fMsgProd(_aProdMsg)
+
+	//+---------------------------------------------------------------------+
+	//| Condicao de Pagamento [PARCELAS]                                    |
+	//+---------------------------------------------------------------------+
+	If !_lHtm
+		If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TbParcelas")}) > 0
+			If Len(_aCondPg) > 0
+				_nLinha := 0
+				While Len(_aCondPg) > _nLinha
+					_nLinha++
+					// Insere o campo Numero de Parcela(s)
+					OLE_SetDocumentVar(_hWord,"TbParcelas_Numero"+Alltrim(str(_nLinha)), AllTrim(str(_nLinha))												)
+					// Insere o campo Valor da Parcela
+					OLE_SetDocumentVar(_hWord,"TbParcelas_Valor"+Alltrim(str(_nLinha)), "R$ "+Alltrim(Transform(_aCondPg[_nLinha,2],"@E 999,999,999.99"))	)
+					// Insere o campo Data Vencimento da Parcela
+					OLE_SetDocumentVar(_hWord,"TbParcelas_DtVencto"+Alltrim(str(_nLinha)), dToC(_aCondPg[_nLinha,1])										)
+				EndDo
+
+				OLE_SetDocumentVar(_hWord,"TbParcelas_QtdItens", _nLinha)	//Implementa o Contador de Itens da Macro
+				If _nLinha > 0
+					OLE_ExecuteMacro(_hWord,"TbParcelas")					//Efetua CARGA da Macros
+				EndIf
+			EndIf
+		elseif Len(_aCondPg) > 0
+			OLE_SetDocumentVar(_hWord, "dataVencimentoPrimeiraParcela", dToC(_aCondPg[1, 1]))
+		EndIf
+	EndIf
+
+	//+---------------------------------------------------------------------+
+	//| Dados do Contratado							                        |
+	//+---------------------------------------------------------------------+
+	dbSelectArea("SM0")
+	SM0->(dbSetOrder(1))
+	If (SM0->(dbSeek(cEmpAnt+_cFilCtr)))
+		_CtadoNome	:= AllTrim(M0_NOMECOM) + IIf(Empty(_cCompCtoNome), "", " - " + AllTrim(_cCompCtoNome)) 					//#012
+		_CtadoCNPJ	:= Transform(AllTrim(M0_CGC),Iif(Len(AllTrim(M0_CGC))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+		_CtadoEnde	:= AllTrim(M0_ENDENT)
+		//_CtadoCEP	:= AllTrim(M0_CEPENT)
+		_CtadoCEP	:= Iif(Empty( AllTrim(M0_CEPENT) ), "", " CEP " + Transform(AllTrim(M0_CEPENT), "@R 99999-999") + ",")
+		_CtadoBair	:= AllTrim(M0_BAIRENT)
+		_CtadoMuni	:= AllTrim(M0_CIDENT)
+		_CtadoUF	:= SM0->M0_ESTENT
+		_cCtrMForo	:= _CtadoMuni
+		_CtadoTel	:= "(" + SubStr(AllTrim(SM0->M0_TEL), 4, 2) + ") " + SubStr(AllTrim(SM0->M0_TEL), 9, 8)
+	Endif
+	RestArea(_aASM0)
+
+	If !_lHtm
+		OLE_SetDocumentVar(_hWord,"Doc_ContratadoNome"			, _CtadoNome)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratadoCNPJ"			, _CtadoCNPJ)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratadoEndere"		, _CtadoEnde)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratadoCEP"			, _CtadoCEP )
+		OLE_SetDocumentVar(_hWord,"Doc_ContratadoBairro"		, _CtadoBair)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratadoMunicipio"		, _CtadoMuni)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratadoUF"			, _CtadoUF	)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoMunicipioForo"	, _cCtrMForo)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratadoTel"			, _CtadoTel)
+	Else
+		_oHtml:ValByName("Doc_ContratadoNome"			, _CtadoNome)
+		_oHtml:ValByName("Doc_ContratadoCNPJ"			, _CtadoCNPJ)
+		_oHtml:ValByName("Doc_ContratadoEndere"		, _CtadoEnde)
+		_oHtml:ValByName("Doc_ContratadoCEP"			, _CtadoCEP )
+		_oHtml:ValByName("Doc_ContratadoBairro"		, _CtadoBair)
+		_oHtml:ValByName("Doc_ContratadoMunicipio"		, _CtadoMuni)
+		_oHtml:ValByName("Doc_ContratadoUF"			, _CtadoUF	)
+		_oHtml:ValByName("Doc_ContratoMunicipioForo"	, _cCtrMForo)
+		_oHtml:ValByName("Doc_ContratadoTel"			, _CtadoTel)
+	EndIf
+
+	//+---------------------------------------------------------------------+
+	//| Dados complementares da filial - minuta de venda                    |
+	//+---------------------------------------------------------------------+
+	DbSelectArea("ZCO")
+	If ZCO->( DbSeek(_cFilCtr) )
+		If !_lHtm
+			OLE_SetDocumentVar( _hWord, "Doc_TelAtenContratado"	, Transform(AllTrim(ZCO->ZCO_TELATE), "@R (99) 9999-9999") )
+			OLE_SetDocumentVar( _hWord, "Doc_EmailAtenContratado", AllTrim(ZCO->ZCO_EMLATE) )
+		Else
+			_oHtml:ValByName("Doc_TelAtenContratado"	, Transform(AllTrim(ZCO->ZCO_TELATE), "@R (99) 9999-9999") )
+			_oHtml:ValByName("Doc_EmailAtenContratado", AllTrim(ZCO->ZCO_EMLATE) )
+		EndIf
+	EndIf
+
+	//+---------------------------------------------------------------------+
+	//| Dados do Representante do Contratatado		                        |
+	//+---------------------------------------------------------------------+
+	If !fGerFil()
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o Representante do Contratatado!",{"OK"})
+
+		If !_lHtm
+			OLE_CloseFile(_hWord)
+			OLE_CloseLink(_hWord)
+
+			If File(_cPathREP+_cArqDOT)
+				FErase(_cPathREP+_cArqDOT)
+			Endif
+		EndIf
+
+		RestArea(_aArea)
+		Return .f.
+	Else
+		If !_lHtm
+			OLE_SetDocumentVar(_hWord,"Doc_ContratadoRepresentanteNome"		, _CtadoRNom)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratadoRepresentanteCPF"		, _CtadoRCPF)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratadoRepresentanteRG"		, _CtadoRRG	)
+		Else
+			_oHtml:ValByName("Doc_ContratadoRepresentanteNome"		, _CtadoRNom)
+			_oHtml:ValByName("Doc_ContratadoRepresentanteCPF"		, _CtadoRCPF)
+			_oHtml:ValByName("Doc_ContratadoRepresentanteRG"		, _CtadoRRG	)
+			//Dados da assinatura
+			_oHtml:ValByName("CtadoR_Nom"		, _CtadoRNom)
+			_oHtml:ValByName("CtadoRCPF"		, _CtadoRCPF)
+			_oHtml:ValByName("CtadoRRG"			, _CtadoRRG	)
+		EndIf
+	Endif
+
+	//+---------------------------------------------------------------------+
+	//| Dados do Contratante						                        |
+	//+---------------------------------------------------------------------+
+	dbSelectArea("SA1")
+	SA1->(dbSetOrder(1))
+	If SA1->(dbSeek(xFilial("SA1")+CN9->CN9_CLIENT+CN9->CN9_LOJACL))
+		_CtateNome		:= AllTrim(SA1->A1_NOME)
+		_CtateInsE		:= iif(Empty(AllTrim(SA1->A1_INSCR)),""," e Inscrição Estadual nº "+AllTrim(SA1->A1_INSCR))
+		_CtateCEI		:= IIf(Empty(AllTrim(_CtateCEI)), "", ", CEI nº " + AllTrim(_CtateCEI))						//#013
+		_CtateEndere	:= AllTrim(SA1->A1_END)
+		_CtateCEP		:= Iif(Empty( AllTrim(SA1->A1_CEP) ), "", " CEP " + Transform(AllTrim(SA1->A1_CEP), "@R 99999-999") + ",")
+		_CtateBair		:= AllTrim(SA1->A1_BAIRRO)
+		_CtateMuni		:= AllTrim(SA1->A1_MUN)
+		_CtateUF		:= SA1->A1_EST
+		_CtateTel		:= "(" + AllTrim(SA1->A1_DDD) + ") " + AllTrim(SA1->A1_TEL)
+		_CtateRG		:= AllTrim(SA1->A1_PFISICA)
+		_CtateCEnd		:= Iif(Empty(AllTrim(SA1->A1_COMPLEM)),"",AllTrim(SA1->A1_COMPLEM) + ",")
+		cEmailCli := AllTrim(SA1->A1_EMAIL)
+		ADY->( dbSetOrder(2) )
+		//Seleciono Propostas da oportunidade do contrato
+		If ADY->( dbSeek(xFilial("ADY") + CN9->CN9_XOPORT + CN9->CN9_XREVOP) )
+			//Varro todas as propostas da oportunidade do contrato
+			While !ADY->( EoF() ) .And. (xFilial("ADY") + CN9->CN9_XOPORT + CN9->CN9_XREVOP) == (ADY->ADY_FILIAL + ADY->ADY_OPORTU + ADY->ADY_REVISA)
+				//Seleciono apenas a proposta escolhida
+				If ADY->ADY_STATUS == "E"
+					_cCodProp := ADY->ADY_PROPOS
+					cRevProp := ADY->ADY_PREVIS
+					_cCodTes := ADY->ADY_TES
+					aAssProp := fGetCont(ADY->ADY_XASSIN)
+					//1=Cobrança física
+					/*
+					If ADY->ADY_XTPCOB == "1"
+						_cEndCobr		+= AllTrim(SA1->A1_ENDCOB) + ", bairro "
+						_cEndCobr		+= AllTrim(SA1->A1_BAIRROC) + ", CEP "
+						_cEndCobr		+= Transform(AllTrim(SA1->A1_CEPC), "@R 99999-999") + ", município "
+						_cEndCobr		+= AllTrim(SA1->A1_MUNC) + "/"
+						_cEndCobr		+= AllTrim(SA1->A1_ESTC)
+					Else
+						_cEndCobr		+= AllTrim(SA1->A1_XEMLCOB)
+					EndIf
+					*/
+					_cEndCobr		+= AllTrim(SA1->A1_XEMLCOB)
+				EndIf
+				ADY->( DbSkip() )
+			EndDo
+		EndIf
+		//#011
+		If (Len(AllTrim(SA1->A1_CGC))==11)
+			_CtateCNPJ := "CPF nº. " + Transform(SA1->A1_CGC, "@R 999.999.999-99")
+		Else
+			_CtateCNPJ := "CNPJ nº. " + Transform(SA1->A1_CGC, "@R 99.999.999/9999-99")
+		EndIf
+		// Caso o Cliente for empregado da Industria, Imprime o Texto....
+		If !Empty(CN9->CN9_XCLEMP)
+			_aASA1 := SA1->(GetArea())
+			_CtateCEmp := POSICIONE("SA1",1,xFilial("SA1")+CN9->CN9_XCLEMP+CN9->CN9_XLJEMP,"SA1->A1_CGC")
+			_CtateCEmp := Transform(_CtateCEmp, "@R 99.999.999/9999-99")
+			_CtateNEmp := POSICIONE("SA1",1,xFilial("SA1")+CN9->CN9_XCLEMP+CN9->CN9_XLJEMP,"SA1->A1_NOME")
+			_CtateEInd := "Empregado(a) da indústria " + Alltrim(_CtateNEmp) + " inscrito sob o CNPJ " + _CtateCEmp + "."
+			RestArea(_aASA1)
+		EndIf
+		If !_lHtm
+			OLE_SetDocumentVar(_hWord,"Doc_ContratanteNome"			, _CtateNome	)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratanteCNPJ"			, _CtateCNPJ	)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratanteInscEstadual"	, _CtateInsE	)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratanteCEI"			, _CtateCEI		)			//#013
+			OLE_SetDocumentVar(_hWord,"Doc_ContratanteEndere"		, _CtateEndere	)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratanteCEP"			, _CtateCEP		)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratanteBairro"		, _CtateBair	)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratanteMunicipio"	, _CtateMuni	)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratanteUF"			, _CtateUF		)
+			OLE_SetDocumentVar(_hWord,"Doc_CodProposta"				, _cCodProp		)
+			OLE_SetDocumentVar(_hWord,"Doc_RevisaoProposta", cRevProp)
+			OLE_SetDocumentVar(_hWord, "ContratanteQtdeEmpregadosSESI", SA1->A1_XQTDESI)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratanteEndCob"		, _cEndCobr		)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratanteTel"			, _CtateTel		)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratanteRG"				, _CtateRG			)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratanteCompleEnd"		, _CtateCEnd		)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratanteEmpregadoInd"	, _CtateEInd		)
+			OLE_SetDocumentVar(_hWord, "emailDoCliente", cEmailCli)
+			if !Empty(aAssProp)
+				OLE_SetDocumentVar(_hWord, "nomeAssinanteProposta", aAssProp[1])
+				OLE_SetDocumentVar(_hWord, "emailAssinanteProposta", aAssProp[10])
+			endif
+		Else
+			_oHtml:ValByName("Doc_ContratanteNome"			, _CtateNome	)
+			_oHtml:ValByName("Doc_ContratanteCNPJ"			, _CtateCNPJ	)
+			_oHtml:ValByName("Doc_ContratanteInscEstadual"	, _CtateInsE	)
+			_oHtml:ValByName("Doc_ContratanteCEI"			, _CtateCEI		)			//#013
+			_oHtml:ValByName("Doc_ContratanteEndere"		, _CtateEndere	)
+			_oHtml:ValByName("Doc_ContratanteCEP"			, _CtateCEP		)
+			_oHtml:ValByName("Doc_ContratanteBairro"		, _CtateBair	)
+			_oHtml:ValByName("Doc_ContratanteMunicipio"	, _CtateMuni	)
+			_oHtml:ValByName("Doc_ContratanteUF"			, _CtateUF		)
+			_oHtml:ValByName("Doc_CodProposta"				, _cCodProp		)
+			_oHtml:ValByName( "ContratanteQtdeEmpregadosSESI", SA1->A1_XQTDESI)
+			_oHtml:ValByName("Doc_ContratanteEndCob"		, _cEndCobr		)
+			_oHtml:ValByName("Doc_ContratanteTel"			, _CtateTel		)
+			_oHtml:ValByName("Doc_ContratanteRG"				, _CtateRG			)
+			_oHtml:ValByName("Doc_ContratanteCompleEnd"		, _CtateCEnd		)
+			_oHtml:ValByName("Doc_ContratanteEmpregadoInd"	, _CtateEInd		)
+		EndIf
+	Else
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o Contratante!",{"OK"})
+
+		If !_lHtm
+			OLE_CloseFile(_hWord)
+			OLE_CloseLink(_hWord)
+
+			If File(_cPathREP+_cArqDOT)
+				FErase(_cPathREP+_cArqDOT)
+			Endif
+		EndIf
+
+		RestArea(_aArea)
+		Return .f.
+	EndIf
+
+	//+---------------------------------------------------------------------+
+	//| Dados do(S) Representante(S) do Contrante	                        |
+	//+---------------------------------------------------------------------+
+	If !fSql("002")
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o(s) Representante(s) do Contratatante!", {"OK"})
+
+		If !_lHtm
+			OLE_CloseFile(_hWord)
+			OLE_CloseLink(_hWord)
+
+			If File(_cPathREP+_cArqDOT)
+				FErase(_cPathREP+_cArqDOT)
+			Endif
+		EndIf
+
+		RestArea(_aArea)
+		Return .f.
+	Endif
+
+	//+--------------------------------------------------------------------------------+
+	//| Objeto do Contrato (Composto por produtos Item da Planilha ou Item da Proposta |
+	//+--------------------------------------------------------------------------------+
+	If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TBPROD")}) > 0 ;
+		.OR. aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TbProd02")}) > 0 ;
+		.OR. aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TbProd03")}) > 0 ;
+		.OR. aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TbProd04")}) > 0 ;
+		.OR. aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TbProd05")}) > 0 ;
+		.OR. aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TbProd06")}) > 0 
+		If !fSql("003")
+			Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o(s) Produto(s) do Contrato!",{"OK"})
+
+			If !_lHtm
+				OLE_CloseFile(_hWord)
+				OLE_CloseLink(_hWord)
+
+				If File(_cPathREP+_cArqDOT)
+					FErase(_cPathREP+_cArqDOT)
+				Endif
+			EndIf
+
+			RestArea(_aArea)
+
+			Return .f.
+		Endif
+	Endif
+
+	//+--------------------------------------------------------------------------------+
+	//|#018 Totalizador de vacinas. Usado apenas na minuta 01 - Imunização			   |
+	//+--------------------------------------------------------------------------------+
+	If !_lHtm
+		If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TXTQTDTOTVACI")}) > 0
+			If !fSql("009")
+				Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel totalizar a quantidade de vacinas!",{"OK"})
+
+				OLE_CloseFile(_hWord)
+				OLE_CloseLink(_hWord)
+
+				If File(_cPathREP+_cArqDOT)
+					FErase(_cPathREP+_cArqDOT)
+				Endif
+
+				RestArea(_aArea)
+
+				Return .f.
+			Endif
+		Endif
+	EndIf
+
+	//Filiais do contratante que serão atendidas
+	If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TXTFilAten")}) > 0
+		_lFilAtend := fSql("005")
+		If !_lHtm
+			OLE_SetDocumentVar(_hWord, "FilAtend"		, _lFilAtend)
+			OLE_SetDocumentVar(_hWord, "TextoFilAtend"	, _cFilAtend)
+			OLE_ExecuteMacro(_hWord, "TXTFilAten")
+
+			//+---------------------------------------------------------------------+
+			//| Jonas Nascimento J2A - 02/10/2015 									|
+			//| Alteração:															|
+			//|  Alterei o nome da macro no documento 								|
+			//|  [04_Minuta_contrato_venda_padrao_rev00_31.07.15.dot].				|
+			//| Motivo: 															|
+			//|  Nome diferente entre PRW e DOT, TXTFilAten e TXTFiAten respectiva-	|
+			//|  mente.																|
+			//+---------------------------------------------------------------------+
+		Else
+			If !Empty(_lFilAtend)
+				_oHtml:ValByName( "Parunic"	, "PARÁGRAFO UNICO - As filiais do CONTRATANTE que serão atendidas são:" )
+				_oHtml:ValByName( "TextoFilAtend"	, _cFilAtend)
+			Else
+				_oHtml:ValByName( "Parunic"	, "" )
+				_oHtml:ValByName( "TextoFilAtend"	, "")
+			EndIf
+		EndIf
+	EndIf
+
+	//+--------------------------------------------------------------------------------+
+	//| Dados da Execucao do Contrato												   |
+	//+--------------------------------------------------------------------------------+
+	_cCtrEDtIn	:= CN9->CN9_XDTINI
+	_cCtrEDtFi	:= CN9->CN9_XDTFIM
+	_cCtrEDesc	:= ""
+
+	If !_lHtm
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoExecucaoDtIni"		, _cCtrEDtIn)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoExecucaoDtFim"		, _cCtrEDtFi)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratoExecucaoDescritivo"	, _cCtrEDesc)
+	Else
+		_oHtml:ValByName("Doc_ContratoExecucaoDtIni"		, _cCtrEDtIn)
+		_oHtml:ValByName("Doc_ContratoExecucaoDtFim"		, _cCtrEDtFi)
+		_oHtml:ValByName("Doc_ContratoExecucaoDescritivo"	, _cCtrEDesc)
+	EndIf
+
+	//Filiais do contratatado que serão executarão o contrato
+	If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TXTUnidOper")}) > 0
+		If !_lHtm
+			_lUnidOper := fSql("004")
+			OLE_SetDocumentVar(_hWord, "UnidOper"		, _lUnidOper)
+			OLE_SetDocumentVar(_hWord, "TextoUnidOper"	, _cUnidOper)
+			OLE_ExecuteMacro(_hWord, "TXTUnidOper")
+		Else
+			If CN9->CN9_TPCTO = "034"
+				_cMsg := "9.2 Os serviços objeto deste serão executados pelas seguintes unidades operacionais:"
+			Else
+				_cMsg :="4.2.	 As unidades do CONTRATANTE, que serão executados pelas seguintes unidades: "
+			EndIf
+			_lUnidOper := fSql("004")
+			If _lUnidOper
+				_oHtml:ValByName("TxtPargUn"		, _cMsg)
+				_oHtml:ValByName("TextoUnidOper"	, _cUnidOper)
+			Else
+				_oHtml:ValByName("TxtPargUn"		, "")
+				_oHtml:ValByName("TextoUnidOper"	, "")
+			EndIf
+		EndIf
+	ElseIf aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TXTUnidOperImun")}) > 0
+		fSql("010")
+		OLE_SetDocumentVar(_hWord, "Doc_MunicUnidExec", Iif(Empty(_cMunUnExec), SM0->M0_CIDENT, _cMunUnExec))
+	EndIf
+
+	//+---------------------------------------------------------------------+
+	//| Executa a macro de prazo de entrega dos programas legais            |
+	//+---------------------------------------------------------------------+
+	If !_lHtm
+		If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("PrzEntPL")}) > 0
+			OLE_ExecuteMacro(_hWord,"PrzEntPL")
+		EndIf
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Executa a macro de prazo de entrega dos AETs                        |
+	//+---------------------------------------------------------------------+
+	If !_lHtm
+		If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("PRZENTAET")}) > 0
+			OLE_ExecuteMacro(_hWord,"PRZENTAET")
+		EndIf
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Executa a macro de prazo de entrega dos laudos                      |
+	//+---------------------------------------------------------------------+
+	If !_lHtm
+		If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("PRZENTLAUDOS")}) > 0
+			OLE_ExecuteMacro(_hWord,"PRZENTLAUDOS")
+		EndIf
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Executa a macro de prazo de entrega dos laudos                      |
+	//+---------------------------------------------------------------------+
+	If !_lHtm
+		If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("PrazoPlanoCOVID")}) > 0
+			OLE_ExecuteMacro(_hWord,"PrazoPlanoCOVID")
+		EndIf
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Executa a macro da tabela de vidas ativas		                    |
+	//+---------------------------------------------------------------------+
+	If !_lHtm
+		If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TbProdSMais")}) > 0
+			If !fSql("011")
+				Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o(s) Produto(s) do Contrato!",{"OK"})
+				OLE_CloseFile(_hWord)
+				OLE_CloseLink(_hWord)
+				If File(_cPathREP+_cArqDOT)
+					FErase(_cPathREP+_cArqDOT)
+				Endif
+				RestArea(_aArea)
+				Return .F.
+			EndIf
+		EndIf
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Executa a macro da clausula de proteção dos dados pessoais          |
+	//+---------------------------------------------------------------------+
+	If !_lHtm
+		If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("ClaProDdosPss")}) > 0
+			If !fSql("012")
+				Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o(s) Produto(s) do Contrato!",{"OK"})
+				OLE_CloseFile(_hWord)
+				OLE_CloseLink(_hWord)
+				If File(_cPathREP+_cArqDOT)
+					FErase(_cPathREP+_cArqDOT)
+				Endif
+				RestArea(_aArea)
+				Return .F.
+			EndIf
+		EndIf
+	EndIf
+	
+	//+---------------------------------------------------------------------+
+	//| Executa a macro da clausula de Teste PCR                            |
+	//+---------------------------------------------------------------------+
+	If !_lHtm
+		If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("tbProdVac")}) > 0
+			If !fSql("013")
+				Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o(s) Produto(s) do Contrato!",{"OK"})
+				OLE_CloseFile(_hWord)
+				OLE_CloseLink(_hWord)
+				If File(_cPathREP+_cArqDOT)
+					FErase(_cPathREP+_cArqDOT)
+				Endif
+				RestArea(_aArea)
+				Return .F.
+			EndIf
+		EndIf
+	EndIf
+
+	If !_lHtm
+		//+---------------------------------------------------------------------+
+		//| Atualizando as variaveis do documento do Word                       |
+		//+---------------------------------------------------------------------+
+		OLE_UpdateFields(_hWord)
+
+		//+---------------------------------------------------------------------+
+		//| Verifica se o arquivo a ser gerado ja existe no repositorio, se     |
+		//| existir apaga                                                       |
+		//+---------------------------------------------------------------------+
+		If File(_cPathREP+_cArqNome)
+			FErase(_cPathREP+_cArqNome)
+		Endif
+
+		//+---------------------------------------------------------------------+
+		//| Salva no repositorio LOCAL o arquivo gerado                         |
+		//+---------------------------------------------------------------------+
+		OLE_SaveAsFile(_hWord, _cPathREP+_cArqNome+".pdf", '', '', .F., oleWdFormatPDF)
+
+		//+---------------------------------------------------------------------+
+		//| Fecha o TEMPLATE 													|
+		//+---------------------------------------------------------------------+
+		OLE_CloseFile(_hWord)
+		
+		//+---------------------------------------------------------------------+
+		//| Fecha o Link com o Word 											|
+		//+---------------------------------------------------------------------+
+		OLE_CloseLink(_hWord)
+		
+		//+---------------------------------------------------------------------+
+		//| Apaga na unidade LOCAL o TEMPLATE utilizado para gerar o documento. |
+		//+---------------------------------------------------------------------+
+		If File(_cPathREP+_cArqDOT)
+			FErase(_cPathREP+_cArqDOT)
+		Endif
+		
+		If Aviso(FunName()+"/"+ProcName(),"Integração finalizada!"+CRLF+"Gerado documento WORD ["+_cArqNome+"]."+CRLF+"Disponivel em ["+_cPathREP+"].",{"OK","Abrir pasta"}) == 2
+			WinExec('explorer /select, "' + _cPathREP + _cArqNome + '.pdf"' )
+		EndIf
+	Else
+
+		_oProcess:cTo		:= ""
+		_oProcess:cBCC		:= ""
+		_oProcess:cCC		:= ""
+		_oProcess:cSubject	:= ""
+		_oProcess:cBody		:= ""
+
+		cProcess := _oProcess:Start("\web\")
+		chtmlfile  := cProcess + ".htm"
+
+		//Copia arquivo HTML gerado na Pasta do Server
+		CpyS2T( "\web\" + chtmlfile, _cPathREP, .F. )
+		frename(_cPathREP + chtmlfile , _cPathREP + _cArqNome + ".html")
+
+		If Aviso(FunName()+"/"+ProcName(),"Integração finalizada!"+CRLF+"Gerado documento.",{"OK","Abrir arquivo"}) == 2
+			//Abre Arquivo na Tela
+			ShellExecute("open", _cArqNome + ".html", "", _cPathREP , 1)
+		EndIf
+
+	EndIf
+	RestArea(_aArea)
+Return
+
+/*
+{Protheus.doc} <fDtExt>
+	Objetivo; Retornar data por extenso.
+		Parâmetro	:= 31/12/2015 (dDataBase)
+		Retorno		:= '31 de Novembro de 2015'
+		fDtExt(dDataBase)
+
+@param _dVal, date, 31/12/2015 (dDataBase)
+@author Jonas Nascimento J2A
+@since 31/07/2015
+@return character, data por extenso
+*/
+Static Function fDtExt(_dVal)
+	Local _cDtExt	:= ""
+	Local _cMes		:= ""
+
+	Do Case
+	Case Month(_dVal) == 1
+			_cMes := "Janeiro"
+	Case Month(_dVal) == 2
+			_cMes := "Fevereiro"
+	Case Month(_dVal) == 3
+			_cMes := "Março"
+	Case Month(_dVal) == 4
+			_cMes := "Abril"
+	Case Month(_dVal) == 5
+			_cMes := "Maio"
+	Case Month(_dVal) == 6
+			_cMes := "Junho"
+	Case Month(_dVal) == 7
+			_cMes := "Julho"
+	Case Month(_dVal) == 8
+			_cMes := "Agosto"
+	Case Month(_dVal) == 9
+			_cMes := "Setembro"
+	Case Month(_dVal) == 10
+			_cMes := "Outubro"
+	Case Month(_dVal) == 11
+			_cMes := "Novembro"
+	Case Month(_dVal) == 12
+			_cMes := "Dezembro"
+	EndCase
+
+	_cDtExt := cValToChar(Day(_dVal))+" de "+_cMes+" de "+cValToChar(Year(_dVal))
+
+Return _cDtExt
+
+/*
+{Protheus.doc} fSql
+	Objetivo; Realizar as consultas SQL.
+		Parâmetro	:= Codigo do bloco
+		Retorno		:= Se _cVal == "001"
+						  Numerico
+					   Senao
+						  Boleano
+
+@author Jonas Nascimento J2A
+@since 19/08/2015
+@version<1.00>
+@receive<Nil>
+@example<Nil>
+@see<Nil>							
+
+Alterações realizadas:
+		
+	23/09/2015 - Franklin B Oliveira:
+		->Adicionado cláusula para retornar quantidade na tabela de produtos na minuta 04.
+	
+	#002 - 30/09/2015 - Jonas Nascimento J2A:
+		-> Adição da tabela SB1 para buscar somente produtos c/ Impressão = Sim [B1_XIMPRIM = '1'].
+		
+	#003 - 05/10/2015 - Jonas Nascimento J2A:
+		-> Adição das colunas Valor Unitário [CNB_VLUNIT/ADZ_PRCVEN] e Valor Total [CNB_VLTOT/ADZ_TOTAL],
+		   para ser usada na macro TbProd03.
+		-> Alteração necessária, pois até o momento já temos três tabelas distintas para listar os produ-
+		   tos contido no contrato, são elas;
+		   Macros		Colunas
+		   ------------ --------------------------------------------
+		   TabProd		CNB_DESCRI
+		   TabProd02	CNB_DESCRI, CNB_QUANT
+		   TabProd03	CNB_DESCRI, CNB_QUANT, CNB_VLUNIT, CNB_VLTOT
+			
+	#004 - 06/10/2015 - Jonas Nascimento J2A:
+		-> Tratamento para executar a macro TbProd04, que conterá as colunas Nome do Produto e Valor Unitário.
+	
+	#005 - 09/10/2015 - Franklin B Oliveira:
+		->Adicionado tratamento para imprimir numero do Banco/Agencia/Conta para depósito/tranferencia.
+	
+	#006 - 14/10/2015 - Franklin B Oliveira:
+		->Adicionado Clausula para não retornar produtos de mesmo código.
+		
+	#007 - 17/11/2015 - Franklin B Oliveira:
+		->Adicionada nova consulta com base na consula 003, mas sem a cláusula Distict e usando outras macros.
+		
+	#008 - 25/11/2015 - Franklin B Oliveira:
+		->Adicionado condição ADY_PREVIS = ADZ.ADZ_REVISA no join da tabela ADZ.
+
+	#009 - 25/11/2015 - Franklin B Oliveira:
+		->Adicionado Salto de linha
+		
+	#010 - 25/11/2015 - Franklin B Oliveira:
+		->Alterado nome das variáveis utilizadas na macro, para não conflitar com macro já existente
+		
+	#011 - 19/01/2016 - Franklin B Oliveira:
+		->Removido as informações CPF e RG tabela de assinatura
+		
+	#012 - 19/01/2016 - Franklin B Oliveira:
+		->Adicionado tratamento na seleção do valor total dos produtos da proposta, para considerar 
+		apenas os itens da proposta vencedora.
+	
+	#013 - 19/01/2016 - Franklin B Oliveira:
+		->Adicionado o campo "U5_XORGEXP", orgão expedidor do documento de identidade.
+		
+	#014 - 19/01/2016 - Franklin B Oliveira:
+		->Alterado a busca pelos objetos do contrato, neste item serão trazidos apenas códigos e descrição destintos.
+			Descrição do produto alterada para o campo B1_DESC, tabela SB1
+			
+	#015 - 19/01/2016 - Franklin B Oliveira:
+		->Adicionado quebra de linha
+		
+	#016 - 19/01/2016 - Franklin B Oliveira:
+		->Alterado a busca pelos objetos do contrato com seus valores:
+		1- Quando for necessário apenas nome e valor unitário, será considerado itens destintos
+		2- Quando for necessário nome, quantidade, valor unitário e valor total, será agrupado por Código, descrição e valor unitário
+	
+	#017 - 15/03/2016 - Franklin B Oliveira:
+		->Adicionado totalizador de vacinas. Totalizador só será utilizado na minuta 01 - Vlr Unit Imunização.
+		
+	#018 - 21/03/2016 - Franklin B Oliveira:
+		-> Adicionado totalizar de vacinas por unidade executora. A tabela descritiva será montada da seguinte maneira:
+		-----------------------------------------------------------------------------------------
+		|Produto									|Quantidade									|
+		-----------------------------------------------------------------------------------------
+		|TextoUnidOper + _nLinha + "Prod"  _nProd	| TextoUnidOper + _nLinha + "Quant"  _nProd	|
+		-----------------------------------------------------------------------------------------
+		
+	#019 - 24/08/2016 Franklin B Oliveira:
+	Tratamento para a consulta considerar mesma proposta e mesma revisão.
+	
+	#020 - 29/08/2016 Franklin B Oliveira:
+	Alterado o telefone do responsável de A1_DDD + A1_TEL para U5_DDD + U5_FCOM1
+	
+	#021 - 24/01/2017 Franklin B. Oliveira:
+	Adicionado a impressão do número do CEI quando há a incidência de filiais do cliente a serem atendidas.
+*/
+
+Static Function fSql(_cVal)
+
+	Local nDescont		:= 0
+	Local nVlrTtl		:= 0
+	Local _aArea		:= GetArea()		// Armazena area atual
+	Local _cSql			:= ""
+	Local _cAlias		:= GetNextAlias()
+	Local _cFrom		:= ""
+	Local _cWhere		:= ""
+	Local _lRet			:= .T.
+	Local _nLinha		:= 0
+
+	If _cVal == "001"		//Busca valor total dos produtos da Proposta
+		_cSql := "SELECT "+CRLF
+		_cSql += "  SUM(ADZ_TOTAL) ADZ_TOTAL "+CRLF
+		_cSql += "FROM "+CRLF
+		_cSql += "  "+RetSqlName("CN9")+" CN9 "+CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("AD1")+" AD1 ON AD1.D_E_L_E_T_ = ' ' AND CN9_FILIAL = AD1_FILIAL AND CN9_XOPORT = AD1_NROPOR AND CN9_XREVOP = AD1_REVISA" + CRLF
+		_cSql += "  INNER JOIN ADY010 ADY ON ADY.D_E_L_E_T_ = ' ' AND AD1_FILIAL = ADY_FILIAL AND AD1_NROPOR = ADY_OPORTU" + CRLF
+		//#012
+		//_cSql += "  INNER JOIN "+RetSqlName("ADJ")+" ADJ ON ADJ.D_E_L_E_T_ = ' ' AND AD1_FILIAL = ADJ_FILIAL AND AD1_NROPOR = ADJ_NROPOR AND AD1_REVISA = ADJ_REVISA" + CRLF
+		//_cSql += "    AND ADY.ADY_PROPOS = ADJ.ADJ_PROPOS" + CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("ADZ")+" ADZ ON ADZ.D_E_L_E_T_ = ' ' AND ADY_FILIAL = ADZ_FILIAL AND ADY_PROPOS = ADZ_PROPOS AND ADY_PREVIS = ADZ_REVISA" + CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("SF4")+" SF4 ON SF4.D_E_L_E_T_ = ' ' AND F4_FILIAL = '" + xFilial("SF4") + "' AND F4_CODIGO = ADZ_TES" + CRLF
+		_cSql += "WHERE "+CRLF
+		_cSql += "  CN9.D_E_L_E_T_ = ' ' "+CRLF
+		_cSql += "  AND CN9_FILIAL = '"+_cFilCtr+"' "+CRLF
+		_cSql += "  AND CN9_NUMERO = '"+_cCtrNr+"' "+CRLF
+		_cSql += "  AND CN9_REVISA = '"+_cCtrNrRev+"' "+CRLF
+		_cSql += "	AND ADY_STATUS = 'E'"+CRLF
+		_cSql += "	AND F4_DUPLIC  = 'S'" + CRLF
+		MemoWrite("C:\temp\SS6925X_001.txt", _cSql)
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+
+		If !(_cAlias)->(EOF())
+			_nLinha	:= (_cAlias)->ADZ_TOTAL
+		EndIf
+
+		(_cAlias)->(dbCloseArea())
+		RestArea(_aArea)
+	ElseIf _cVal == "002"		//Dados do(S) Representante(S) do Contrante
+
+		If !Empty(CN9->CN9_XOPORT)
+
+			_cSql := "SELECT "+CRLF
+			_cSql += "  Trim(U5_CONTAT) U5_CONTAT, U5_CPF, Trim(U5_RG) U5_RG, Trim(U5_XORGEXP) U5_XORGEXP "+CRLF
+			_cSql += "FROM "+CRLF
+			_cSql += "  "+RetSqlName("CN9")+" CN9 "+CRLF
+			_cSql += "  INNER JOIN "+RetSqlName("AD1")+" AD1 ON AD1.D_E_L_E_T_ = ' ' AND CN9_FILIAL = AD1_FILIAL AND CN9_XOPORT = AD1_NROPOR "+CRLF
+			_cSql += "  INNER JOIN "+RetSqlName("AD9")+" AD9 ON AD9.D_E_L_E_T_ = ' ' AND AD1_FILIAL = AD9_FILIAL AND AD1_NROPOR = AD9_NROPOR AND AD1_REVISA = AD9_REVISA "+CRLF
+			_cSql += "  INNER JOIN "+RetSqlName("SU5")+" SU5 ON SU5.D_E_L_E_T_ = ' ' AND  U5_FILIAL = '"+xFilial("SU5")+"' AND AD9_CODCON = U5_CODCONT "+CRLF
+			_cSql += "WHERE "+CRLF
+			_cSql += "  CN9.D_E_L_E_T_ = ' ' "+CRLF
+			_cSql += "  AND CN9_FILIAL = '"+_cFilCtr+"' "+CRLF
+			_cSql += "  AND CN9_NUMERO = '"+_cCtrNr+"' "+CRLF
+			_cSql += "  AND CN9_REVISA = '"+_cCtrNrRev+"' "+CRLF
+			_cSql += "  AND AD9_XREPRE = '1' "+CRLF			//Somente contatos do tipo Representante (1=Sim)
+			MemoWrite("C:\temp\SS6925X_002.txt", _cSql)
+			dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+
+			If !(_cAlias)->(EOF())
+				While !(_cAlias)->(EOF())
+				  	/* Prepara os dados para serem adicionados numa TABELA do Word via Macro */
+					_nLinha++
+
+					_CtateRNom	:= AllTrim((_cAlias)->U5_CONTAT)
+					_CtateRCPF	:= Transform((_cAlias)->U5_CPF,Iif(Len(AllTrim((_cAlias)->U5_CPF))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+					_CtateRRG	:= AllTrim((_cAlias)->U5_RG)
+					_CtateOExp	:= IIf(Empty(AllTrim((_cAlias)->U5_XORGEXP)), "", " " + AllTrim((_cAlias)->U5_XORGEXP))				//#013
+
+					// Nome do Representante
+					If !_lHtm
+						OLE_SetDocumentVar(_hWord,"CtateR_Nom"+Alltrim(str(_nLinha)), _CtateRNom	)
+					Else
+						_oHtml:ValByName("CtateR_Nom", _CtateRNom	)
+						_oHtml:ValByName("CtateR_CPF", _CtateRCPF	)
+						_oHtml:ValByName("CtateR_RG" , _CtateRRG	)
+					EndIf
+					
+				  	/* Prepara os dados para serem adicionados como STRING formatada no Word via Macro */
+					(_cAlias)->(dbSkip())
+					If _nLinha == 1
+						_CtateRAll := _CtateRNom
+						_CtateRAll += ", inscrito(a) no CPF sob nº " + _CtateRCPF
+						_CtateRAll += ", portador(a) do RG nº " + _CtateRRG + _CtateOExp + (iif((_cAlias)->(EOF()),"",", "))		//#013
+					Else
+						_CtateRAll += _CtateRNom
+						_CtateRAll += ", inscrito(a) no CPF sob nº " + _CtateRCPF
+						_CtateRAll += ", portador(a) do RG nº " + _CtateRRG + _CtateOExp + (iif((_cAlias)->(EOF()),"",", "))		//#013
+					EndIf
+				EndDo
+			  	/* TABELA */
+				If !_lHtm
+					OLE_SetDocumentVar(_hWord,"TbCtateR_QtdItens", _nLinha)	//Implementa o Contador de Itens da Macro
+				Else
+					_oHtml:ValByName("TbCtateR_QtdItens", _nLinha)	//Implementa o Contador de Itens da Macro
+				EndIf
+				If !_lHtm
+					If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TbCtateR")}) > 0
+						If _nLinha > 0
+							OLE_ExecuteMacro(_hWord,"TbCtateR")						//Efetua CARGA das Macros
+						EndIf
+					EndIf
+				EndIf
+
+				If !_lHtm
+					OLE_SetDocumentVar(_hWord,"Doc_ContratanteRepresentanteNom", _CtateRNom)
+					OLE_SetDocumentVar(_hWord,"CPFDoRepresentanteDoContratante", _CtateRCPF)
+					_CtateRNom	:= ""
+					_CtateRCPF	:= ""
+					_CtateRRG	:= ""
+					_CtateOExp	:= ""
+					OLE_SetDocumentVar(_hWord,"Doc_ContratanteRepresentanteALL", _CtateRAll)		//Carrega a DocVariable
+				Else
+					_oHtml:ValByName("Doc_ContratanteRepresentanteNom", _CtateRNom)
+					_CtateRNom	:= ""
+					_CtateRCPF	:= ""
+					_CtateRRG	:= ""
+					_CtateOExp	:= ""
+					_oHtml:ValByName("Doc_ContratanteRepresentanteALL", _CtateRAll)		//Carrega a DocVariable
+				EndIf
+			Else
+				_lRet := .F.
+			EndIf
+
+			(_cAlias)->(dbCloseArea())
+			RestArea(_aArea)
+		EndIf
+	ElseIf _cVal == "003"		//Objeto do Contrato [PRODUTOS]
+		If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TXTQTDTOTVACI")}) > 0
+			_cFrom	:= "CNB_PRODUT, 					" + CRLF
+			_cFrom	+= "Trim(B1_DESC) CNB_DESCRI, 		" + CRLF
+			_cFrom	+= "SUM(CNB_QUANT) AS CNB_QUANT,	" + CRLF
+			_cFrom	+= "SUM(CNB_VLTOT) AS CNB_VLTOT,	" + CRLF
+			_cFrom	+= "SUM(CNB_DESC) AS CNB_DESC		" + CRLF
+			
+			_cWhere	:= "AND B1_TIPO          = 'IM'		" + CRLF
+			_cWhere	+= "GROUP BY CNB_PRODUT,			" + CRLF
+			_cWhere	+= "	Trim(B1_DESC)				" + CRLF
+		Else
+			_cFrom := "	DISTINCT CNB_PRODUT, Trim(B1_DESC) CNB_DESCRI, CNB_QUANT, CNB_UM, CNB_VLUNIT, CNB_VLTOT, CNB_DESC, CNB_VLDESC, CNB_TS, CNB_XUNEXE "+CRLF
+		EndIf
+		
+		//Itens da Planilha do Contrato
+		//#006
+		_cSql := "SELECT "+CRLF
+		_cSql += _cFrom	
+		_cSql += "FROM "+CRLF
+		_cSql += "	"+RetSqlName("CNB")+" CNB "+CRLF
+		_cSql += "	INNER JOIN "+RetSqlName("SB1")+" SB1 ON SB1.D_E_L_E_T_ = ' ' AND CNB_PRODUT = B1_COD "+CRLF //#002
+		_cSql += "WHERE "+CRLF
+		_cSql += "	CNB.D_E_L_E_T_ = ' ' "+CRLF
+		_cSql += "	AND CNB_FILIAL = '"+xFilial("ADZ")+"' "+CRLF
+		_cSql += "	AND CNB_CONTRA = '"+_cCtrNr+"' "+CRLF
+		_cSql += "  AND B1_FILIAL = '"+xFilial("SB1")+"' "+CRLF 	//#002
+		_cSql += "  AND B1_XIMPRIM = '1' "+CRLF						//#002
+		_cSql += _cWhere
+		MemoWrite("C:\temp\SS6925X_003A.txt", _cSql)
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+
+		(_cAlias)->(dbGoTop())
+				
+		If (_cAlias)->(EOF())
+			If Select(_cAlias) > 0
+				(_cAlias)->(dbCloseArea())
+				_cAlias := GetNextAlias()
+			Endif
+
+			If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TXTQTDTOTVACI")}) > 0
+				_cFrom	:= " ADZ_PRODUT,						" + CRLF
+				_cFrom	+= " Trim(B1_DESC) CNB_DESCRI,			" + CRLF
+				_cFrom	+= " SUM(ADZ_QTDVEN) CNB_QUANT			" + CRLF
+				
+				_cWhere	:= "AND B1_TIPO          = 'IM' " + CRLF
+				_cWhere	+= "GROUP BY ADZ_PRODUT, 		" + CRLF
+				_cWhere	+= "  Trim(B1_DESC)				" + CRLF
+			Else
+				_cFrom := "  DISTINCT ADZ_PRODUT, Trim(B1_DESC) CNB_DESCRI, ADZ_QTDVEN  CNB_QUANT, ADZ_XUNEXE AS CNB_XUNEXE "+CRLF
+			EndIf
+			
+			//Itens da Proposta
+			//#006
+			_cSql := "SELECT "+CRLF
+			_cSql += _cFrom
+			_cSql += "FROM "+CRLF
+			_cSql += "  "+RetSqlName("CN9")+" CN9 "+CRLF
+			_cSql += "  INNER JOIN "+RetSqlName("AD1")+" AD1 ON AD1.D_E_L_E_T_ = ' ' AND CN9_FILIAL = AD1_FILIAL AND CN9_XOPORT = AD1_NROPOR "+CRLF
+			_cSql += "  INNER JOIN "+RetSqlName("ADY")+" ADY ON ADY.D_E_L_E_T_ = ' ' AND AD1_FILIAL = ADY_FILIAL AND AD1_NROPOR = ADY_OPORTU "+CRLF
+			_cSql += "  INNER JOIN "+RetSqlName("ADZ")+" ADZ ON ADZ.D_E_L_E_T_ = ' ' AND ADY_FILIAL = ADZ_FILIAL AND ADY_PROPOS = ADZ_PROPOS "+CRLF
+			_cSql += "  	AND ADY_PREVIS = ADZ_REVISA "+CRLF
+			_cSql += "	INNER JOIN "+RetSqlName("SB1")+" SB1 ON SB1.D_E_L_E_T_ = ' ' AND ADZ_PRODUT = B1_COD "+CRLF //#002
+			_cSql += "WHERE "+CRLF
+			_cSql += "  CN9.D_E_L_E_T_ = ' ' "+CRLF
+			_cSql += "  AND CN9_FILIAL = '"+_cFilCtr+"' "+CRLF
+			_cSql += "  AND CN9_NUMERO = '"+_cCtrNr+"' "+CRLF
+			_cSql += "  AND CN9_REVISA = '"+_cCtrNrRev+"' "+CRLF //Jonas Nascimento 02/10/2015 - Adição da revisão
+			_cSql += "  AND ADY_STATUS = 'E' "+CRLF		//Somente a escolhida
+			_cSql += "  AND B1_FILIAL = '"+xFilial("SB1")+"' "+CRLF 	//#002
+			_cSql += "  AND B1_XIMPRIM = '1' "+CRLF						//#002
+			_cSql += _cWhere
+			MemoWrite("C:\temp\SS6925X_003B.txt", _cSql)
+			dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+		EndIf
+
+		(_cAlias)->(dbGoTop())
+		
+		If !(_cAlias)->(EOF())
+			While !(_cAlias)->(EOF())
+				_nLinha++
+
+				//#003
+				// Insere o campo Objeto Nome do(s) Produto(s)	
+				If !_lHtm
+					OLE_SetDocumentVar(_hWord, "NomeProd"+Alltrim(str(_nLinha)), AllTrim((_cAlias)->CNB_DESCRI))
+					If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TbProd02")}) > 0
+						OLE_SetDocumentVar(_hWord, "Qtd"+Alltrim(str(_nLinha))			, AllTrim(Transform((_cAlias)->CNB_QUANT, "@E 999,999,999.99")))
+					EndIf
+					If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TbProd05")}) > 0
+						OLE_SetDocumentVar(_hWord, "Qtd"+Alltrim(str(_nLinha))		, AllTrim(Transform((_cAlias)->CNB_QUANT, "@E 999,999,999.99")))
+						OLE_SetDocumentVar(_hWord, "UndMed"+Alltrim(str(_nLinha))	, AllTrim(Posicione("SAH", 1, xFilial("SAH") + (_cAlias)->CNB_UM, "AH_DESCPO")))
+					
+						If ((_cAlias)->CNB_TS $ GetNewPar("MV_XTESMIN","502|505"))
+							OLE_SetDocumentVar(_hWord, "VrlUnit"+Alltrim(str(_nLinha))	, "0,00")
+							OLE_SetDocumentVar(_hWord, "VlrDesc"+Alltrim(str(_nLinha))	, "0,00")
+							OLE_SetDocumentVar(_hWord, "VlrTotl"+Alltrim(str(_nLinha))	, "0,00")
+							nDescont += 0
+						Else
+							OLE_SetDocumentVar(_hWord, "VrlUnit"+Alltrim(str(_nLinha))	,AllTrim(Transform((_cAlias)->CNB_VLUNIT, "@E 999,999,999.99")))
+							OLE_SetDocumentVar(_hWord, "VlrDesc"+Alltrim(str(_nLinha))	, AllTrim(Transform((_cAlias)->CNB_DESC, "@E 999,999,999.99")))
+							OLE_SetDocumentVar(_hWord, "VlrTotl"+Alltrim(str(_nLinha))	, AllTrim(Transform((_cAlias)->CNB_VLTOT-(_cAlias)->CNB_DESC, "@E 999,999,999.99")))
+							nDescont += (_cAlias)->CNB_DESC
+						EndIf
+						nVlrTtl  += (_cAlias)->CNB_VLTOT-(_cAlias)->CNB_DESC
+					EndIf
+					if aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TbProd06")}) > 0
+						OLE_SetDocumentVar(_hWord, "Qtd"+Alltrim(str(_nLinha)), AllTrim(Transform((_cAlias)->CNB_QUANT, "@E 999,999,999.99")))
+						OLE_SetDocumentVar(_hWord, "UnidadeExecutora"+Alltrim(str(_nLinha)), AllTrim((_cAlias)->CNB_XUNEXE))
+						OLE_SetDocumentVar(_hWord, "VrlUnit"+Alltrim(str(_nLinha))	,AllTrim(Transform((_cAlias)->CNB_VLUNIT, "@E 999,999,999.99")))
+						OLE_SetDocumentVar(_hWord, "VrlItem"+Alltrim(str(_nLinha))	,AllTrim(Transform((_cAlias)->CNB_VLTOT, "@E 999,999,999.99")))	
+						If ((_cAlias)->CNB_TS $ GetNewPar("MV_XTESMIN","502|505"))
+							OLE_SetDocumentVar(_hWord, "VlrDesc"+Alltrim(str(_nLinha))	, "0,00")
+							OLE_SetDocumentVar(_hWord, "VlrTotl"+Alltrim(str(_nLinha))	, "0,00")
+							nDescont += 0
+							nVlrTtl += 0
+						Else
+							OLE_SetDocumentVar(_hWord, "VlrDesc"+Alltrim(str(_nLinha))	, AllTrim(Transform((_cAlias)->CNB_VLDESC, "@E 999,999,999.99")))
+							OLE_SetDocumentVar(_hWord, "VlrTotl"+Alltrim(str(_nLinha))	, AllTrim(Transform((_cAlias)->CNB_VLTOT-(_cAlias)->CNB_VLDESC, "@E 999,999,999.99")))
+							nDescont += (_cAlias)->CNB_VLDESC
+							nVlrTtl  += (_cAlias)->CNB_VLTOT-(_cAlias)->CNB_VLDESC
+						EndIf
+					endif
+				Else
+					If (_oHtml:ValByName( "it.prod" )) <> Nil
+						AAdd( (_oHtml:ValByName( "it.prod" )), AllTrim((_cAlias)->CNB_DESCRI) )
+						AAdd( (_oHtml:ValByName( "it.qtd" )), AllTrim(Transform((_cAlias)->CNB_QUANT, "@E 999,999,999.99")) )
+					EndIf
+					If (_oHtml:ValByName( "vl.val" )) <> Nil
+						AAdd( (_oHtml:ValByName( "vl.prod" )), AllTrim((_cAlias)->CNB_DESCRI) )
+						AAdd( (_oHtml:ValByName( "vl.val" )), AllTrim(Transform((_cAlias)->CNB_VLTOT - (_cAlias)->CNB_DESC, "@E 999,999,999.99")) )
+					EndIf
+					nVlrTtl  += (_cAlias)->CNB_VLTOT - (_cAlias)->CNB_DESC
+				EndIf
+				(_cAlias)->(dbSkip())
+			EndDo
+			
+			If !_lHtm
+				OLE_SetDocumentVar(_hWord,"TbProd_QtdItens", _nLinha)		//Implementa o Contador de Itens da Macro
+				OLE_SetDocumentVar(_hWord,"VlrTotalALL", AllTrim(Transform(nVlrTtl, "@E 999,999,999.99")))
+				OLE_SetDocumentVar(_hWord,"VlrDescontoALL", nDescont)
+			Else
+				_oHtml:ValByName("VlrTotalALL"	, AllTrim(Transform(nVlrTtl, "@E 999,999,999.99")))
+			Endif
+
+			If _nLinha > 0
+				//#003
+				If !_lHtm
+					If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TbProd")}) > 0
+						OLE_ExecuteMacro(_hWord,"TbProd")	//Executa macro contida no documento do Word.
+					EndIf
+					If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TbProd02")}) > 0
+						OLE_ExecuteMacro(_hWord,"TbProd02")
+					EndIf
+					If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TbProd05")}) > 0
+						OLE_ExecuteMacro(_hWord,"TbProd05")
+					EndIf
+					If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TbProd06")}) > 0
+						OLE_ExecuteMacro(_hWord,"TbProd06")
+					EndIf
+				EndIf
+			Endif
+		Else
+			_lRet := .F.
+		EndIf
+
+		(_cAlias)->(dbCloseArea())
+		RestArea(_aArea)
+	ElseIf _cVal == "004"
+		/* Selecionar, caso haja, as filiais do EXECUTORAS do contrato.
+			Cláusula quinta - da execução, item 5.2
+		*/
+
+		_cSql := "SELECT " 		+ CRLF
+		_cSql += " DISTINCT ADZ_XUNEXE" + CRLF
+		_cSql += "FROM " 		+ CRLF
+		_cSql += "  "+ RetSqlName("CN9") +" CN9 " 	+ CRLF
+		_cSql += "  INNER JOIN "+ RetSqlName("AD1") +" AD1 ON AD1.D_E_L_E_T_ = ' ' AND CN9_FILIAL = AD1_FILIAL AND CN9_XOPORT = AD1_NROPOR " + CRLF
+		_cSql += "  INNER JOIN "+ RetSqlName("ADY") +" ADY ON ADY.D_E_L_E_T_ = ' ' AND AD1_FILIAL = ADY_FILIAL AND AD1_NROPOR = ADY_OPORTU " + CRLF
+		_cSql += "  INNER JOIN "+ RetSqlName("ADZ") +" ADZ ON ADZ.D_E_L_E_T_ = ' ' AND ADY_FILIAL = ADZ_FILIAL AND ADY_PROPOS = ADZ_PROPOS AND CN9_FILIAL <> ADZ.ADZ_XUNEXE" + CRLF
+		_cSql += "WHERE " 		+ CRLF
+		_cSql += "  CN9.D_E_L_E_T_ = ' ' 				" + CRLF
+		_cSql += "  AND CN9_FILIAL = '"+ _cFilCtr	+"' " + CRLF
+		_cSql += "  AND CN9_NUMERO = '"+ _cCtrNr	+"' " + CRLF
+		_cSql += "  AND CN9_REVISA = '"+_cCtrNrRev+"' "+CRLF 		//Jonas Nascimento 02/10/2015 - Adição da revisão
+		_cSql += "  AND ADY_STATUS = 'E' 				" + CRLF		//Somente a escolhida
+
+		MemoWrite("C:\temp\SS6925X_004.txt", _cSql)
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+
+		If .Not. (_cAlias)->(EOF())
+
+			dbSelectArea("SM0")
+			SM0->(dbSetOrder(1))
+
+			_cUnidOper := "Os serviços objeto deste serão executados pelas seguintes unidades operacionais: " + CRLF
+
+			While .Not. (_cAlias)->(EOF())
+
+				If (SM0->( dbSeek(cEmpAnt + (_cAlias)->ADZ_XUNEXE) ))
+
+					_nLinha++
+					_cUnidOper += StrZero(_nLinha, 2) + " - " + AllTrim(M0_NOMECOM)	+ ", "															//Nome Comercial
+					_cUnidOper += Transform(AllTrim(M0_CGC), Iif(Len(AllTrim(M0_CGC))==11, "@R 999.999.999-99", "@R 99.999.999/9999-99")) + ", "	//CNPJ
+					_cUnidOper += "Estabelecida no endereço " + AllTrim(M0_ENDENT) + ", " 															//Endereço
+					_cUnidOper += "Bairro " + AllTrim(M0_BAIRENT) + ", "																			//Bairro
+					_cUnidOper += Iif(Empty( AllTrim(M0_CEPENT) ), "", "CEP " + Transform(AllTrim(M0_CEPENT), "@R 99999-999")) + ", "				//CEP
+					_cUnidOper += "Municipio " + AllTrim(M0_CIDENT) + "/" + AllTrim(M0_ESTENT) + ", "												//Municipio/Estado
+					_cUnidOper += "Tel. " + SubStr(AllTrim(M0_TEL), 4) + ", " 																		//Telefone
+					_cUnidOper += "Contato " + fSelResUnd((_cAlias)->ADZ_XUNEXE) + "." + CRLF + CRLF												//Nome do Responsavel da Unidade #009
+
+
+				Endif
+
+				(_cAlias)->( dbSkip() )
+
+			EndDo
+
+		Else
+
+			_lRet := .F. // Jonas Nascimento 05/10/2015
+
+		Endif
+
+		(_cAlias)->(dbCloseArea())
+		RestArea(_aArea)
+
+	ElseIf _cVal == "005"
+		/* Selecionar, caso haja, as filiais do CONTRATANTE, que serão atendidas pelo contrato.
+			Cláusula primeira - do objeto, parágrafo único
+		*/
+
+
+		//Alterado por Jonas Nascimento J2A 02/10/2015 - Motivo: Retornar todos os dados necessários
+		/*
+		_cSql := "SELECT " 		+ CRLF
+		_cSql += " DISTINCT ZC3_CODCLI, ZC3_LOJA" + CRLF
+		_cSql += "FROM " 		+ CRLF
+		_cSql += "  "+ RetSqlName("CN9") +" CN9 " 	+ CRLF
+		_cSql += "  INNER JOIN "+ RetSqlName("AD1") + " AD1 ON AD1.D_E_L_E_T_ = ' ' AND CN9_FILIAL = AD1_FILIAL AND CN9_XOPORT = AD1_NROPOR " + CRLF
+		_cSql += "  INNER JOIN "+ RetSqlName("ADY") + " ADY ON ADY.D_E_L_E_T_ = ' ' AND AD1_FILIAL = ADY_FILIAL AND AD1_NROPOR = ADY_OPORTU " + CRLF
+		_cSql += "  INNER JOIN "+ RetSqlName("ZC3") + " ZC3 ON ZC3.D_E_L_E_T_ = ' ' AND ZC3_FILIAL = ADY_FILIAL AND ZC3_OPORTU = ADY_OPORTU " + CRLF
+		_cSql += "		AND ZC3_REVISA = ADY_REVISA AND ZC3_PROPOS = ADY_PROPOS " + CRLF
+		_cSql += "WHERE " 		+ CRLF
+		_cSql += "  CN9.D_E_L_E_T_ = ' ' 				" + CRLF
+		_cSql += "  AND CN9_FILIAL = '"+ _cFilCtr	+"' " + CRLF
+		_cSql += "  AND CN9_NUMERO = '"+ _cCtrNr	+"' " + CRLF
+		_cSql += "  AND ADY_STATUS = 'E' 				" + CRLF		//Somente a escolhida
+		*/
+		_cSql := "SELECT "+CRLF
+
+		//#021
+		_cSql += "  A1_NOME, A1_CGC, A1_INSCR, A1_END, A1_MUN, A1_BAIRRO, A1_CEP, A1_EST, A1_DDD, A1_TEL, A1_CEINSS AS A1_CEI,"+CRLF //Dados do Cliente
+		_cSql += "  U5_CONTAT, U5_DDD, U5_FCOM1 "+CRLF //Dados do Contato do cliente
+		_cSql += "FROM "+CRLF
+		_cSql += "  "+RetSqlName("CN9")+" CN9 "+CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("AD1")+" AD1 ON AD1.D_E_L_E_T_ = ' ' AND CN9_FILIAL = AD1_FILIAL AND CN9_XOPORT = AD1_NROPOR "+CRLF
+		_cSql += "				AND CN9_XREVOP = AD1_REVISA "+CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("ADY")+" ADY ON ADY.D_E_L_E_T_ = ' ' AND AD1_FILIAL = ADY_FILIAL AND AD1_NROPOR = ADY_OPORTU "+CRLF
+		_cSql += "				AND AD1_REVISA = ADY_REVISA "+CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("ZC3")+" ZC3 ON ZC3.D_E_L_E_T_ = ' ' AND ADY_FILIAL = ZC3_FILIAL AND ADY_PROPOS = ZC3_PROPOS "+CRLF
+		_cSql += "				AND ADY_PREVIS = ZC3_PREVIS AND ADY_OPORTU = ZC3_OPORTU AND ADY_REVISA = ZC3_REVISA "+CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("SA1")+" SA1 ON SA1.D_E_L_E_T_ = ' ' AND A1_FILIAL = '"+xFilial("SA1")+"' "+CRLF
+		_cSql += "				AND ZC3_CODCLI = A1_COD AND ZC3_LOJA = A1_LOJA "+CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("SU5")+" SU5 ON SU5.D_E_L_E_T_ = ' ' AND U5_FILIAL = '"+xFilial("SU5")+"' "+CRLF
+		_cSql += "				AND ZC3_CODCON = U5_CODCONT "+CRLF
+		_cSql += "WHERE  "+CRLF
+		_cSql += "  CN9.D_E_L_E_T_ = ' ' "+CRLF
+		_cSql += "  AND CN9_FILIAL = '"+_cFilCtr+"' "+CRLF
+		_cSql += "  AND CN9_NUMERO = '"+_cCtrNr+"' "+CRLF
+		_cSql += "  AND CN9_REVISA = '"+_cCtrNrRev+"' "+CRLF
+		_cSql += "  AND ADY_STATUS = 'E' "+CRLF		//Somente a proposta escolhida
+		MemoWrite("C:\temp\SS6925X_005.txt", _cSql)
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+
+		If .Not. (_cAlias)->(EOF())
+			//dbSelectArea("SA1")
+			//SA1->( dbSetOrder(1) )
+			_cFilAtend := "As filiais do CONTRATANTE que serão atendidas são: "  + CRLF
+			While .Not. (_cAlias)->( EOF() )
+				//If (SA1->( dbSeek(xFilial("SA1") + (_cAlias)->ZC3_CODCLI + (_cAlias)->ZC3_LOJA) ))
+				_nLinha++
+				//Nome Comercial
+				_cFilAtend += StrZero(_nLinha, 2) + " - " + AllTrim((_cAlias)->A1_NOME)	+ ", "
+				//CNPJ
+				_cFilAtend += Iif( Len(AllTrim((_cAlias)->A1_CGC))==11, "CPF ", "CNPJ " ) + "nº "
+				_cFilAtend += Transform(AllTrim((_cAlias)->A1_CGC), Iif(Len(AllTrim((_cAlias)->A1_CGC))==11, "@R 999.999.999-99", "@R 99.999.999/9999-99")) + ", "
+				//CEI
+				If .Not. Empty(AllTrim((_cAlias)->A1_CEI))
+					_cFilAtend += "CEI nº " + AllTrim((_cAlias)->A1_CEI) + ", "
+				EndIf
+				//Endereço
+				_cFilAtend += "Estabelecida no endereço " + AllTrim((_cAlias)->A1_END) + ", "
+				//Bairro
+				_cFilAtend += "Bairro " + AllTrim((_cAlias)->A1_BAIRRO) + ", "
+				//CEP
+				_cFilAtend += Iif(Empty( AllTrim((_cAlias)->A1_CEP) ), "", "CEP " + Transform(AllTrim((_cAlias)->A1_CEP), "@R 99999-999") + ", ")
+				//Municipio/Estado
+				_cFilAtend += "Município " + AllTrim((_cAlias)->A1_MUN) + "/" + AllTrim((_cAlias)->A1_EST) + ", "
+				//Telefone
+				_cFilAtend += "Tel. (" + AllTrim((_cAlias)->A1_DDD) + ") " + AllTrim((_cAlias)->A1_TEL) + ", "
+				//Contato
+				_cFilAtend += "Pessoa de contato "+AllTrim((_cAlias)->U5_CONTAT)+" ("+AllTrim((_cAlias)->U5_DDD)+") "+AllTrim((_cAlias)->U5_FCOM1)+"."+ CRLF + CRLF //#015 + #020
+				//EndIf
+				(_cAlias)->(dbSkip())
+			EndDo
+			//Adicionado por Franklin em 06/10/2015: Caso não haja, deverá ser retornado .F.
+		Else
+			_lRet := .F.
+		EndIf
+
+
+		(_cAlias)->(dbCloseArea())
+		RestArea(_aArea)
+
+	ElseIf _cVal == "006"
+		/* Selecionar a descrição da forma de pagamento		*/
+
+		_cSql := "SELECT " 		+ CRLF
+		_cSql += " SX5.X5_DESCRI, ADY_XTPCOB, COALESCE(A1_XEMLCOB,'') A1_XEMLCOB " + CRLF
+		_cSql += "FROM " 		+ CRLF
+		_cSql += "  "+ RetSqlName("CN9") +" CN9 " 	+ CRLF
+		_cSql += "  INNER JOIN "+ RetSqlName("AD1") + " AD1 ON AD1.D_E_L_E_T_ = ' ' AND CN9_FILIAL = AD1_FILIAL AND CN9_XOPORT = AD1_NROPOR " + CRLF
+		_cSql += "  INNER JOIN "+ RetSqlName("ADY") + " ADY ON ADY.D_E_L_E_T_ = ' ' AND AD1_FILIAL = ADY_FILIAL AND AD1_NROPOR = ADY_OPORTU " + CRLF
+		_cSql += "  INNER JOIN "+ RetSqlName("SX5") + " SX5 ON SX5.D_E_L_E_T_ = ' ' AND X5_CHAVE = ADY_XFORPG	" + CRLF
+		_cSql += "  LEFT  JOIN "+ RetSqlName("SA1") + " SA1 ON SA1.D_E_L_E_T_ = ' ' AND A1_COD=CN9_CLIENT AND A1_LOJA=CN9_LOJACL	" + CRLF
+		_cSql += "WHERE " 		+ CRLF
+		_cSql += "  CN9.D_E_L_E_T_ = ' ' 							" + CRLF
+		_cSql += "  AND CN9_FILIAL = '"+ _cFilCtr	+"' 			" + CRLF
+		_cSql += "  AND CN9_NUMERO = '"+ _cCtrNr	+"' 			" + CRLF
+		_cSql += "  AND ADY_STATUS = 'E' 							" + CRLF		//Somente a escolhida
+		_cSql += "  AND SX5.X5_FILIAL     = '"+ xFilial("SX5") +"'	" + CRLF
+		_cSql += "  AND SX5.X5_TABELA     = 'ZC' 					" + CRLF
+
+		MemoWrite("C:\temp\SS6925X_006.txt", _cSql)
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+
+		If .Not. (_cAlias)->(EOF())
+
+			_cCtrFPgto	:= (_cAlias)->X5_DESCRI
+
+			If (_cAlias)->ADY_XTPCOB == '1' // Cobrança fisica
+			ElseIf (_cAlias)->ADY_XTPCOB == '2' // Cobrança por email
+				_cTpCob := " e encaminhar CONTRATANTE no endereço eletrônico: " + AllTrim((_cAlias)->A1_XEMLCOB) + "."
+			Else
+			EndIf
+			//Adicionado por Franklin em 06/10/2015: Caso não haja, deverá ser retornado .F.
+		Else
+			_lRet := .F.
+		EndIf
+
+		(_cAlias)->(dbCloseArea())
+		RestArea(_aArea)
+
+	ElseIf _cVal == "007"
+		/*#005 - Selecionar Banco/Agencia/Conta informados na proposta		*/
+
+		_cSql := "SELECT SA6.A6_COD BANCO,						"	+ CRLF
+		_cSql += "	SA6.A6_AGENCIA AGENCIA,						"	+ CRLF
+		_cSql += "	SA6.A6_NUMCON	 CONTA						"	+ CRLF
+		_cSql += "FROM "+ RetSqlName("CN9") +" CN9				"	+ CRLF
+		_cSql += "INNER JOIN "+ RetSqlName("AD1") + " AD1		"	+ CRLF
+		_cSql += "ON AD1.D_E_L_E_T_ = ' '						"	+ CRLF
+		_cSql += "AND CN9_FILIAL    = AD1_FILIAL				"	+ CRLF
+		_cSql += "AND CN9_XOPORT    = AD1_NROPOR				"	+ CRLF
+		_cSql += "INNER JOIN "+ RetSqlName("ADY") + " ADY		"	+ CRLF
+		_cSql += "ON ADY.D_E_L_E_T_    = ' '					"	+ CRLF
+		_cSql += "AND AD1_FILIAL       = ADY_FILIAL				" 	+ CRLF
+		_cSql += "AND AD1_NROPOR       = ADY_OPORTU				" 	+ CRLF
+		_cSql += "AND AD1_REVISA       = ADY_REVISA				" 	+ CRLF
+		_cSql += "INNER JOIN "+ RetSqlName("SA6") + " SA6		"	+ CRLF
+		_cSql += "ON SA6.D_E_L_E_T_    = ' '					"	+ CRLF
+		_cSql += "AND ADY.ADY_FILIAL   = SA6.A6_FILIAL			" 	+ CRLF
+		_cSql += "AND ADY_XBANCO       = SA6.A6_COD				" 	+ CRLF
+		_cSql += "AND ADY_XAGENC       = SA6.A6_AGENCIA			" 	+ CRLF
+		_cSql += "AND ADY_XCONTA       = SA6.A6_NUMCON			" 	+ CRLF
+		_cSql += "WHERE CN9.D_E_L_E_T_ = ' '					" 	+ CRLF
+		_cSql += "AND CN9_FILIAL       = '"+ _cFilCtr	+"'		" 	+ CRLF
+		_cSql += "AND CN9_NUMERO       = '"+ _cCtrNr	+"'		" 	+ CRLF
+		_cSql += "AND ADY_STATUS       = 'E'					" 	+ CRLF
+
+		MemoWrite("C:\temp\SS6925X_007.txt", _cSql)
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+
+		If .Not. (_cAlias)->(EOF())
+			_cNumBanco	:= (_cAlias)->BANCO					//Numero Banco
+			_cNumAgenc	:= (_cAlias)->AGENCIA				//Numero Agencia
+			_cNumConta	:= (_cAlias)->CONTA					//Numero Conta
+		Else
+			_lRet := .F.
+		EndIf
+
+		(_cAlias)->(dbCloseArea())
+		RestArea(_aArea)
+
+	ElseIf _cVal == "008"		//Tabela descritiva dos produtos e seus valores
+		nVlrCto := 0
+		//#016
+		If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TBPRODVLR01")}) > 0 	//Retorna o nome do produto e valor unitário
+
+			_cFrom	:= " DISTINCT CNB_PRODUT, Trim(B1_DESC) CNB_DESCRI, CNB_VLUNIT - CASE CNB_VLDESC WHEN 0 THEN 0 ELSE (CNB_VLDESC/CNB_QUANT) END CNB_VLUNIT, F4_DUPLIC " + CRLF
+
+		ElseIf aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TBPRODVLR02")}) > 0 //Retorna nome do produto, quantidade, valor unitário e valor total
+
+			_cFrom	:= " CNB_PRODUT, Trim(B1_DESC) CNB_DESCRI, SUM(CNB_QUANT) CNB_QUANT, CNB_VLUNIT, F4_DUPLIC, SUM(CNB_VLTOT - CNB_VLDESC) CNB_VLTOT " + CRLF
+			_cWhere	:= " GROUP BY CNB_PRODUT, Trim(B1_DESC), CNB_VLUNIT, F4_DUPLIC " + CRLF
+
+		EndIf
+
+		//Itens da Planilha do Contrato
+		//#008
+		_cSql := "SELECT " + CRLF
+		//_cSql += "CNB_PRODUT,Trim(CNB_DESCRI) CNB_DESCRI, CNB_QUANT, CNB_VLUNIT, CNB_VLTOT " + CRLF
+		_cSql += _cFrom	//#016
+		_cSql += "FROM " + CRLF
+		_cSql += "	"+RetSqlName("CNB")+" CNB " + CRLF
+		_cSql += "	INNER JOIN "+RetSqlName("SB1")+" SB1 ON SB1.D_E_L_E_T_ = ' ' AND CNB_PRODUT = B1_COD " + CRLF
+		_cSql += "	INNER JOIN "+RetSqlName("SF4")+" SF4 ON SF4.D_E_L_E_T_ = ' ' AND CNB_TS     = F4_CODIGO " + CRLF
+		_cSql += "WHERE " + CRLF
+		_cSql += "	CNB.D_E_L_E_T_ = ' ' " + CRLF
+		_cSql += "	AND CNB_FILIAL = '" + xFilial("ADZ") + "' " + CRLF
+		_cSql += "	AND CNB_CONTRA = '" + _cCtrNr + "' " + CRLF
+		_cSql += "  AND B1_FILIAL = '" + xFilial("SB1") + "' " + CRLF
+		_cSql += "  AND F4_FILIAL = '" + xFilial("SF4") + "' " + CRLF
+		_cSql += _cWhere
+
+		MemoWrite("C:\temp\SS6925X_008A.txt", _cSql)
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+
+		If (_cAlias)->(EOF())
+			If Select(_cAlias) > 0
+				(_cAlias)->(dbCloseArea())
+				_cAlias := GetNextAlias()
+			Endif
+
+			//#016
+			If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TBPRODVLR01")}) > 0 	//Retorna o nome do produto e valor unitário
+
+				_cFrom	:= " DISTINCT ADZ_PRODUT, Trim(B1_DESC) CNB_DESCRI, F4_DUPLIC, ADZ_PRCVEN - CASE ADZ_VALDES WHEN 0 THEN 0 ELSE (ADZ_VALDES/ADZ_QTDVEN) END CNB_VLUNIT " + CRLF
+
+			ElseIf aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TBPRODVLR02")}) > 0 //Retorna nome do produto, quantidade, valor unitário e valor total
+
+				_cFrom	:= " ADZ_PRODUT, Trim(B1_DESC) CNB_DESCRI, SUM(ADZ_QTDVEN) CNB_QUANT, F4_DUPLIC, ADZ_PRCVEN CNB_VLUNIT, SUM(ADZ_TOTAL - ADZ_VALDES) CNB_VLTOT " + CRLF
+				_cWhere	:= " GROUP BY ADZ_PRODUT, B1_DESC, ADZ_PRCVEN, F4_DUPLIC " + CRLF
+
+			EndIf
+
+			//Itens da Proposta
+			_cSql := "SELECT " + CRLF
+			//_cSql += "ADZ_PRODUT, Trim(ADZ_DESCRI) CNB_DESCRI, ADZ_QTDVEN  CNB_QUANT, ADZ_PRCVEN CNB_VLUNIT, ADZ_TOTAL CNB_VLTOT " + CRLF
+			_cSql += _cFrom //#016
+			_cSql += "FROM " + CRLF
+			_cSql += "  " + RetSqlName("CN9") + " CN9 " + CRLF
+			_cSql += "  INNER JOIN " + RetSqlName("AD1") + " AD1 ON AD1.D_E_L_E_T_ = ' ' AND CN9_FILIAL = AD1_FILIAL AND CN9_XOPORT = AD1_NROPOR " + CRLF
+			_cSql += "  INNER JOIN " + RetSqlName("ADY") + " ADY ON ADY.D_E_L_E_T_ = ' ' AND AD1_FILIAL = ADY_FILIAL AND AD1_NROPOR = ADY_OPORTU " + CRLF
+			//#008
+			_cSql += "  INNER JOIN " + RetSqlName("ADZ") + " ADZ ON ADZ.D_E_L_E_T_ = ' ' AND ADY_FILIAL = ADZ_FILIAL AND ADY_PROPOS = ADZ_PROPOS AND ADY_PREVIS = ADZ.ADZ_REVISA" + CRLF
+			_cSql += "	INNER JOIN " + RetSqlName("SB1") + " SB1 ON SB1.D_E_L_E_T_ = ' ' AND ADZ_PRODUT = B1_COD " + CRLF
+			_cSql += "	INNER JOIN " + RetSqlName("SF4") + " SF4 ON SF4.D_E_L_E_T_ = ' ' AND ADZ_TES    = F4_CODIGO " + CRLF
+			_cSql += "WHERE " + CRLF
+			_cSql += "  CN9.D_E_L_E_T_ = ' ' " + CRLF
+			_cSql += "  AND CN9_FILIAL = '" + _cFilCtr +"' " + CRLF
+			_cSql += "  AND CN9_NUMERO = '" + _cCtrNr +"' " + CRLF
+			_cSql += "  AND CN9_REVISA = '" + _cCtrNrRev +"' " + CRLF
+			_cSql += "  AND ADY_STATUS = 'E' " + CRLF
+			_cSql += "  AND B1_FILIAL = '" + xFilial("SB1") + "' " + CRLF
+			_cSql += "  AND F4_FILIAL = '" + xFilial("SF4") + "' " + CRLF
+			_cSql += _cWhere
+
+			MemoWrite("C:\temp\SS6925X_008B.txt", _cSql)
+			dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+		EndIf
+
+		If !(_cAlias)->(EOF())
+			While !(_cAlias)->(EOF())
+				_nLinha++
+
+				// Insere o campo Objeto Nome do(s) Produto(s)
+				//#010
+				OLE_SetDocumentVar(_hWord, "DisNomeProd"+Alltrim(str(_nLinha)), AllTrim((_cAlias)->CNB_DESCRI))
+
+				If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TBPRODVLR01")}) > 0
+					If (_cAlias)->F4_DUPLIC == 'S'
+						OLE_SetDocumentVar(_hWord, "DisVlUnitario"+Alltrim(str(_nLinha))	, "R$ "+Alltrim(Transform((_cAlias)->CNB_VLUNIT,"@E 999,999,999.99")))
+					Else
+						OLE_SetDocumentVar(_hWord, "DisVlUnitario"+Alltrim(str(_nLinha))	, "R$ "+Alltrim(Transform(0,"@E 999,999,999.99")))
+					EndIf
+				EndIf
+		
+				If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TBPRODVLR02")}) > 0
+					OLE_SetDocumentVar(_hWord, "DisQtd"+Alltrim(str(_nLinha)), AllTrim(Transform((_cAlias)->CNB_QUANT, "@E 999,999,999.99")))
+					OLE_SetDocumentVar(_hWord, "DisVlUnitario"+Alltrim(str(_nLinha)), "R$ "+Alltrim(Transform((_cAlias)->CNB_VLUNIT, "@E 999,999,999.99")))
+					If (_cAlias)->F4_DUPLIC == 'S'
+						OLE_SetDocumentVar(_hWord, "DisVlTotal"+Alltrim(str(_nLinha)), "R$ "+Alltrim(Transform((_cAlias)->CNB_VLTOT, "@E 999,999,999.99")))
+						nVlrCto += (_cAlias)->CNB_VLTOT
+					Else
+						OLE_SetDocumentVar(_hWord, "DisVlTotal"+Alltrim(str(_nLinha)), "R$ "+Alltrim(Transform(0, "@E 999,999,999.99")))
+					EndIf
+				EndIf
+				(_cAlias)->(dbSkip())
+			EndDo
+			
+			OLE_SetDocumentVar(_hWord,"DisTbProd_QtdItens", _nLinha)		//Implementa o Contador de Itens da Macro
+			
+			If _nLinha > 0
+				_cCtrVIni := "R$ "+Alltrim(Transform(nVlrCto, "@E 999,999,999.99"))
+				_cCtrVIniE := Extenso(nVlrCto, .F., 1)
+				_aCondPg := Condicao(nVlrCto, CN9->CN9_CONDPG, , CN9->CN9_DTULST)
+				If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TBPRODVLR01")}) > 0
+					OLE_ExecuteMacro(_hWord,"TBPRODVLR01")	//Executa macro contida no documento do Word.
+				EndIf
+				If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TBPRODVLR02")}) > 0
+					OLE_ExecuteMacro(_hWord,"TBPRODVLR02")
+				EndIf
+			Endif
+		Else
+			_lRet := .F.
+		EndIf
+
+		(_cAlias)->(dbCloseArea())
+		RestArea(_aArea)
+
+		//#018
+	ElseIf _cVal == "009"
+		//Itens do contrato
+		_cSql := "SELECT CNB_PRODUT," 							+ CRLF
+		_cSql += "	SUM(CNB_QUANT) AS QUANT " 					+ CRLF
+		_cSql += "FROM " + RetSqlName("CNB") + " CNB " 			+ CRLF
+		_cSql += "INNER JOIN " + RetSqlName("SB1") + " SB1 " 	+ CRLF
+		_cSql += "ON SB1.D_E_L_E_T_    	= ' ' " 				+ CRLF
+		_cSql += "AND CNB_PRODUT       	= B1_COD" 				+ CRLF
+		_cSql += "WHERE CNB.D_E_L_E_T_ 	= ' '" 					+ CRLF
+		_cSql += "AND CNB_FILIAL       	= '" + xFilial("ADZ") + "'" 	+ CRLF
+		_cSql += "AND CNB_CONTRA       	= '" + _cCtrNr + "'" 	+ CRLF
+		_cSql += "AND B1_FILIAL        	= '" + xFilial("SB1") + "'" 	+ CRLF
+		_cSql += "AND B1_XIMPRIM      	= '1'" 					+ CRLF
+		_cSql += "AND B1_TIPO      		= 'IM'" 				+ CRLF
+		_cSql += "GROUP BY CNB_PRODUT"			 				+ CRLF
+
+		MemoWrite("C:\temp\SS6925X_009A.txt", _cSql)
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+
+		If (_cAlias)->(EOF())
+			If Select(_cAlias) > 0
+				(_cAlias)->(dbCloseArea())
+				_cAlias := GetNextAlias()
+			Endif
+
+			//Itens da Proposta
+			_cSql := "SELECT ADZ_PRODUT AS CNB_PRODUT,"			+ CRLF
+			_cSql += "	SUM(ADZ_QTDVEN) QUANT" 					+ CRLF
+			_cSql += "FROM  " + RetSqlName("CN9") + " CN9" 		+ CRLF
+			_cSql += "INNER JOIN AD1010 AD1" 					+ CRLF
+			_cSql += "ON AD1.D_E_L_E_T_ = ' '" 					+ CRLF
+			_cSql += "AND CN9_FILIAL    = AD1_FILIAL" 			+ CRLF
+			_cSql += "AND CN9_XOPORT    = AD1_NROPOR" 			+ CRLF
+			_cSql += "INNER JOIN " + RetSqlName("ADY") + " ADY" + CRLF
+			_cSql += "ON ADY.D_E_L_E_T_ = ' '" 					+ CRLF
+			_cSql += "AND AD1_FILIAL    = ADY_FILIAL" 			+ CRLF
+			_cSql += "AND AD1_NROPOR    = ADY_OPORTU" 			+ CRLF
+			_cSql += "INNER JOIN " + RetSqlName("ADZ") + " ADZ" + CRLF
+			_cSql += "ON ADZ.D_E_L_E_T_ = ' '" 					+ CRLF
+			_cSql += "AND ADY_FILIAL    = ADZ_FILIAL" 			+ CRLF
+			_cSql += "AND ADY_PROPOS    = ADZ_PROPOS" 			+ CRLF
+			_cSql += "AND ADY_PREVIS    = ADZ.ADZ_REVISA" 		+ CRLF
+			_cSql += "INNER JOIN " + RetSqlName("SB1") + " SB1" + CRLF
+			_cSql += "ON SB1.D_E_L_E_T_    = ' '" 				+ CRLF
+			_cSql += "AND ADZ_PRODUT       = B1_COD" 			+ CRLF
+			_cSql += "WHERE CN9.D_E_L_E_T_ = ' '" 				+ CRLF
+			_cSql += "AND CN9_FILIAL       = '" + _cFilCtr +"'" + CRLF
+			_cSql += "AND CN9_NUMERO       = '" + _cCtrNr +"'" 	+ CRLF
+			_cSql += "AND CN9_REVISA       = '" + _cCtrNrRev +"'" 	+ CRLF
+			_cSql += "AND ADY_STATUS       = 'E'" 				+ CRLF
+			_cSql += "AND B1_FILIAL        = '" + xFilial("SB1") + "'" 	+ CRLF
+			_cSql += "AND B1_XIMPRIM       = '1'" 				+ CRLF
+			_cSql += "AND B1_TIPO          = 'IM'" 				+ CRLF
+			_cSql += "GROUP BY ADZ_PRODUT"		 				+ CRLF
+
+			MemoWrite("C:\temp\SS6925X_009B.txt", _cSql)
+			dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+		EndIf
+
+		If !(_cAlias)->(EOF())
+			While !(_cAlias)->(EOF())
+				_nQtdTotVac	+= (_cAlias)->QUANT
+				(_cAlias)->( DbSkip() )
+			End
+			If !_lHtm
+				OLE_SetDocumentVar(_hWord,"Doc_QtdTotVacinas", _nQtdTotVac)
+			Else
+				_oHtml:ValByName("Doc_QtdTotVacinas", _nQtdTotVac)
+			EndIf
+		Else
+			_lRet := .F.
+		EndIf
+
+		(_cAlias)->(dbCloseArea())
+		RestArea(_aArea)
+	ElseIf _cVal == "010"
+		//#020 - Descrição da montagem no cabeçalho da função
+
+		_cSql := "SELECT " 		+ CRLF
+		_cSql += "	ADZ.ADZ_FILIAL, SB1.B1_DESC, ADZ.ADZ_PROPOS, ADZ_XUNEXE, SUM(ADZ.ADZ_QTDVEN) ADZ_QTDVEN" + CRLF
+		_cSql += "FROM " 		+ CRLF
+		_cSql += "  "+ RetSqlName("CN9") +" CN9 " 	+ CRLF
+		_cSql += "  INNER JOIN "+ RetSqlName("AD1") +" AD1 ON AD1.D_E_L_E_T_ = ' ' AND CN9_FILIAL = AD1_FILIAL AND CN9_XOPORT = AD1_NROPOR " + CRLF
+		_cSql += "  INNER JOIN "+ RetSqlName("ADY") +" ADY ON ADY.D_E_L_E_T_ = ' ' AND AD1_FILIAL = ADY_FILIAL AND AD1_NROPOR = ADY_OPORTU " + CRLF
+		_cSql += "  INNER JOIN "+ RetSqlName("ADZ") +" ADZ ON ADZ.D_E_L_E_T_ = ' ' AND ADY_FILIAL = ADZ_FILIAL AND ADY_PROPOS = ADZ_PROPOS " + CRLF
+		//#019
+		_cSql += "		AND ADY_PREVIS = ADZ_REVISA AND CN9_FILIAL <> ADZ.ADZ_XUNEXE"  + CRLF
+		_cSql += "	INNER JOIN "+ RetSqlName("SB1") +" SB1 ON SB1.D_E_L_E_T_ = ' ' AND ADZ_PRODUT = B1_COD" 			+ CRLF
+		_cSql += "WHERE " 		+ CRLF
+		_cSql += "  CN9.D_E_L_E_T_ = ' ' 				" 		+ CRLF
+		_cSql += "  AND CN9_FILIAL = '"+ _cFilCtr	+"' " 		+ CRLF
+		_cSql += "  AND CN9_NUMERO = '"+ _cCtrNr	+"' " 		+ CRLF
+		_cSql += "  AND CN9_REVISA = '"+_cCtrNrRev+"' "			+ CRLF
+		_cSql += "  AND ADY_STATUS = 'E' 				" 		+ CRLF		//Somente a escolhida
+		_cSql += "	AND B1_XIMPRIM       = '1'" 				+ CRLF
+		_cSql += "GROUP BY ADZ.ADZ_FILIAL, SB1.B1_DESC, ADZ.ADZ_PROPOS, ADZ_XUNEXE" + CRLF
+		_cSql += "ORDER BY ADZ.ADZ_FILIAL, ADZ_XUNEXE, SB1.B1_DESC"	+ CRLF
+
+		MemoWrite("C:\temp\SS6925X_010.txt", _cSql)
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+
+		If .Not. (_cAlias)->(EOF())
+
+			dbSelectArea("SM0")
+			SM0->(dbSetOrder(1))
+
+			OLE_SetDocumentVar(_hWord, "UnidOper"		, .T.)
+
+			While .Not. (_cAlias)->(EOF())
+				If (SM0->( dbSeek(cEmpAnt + (_cAlias)->ADZ_XUNEXE) ))
+					_nLinha++
+					_nTotUn	:= 0
+					_cUnidOper := StrZero(_nLinha, 2) + " - " + AllTrim(M0_NOMECOM)	+ ", "															//Nome Comercial
+					_cUnidOper += Transform(AllTrim(M0_CGC), Iif(Len(AllTrim(M0_CGC))==11, "@R 999.999.999-99", "@R 99.999.999/9999-99")) + ", "	//CNPJ
+					_cUnidOper += "Estabelecida no endereço " + AllTrim(M0_ENDENT) + ", " 															//Endereço
+					_cUnidOper += "Bairro " + AllTrim(M0_BAIRENT) + ", "																			//Bairro
+					_cUnidOper += Iif(Empty( AllTrim(M0_CEPENT) ), "", "CEP " + Transform(AllTrim(M0_CEPENT), "@R 99999-999")) + ", "				//CEP
+					_cUnidOper += "Municipio " + AllTrim(M0_CIDENT) + "/" + AllTrim(M0_ESTENT) + ", "												//Municipio/Estado
+					_cUnidOper += "Tel. " + SubStr(AllTrim(M0_TEL), 4) + ", " 																		//Telefone
+					_cUnidOper += "Contato " + fSelResUnd((_cAlias)->ADZ_XUNEXE) + "."																//Nome do Responsavel da Unidade #009
+
+					_cMunUnExec += AllTrim(M0_CIDENT) + ", "
+
+					_cUnExec := (_cAlias)->ADZ_XUNEXE
+
+					_nProd := 0
+					While (_cAlias)->ADZ_XUNEXE == _cUnExec
+						_nProd++
+						_nTotUn += (_cAlias)->ADZ_QTDVEN
+
+						If !_lHtm
+							OLE_SetDocumentVar(_hWord, "TextoUnidOper" + Alltrim(str(_nLinha)) + "Prod"  + Alltrim(str(_nProd)), (_cAlias)->B1_DESC)
+							OLE_SetDocumentVar(_hWord, "TextoUnidOper" + Alltrim(str(_nLinha)) + "Quant" + Alltrim(str(_nProd)), (_cAlias)->ADZ_QTDVEN)
+						Else
+							_oHtml:ValByName( "TextoUnidOper" + Alltrim(str(_nLinha)) + "Prod"  + Alltrim(str(_nProd)), (_cAlias)->B1_DESC)
+							_oHtml:ValByName( "TextoUnidOper" + Alltrim(str(_nLinha)) + "Quant" + Alltrim(str(_nProd)), (_cAlias)->ADZ_QTDVEN)
+						EndIf
+						(_cAlias)->( dbSkip() )
+					EndDo
+
+					//_cUnidOper += " Responsável pela aplicação de " + Alltrim(str(_nTotUn)) + " doses do montante previsto, conforme especificado no quadro abaixo:"
+					_cUnidOper += " Conforme especificado no quadro abaixo:"
+
+					If !_lHtm
+						OLE_SetDocumentVar(_hWord, "TextoUnidOper" + Alltrim(str(_nLinha)), _cUnidOper)
+						OLE_SetDocumentVar(_hWord, "QtdProd" + Alltrim(str(_nLinha)), Alltrim(str(_nProd)))
+					Else
+						_oHtml:ValByName("TextoUnidOper" + Alltrim(str(_nLinha)), _cUnidOper)
+						_oHtml:ValByName("QtdProd" + Alltrim(str(_nLinha)), Alltrim(str(_nProd)))
+					EndIf
+
+				Endif
+			EndDo
+
+			If !_lHtm
+				OLE_SetDocumentVar(_hWord,"QtdUnidExec", _nLinha)
+				OLE_ExecuteMacro(_hWord, "TXTUnidOperImun")
+			EndIf
+
+		Else
+			If !_lHtm
+				OLE_SetDocumentVar(_hWord, "UnidOper"		, .F.)
+				OLE_ExecuteMacro(_hWord, "TXTUnidOperImun")
+			EndIf
+		Endif
+
+		(_cAlias)->(dbCloseArea())
+		RestArea(_aArea)
+	ElseIf _cVal == "011"		//Tabelas para produtos da minuta S+
+		_nTotDemPro := 0
+		_nTotVidAti := 0
+		_nTotGeral := 0
+		If Select(_cAlias) > 0
+			(_cAlias)->(dbCloseArea())
+			_cAlias := GetNextAlias()
+		Endif
+		//Itens da Proposta
+		_cSql := "SELECT "+CRLF
+		_cSql += "ADZ_PRODUT, ADZ_DESCRI, SUM(ADZ_QTDVEN) AS ADZ_QTDVEN, ADZ_PRCTAB, ADZ_PRCVEN, "+CRLF
+		_cSql += "SUM(ADZ_TOTAL) AS ADZ_TOTAL, SUM(ADZ_VALDES) AS ADZ_VALDES, ADZ_UM, F4_DUPLIC"+CRLF
+		_cSql += "FROM "+CRLF
+		_cSql += "  "+RetSqlName("CN9")+" CN9 "+CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("AD1")+" AD1 ON AD1.D_E_L_E_T_ = ' ' AND CN9_FILIAL = AD1_FILIAL AND CN9_XOPORT = AD1_NROPOR "+CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("ADY")+" ADY ON ADY.D_E_L_E_T_ = ' ' AND AD1_FILIAL = ADY_FILIAL AND AD1_NROPOR = ADY_OPORTU "+CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("ADZ")+" ADZ ON ADZ.D_E_L_E_T_ = ' ' AND ADY_FILIAL = ADZ_FILIAL AND ADY_PROPOS = ADZ_PROPOS "+CRLF
+		_cSql += "  	AND ADY_PREVIS = ADZ_REVISA "+CRLF
+		_cSql += "	INNER JOIN "+RetSqlName("SB1")+" SB1 ON SB1.D_E_L_E_T_ = ' ' AND ADZ_PRODUT = B1_COD "+CRLF
+		_cSql += "	INNER JOIN " + RetSqlName("SF4") + " SF4 ON SF4.D_E_L_E_T_ = ' ' AND F4_FILIAL = '" + xFilial("SF4") + "' AND ADZ_TES    = F4_CODIGO " + CRLF
+		_cSql += "WHERE "+CRLF
+		_cSql += "  CN9.D_E_L_E_T_ = ' ' "+CRLF
+		_cSql += "  AND CN9_FILIAL = '"+_cFilCtr+"' "+CRLF
+		_cSql += "  AND CN9_NUMERO = '"+_cCtrNr+"' "+CRLF
+		_cSql += "  AND CN9_REVISA = '"+_cCtrNrRev+"' "+CRLF
+		_cSql += "  AND ADY_STATUS = 'E' "+CRLF		//Somente a escolhida
+		_cSql += "  AND B1_FILIAL = '"+xFilial("SB1")+"' "+CRLF
+		_cSql += "  AND B1_XIMPRIM = '1' "+CRLF
+		_cSql += "GROUP BY ADZ_PRODUT, ADZ_DESCRI, ADZ_PRCTAB, ADZ_PRCVEN, ADZ_UM, F4_DUPLIC"+CRLF
+		MemoWrite("C:\temp\SS6925X_011B.txt", _cSql)
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+		If !(_cAlias)->(EOF())
+			While !(_cAlias)->(EOF())
+				If (_cAlias)->ADZ_PRODUT ==  AllTrim( SuperGetMV("MV_XVIDATI", .F., "") ) //Código do produto Vidas Ativas
+					OLE_SetDocumentVar( _hWord,"Doc_QuantidadeVidasAtivas", AllTrim(Transform((_cAlias)->ADZ_QTDVEN, "@E 999,999,999.99")) )
+					If (_cAlias)->F4_DUPLIC == 'S'
+						_nTotVidAti := (_cAlias)->ADZ_TOTAL
+						OLE_SetDocumentVar( _hWord,"Doc_ValorUnitarioVidasAtivas", "R$ " + AllTrim(Transform((_cAlias)->ADZ_PRCVEN, "@E 999,999,999.99")) )
+						OLE_SetDocumentVar( _hWord,"Doc_ValorTotalVidasAtivas", "R$ " + AllTrim(Transform((_cAlias)->ADZ_TOTAL, "@E 999,999,999.99")) )
+						OLE_SetDocumentVar( _hWord,"Doc_ValorMesVidasAtivas", "R$ " +  AllTrim(Transform(_nTotVidAti/12, "@E 999,999,999.99")) )
+						OLE_SetDocumentVar( _hWord,"Doc_ValorTotalVidasAtivasExtenso", Extenso(_nTotVidAti) )
+					Else
+						_nTotVidAti := 0
+						OLE_SetDocumentVar( _hWord,"Doc_ValorUnitarioVidasAtivas", "R$ " + AllTrim(Transform(0, "@E 999,999,999.99")) )
+						OLE_SetDocumentVar( _hWord,"Doc_ValorTotalVidasAtivas", "R$ " + AllTrim(Transform(0, "@E 999,999,999.99")) )
+						OLE_SetDocumentVar( _hWord,"Doc_ValorMesVidasAtivas", "R$ " +  AllTrim(Transform(0, "@E 999,999,999.99")) )
+						OLE_SetDocumentVar( _hWord,"Doc_ValorTotalVidasAtivasExtenso", Extenso(0) )
+					EndIf
+				Else //Demais produtos - Produto|QTDE|Especificação|Valor Unitário R$|Valor Total R$|Desc. R$|Valor Total a Pagar R$
+					_nLinha++
+					OLE_SetDocumentVar( _hWord, "DescProd"+Alltrim(str(_nLinha)), AllTrim((_cAlias)->ADZ_DESCRI) )
+					OLE_SetDocumentVar( _hWord, "QtdeProd"+Alltrim(str(_nLinha)), AllTrim(Transform((_cAlias)->ADZ_QTDVEN, "@E 999,999,999")) )
+					OLE_SetDocumentVar( _hWord, "UnMeProd"+Alltrim(str(_nLinha)), AllTrim(Posicione("SAH", 1, xFilial("SAH") + (_cAlias)->ADZ_UM, "AH_DESCPO")) )
+					If (_cAlias)->F4_DUPLIC == 'S'
+						OLE_SetDocumentVar( _hWord, "VlUnProd"+Alltrim(str(_nLinha)), "R$ " + AllTrim(Transform((_cAlias)->ADZ_PRCTAB, "@E 999,999,999.99")) )
+						OLE_SetDocumentVar( _hWord, "VlToProd"+Alltrim(str(_nLinha)), "R$ " + AllTrim(Transform((_cAlias)->ADZ_PRCTAB*(_cAlias)->ADZ_QTDVEN, "@E 999,999,999.99")) )
+						OLE_SetDocumentVar( _hWord, "VlDeProd"+Alltrim(str(_nLinha)), "R$ " + AllTrim(Transform((_cAlias)->ADZ_VALDES, "@E 999,999,999.99")) )
+						OLE_SetDocumentVar( _hWord, "TotPProd"+Alltrim(str(_nLinha)), "R$ " + AllTrim(Transform((_cAlias)->ADZ_TOTAL, "@E 999,999,999.99")) )
+						_nTotDemPro += (_cAlias)->ADZ_TOTAL
+					Else
+						OLE_SetDocumentVar( _hWord, "VlUnProd"+Alltrim(str(_nLinha)), "R$ " + AllTrim(Transform(0, "@E 999,999,999.99")) )
+						OLE_SetDocumentVar( _hWord, "VlToProd"+Alltrim(str(_nLinha)), "R$ " + AllTrim(Transform(0, "@E 999,999,999.99")) )
+						OLE_SetDocumentVar( _hWord, "VlDeProd"+Alltrim(str(_nLinha)), "R$ " + AllTrim(Transform(0, "@E 999,999,999.99")) )
+						OLE_SetDocumentVar( _hWord, "TotPProd"+Alltrim(str(_nLinha)), "R$ " + AllTrim(Transform(0, "@E 999,999,999.99")) )
+					EndIf
+				EndIf
+				(_cAlias)->(dbSkip())
+			EndDo
+			_nTotGeral := _nTotDemPro + _nTotVidAti
+			If !_lHtm
+				//Implementa o Contador de Itens da Macro
+				OLE_SetDocumentVar( _hWord,"TbProd_QtdItens", _nLinha )
+				//Total de produtos da tabela "Demais Produtos"
+				OLE_SetDocumentVar( _hWord,"Doc_ValorTotalOutrosProd", "R$ " + AllTrim(Transform(_nTotDemPro, "@E 999,999,999.99")) )
+				//Total de produtos da tabela "Demais Produtos" por extenso
+				OLE_SetDocumentVar( _hWord,"Doc_ValorTotalOutrosProdutosExtenso", Extenso(_nTotDemPro) )
+				//Data de vencimento da primeira parcela por extenso
+				OLE_SetDocumentVar( _hWord,"Doc_DataPrimVencExtenso", fDtExt(_aCondPg[1,1]) )
+				//Valor da primeira parcela "demais Produtos"
+				OLE_SetDocumentVar( _hWord,"Doc_ValorPrimeiraParcelaDemaisProdutos", "R$ " + AllTrim(Transform(_nTotDemPro/Len(_aCondPg), "@E 999,999,999.99")) )
+				//Valor das duas tabelas somadas
+				OLE_SetDocumentVar( _hWord, "Doc_TotalGeral", "R$ " + AllTrim(Transform(_nTotGeral, "@E 999,999,999.99")) )
+				//Valor das duas tabelas somadas por extenso
+				OLE_SetDocumentVar( _hWord, "Doc_TotalGeralExtenso", AllTrim(Extenso(_nTotGeral)) )
+				OLE_ExecuteMacro( _hWord, "TbProdSMais" )
+			Else
+				//Implementa o Contador de Itens da Macro
+				_oHtml:ValByName("TbProd_QtdItens", _nLinha )
+				//Total de produtos da tabela "Demais Produtos"
+				_oHtml:ValByName("Doc_ValorTotalOutrosProd", "R$ " + AllTrim(Transform(_nTotDemPro, "@E 999,999,999.99")) )
+				//Total de produtos da tabela "Demais Produtos" por extenso
+				_oHtml:ValByName("Doc_ValorTotalOutrosProdutosExtenso", Extenso(_nTotDemPro) )
+				//Data de vencimento da primeira parcela por extenso
+				_oHtml:ValByName("Doc_DataPrimVencExtenso", fDtExt(_aCondPg[1,1]) )
+				//Valor da primeira parcela "demais Produtos"
+				_oHtml:ValByName("Doc_ValorPrimeiraParcelaDemaisProdutos", "R$ " + AllTrim(Transform(_nTotDemPro/Len(_aCondPg), "@E 999,999,999.99")) )
+				//Valor das duas tabelas somadas
+				_oHtml:ValByName("Doc_TotalGeral", "R$ " + AllTrim(Transform(_nTotGeral, "@E 999,999,999.99")) )
+				//Valor das duas tabelas somadas por extenso
+				_oHtml:ValByName("Doc_TotalGeralExtenso", AllTrim(Extenso(_nTotGeral)) )
+			EndIf
+		Else
+			_lRet := .F.
+		EndIf
+		(_cAlias)->(dbCloseArea())
+		RestArea(_aArea)
+	ElseIf _cVal == "012" //Consulta se cliente Cedeu Imagem.
+		If Select(_cAlias) > 0
+			(_cAlias)->(dbCloseArea())
+			_cAlias := GetNextAlias()
+		EndIf
+		_cSql := "SELECT "+CRLF
+		_cSql += "	ADY_XCEDAP "+CRLF
+		_cSql += "FROM "+CRLF
+		_cSql += "  "+RetSqlName("CN9")+" CN9 "+CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("AD1")+" AD1 ON AD1.D_E_L_E_T_ = ' ' AND CN9_FILIAL = AD1_FILIAL AND CN9_XOPORT = AD1_NROPOR "+CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("ADY")+" ADY ON ADY.D_E_L_E_T_ = ' ' AND AD1_FILIAL = ADY_FILIAL AND AD1_NROPOR = ADY_OPORTU "+CRLF
+		_cSql += "WHERE "+CRLF
+		_cSql += "  CN9.D_E_L_E_T_ = ' ' "+CRLF
+		_cSql += "  AND CN9_FILIAL = '"+_cFilCtr+"' "+CRLF
+		_cSql += "  AND CN9_NUMERO = '"+_cCtrNr+"' "+CRLF
+		_cSql += "  AND CN9_REVISA = '"+_cCtrNrRev+"' "+CRLF
+		_cSql += "  AND ADY_STATUS = 'E' "+CRLF		//Somente a escolhida
+		MemoWrite("C:\temp\SS6925X_012.txt", _cSql)
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+		If !(_cAlias)->(EOF())
+			OLE_SetDocumentVar( _hWord, "Doc_CedeDadosPessoais", AllTrim((_cAlias)->ADY_XCEDAP) )
+			OLE_ExecuteMacro( _hWord,"ClaProDdosPss" )
+		Else
+			_lRet := .F.
+		EndIf
+		(_cAlias)->(dbCloseArea())
+		RestArea(_aArea)
+	EndIf
+
+Return iif(_cVal == "001", _nLinha, _lRet)
+
+/*
+{Protheus.doc} <fGerFil>
+Objetivo; Carregar os dados do Representante do Contratado (Gerente da Unidade).
+@type function
+@author Jonas Nascimento J2A
+@since 21/08/2015
+@return logical, Indica se foi possível carregar os dados do representante do contratdo
+@history 20/01/2016, Franklin B Oliveira, Adicionado órgão expedidor, oriundo do campo "RA_RGEXP", tabela "SRA"
+@history 28/01/2016, Franklin B Oliveira, Adicionado condições para a seleção de dados do Gerente da unidade.
+@history 11/07/2016, Franklin B Oliveira, Alterado o campo RA_RGEXP para os Campos RA_RGORG + RA_RGUF
+@history 29/08/2016, Franklin B Oliveira, Alterado o nome do gerente da filial de RA_NOME para RA_NOMECMP
+@history 25/05/2020, Franklin B Oliveira, Incluido consulta a tabela ZCO - Dados complementares da minuta de venda;
+*/
+Static Function fGerFil()
+	Local aGerInf,cEmpUni,cDados
+	Local cEmpres		:= FWCodEmp('SX5')
+	Local cUnidad		:= FWUnitBusiness('SX5')
+	Local cFilCod		:= FWFilial()
+	Local _cCPF			:= ""
+	Local _aArea		:= GetArea()
+	Local _cSql			:= ""
+	Local _cAlias		:= GetNextAlias()
+	Local _cAliasZCO	:= GetNextAlias()
+	Local _lRet			:= .T.
+	BeginSql Alias _cAliasZCO
+		SELECT Trim(ZCO.ZCO_NOMREP) AS ZCO_NOMREP, 
+			Trim(ZCO.ZCO_CPFREP) AS ZCO_CPFREP,
+			Trim(ZCO.ZCO_RGREPR) AS ZCO_RGREPR,
+			Trim(ZCO.ZCO_OREREP) AS ZCO_OREREP 
+		FROM %Table:ZCO% ZCO
+		WHERE ZCO.%NOTDEL%
+			AND ZCO.ZCO_FILIAL = %Exp:xFilial("ZCO")%
+	EndSql
+	MemoWrite("C:\temp\SS6925X_fGerFil01.txt", GetLastQuery()[2])
+	If !(_cAliasZCO)->( EoF() )
+		_CtadoRNom	:= AllTrim( (_cAliasZCO)->ZCO_NOMREP )
+		_CtadoRCPF	:= Transform((_cAliasZCO)->ZCO_CPFREP,Iif(Len(AllTrim((_cAliasZCO)->ZCO_CPFREP))==11, "@R 999.999.999-99", "@R 99.999.999/9999-99"))
+		_CtadoRRG	:= AllTrim( (_cAliasZCO)->ZCO_RGREPR ) + " " + AllTrim( (_cAliasZCO)->ZCO_OREREP )
+	Else
+		cEmpUni := PadR( cEmpres + cUnidad , FWSizeFilial() )
+		SX5->( dbSetOrder(1) )
+		If( SX5->( dbSeek( cEmpUni + 'Z5' + cFilCod ) ) )
+			cDados  := SX5->X5_DESCRI
+			cDados  := StrTran(cDados,",","|")
+			cDados  := StrTran(cDados,";","|")
+			aGerInf := StrTokArr(cDados,'|')
+			_cCPF := AllTrim(StrTran(StrTran(aGerInf[2],".",""),"-",""))
+		Else
+			_lRet := .F.
+		EndIf
+		If _lRet
+			_cSql := "SELECT Trim(RA_NOMECMP) RA_NOME, RA_CIC, Trim(RA_RG) RA_RG, Trim(RA_RGORG) || '/' || Trim(RA_RGUF) AS RA_RGEXP FROM " + RetSqlName("SRA") + " " + CRLF
+			_cSql += "WHERE D_E_L_E_T_ = ' '" + CRLF
+			_cSql += "AND RA_CIC = '" + _cCPF + "'" + CRLF
+			_cSql += "AND RA_SITFOLH NOT IN ('D','T')" + CRLF
+			MemoWrite("C:\temp\SS6925X_fGerFil02.txt", _cSql)
+			dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+			If !(_cAlias)->(EOF())
+				_CtadoRNom	:= AllTrim((_cAlias)->RA_NOME)
+				_CtadoRCPF	:= Transform((_cAlias)->RA_CIC,Iif(Len(AllTrim((_cAlias)->RA_CIC))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+				_CtadoRRG	:= AllTrim((_cAlias)->RA_RG) + IIf(Empty(AllTrim((_cAlias)->RA_RGEXP)), "", " " + AllTrim((_cAlias)->RA_RGEXP))
+			Else
+				_lRet := .F.
+			EndIf
+			(_cAlias)->(dbCloseArea())
+		EndIf
+	EndIf
+	(_cAliasZCO)->(dbCloseArea())
+	RestArea(_aArea)
+Return _lRet
+
+/*
+{Protheus.doc} <fRetMinuta>
+	Objetivo; Garantir o relacionamento entre a minuta informada no Tipo de Contrato [CN1]
+			  e Família de Produto [ZG1] ligado ao Produto [B1_XCODFAM], sendo assim o
+			  contrato só será impresso se todos os produtos em suas respectivas Famílias
+			  tiver a mesma minuta informada no Tipo de Contrato!
+	Relacionamento;
+			  01 - Um Produto pode ter 0 ou 1 Família
+			  02 - Uma Família pode ter 0 ou N Minutas
+			  03 - Um Tipo de Contrato deve conter 1 Minuta
+
+@author Jonas Nascimento J2A
+@since 10/09/2015
+@version<1.00>
+@receive<Nil>
+@example<Nil>
+@see<Nil>							*/
+
+/*
+Alterações realizadas:
+		
+	#001 21/10/2015 - Franklin B Oliveira:
+		->Alterado a busca na oportunidade, antes a busca pelo produto era realizada
+			na tabela ADJ (Produt/Categ. do oportunidade), passou a buscar na tabela
+			ADZ (Propos. Comercial itens).
+*/
+
+Static Function fRetMinuta()
+	Local _cArqDOT		:= ""
+	Local _cMsgErro		:= ""
+	Local _cSql			:= ""
+	Local _aArea		:= GetArea()
+	Local _cAlias		:= GetNextAlias()
+	Local _aProdOK		:= {}
+
+	dbSelectArea("CNB")
+	CNB->(dbSetOrder(1))
+	If CNB->(dbSeek(xFilial("CNB")+_cCtrNr+_cCtrNrRev))
+		//busca na planilha
+		_cSql := "SELECT DISTINCT "+CRLF
+		_cSql += "  CASE WHEN B1_XCODFAM = ' ' THEN ' ' ELSE ZG3_CODMIN       END ZG3_CODMIN, "+CRLF
+		_cSql += "  CASE WHEN B1_XCODFAM = ' ' THEN ' ' ELSE Trim(ZG3_DESCRI) END ZG3_DESCRI, "+CRLF
+		_cSql += "  CASE WHEN B1_XCODFAM = ' ' THEN ' ' ELSE Trim(ZG3_ARQUIV) END ZG3_ARQUIV, "+CRLF
+		_cSql += "  CASE WHEN B1_XCODFAM = ' ' THEN ' ' ELSE Trim(ZG3_MACROS) END ZG3_MACROS, "+CRLF
+		_cSql += "  ZG3_STATUS, B1_COD, B1_XCODFAM, B1_XCODMSG "+CRLF
+		_cSql += "FROM "+CRLF
+		_cSql += "  "+RetSqlName("CN9")+" CN9 "+CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("CNA")+" CNA ON CNA.D_E_L_E_T_ = ' ' AND CN9_FILIAL = CNA_FILIAL AND CN9_NUMERO = CNA_CONTRA AND CN9_REVISA = CNA_REVISA "+CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("CNB")+" CNB ON CNB.D_E_L_E_T_ = ' ' AND CNA_FILIAL = CNB_FILIAL AND CNA_CONTRA = CNB_CONTRA AND CNA_REVISA = CNB_REVISA "+CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("SB1")+" SB1 ON SB1.D_E_L_E_T_ = ' ' AND B1_FILIAL = '"+xFilial("SB1")+"' AND CNB_PRODUT = B1_COD "+CRLF
+		_cSql += "  LEFT  JOIN "+RetSqlName("ZG2")+" ZG2 ON ZG2.D_E_L_E_T_ = ' ' AND ZG2_FILIAL = '"+xFilial("ZG2")+"' AND ZG2_CODFAM = B1_XCODFAM "+CRLF
+		_cSql += "  LEFT  JOIN "+RetSqlName("ZG3")+" ZG3 ON ZG3.D_E_L_E_T_ = ' ' AND ZG3_FILIAL = '"+xFilial("ZG3")+"' "+CRLF
+		_cSql += "WHERE "+CRLF
+		_cSql += "  CN9.D_E_L_E_T_ = ' ' "+CRLF
+		_cSql += "  AND CN9_NUMERO = '"+_cCtrNr+"' "+CRLF
+		_cSql += "  AND CN9_FILIAL = '"+_cFilCtr+"' "+CRLF
+		_cSql += "  AND CN9_REVISA = '"+_cCtrNrRev+"' "+CRLF
+		_cSql += "  ORDER BY B1_COD "+CRLF
+		MemoWrite("C:\temp\fRetMinutaPlan.txt", _cSql)
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+	Else
+		//busca na oportunidade
+		_cSql := "SELECT DISTINCT "+CRLF
+		_cSql += "  CASE WHEN B1_XCODFAM = ' ' THEN ' ' ELSE ZG3_CODMIN END ZG3_CODMIN, "+CRLF
+		_cSql += "  CASE WHEN B1_XCODFAM = ' ' THEN ' ' ELSE Trim(ZG3_DESCRI) END ZG3_DESCRI, "+CRLF
+		_cSql += "  CASE WHEN B1_XCODFAM = ' ' THEN ' ' ELSE Trim(ZG3_ARQUIV) END ZG3_ARQUIV, "+CRLF
+		_cSql += "  CASE WHEN B1_XCODFAM = ' ' THEN ' ' ELSE Trim(ZG3_MACROS) END ZG3_MACROS, "+CRLF
+		_cSql += "  ZG3_STATUS, B1_COD, B1_XCODFAM, B1_XCODMSG "+CRLF
+		_cSql += "FROM "+CRLF
+		_cSql += "  "+RetSqlName("CN9")+" CN9 "+CRLF
+		//#001
+		//_cSql += "  INNER JOIN "+RetSqlName("ADJ")+" ADJ ON ADJ.D_E_L_E_T_ = ' ' AND CN9_FILIAL = ADJ_FILIAL AND CN9_XOPORT = ADJ_NROPOR "+CRLF
+		_cSql += "	INNER JOIN "+RetSqlName("AD1")+" AD1 ON AD1.D_E_L_E_T_ = ' ' AND CN9_FILIAL = AD1_FILIAL AND CN9_XOPORT = AD1_NROPOR"
+		_cSql += "  INNER JOIN "+RetSqlName("ADY")+" ADY ON ADY.D_E_L_E_T_ = ' ' AND AD1_FILIAL = ADY_FILIAL AND AD1_NROPOR = ADY_OPORTU "+CRLF
+		_cSql += "				AND AD1_REVISA = ADY_REVISA "+CRLF
+		_cSql += "	INNER JOIN "+RetSqlName("ADZ")+" ADZ ON ADZ.D_E_L_E_T_ = ' ' AND ADY_FILIAL = ADZ_FILIAL AND ADY_PROPOS = ADZ_PROPOS AND ADY_PREVIS = ADZ_REVISA"
+		_cSql += "  INNER JOIN "+RetSqlName("SB1")+" SB1 ON SB1.D_E_L_E_T_ = ' ' AND B1_FILIAL  = '"+xFilial("SB1")+"' AND ADZ_PRODUT = B1_COD "+CRLF
+		_cSql += "  LEFT  JOIN "+RetSqlName("ZG2")+" ZG2 ON ZG2.D_E_L_E_T_ = ' ' AND ZG2_FILIAL = '"+xFilial("ZG2")+"' AND ZG2_CODFAM = B1_XCODFAM "+CRLF
+		_cSql += "  LEFT  JOIN "+RetSqlName("ZG3")+" ZG3 ON ZG3.D_E_L_E_T_ = ' ' AND ZG3_FILIAL = '"+xFilial("ZG3")+"' "+CRLF
+		_cSql += "WHERE "+CRLF
+		_cSql += "  CN9.D_E_L_E_T_ = ' ' "+CRLF
+		_cSql += "  AND CN9_NUMERO = '"+_cCtrNr+"' "+CRLF
+		_cSql += "  AND CN9_FILIAL = '"+_cFilCtr+"' "+CRLF
+		_cSql += "  AND CN9_REVISA = '"+_cCtrNrRev+"' "+CRLF
+		_cSql += "  AND ADY_STATUS = 'E' "+CRLF
+		_cSql += "  ORDER BY B1_COD "+CRLF
+		MemoWrite("C:\temp\fRetMinutaOpor.txt", _cSql)
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+	EndIf
+
+	DbSelectArea(_cAlias)
+	(_cAlias)->(dbGoTop())
+
+	If .Not. (_cAlias)->( EOF() )
+		dbSelectArea("CN1")
+		CN1->(dbSetOrder(1))
+		If CN1->(dbSeek(xFilial("CN1")+CN9->CN9_TPCTO))
+			While !(_cAlias)->(EOF())
+				//Realiza a validação se o produto nao existir no array
+				If aScan(_aProdOK, {|x| AllTrim(x[1]) == AllTrim((_cAlias)->B1_COD)}) == 0
+					If !Empty(AllTrim((_cAlias)->B1_XCODFAM))
+						If CN1->CN1_XMINUT == (_cAlias)->ZG3_CODMIN
+							If (_cAlias)->ZG3_STATUS == '1'
+								_cArqDOT	:= AllTrim((_cAlias)->ZG3_ARQUIV)
+								_aMacroExc	:= StrTokArr2( AllTrim((_cAlias)->ZG3_MACROS), ";", .T. )	//AllTrim((_cAlias)->ZG3_MACROS)
+								aadd(_aProdOK, {(_cAlias)->B1_COD})
+								_cMsgErro	:= ""
+							Else
+								_cMsgErro := 'Minuta ['+(_cAlias)->ZG3_CODMIN+'] não está ativa!'+CRLF+'Verifique o Cadastro de Minutas.'
+								Exit
+							EndIf
+						Else
+							_cMsgErro := 'Família ['+(_cAlias)->B1_XCODFAM+'] não contém a Minuta ['+CN1->CN1_XMINUT+']!'+CRLF
+						EndIf
+					Else
+						_cMsgErro := "Produto(s) ["+(_cAlias)->B1_COD+"] sem definição de Família:"+CRLF
+						_cArqDOT  := ""
+						Exit
+					EndIf
+				EndIf
+
+				(_cAlias)->(dbSkip())
+			EndDo
+		EndIf
+	Else
+		_cMsgErro := "Produtos sem Família ou não existe Minuta associada a Família dos Produtos adicionados no Contrato."+CRLF+"Verifique o Cadastro de Produtos vs Família."
+	EndIf
+
+	If !Empty(_cMsgErro)
+		Aviso(FunName()+"/"+ProcName(), _cMsgErro, {"OK"})
+	Else
+		/*
+		Este bloco é necessário p/ o sucesso da função [fMsgProd()], que receberá como parâmetro o
+		valor do array _aProdMsg (contém os códigos distintos das Mensagens [ZG4] do Contrato).
+		*/
+		(_cAlias)->(dbGoTop())
+		While !(_cAlias)->(EOF())
+			If !Empty((_cAlias)->B1_XCODMSG)
+				If aScan(_aProdMsg,{|x| AllTrim(x[1]) == (_cAlias)->B1_XCODMSG}) == 0
+					aadd(_aProdMsg, {(_cAlias)->B1_XCODMSG})
+				EndIf
+			EndIf
+
+			(_cAlias)->(dbSkip())
+		EndDo
+	EndIf
+
+
+	(_cAlias)->(dbCloseArea())
+	RestArea(_aArea)
+
+Return _cArqDOT
+
+
+/*
+{Protheus.doc} <fMsgProd>
+	Objetivo; Retornar o texto distinto vinculado ao produto.
+
+@author Jonas Nascimento J2A
+@since 10/09/2015
+@version<1.00>
+@receive<Nil>
+@example<Nil>
+@see<Nil>							*/
+Static Function fMsgProd(_aProdMsg)
+	Local _cMsgProd := ""
+	Local nI 		:= 0
+
+	For nI := 1 To Len(_aProdMsg)
+		dbSelectArea("ZG4")
+		ZG4->(dbSetOrder(1))
+		If (ZG4->(dbSeek(FwxFilial("ZG4")+cValToChar(_aProdMsg[nI,1]))))
+			_cMsgProd += ZG4->ZG4_MENSAG+CRLF+CRLF
+		EndIf
+	Next
+	
+	If !_lHtm
+		OLE_SetDocumentVar(_hWord,"Doc_MsgProd", _cMsgProd)
+	Else
+		_oHtml:ValByName("Doc_MsgProd", _cMsgProd)
+	Endif
+
+Return
+
+
+/*
+{Protheus.doc} <fCn1Zg3>
+	Objetivo; Validar a inclusao de Produtos no Contrato de Venda, para garantir que todos os
+			  Produtos trabalham com a mesma Minuta definida no Cadastro de Tipo de Contrato.
+
+	Exemplo:
+		VALIDO (permite inclusao de produtos)		|		INVALIDO (nao permite inclusao dos produtos)
+			Produto		Cod. Familia				|		Produto		Cod. Familia
+			----------- ------------				|		----------- ------------
+			000000001   000001						|		000000001   000001
+			000000002   000002						|		000000002   000002
+													|
+			Familia		Cod Minuta					|		Familia		Cod Minuta
+			----------- ----------					|		----------- ----------
+			000001		001							|		000001		001
+			000001		002							|		000001		002
+			000002		001							|		000002		001
+													|
+			Tipo de Produto		Cod Minuta			|		Tipo de Produto		Cod Minuta
+			------------------- ----------			|		------------------- ----------
+			004					001					|		005					002
+
+	Obs.: Para ser valido todos os produtos devem pertencer a mesma minuta definida no tipo de contrato.
+
+@author Jonas Nascimento J2A
+@since 10/09/2015
+@version<1.00>
+@receive<Nil>
+@example<Nil>
+@see<Nil>
+*/
+User Function fCn1Zg3(_cCodProd)
+	Local _lRet			:= .T.
+	Local _cSql			:= ""
+	Local _aArea		:= GetArea()
+	Local _cAlias		:= GetNextAlias()
+	Local _cMsgErro		:= ""
+
+	dbSelectArea("CN1")
+	CN1->(DBOrderNickName("CN10000001"))
+	If CN1->(dbSeek(xFilial("CN1")+M->CN9_TPCTO+'2'))	//Valida contrato de VENDA
+
+		If !Empty(CN1->CN1_XMINUT)
+
+			If !Empty(_cCodProd)	//Valida por Produto
+				dbSelectArea("SB1")
+				SB1->(dbSetOrder(1))
+				If (SB1->(dbSeek(FwxFilial("SB1")+_cCodProd)))
+					If Empty(SB1->B1_XCODFAM)
+						_cMsgErro := 'Produto ['+SB1->B1_COD+'] sem definição de Família! Verifique o Cadastro de Produto.'
+					EndIf
+				EndIf
+
+				If Empty(_cMsgErro)
+					//Valida por produto
+					_cSql := "SELECT "+CRLF
+					_cSql += "  B1_COD, "+CRLF
+					_cSql += "  B1_XCODFAM, "+CRLF
+					_cSql += "  ZG2_CODFAM, "+CRLF
+					_cSql += "  ZG3_STATUS, "+CRLF
+					_cSql += "  CN1_XMINUT "+CRLF
+					_cSql += "FROM "+CRLF
+					_cSql += "  "+RetSqlName("SB1")+" SB1 "+CRLF
+					_cSql += "  LEFT  JOIN "+RetSqlName("ZG2")+" ZG2 ON ZG2.D_E_L_E_T_ = ' ' AND ZG2_FILIAL = '"+xFilial("ZG2")+"' AND B1_XCODFAM = ZG2_CODFAM "+CRLF
+					_cSql += "  LEFT  JOIN "+RetSqlName("ZG3")+" ZG3 ON ZG3.D_E_L_E_T_ = ' ' AND ZG3_FILIAL = '"+xFilial("ZG3")+"' AND ZG2_CODMIN = ZG3_CODMIN "+CRLF
+					_cSql += "  INNER JOIN "+RetSqlName("CN1")+" CN1 ON CN1.D_E_L_E_T_ = ' ' AND CN1_FILIAL = '"+xFilial("CN1")+"' AND ZG3_CODMIN = CN1_XMINUT "+CRLF
+					_cSql += "WHERE "+CRLF
+					_cSql += "  SB1.D_E_L_E_T_ = ' ' "+CRLF
+					_cSql += "  AND B1_FILIAL = '"+xFilial("SB1")+"' "+CRLF
+					_cSql += "  AND B1_COD = '"+_cCodProd+"' "+CRLF
+					_cSql += "  AND CN1_CODIGO = '"+M->CN9_TPCTO+"' "+CRLF
+					_cSql += "  AND ZG3_STATUS IS NOT NULL "+CRLF
+					MemoWrite("C:\temp\fCn1Zg3_01.txt", _cSql)
+					dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+				EndIf
+			ElseIf CN1->CN1_CROFIS == '2'	//Oportunidade s/ Planilha (1=Sim;2=Nao)
+				_cSql := "SELECT "+CRLF
+				_cSql += "  B1_COD, "+CRLF
+				_cSql += "  B1_XCODFAM, "+CRLF
+				_cSql += "  ZG2_CODFAM, "+CRLF
+				_cSql += "  ZG3_STATUS, "+CRLF
+				_cSql += "  CN1_XMINUT "+CRLF
+				_cSql += "FROM "+CRLF
+				_cSql += "  "+RetSqlName("ADJ")+" ADJ "+CRLF
+				_cSql += "  INNER JOIN "+RetSqlName("SB1")+" SB1 ON SB1.D_E_L_E_T_ = ' ' AND B1_FILIAL  = '"+xFilial("SB1")+"' AND ADJ_PROD = B1_COD "+CRLF
+				_cSql += "  LEFT  JOIN "+RetSqlName("ZG2")+" ZG2 ON ZG2.D_E_L_E_T_ = ' ' AND ZG2_FILIAL = '"+xFilial("ZG2")+"' AND B1_XCODFAM = ZG2_CODFAM "+CRLF
+				_cSql += "  LEFT  JOIN "+RetSqlName("ZG3")+" ZG3 ON ZG3.D_E_L_E_T_ = ' ' AND ZG3_FILIAL = '"+xFilial("ZG3")+"' AND ZG2_CODMIN = ZG3_CODMIN "+CRLF
+				_cSql += "  INNER JOIN "+RetSqlName("CN1")+" CN1 ON CN1.D_E_L_E_T_ = ' ' AND CN1_FILIAL = '"+xFilial("CN1")+"' AND ZG3_CODMIN = CN1_XMINUT "+CRLF
+				_cSql += "WHERE "+CRLF
+				_cSql += "  ADJ.D_E_L_E_T_ = ' '  "+CRLF
+				_cSql += "  AND ADJ_FILIAL = '"+xFilial("ADJ")+"' "+CRLF
+				_cSql += "  AND ADJ_NROPOR = '"+M->CN9_XOPORT+"' "+CRLF
+				_cSql += "  AND CN1_CODIGO = '"+M->CN9_TPCTO+"' "+CRLF
+				_cSql += "  AND ZG3_STATUS IS NOT NULL "+CRLF
+				MemoWrite("C:\temp\fCn1Zg3_02.txt", _cSql)
+				dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+			EndIf
+
+			If Empty(_cMsgErro)		/* Adicionado por Jonas Nascimento J2A */
+				If !(_cAlias)->(EOF())
+					Do Case
+					Case Empty((_cAlias)->B1_XCODFAM)
+						_cMsgErro := 'Produto ['+(_cAlias)->B1_COD+'] sem definição de Família! Verifique o Cadastro de Produto.'
+					Case Empty((_cAlias)->ZG2_CODFAM)
+						_cMsgErro := 'A Família ['+(_cAlias)->B1_XCODFAM+'] no Produto ['+(_cAlias)->B1_COD+'] não existe no Cadastro de Família!'
+					Case ZG3_STATUS <> '1'
+						_cMsgErro := 'Minuta ['+(_cAlias)->CN1_XMINUT+'] não está Ativa!'+CRLF+'Verifique o Cadastro de Minuta.'
+					EndCase
+				EndIf
+			EndIf
+		Else
+			_cMsgErro := 'Tipo de Contrato ['+M->CN9_TPCTO+'] sem definição de minuta!'+CRLF+'Verifique o Cadastro de Tipo de Contrato.'
+		EndIf
+
+		If !Empty(_cMsgErro)
+			_lRet := .F.
+			Aviso(FunName()+"/"+ProcName(), _cMsgErro, {"OK"})
+		EndIf
+
+		If Select(_cAlias) > 0
+			(_cAlias)->(dbCloseArea())
+			RestArea(_aArea)
+		EndIf
+	EndIf
+
+Return _lRet
+
+/*/{Protheus.doc} fSelResUnd
+Função para retornar o nome do responsável pela unidade indicada no parâmetro
+@type function
+@author Franklin de Brito de Oliveira
+@since 24/09/2015
+@version 1.0
+@param _pFilial, character,Filial para selecionar o responsável
+@return character, Nome do responsável
+@history 27/10/2015, Franklin B Oliveira, Adicionado condições para a seleção de dados do responsável da unidade
+@history 29/08/2016, Franklin B Oliveira, Alterado o nome do gerente da filial de RA_NOME para RA_NOMECMP
+@history 25/05/2020, Franklin B Oliveira, Incluido consulta a tabela ZCO - Dados complementares da minuta de venda
+/*/
+Static Function fSelResUnd(_pFilial)
+	Local aGerInf,cEmpUni,cDados
+	Local cEmpres		:= FWCodEmp('SX5')
+	Local cUnidad		:= FWUnitBusiness('SX5')
+	Local _cCPF			:= ""
+	Local _aArea		:= GetArea()
+	Local _cSql			:= ""
+	Local _cAlias		:= GetNextAlias()
+	Local _cAliasZCO	:= GetNextAlias()
+	Local _lRet			:= .T.
+	Local _cNomeResp	:= ""
+	Local _cFilial		:= SubStr(_pFilial, Len(cEmpres) + Len(cUnidad) + 1)
+	BeginSql Alias _cAliasZCO
+		SELECT Trim(ZCO.ZCO_NOMREP) AS ZCO_NOMREP
+		FROM %Table:ZCO% ZCO
+		WHERE ZCO.%NOTDEL%
+			AND ZCO.ZCO_FILIAL = %Exp:_pFilial%
+	EndSql
+	MemoWrite("C:\temp\SS6925X_fSelResUnd01.txt", GetlastQuery()[2])
+	If !(_cAliasZCO)->( EoF() )
+		_cNomeResp	:= AllTrim((_cAliasZCO)->ZCO_NOMREP)
+	Else
+		cEmpUni := PadR( cEmpres + cUnidad , FWSizeFilial() )
+		SX5->( dbSetOrder(1) )
+		If( SX5->( dbSeek( cEmpUni + 'Z5' + _cFilial ) ) )
+			cDados  := SX5->X5_DESCRI
+			cDados  := StrTran(cDados,",","|")
+			cDados  := StrTran(cDados,";","|")
+			aGerInf := StrTokArr(cDados,'|')
+			_cCPF 	:= AllTrim(StrTran(StrTran(aGerInf[2],".",""),"-",""))
+		Else
+			_lRet := .F.
+		EndIf
+
+		If _lRet
+			_cSql := "SELECT Trim(RA_NOMECMP) RA_NOME, RA_CIC, Trim(RA_RGORG) || '/' || Trim(RA_RGUF) AS RA_RGEXP FROM " + RetSqlName("SRA") + " " + CRLF
+			_cSql += "WHERE D_E_L_E_T_ = ' '" + CRLF
+			_cSql += "AND RA_CIC = '" + _cCPF + "'" + CRLF
+			_cSql += "AND RA_SITFOLH NOT IN ('D','T')" + CRLF
+			MemoWrite("C:\temp\SS6925X_fSelResUnd02.txt", _cSql)
+			dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+			If !(_cAlias)->(EOF())
+				_cNomeResp	:= AllTrim((_cAlias)->RA_NOME)
+			Else
+				_lRet := .F.
+			EndIf
+			(_cAlias)->(dbCloseArea())
+			RestArea(_aArea)
+		EndIf
+	EndIf
+	(_cAliasZCO)->(dbCloseArea())
+	RestArea(_aArea)
+Return _cNomeResp
+
+/*/{Protheus.doc} fCompEmp
+Função para identificar e retornar complemento do nome comercial, cadastrado
+na tabela genérica Z1
+@type function
+@author Franklin de Brito de Oliveira
+@since 19/01/2016
+@return character, Complemento do nome da empresa
+/*/
+Static Function fCompEmp()
+	Local cCompEmp	:= ""
+	Local cEmpres	:= FWCodEmp('SX5')
+	Local cUnidad	:= FWUnitBusiness('SX5')
+	Local cFilCod	:= FWFilial()
+
+	cEmpUni := PadR( cEmpres + cUnidad , FWSizeFilial() )
+	SX5->( dbSetOrder(1) )
+	If( SX5->( dbSeek( cEmpUni + 'Z1' + cFilCod ) ) )
+		cCompEmp  := SX5->X5_DESCRI
+	EndIf
+
+Return cCompEmp
+
+
+/*/{Protheus.doc} fcriaHtm
+Função para criar o arquivo html de template
+@type function
+@author Daniel Castro - Totvs
+@since 09/02/21
+@version 1.00
+@return object, objeto com o escopo do html
+/*/
+Static Function fcriaHtm(cDir,cArq)
+
+	//Gera Processo do workFlow para geração do termo
+	_oProcess	:= TWFProcess():New("000001","Gera")
+	_oProcess:NewTask('Envio',cDir+cArq)
+	_oHtml	:= _oProcess:oHtml
+
+Return()
+
+/*/{Protheus.doc} fGetCont
+(long_description)
+@type Function
+@author Franklin de Brito de Oliveira
+@since 12/05/2022
+@param cCodAssi, character, código de contato (tabela SU5) a ser pesquisado
+@return aDdosCon, array, dados do contato
+/*/
+Static Function fGetCont(cCodAssi)
+Local aDdosCon := {}
+Local aArea := getArea()
+	DbSelectArea("SU5")
+	DbSetOrder(1)	//U5_FILIAL+U5_CODCONT+U5_IDEXC
+	If SU5->(DbSeek(xFilial("SU5")+cCodAssi))
+		Aadd(aDdosCon, AllTrim(SU5->U5_CONTAT))
+		Aadd(aDdosCon, AllTrim(SU5->U5_CPF))
+		Aadd(aDdosCon, AllTrim(SU5->U5_END))
+		Aadd(aDdosCon, AllTrim(SU5->U5_RG))
+		Aadd(aDdosCon, AllTrim(SU5->U5_BAIRRO))
+		Aadd(aDdosCon, AllTrim(SU5->U5_MUN))
+		Aadd(aDdosCon, AllTrim(SU5->U5_EST))
+		Aadd(aDdosCon, AllTrim(SU5->U5_DDD+SU5->U5_FONE))
+		Aadd(aDdosCon, AllTrim(SU5->U5_DDD+SU5->U5_CELULAR))
+		Aadd(aDdosCon, AllTrim(SU5->U5_EMAIL))
+	endif
+	restArea(aArea)
+Return aDdosCon

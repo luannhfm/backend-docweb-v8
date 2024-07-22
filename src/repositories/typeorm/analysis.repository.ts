@@ -9,15 +9,33 @@ export class AnalysisRepository {
     this.repository = appDataSource.getRepository(Analysis);
   }
 
-  async updateAnalysisStatus(jsonAnalysis: any, analysisId: string): Promise<void> {
-    const result = await this.repository.update(
-      { id_analysis: analysisId },
-      { status: 'concluído', analysis: jsonAnalysis }
-    );
-    if (result.affected === 0) {
-      console.log('Nenhum registro foi atualizado. Verifique se o ID está correto.');
-    } else {
-      console.log('Registro atualizado com sucesso.');
+  async updateAnalysisStatus(id_analysis: string, analysis: any) {
+    try {
+      await this.repository.update({ id_analysis }, { status: 'concluído', analysis });
+    } catch (error) {
+      console.error('Erro ao atualizar a análise:', error);
+      throw error;
     }
+  
+  }
+  async findAndCount(page: number, pageSize: number): Promise<[Analysis[], number]> {
+    const [results, total] = await this.repository.findAndCount({
+      order: { id_analysis: 'DESC' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    });
+    return [results, total];
+  }
+
+  async findById(id: string): Promise<Analysis | null> {
+    return this.repository.findOne({ where: { id_analysis: id } });
+  }
+
+  async createAnalysis(analysis: Partial<Analysis>): Promise<Analysis> {
+    return this.repository.save(analysis);
+  }
+
+  async deleteAnalysis(id: string): Promise<void> {
+    await this.repository.delete({ id_analysis: id });
   }
 }

@@ -1,0 +1,174 @@
+#INCLUDE "RPTDEF.CH"
+#INCLUDE "FWPrintSetup.ch"
+#INCLUDE "protheus.ch"
+
+/*/{Protheus.doc} SF0101F
+
+Rotina para impressão de etiqueta com código de barras dos ativos.
+@author Franklin de Brito de Oliveira
+@since 09/03/2015
+@version 1.0
+@return {nil}
+
+/*/
+User Function SF0101F()
+
+Local lAdjustToLegacy	:= .F.
+Local lDisableSetup		:= .T.
+Local oPrinter
+Local oSetup
+Local oFontCasa
+Local oFontBem
+Local cLocal				:= "\spool"
+Local cAlias 				:= ""
+Local cNomeEmp			:= ""
+
+
+Private cTitulo			:= "Impressão de etiquetas"
+Private cPerg				:= "XSFATFR2"
+Private cCodEmp			:= FWCodEmp()
+
+	CriaSX1()
+	
+	
+	// Forca o usuario a preencher as perguntas.
+	If .Not. Pergunte(cPerg,.t.)
+		Return
+	EndIf
+
+	oPrinter := FWMSPrinter():New("SF0101F.rel", IMP_SPOOL, lAdjustToLegacy,cLocal, lDisableSetup, , , , , , .F., )
+	//04/02/2016 - trecho comentado por Franklin B. Oliveira:
+	//oPrinter:setPaperSize(0, 21, 27)
+	oPrinter:Setup()
+	
+	oFontCasa := TFont():New('Arial Narrow', , -6, , .T.)
+	oFontBem  := TFont():New('Arial Narrow', , -12 , , .T. )
+	
+	getData(@cAlias)
+	
+	If (cAlias)->( EOF() )
+		Alert("Não foram encontrados registros com os parâmetros informados")
+		(cAlias)->( dbCloseArea() )
+		Return ()
+	else
+		While .Not. (cAlias)->( EOF() )
+		
+			oPrinter:StartPage()
+			cBase	 	:= AllTrim( (cAlias)->( ND_CBASE ) )
+			cCodBar 	:= AllTrim( (cAlias)->( ND_CBASE ) )
+				
+			Do Case
+				Case cCodEmp == "01" //FIEMT
+					cNomeEmp := "FIEMT"
+					
+				Case cCodEmp == "02" //SESI
+					cNomeEmp := "SESI"
+					
+				Case cCodEmp == "03" //SENAI
+					cNomeEmp := "SENAI"
+					
+				Case cCodEmp == "04" //IEL
+					cNomeEmp := "IEL"
+					
+				Case cCodEmp == "05" //CONDOMINIO
+					cNomeEmp := "CONDOMINIO"
+					
+			EndCase 
+			
+			//Impressao da casa
+			oPrinter:Say( 15 /*nRow>*/, 8 /*nCol*/, cNomeEmp /*cText*/, oFontCasa /*oFont*/, 10 /*nWidth*/, /*nClrText*/, /*nAngle*/ )
+			
+			//Codigo Bem
+			oPrinter:Say( 28 /*nRow>*/, 18 /*nCol*/, cBase /*cText*/, oFontBem /*oFont*/, /*nWidth*/, /*nClrText*/, /*nAngle*/ )
+			
+			//Codigo de Barras			
+			oPrinter:FWMSBAR("CODE128" /*cTypeBar*/, 2.6 /*nRow*/, 0.6 /*nCol*/, cCodBar /*cCode*/, oPrinter /*oPrint*/, /*lCheck*/, /*Color*/, /*lHorz*/, 0.04/*nWidth*/, 0.9 /*nHeigth*/, /*lBanner*/, /*cFont*/, /*cMode*/, .F. /*lPrint*/, /*nPFWidth*/, /*nPFHeigth*/, /*lCmtr2Pix*/)
+					
+			oPrinter:EndPage()
+			
+			(cAlias)->( DbSkip() )
+		End
+	EndIf
+	
+	If oPrinter:nModalResult == PD_OK
+		oPrinter:Preview()
+	EndIf
+	
+Return ()
+
+
+
+/*/{Protheus.doc} getData
+
+Função de consulta conforme parâmetros
+@author Franklin de Brito de Oliveira
+@since 10/03/2015
+@version 1.0
+@param cAlias, character, Alias vazio, para ser preenchido
+@return ${cAlias}, Alias com a consulta preenchida
+
+/*/
+Static Function getData(cAlias)
+
+	cAlias := GetNextAlias()
+
+	BeginSql Alias cAlias
+	
+		SELECT ND_CBASE, ND_ITEM, ND_CODRESP, RD0_NOME, RD0_TIPO, //  -- 1 = Interno / 2 = Externo
+				N1_DESCRIC, N1_LOCAL
+			
+		FROM %Table:SND% SND
+	 
+		INNER JOIN %Table:RD0% RD0 ON ( RD0_FILIAL = %xFilial:RD0% 
+										AND RD0_CODIGO = ND_CODRESP 
+										AND RD0.%NotDel% )
+		INNER JOIN %Table:SN1% SN1 ON ( N1_FILIAL = %xFilial:SN1% 
+										AND N1_CBASE = ND_CBASE 
+										AND N1_ITEM = ND_ITEM 
+										AND SN1.%NotDel% )
+	
+		WHERE 	ND_FILIAL = %xFilial:SND%	
+				AND ND_CODRESP BETWEEN %Exp:MV_PAR01% AND %Exp:MV_PAR02%
+				AND ND_CBASE BETWEEN %Exp:MV_PAR03% AND %Exp:MV_PAR04%
+				AND ND_STATUS = '1' 
+				AND SND.%NotDel% 
+				AND N1_LOCAL BETWEEN %Exp:MV_PAR05% AND %Exp:MV_PAR06% 
+				AND N1_BAIXA = ' '
+				
+		ORDER BY ND_CBASE
+
+	EndSql
+	
+	MemoWrite("c:/pLog/Etiqueta_Patrimonio.sql",  GetLastQuery()[2])
+	
+Return( cAlias )
+
+
+/*/{Protheus.doc} CriaSX1
+
+Função para criar arquivo de perguntas
+@author Franklin de Brito de Oliveira
+@since 10/03/2015
+@version 1.0
+@return ${Nil}
+
+/*/
+
+Static Function CriaSX1()
+
+
+	//MV_PAR01  Responsavel de   
+	//MV_PAR02  Responsavel ate
+	//MV_PAR03  Codigo Bem de
+	//MV_PAR04  Codigo Bem ate
+	//MV_PAR05  Local de
+	//MV_PAR06  Local ate  
+
+	u_SFPUTSX1( cPerg, "01","Responsavel de  "		,"","","mv_ch1","C",TamSX3("RD0_CODIGO")[1]	,0,0,"G","","RD0"			,"","","mv_par01","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "02","Responsavel ate "		,"","","mv_ch2","C",TamSX3("RD0_CODIGO")[1]	,0,0,"G","","RD0"			,"","","mv_par02","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "03","Codigo Bem de"		,"","","mv_ch3","C",TamSX3("N1_CBASE")[1]		,0,0,"G","","SN1"			,"","","mv_par03","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "04","Codigo Bem ate"		,"","","mv_ch4","C",TamSX3("N1_CBASE")[1]		,0,0,"G","","SN1"			,"","","mv_par04","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "05","Local de       "		,"","","mv_ch5","C",TamSX3("N1_LOCAL")[1]		,0,0,"G","","SN1LOC"		,"","","mv_par05","","","","","","","","","","","","","","","","",{},{},{})
+	u_SFPUTSX1( cPerg, "06","Local ate      "		,"","","mv_ch6","C",TamSX3("N1_LOCAL")[1]		,0,0,"G","","SN1LOC"		,"","","mv_par06","","","","","","","","","","","","","","","","",{},{},{})
+
+Return (Nil)

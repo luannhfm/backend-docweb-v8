@@ -1,0 +1,1866 @@
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE 'FWMVCDEF.CH'
+#INCLUDE 'IDATOOLS.CH'
+
+#DEFINE CR Chr(13) + Chr(10)
+
+/*/{Protheus.doc} SF06A64X
+@description Formulário de Alteração de Boletos Banco do Brasil
+
+@author Helitom Silva 
+@since  16/11/2020
+
+@type User Function
+@obs Nil
+/*/
+User Function SF06A64X()
+
+	Private oBrowse
+
+	Private aRotina := MenuDef()
+
+	oBrowse := FWMBrowse():New()
+	oBrowse:SetAlias('ZHU')
+	oBrowse:SetSeeAll( .F. )
+	oBrowse:SetChgAll( .F. )
+	oBrowse:SetMenuDef('SF06A64X')
+	oBrowse:SetDescription('Envio Alteração Boletos Banco do Brasil')
+	oBrowse:AddLegend("ZHU_STATUS = '1'", "GREEN", "Pendente")
+	oBrowse:AddLegend("ZHU_STATUS = '2'", "RED", "Enviado")		
+	oBrowse:AddLegend("ZHU_STATUS = '3'", "YELLOW", "Erro no Envio")
+	oBrowse:AddLegend("ZHU_STATUS = '4'", "BLUE", "Cancelado")	
+	oBrowse:SetFilterDefault( "ZHU_PREFIX = '" + SE1->E1_PREFIXO + "' .and. ZHU_NUM = '" + SE1->E1_NUM + "' .and. ZHU_PARCEL = '" + SE1->E1_PARCELA + "' .and. ZHU_TIPO = '" + SE1->E1_TIPO + "'" )
+	oBrowse:DisableDetails()
+	oBrowse:ForceQuitButton()
+	
+	oBrowse:Activate()
+
+Return
+
+
+/*/{Protheus.doc} MenuDef
+@description Criação do Menu.
+
+@author  Helitom Silva 
+@since   16/11/2020
+
+@return  aRotina, Array, Opcões do Menu do formulário
+
+/*/
+Static Function MenuDef()
+
+	Local aRotina := {}
+
+	aAdd( aRotina, { "Pesquisar" , "PesqBrw"         , 0, 1, 0, .T. } )
+	aAdd( aRotina, { "Visualizar", "ViewDef.SF06A64X", 0, 2, 0, .T. } )
+	aAdd( aRotina, { "Incluir"   , "ViewDef.SF06A64X", 0, 3, 0, .T. } )
+	aAdd( aRotina, { "Reenviar ao Banco", "U_F06A64XV(.F.)", 0, 4, 0, .T. } )	
+	aAdd( aRotina, { "Alterar"   , "ViewDef.SF06A64X", 0, 4, 0, .T. } )
+	aAdd( aRotina, { "Imprimir"  , "ViewDef.SF06A64X", 0, 8, 0, .T. } )
+
+Return aRotina
+
+
+/*/{Protheus.doc} ModelDef
+@description Criação do Modelo de dados
+
+@author  Helitom Silva 
+@since   16/11/2020
+
+@return oModel, Objeto, Objeto de modelo de dados
+
+/*/
+Static Function ModelDef()
+
+	Local oStruZHUM := FWFormStruct( 1, 'ZHU', {|p_cField| .T. })
+	Local oModel
+
+	oStruZHUM:SetProperty( "ZHU_DATA", MODEL_FIELD_INIT, { |oFields| InitField('ZHU_DATA', oFields) } )
+	oStruZHUM:SetProperty( "ZHU_HORA", MODEL_FIELD_INIT, { |oFields| InitField('ZHU_HORA', oFields) } )
+	oStruZHUM:SetProperty( "ZHU_PREFIX", MODEL_FIELD_INIT, { |oFields| InitField('ZHU_PREFIX', oFields) } )
+	oStruZHUM:SetProperty( "ZHU_NUM", MODEL_FIELD_INIT, { |oFields| InitField('ZHU_NUM', oFields) } )
+	oStruZHUM:SetProperty( "ZHU_PARCEL", MODEL_FIELD_INIT, { |oFields| InitField('ZHU_PARCEL', oFields) } )
+	oStruZHUM:SetProperty( "ZHU_TIPO", MODEL_FIELD_INIT, { |oFields| InitField('ZHU_TIPO', oFields) } )
+	oStruZHUM:SetProperty( "ZHU_NUMBCO", MODEL_FIELD_INIT, { |oFields| InitField('ZHU_NUMBCO', oFields) } )
+	oStruZHUM:SetProperty( "ZHU_USER", MODEL_FIELD_INIT, { |oFields| InitField('ZHU_USER', oFields) } )
+	oStruZHUM:SetProperty( 'ZHU_TPALT', MODEL_FIELD_OBRIGAT, .T.)
+	oStruZHUM:SetProperty( 'ZHU_TPALT', MODEL_FIELD_VALID, { |oFields| ValidField('ZHU_TPALT', oFields) } )
+
+	oModel := MPFormModel():New('SF06A64M')
+
+	oModel:AddFields( 'ZHUMASTER', /*cOwner*/, oStruZHUM)
+	oModel:GetModel( "ZHUMASTER"):SetDescription("Alteração Boletos Banco do Brasil")
+	oModel:SetPrimaryKey({"ZHU_FILIAL", "ZHU_ID", "ZHU_APPKEY"})
+	
+Return oModel
+
+
+/*/{Protheus.doc} ViewDef
+@description Criação da View
+
+@author Helitom Silva
+@version versao
+@since 16/11/2020
+
+@return oView, Objeto, Objeto com Visual da Rotina
+
+/*/      
+Static Function ViewDef()
+
+	Local oStruZHUM	:= FWFormStruct(2, "ZHU", {|p_cField| .T.})
+	Local oModel    := FWLoadModel( 'SF06A64X' )
+
+	Local oView		
+
+	oStruZHUM:AddGroup( 'ALTERACAO', 'Cabeçalho', '', 2 )
+	oStruZHUM:AddGroup( 'ORIGEM', 'Origem da Alteração', '', 2 )	
+	oStruZHUM:AddGroup( 'CONTEUDO', 'Dados da Alteração', '', 2 )
+	oStruZHUM:AddGroup( 'TITULO', 'Boleto', '', 2 )
+	oStruZHUM:AddGroup( 'API', 'Resposta da API quando há erro no Envio', '', 2 )
+
+	oStruZHUM:SetProperty( 'ZHU_CODIGO', MVC_VIEW_GROUP_NUMBER, 'ALTERACAO' )
+
+	oStruZHUM:SetProperty( 'ZHU_DATA', MVC_VIEW_GROUP_NUMBER, 'ALTERACAO' )
+	oStruZHUM:SetProperty( 'ZHU_DATA', MVC_VIEW_TITULO, 'Data da Alteracao' )
+
+	oStruZHUM:SetProperty( 'ZHU_HORA', MVC_VIEW_GROUP_NUMBER, 'ALTERACAO' )
+	oStruZHUM:SetProperty( 'ZHU_HORA', MVC_VIEW_TITULO, 'Hora da Alteracao' )
+
+	oStruZHUM:SetProperty( 'ZHU_TPALT', MVC_VIEW_GROUP_NUMBER, 'ALTERACAO' )
+	oStruZHUM:SetProperty( 'ZHU_TPALT', MVC_VIEW_TITULO, 'Tipo da Alteração' )
+
+	oStruZHUM:SetProperty( 'ZHU_STATUS', MVC_VIEW_GROUP_NUMBER, 'ALTERACAO' )
+	oStruZHUM:SetProperty( 'ZHU_USER', MVC_VIEW_GROUP_NUMBER, 'ALTERACAO' )
+
+	oStruZHUM:SetProperty( 'ZHU_CAMPO', MVC_VIEW_GROUP_NUMBER, 'ORIGEM' )
+	oStruZHUM:SetProperty( 'ZHU_ANTES', MVC_VIEW_GROUP_NUMBER, 'ORIGEM' )
+	oStruZHUM:SetProperty( 'ZHU_DEPOIS', MVC_VIEW_GROUP_NUMBER, 'ORIGEM' )
+
+	oStruZHUM:SetProperty( 'ZHU_ALTERA', MVC_VIEW_GROUP_NUMBER, 'CONTEUDO' )
+	oStruZHUM:SetProperty( 'ZHU_ALTERA', MVC_VIEW_TITULO, 'Conteúdo a enviado ao Banco' )
+
+	oStruZHUM:SetProperty( 'ZHU_PREFIX', MVC_VIEW_GROUP_NUMBER, 'TITULO' )
+	oStruZHUM:SetProperty( 'ZHU_NUM', MVC_VIEW_GROUP_NUMBER, 'TITULO' )
+	oStruZHUM:SetProperty( 'ZHU_PARCEL', MVC_VIEW_GROUP_NUMBER, 'TITULO' )
+	oStruZHUM:SetProperty( 'ZHU_TIPO', MVC_VIEW_GROUP_NUMBER, 'TITULO' )
+	oStruZHUM:SetProperty( 'ZHU_NUMBCO', MVC_VIEW_GROUP_NUMBER, 'TITULO' )
+
+	oStruZHUM:SetProperty( 'ZHU_MSGAPI', MVC_VIEW_GROUP_NUMBER, 'API' )
+
+	oView := FWFormView():New()
+	oView:SetModel( oModel )
+
+	oView:CreateHorizontalBox( 'MASTER', 100 )
+	
+	oView:AddField( 'VIEW_ZHUM', oStruZHUM, 'ZHUMASTER' )
+	oView:SetOwnerView( 'VIEW_ZHUM', 'MASTER' )
+	
+	oView:EnableTitleView('VIEW_ZHUM')
+
+	oView:SetAfterViewActivate({|| ModifyObj()})
+
+	oView:SetCloseOnOk( {|| .T.} )
+
+Return oView
+
+
+/*/{Protheus.doc} ValidActive
+@description Valida a ativação do formulário
+
+@author  Helitom Silva
+@since   16/11/2020
+
+@param p_oModel, Objeto, Modelo
+
+@return lRet,  Se poder alterar Retorna .T.
+
+/*/
+Static Function ValidActive(p_oModel)
+
+	Local lRet	 := .T.
+
+	If lRet .and. (p_oModel:GetOperation() == 4)
+
+		If ZHU->ZHU_STATUS = '2'
+			Help( ,, 'HELP', 'Fonte: SF0A64X/ValidActive', 'Não é possível alterar "Eventos de Alterações de títulos" já Enviados, verifique!', 1, 0)
+			lRet := .F.
+		EndIf
+	
+	ElseIf lRet .and. (p_oModel:GetOperation() == 3)
+
+		If .not. SE1->E1_XENVBOL = '4'
+			Help( ,, 'HELP', 'Fonte: SF0A64X/ValidActive', 'Não é possível Incluir "Eventos de Alterações de títulos" e Títulos que não foram Enviados ao Banco, verifique!', 1, 0)
+			lRet := .F.
+		EndIf
+
+	EndIf
+
+Return lRet
+
+
+/*/{Protheus.doc} InitField
+@description Inicializador de Campos do Modelo
+
+@author  Helitom Silva
+@since   16/11/2020
+@version 1.0
+
+@param p_cField, Caracter, Campo a ser inicializado
+
+@return uRet, Indefinido, Valor inicial do Campo
+
+/*/
+Static Function InitField(p_cField, p_oFields)
+
+	Local uRet		 
+	Local oModel	 := p_oFields:oFormModel
+	Local oZHUMASTER := oModel:GetModel('ZHUMASTER')
+
+	Default p_cField := ''
+	
+	If p_cField == 'ZHU_DATA'
+	
+		uRet := dDataBase
+	
+	ElseIf p_cField == 'ZHU_HORA'
+	
+		uRet := Time()
+	
+	ElseIf p_cField == 'ZHU_PREFIX'
+	
+		uRet := SE1->E1_PREFIXO
+	
+	ElseIf p_cField == 'ZHU_NUM'
+	
+		uRet := SE1->E1_NUM
+	
+	ElseIf p_cField == 'ZHU_PARCEL'
+	
+		uRet := SE1->E1_PARCELA
+	
+	ElseIf p_cField == 'ZHU_TIPO'
+	
+		uRet := SE1->E1_TIPO
+	
+	ElseIf p_cField == 'ZHU_NUMBCO'
+	
+		uRet := PadL(Alltrim(Iif(Empty(SE1->E1_NUMBCO), SE1->E1_XNUMBCO, SE1->E1_NUMBCO)), TamSX3('E1_NUMBCO')[1], '0') 
+	
+	ElseIf p_cField == 'ZHU_USER'
+	
+		uRet := cUserName
+		
+	EndIf
+	
+Return uRet
+
+
+/*/{Protheus.doc} ValidField
+@description Validação de Campos do Modelo
+
+@author  Helitom Silva
+@since   17/11/2020
+@version 1.0
+
+@param p_cField, Caracter, Campo a ser inicializado
+
+@return lRet, Logico, Se o valor do campo for válido, retorna .T.
+
+/*/
+Static Function ValidField(p_cField)
+
+	Local lRet		 := .T.		 
+	Local oView 	 := FwViewActive()	
+	Local oModel	 := FwModelActive()
+	Local oZHUMASTER := oModel:GetModel('ZHUMASTER')
+	Local nX, nY, nF := 0
+	Local nLine		 := 0
+	Local aOldArea	 := GetArea()
+	Local cTextJson	 := ''
+	
+	Default p_cField := ''
+	
+	If p_cField = 'ZHU_TPALT'
+		
+		cTextJson := U_F06A64XG(oZHUMASTER:GetValue('ZHU_TPALT'))
+		
+		If !Empty(cTextJson)
+			oZHUMASTER:SetValue('ZHU_ALTERA', cTextJson)
+		Else
+			lRet := .F.
+		EndIf
+
+		//Help( ,, 'HELP', 'Fonte: SF0A64X/A64XValid', 'Valor inválido, verifique!', 1, 0)
+		
+	EndIf
+
+    RestArea(aOldArea)
+
+Return lRet
+
+
+/*/{Protheus.doc} SF06A64M
+@description Ponto de Entrada Geral da Rotina
+
+@author  Helitom Silva
+@since   16/11/2020
+
+@param PARAMIXB, Array, [Objeto][IdPonto][IdModel]
+
+@return uRet,  Retorno diversos do PE
+
+/*/
+User Function SF06A64M()
+
+	Local uRet		 := .T.
+	Local oObj       := ParamIXB[1]
+	Local cIdPonto   := ParamIXB[2]
+	Local cIdModel   := ParamIXB[3]
+	Local lIsGrid    := .F.
+	Local nX		 := 0
+	Local nLinha     := 0
+	Local nQtdLinhas := 0
+	Local aAreaOld   := GetArea()
+
+	If (lIsGrid := ( oObj:ClassName() == 'FWFORMGRID' ))
+
+		nQtdLinhas := oObj:GetQtdLine()
+		nLinha     := oObj:nLine
+
+	EndIf
+
+	If cIdPonto == 'MODELPRE' /* Chamada antes da alteração de qualquer campo do modelo. */   		
+	ElseIf cIdPonto == 'MODELPOS' /* Chamada na validação total do modelo. */
+	ElseIf cIdPonto == 'FORMPRE' /* Chamada na antes da alteração de qualquer campo do formulário. */ 
+	ElseIf cIdPonto == 'FORMPOS' /* Chamada na validação total do formulário. */ 
+	ElseIf cIdPonto == 'FORMLINEPRE' /* Chamada na pre validação da linha do formulário. */            
+	ElseIf cIdPonto == 'FORMLINEPOS' /* Chamada na validação da linha do formulário. */	
+
+		/*If lIsGrid
+
+			uRet := .T.
+
+			For nX := 1 to Len(oObj:aHeader)
+
+				If !(AllTrim(oObj:aHeader[nX][2]) == 'ZHU_CODUSR')
+
+					If !( uRet := ValidField(oObj:aHeader[nX][2]))
+						Exit
+					EndIf
+
+				EndIf
+
+			Next
+
+		EndIf*/
+
+	ElseIf cIdPonto == 'MODELVLDACTIVE' /* Chamada na validação da ativação do Modelo. */	      
+
+		uRet := ValidActive(oObj)
+
+	ElseIf cIdPonto == 'MODELCOMMITTTS' /* Chamada apos a gravação total do modelo e dentro da transação. */      
+	ElseIf cIdPonto == 'MODELCOMMITNTTS' /* Chamada apos a gravação total do modelo e fora da transação. */	      
+	ElseIf cIdPonto == 'FORMCOMMITTTSPRE' /* Chamada antes da gravação da tabela do formulário. */
+	ElseIf cIdPonto == 'FORMCOMMITTTSPOS' /* Chamada apos a gravação da tabela do formulário. */
+
+		/*If (oObj:oFormModel:nOperation = 4) .or. (oObj:oFormModel:nOperation = 3)
+
+			If lIsGrid
+
+				If oObj:GetLine() == nQtdLinhas
+
+				EndIf
+
+			EndIf
+
+		EndIf*/
+
+	ElseIf cIdPonto == 'MODELCANCEL' /* Cancela */	
+		
+		//RollbackSX8()
+		
+		uRet := .T.
+		
+	ElseIf cIdPonto == 'BUTTONBAR' /* Usado para Criação de Botoes Estrutura: { {'Nome', 'Imagem Botap', { || bBlock } } } */	 
+	EndIf
+
+	RestArea(aAreaOld)
+
+Return uRet
+
+
+/*/{Protheus.doc} 06A64XEV
+@description Executa Cadastro de Configuração de Comunicação com Banco do Brasil
+
+@author    Helitom Silva
+@since     16/11/2020
+@version   1.0
+
+@param p_nOption, Numeric, Opção da rotina que chamou o formulário de acompanhamento
+
+@type User Function
+@obs Nil
+
+/*/
+User Function F06A64XE(p_nOption, p_cChavSE1)
+
+	Local nOper	    := MODEL_OPERATION_INSERT
+	Local aButtons  := {{.F.,Nil},{.F.,Nil},{.F.,Nil},{.T.,Nil},{.T.,Nil},{.T.,Nil}, {.T., "OK"}, {.T., "Cancelar"},{.T.,Nil},{.T.,Nil},{.T.,Nil},{.T.,Nil},{.T.,Nil},{.T.,Nil}}
+	Local aAreaSC1  := SC1->(GetArea())
+	
+	Default p_nOption  := 3
+	Default p_cChavSE1 := ''
+	
+	nOper := p_nOption
+
+	If cValToChar(p_nOption) $ '2/4'
+
+		DbSelectArea('ZHU')
+		ZHU->(DbSetOrder(2)) // ZHU_FILIAL + ZHU_CODIGO
+		If ZHU->(DbSeek(FWxFilial('ZHU') + p_cChavSE1))
+			
+			If p_nOption = 2
+				nOper  := MODEL_OPERATION_VIEW
+			Else
+				nOper  := MODEL_OPERATION_UPDATE
+			EndIf
+			
+		EndIf
+	
+	EndIf
+
+	FWExecView('Portos'/*cTitulo*/, 'SF06A64X' /*cPrograma*/, nOper /*nOperation*/, /*oDlg*/, { || .t. } /*bCloseOnOK*/, { || .t. } /*bOk*/, /*nPercReducao*/ , aButtons /*aEnableButtons*/, /*bCancel*/, /*cOperatId*/, /*cToolBar*/, /*oModelAct*/)
+
+	RestArea(aAreaSC1)
+
+Return .T.
+
+
+/*/{Protheus.doc} ModifyObj
+@description Modifica propriedades dos Objetos.
+
+@author  Helitom Silva
+@since   25/05/2018
+@version 1.0
+
+/*/
+Static Function ModifyObj()
+	
+	Local oTmpDlg 	  := Nil
+	Local nX, nI  	  := 0
+	Local cListObj    := ''
+	Local oView		  := FwViewActive()
+	Local oFtArialB12 := TFont():New( "Arial",0,-12,,.T.,0,,400,.F.,.F.,,,,,, )		
+		
+	If oView:IsActive() .and. ValType(oView:GetModel('ZHUMASTER')) = 'O'
+		
+		oTmpDlg := GetWndDefault()
+		
+		For nX := 1 to Len(oTmpDlg:aControls)
+
+			If ValType(oTmpDlg:aControls[nX]) == 'O'
+				cListObj += cValToChar(nX) + ' - ' + AllTrim(oTmpDlg:aControls[nX]:ClassName()) + CR
+			EndIf
+									
+			If ValType(oTmpDlg:aControls[nX]) == 'O' .and. 'FWMULTIGET' $ AllTrim(oTmpDlg:aControls[nX]:ClassName()) .and. .not. oTmpDlg:aControls[nX]:cReadVar == 'M->ZHU_REGTOK'
+				
+				//oTmpDlg:aControls[nX]:Align := CONTROL_ALIGN_ALLCLIENT
+				//oTmpDlg:aControls[nX]:SetFont(oFtArialB12)
+				//oTmpDlg:aControls[nX]:EnableVScroll( .F. )
+				oTmpDlg:aControls[nX]:lReadOnly := .T.
+				oTmpDlg:aControls[nX]:Refresh()
+				
+			EndIf
+
+		Next
+		
+		oTmpDlg:Refresh()
+					
+	EndIf
+	
+	//MemoWrite('C:\Temp\Obj-Classes.txt', cListObj)
+		
+Return
+
+
+/*/{Protheus.doc} 06A64XOP
+@description Obtem de opções de alterações dos Títulos
+
+@type   Function
+@author Helitom Silva
+@since  16/11/2020
+@version 12.1.17
+
+@return cRet, Caracter, Lista com opções de alterações possíveis do Boleto
+/*/
+User Function F06A64XO()
+    
+    Local cRet := ''
+
+    cRet += '0=indicadorAlterarAbatimento;'
+    cRet += '1=indicadorAlterarDataDesconto;'
+    cRet += '2=indicadorAlterarDesconto;'
+    cRet += '3=indicadorAlterarEnderecoPagador;'
+    cRet += '4=indicadorAlterarPrazoBoletoVencido;'
+    cRet += '5=indicadorAlterarSeuNumero;'
+    cRet += '6=indicadorAtribuirDesconto;'
+    cRet += '7=indicadorCancelarProtesto;'
+    cRet += '8=indicadorCobrarJuros;'
+    cRet += '9=indicadorCobrarMulta;'
+    cRet += 'A=indicadorDispensarJuros;'
+    cRet += 'B=indicadorDispensarMulta;'
+    cRet += 'C=indicadorIncluirAbatimento;'
+    cRet += 'D=indicadorNegativar;'
+    cRet += 'E=indicadorNovaDataVencimento;'
+    cRet += 'F=indicadorProtestar;'
+    cRet += 'G=indicadorSustacaoProtesto'
+
+Return cRet
+
+
+/*/{Protheus.doc} 06A64XOP
+@description Obtem Texto no formto json para envio ao Banco.
+
+@type   Function
+@author Helitom Silva
+@since  16/11/2020
+@version 12.1.17
+
+@return cRet, Caracter, Lista com opções de alterações possíveis do Boleto
+/*/
+User Function F06A64XG(p_cIndicador)
+
+    Local cRet 		   := ''
+    Local oAlterBoleto := JsonObject():New()
+    Local cAliasTMP    := GetNextAlias()
+    Local cQuery       := ""
+    Local dDtMulta     := CtoD('//')
+    Local nNumLimRec   := GetNewPar('MV_XNUMDL', 29)
+
+    cQuery += " SELECT  EA_FILIAL,EA_PREFIXO,EA_NUM,EA_PARCELA,EA_TIPO,EA_NUMBOR,EA_PORTADO,EA_AGEDEP,EA_NUMCON,EA_FORNECE,EA_LOJA,EA_XSTATUS,EA.R_E_C_N_O_ AS EA_RECNO,"
+    cQuery += " 		A6_FILIAL,A6_COD,A6_AGENCIA,A6_NUMCON,A6_XCONV,A6_XTPCART,A6_XVARCAR,"
+    cQuery += " 		E1_FILIAL,E1_NUMBCO,E1_NUMBOR,E1_PREFIXO,E1_NUM,E1_PARCELA,E1_TIPO,E1_CLIENTE,E1_LOJA,E1_EMISSAO,E1_VENCTO,E1_VENCREA,E1_VALOR,E1_IDCNAB,E1_DESCFIN,E1_XENVBOL, E1.E1_XHORAE, E1.E1_PORCJUR, E1.R_E_C_N_O_ AS E1_RECNO,"
+    cQuery += " 		E1_XNEWVEN,E1_XNEWVAL,EE_XMULTA,"
+    cQuery += " 		A1_FILIAL,A1_COD,A1_LOJA,A1_BAIRRO,A1_CEP,A1_MUNC,A1_END,A1_NOME,A1_PESSOA,A1_CGC,A1_EST"
+    cQuery += " FROM " + RetSqlName("SEA") + " EA "
+    cQuery += " INNER JOIN " + RetSqlName("SA6") + " A6 ON A6.A6_COD     = EA.EA_PORTADO "
+    cQuery += "              						   AND A6.A6_AGENCIA = EA.EA_AGEDEP "
+    cQuery += "              						   AND A6.A6_NUMCON  = EA.EA_NUMCON "
+    cQuery += "              						   AND A6.A6_FILIAL  = '" + xFilial("SA6") + "' "
+    cQuery += "              						   AND A6.D_E_L_E_T_ = ' '  "
+    cQuery += " INNER JOIN " + RetSqlName("SEE") + " EE ON EE.EE_CODIGO  = EA.EA_PORTADO "
+    cQuery += "                                        AND EE.EE_AGENCIA = EA.EA_AGEDEP "
+    cQuery += "                                        AND EE.EE_CONTA   = EA.EA_NUMCON "
+    cQuery += "                                        AND EE.EE_SUBCTA  = '20 ' " // SUBCONTA PADRÃO DE RECEBIMENTO FIEMT
+    cQuery += "                                        AND EE.EE_FILIAL  = '" + xFilial("SEE") + "'"
+    cQuery += "                                        AND EE.D_E_L_E_T_ = ' ' "	
+    cQuery += " INNER JOIN " + RetSqlName("SE1") + " E1 ON E1.E1_PREFIXO = EA.EA_PREFIXO "
+    cQuery += "                                        AND E1.E1_NUM     = EA.EA_NUM "
+    cQuery += "                                        AND E1.E1_PARCELA = EA.EA_PARCELA "
+    cQuery += "                                        AND E1.E1_TIPO    = EA.EA_TIPO "
+    cQuery += "                                        AND E1.E1_NUMBOR  = EA.EA_NUMBOR "
+    cQuery += " 									   AND E1.E1_FILIAL  = '" + xFilial("SE1") + "'"	
+    cQuery += "                                        AND E1.D_E_L_E_T_ = ' ' "
+    cQuery += " INNER JOIN " + RetSqlName("SA1") + " A1 ON A1.A1_COD     = E1.E1_CLIENTE "
+	cQuery += "              						   AND A1.A1_LOJA    = E1.E1_LOJA "
+    cQuery += " 									   AND A1.A1_FILIAL  = '" + xFilial("SA1") + "'"	
+	cQuery += "              						   AND A1.D_E_L_E_T_ = ' ' "
+    cQuery += " WHERE EA.EA_PREFIXO = '" + SE1->E1_PREFIXO + "' "
+	cQuery += "   AND EA.EA_NUM     = '" + SE1->E1_NUM + "' "
+	cQuery += "   AND EA.EA_PARCELA = '" + SE1->E1_PARCELA + "' "
+	cQuery += "   AND EA.EA_TIPO    = '" + SE1->E1_TIPO + "' "
+    cQuery += "   AND EA.EA_FILIAL  = '" + xFilial('SEA') + "' "
+    cQuery += "   AND EA.D_E_L_E_T_ = ' ' "	
+    cQuery += "ORDER BY "+ SqlOrder(SE1->(IndexKey()))
+	
+    cQuery := ChangeQuery(cQuery)
+
+    If Select(cAliasTMP) > 0
+        (cAliasTMP)->(DbCloseArea())
+    EndIf
+
+    DbUseArea(.T., "TOPCONN", TCGenQry(,,cQuery), cAliasTMP, .F., .T.)
+
+    TcSetField(cAliasTMP, 'E1_EMISSAO', TamSX3('E1_EMISSAO')[3], TamSX3('E1_EMISSAO')[1], TamSX3('E1_EMISSAO')[2])
+    TcSetField(cAliasTMP, 'E1_VENCTO', TamSX3('E1_VENCTO')[3], TamSX3('E1_VENCTO')[1], TamSX3('E1_VENCTO')[2])
+    TcSetField(cAliasTMP, 'E1_VENCREA', TamSX3('E1_VENCREA')[3], TamSX3('E1_VENCREA')[1], TamSX3('E1_VENCREA')[2])
+    TcSetField(cAliasTMP, 'E1_XNEWVEN', TamSX3('E1_XNEWVEN')[3], TamSX3('E1_XNEWVEN')[1], TamSX3('E1_XNEWVEN')[2])
+    TcSetField(cAliasTMP, 'E1_VALOR', TamSX3('E1_VALOR')[3], TamSX3('E1_VALOR')[1], TamSX3('E1_VALOR')[2])
+  	TcSetField(cAliasTMP, 'E1_XNEWVAL', TamSX3('E1_XNEWVAL')[3], TamSX3('E1_XNEWVAL')[1], TamSX3('E1_XNEWVAL')[2])
+    TcSetField(cAliasTMP, 'E1_DESCFIN', TamSX3('E1_DESCFIN')[3], TamSX3('E1_DESCFIN')[1], TamSX3('E1_DESCFIN')[2])
+    TcSetField(cAliasTMP, 'E1_PORCJUR', TamSX3('E1_PORCJUR')[3], TamSX3('E1_PORCJUR')[1], TamSX3('E1_PORCJUR')[2])
+    TcSetField(cAliasTMP, 'EE_XMULTA', TamSX3('EE_XMULTA')[3], TamSX3('EE_XMULTA')[1], TamSX3('EE_XMULTA')[2])	
+    TcSetField(cAliasTMP, 'EA_RECNO', 'N', 17, 0)
+    TcSetField(cAliasTMP, 'E1_RECNO', 'N', 17, 0)
+
+    If .not. (cAliasTMP)->(Eof())
+
+		dDtMulta := (cAliasTMP)->E1_VENCREA + 1
+
+		oAlterBoleto["numeroConvenio"] := (cAliasTMP)->A6_XCONV //"<integer>"
+
+		If p_cIndicador = '0' //indicadorAlterarAbatimento
+
+			// Indica a intenção de alterar o abatimento no boleto. Preencher se indicador = "S" (SIM). O novo valor do abatimento (reduz valor do boleto) expresso em moeda corrente.
+			oAlterBoleto["indicadorAlterarAbatimento"] := '' //"<string>"
+
+			oAlterBoleto["alteracaoAbatimento"] := JsonObject():New()
+			oAlterBoleto["alteracaoAbatimento"]["novoValorAbatimento"] := 0.00 //"<double>"
+					
+		ElseIf p_cIndicador = '1' //indicadorAlterarDataDesconto
+
+			// Indica a intenção de alterar a data do desconto do boleto. Preencher se indicador = "S" (SIM),
+			oAlterBoleto["indicadorAlterarDataDesconto"] := '' //"<string>"
+			
+			oAlterBoleto["alteracaoDataDesconto"] := JsonObject():New()
+			oAlterBoleto["alteracaoDataDesconto"]["novaDataLimitePrimeiroDesconto"] := '' //"<string>"
+			oAlterBoleto["alteracaoDataDesconto"]["novaDataLimiteSegundoDesconto"] := '' //"<string>"
+			oAlterBoleto["alteracaoDataDesconto"]["novaDataLimiteTerceiroDesconto"] := '' //"<string>"
+			
+		ElseIf p_cIndicador = '2' //indicadorAlterarDesconto
+
+			If (cAliasTMP)->E1_DESCFIN > 0
+
+				// Indica a intenção de alterar desconto do boleto. Preencher se indicador = "S" (SIM)
+				oAlterBoleto["indicadorAlterarDesconto"] := 'S' //"<string>"
+
+				oAlterBoleto["alteracaoDesconto"] := JsonObject():New()
+
+				oAlterBoleto["alteracaoDesconto"]["tipoPrimeiroDesconto"]           := 2 //"<integer>"
+				oAlterBoleto["alteracaoDesconto"]["novoValorPrimeiroDesconto"]      := 0.00 //"<double>"
+				oAlterBoleto["alteracaoDesconto"]["novoPercentualPrimeiroDesconto"] := (cAliasTMP)->E1_DESCFIN //"<double>"
+				oAlterBoleto["alteracaoDesconto"]["novaDataLimitePrimeiroDesconto"] := Day2Str((cAliasTMP)->E1_VENCTO) + '.' + Month2Str((cAliasTMP)->E1_VENCTO) + '.' + Year2Str((cAliasTMP)->E1_VENCTO) //"<string>"
+
+				//oAlterBoleto["alteracaoDesconto"]["tipoSegundoDesconto"] := 0 //"<integer>"
+				//oAlterBoleto["alteracaoDesconto"]["novoValorSegundoDesconto"] := 0.00 //"<double>"
+				//oAlterBoleto["alteracaoDesconto"]["novoPercentualSegundoDesconto"] := 0.00 //"<double>"
+				//oAlterBoleto["alteracaoDesconto"]["novaDataLimiteSegundoDesconto"] := '' //"<string>"
+				//oAlterBoleto["alteracaoDesconto"]["tipoTerceiroDesconto"] := 0 //"<integer>"
+				//oAlterBoleto["alteracaoDesconto"]["novoValorTerceiroDesconto"] := 0.00 //"<double>"
+				//oAlterBoleto["alteracaoDesconto"]["novoPercentualTerceiroDesconto"] := 0.00 //"<double>"
+				//oAlterBoleto["alteracaoDesconto"]["novaDataLimiteTerceiroDesconto"] := '' //"<string>"
+				
+			EndIf
+
+		ElseIf p_cIndicador = '3' //indicadorAlterarEnderecoPagador
+
+			// Indica a intenção de alterar endereço do Pagador no boleto. Preencher se indicador = "S" (SIM)
+			oAlterBoleto["indicadorAlterarEnderecoPagador"] := 'S' //"<string>"
+
+			oAlterBoleto["alteracaoEndereco"] := JsonObject():New()
+			oAlterBoleto["alteracaoEndereco"]["enderecoPagador"] := LjRmvChEs(Alltrim((cAliasTMP)->A1_END)) //"<string>"
+			oAlterBoleto["alteracaoEndereco"]["bairroPagador"]   := LjRmvChEs(Alltrim((cAliasTMP)->A1_BAIRRO)) //"<string>"
+			oAlterBoleto["alteracaoEndereco"]["cidadePagador"]   := LjRmvChEs(Alltrim((cAliasTMP)->A1_MUNC)) //"<string>"
+			oAlterBoleto["alteracaoEndereco"]["UFPagador"]       := (cAliasTMP)->A1_EST //"<string>"
+			oAlterBoleto["alteracaoEndereco"]["CEPPagador"]      := Val((cAliasTMP)->A1_CEP) //"<integer>"
+			
+		ElseIf p_cIndicador = '4' //indicadorAlterarPrazoBoletoVencido
+
+			// Indica a intenção de prazo de aceite de boleto vencido. Preencher se indicador = "S" (SIM).
+			oAlterBoleto["indicadorAlterarPrazoBoletoVencido"] := Iif(nNumLimRec > 0, 'S', 'N') //"<string>"
+
+			oAlterBoleto["alteracaoPrazo"] := JsonObject():New()
+			oAlterBoleto["alteracaoPrazo"]["quantidadeDiasAceite"] := nNumLimRec //"<integer>"
+
+		ElseIf p_cIndicador = '5' //indicadorAlterarSeuNumero
+
+			// Indica a intenção de alterar Seu Numero no boleto. Preencher se indicador = "S" (SIM).
+			oAlterBoleto["indicadorAlterarSeuNumero"] := 'S' //"<string>"
+
+			oAlterBoleto["alteracaoSeuNumero"] := JsonObject():New()
+			oAlterBoleto["alteracaoSeuNumero"]["codigoSeuNumero"] := PadL(Alltrim((cAliasTMP)->E1_NUMBCO), TamSX3('E1_NUMBCO')[1], '0') //"<string>"
+					
+		ElseIf p_cIndicador = '6' //indicadorAtribuirDesconto
+
+			If (cAliasTMP)->E1_DESCFIN > 0
+
+				// Indica a intenção de atribuir desconto ao boleto. Preencher se indicador = "S" (SIM).
+				oAlterBoleto["indicadorAtribuirDesconto"] := 'S' //"<string>"
+
+				oAlterBoleto["desconto"] := JsonObject():New()
+				oAlterBoleto["desconto"]["tipoPrimeiroDesconto"]       := 2 //"<integer>"
+				oAlterBoleto["desconto"]["valorPrimeiroDesconto"]      := 0.00 //"<double>"
+				oAlterBoleto["desconto"]["percentualPrimeiroDesconto"] := (cAliasTMP)->E1_DESCFIN //"<double>"
+				oAlterBoleto["desconto"]["dataPrimeiroDesconto"]       :=  Day2Str((cAliasTMP)->E1_VENCTO) + '.' + Month2Str((cAliasTMP)->E1_VENCTO) + '.' + Year2Str((cAliasTMP)->E1_VENCTO) //"<string>"
+
+				//oAlterBoleto["desconto"]["tipoSegundoDesconto"] := 0 //"<integer>"
+				//oAlterBoleto["desconto"]["valorSegundoDesconto"] := 0.00 //"<double>"
+				//oAlterBoleto["desconto"]["percentualSegundoDesconto"] := 0.00 //"<double>"
+				//oAlterBoleto["desconto"]["dataSegundoDesconto"] := '' //"<string>"
+				//oAlterBoleto["desconto"]["tipoTerceiroDesconto"] := 0 //"<integer>"
+				//oAlterBoleto["desconto"]["valorTerceiroDesconto"] := 0.00 //"<double>"
+				//oAlterBoleto["desconto"]["percentualTerceiroDesconto"] := 0.00 //"<double>"
+				//oAlterBoleto["desconto"]["dataTerceiroDesconto"] := '' //"<string>"
+				
+			EndIf
+
+		ElseIf p_cIndicador = '7' //indicadorCancelarProtesto
+
+			// Indica a intenção de cancelar o pedido de protesto do boleto. Valores a informar: "S" -> Sim, desejo alterar ou "N" -> Não, não desejo alterar".
+			oAlterBoleto["indicadorCancelarProtesto"] := 'S' //"<string>"
+
+		ElseIf p_cIndicador = '8' //indicadorCobrarJuros
+
+			// Indica a intenção de cobrar juros no boleto. Preencher se indicador = "S" (SIM).
+			oAlterBoleto["indicadorCobrarJuros"] := 'S' //"<string>"
+
+			oAlterBoleto["juros"] := JsonObject():New()
+			oAlterBoleto["juros"]["tipoJuros"]   := 2 //"<integer>"
+			oAlterBoleto["juros"]["valorJuros"]  := 0.00 //"<double>"
+			oAlterBoleto["juros"]["taxaJuros"]   := Round((cAliasTMP)->E1_PORCJUR * 30, 2) //"<double>"
+			
+		ElseIf p_cIndicador = '9' //indicadorCobrarMulta
+
+			// Indica a intenção de cobrar multa no boleto. Preencher se indicador = "S" (SIM)
+			oAlterBoleto["indicadorCobrarMulta"] := 'S' //"<string>"
+
+			oAlterBoleto["multa"] := JsonObject():New()
+			oAlterBoleto["multa"]["tipoMulta"]        := 2                                            // "<float>"
+			oAlterBoleto["multa"]["dataInicioMulta"]  := Day2Str(dDtMulta) + '.' + Month2Str(dDtMulta) + '.' + Year2Str(dDtMulta)  // "<string>" - '19.08.2020'
+			oAlterBoleto["multa"]["taxaMulta"] 		  := (cAliasTMP)->EE_XMULTA                          // "<float>"
+			oAlterBoleto["multa"]["valorMulta"]       := 0                                            // "<float>"
+					
+		ElseIf p_cIndicador = 'A' //indicadorDispensarJuros
+
+			// Indica a intenção de dispensar juros no boleto. Valores a informar: "S" -> Sim, desejo alterar ou "N" -> Não, não desejo alterar".
+			oAlterBoleto["indicadorDispensarJuros"] := 'S' //"<string>"
+					
+		ElseIf p_cIndicador = 'B' //indicadorDispensarMulta
+
+			// Indica a intenção de dispensar cobrança de multa no boleto. Valores a informar: "S" -> Sim, desejo alterar ou "N" -> Não, não desejo alterar".
+			oAlterBoleto["indicadorDispensarMulta"] := 'S' //"<string>"
+
+		ElseIf p_cIndicador = 'C' //indicadorIncluirAbatimento
+
+			// Indica a intenção de incluir abatimento no boleto. Preencher se indicador = "S" (SIM). O novo valor do abatimento (soma valor do boleto) expresso em moeda corrente.
+			oAlterBoleto["indicadorIncluirAbatimento"] := '' //"<string>"
+
+			oAlterBoleto["abatimento"] := JsonObject():New()
+			oAlterBoleto["abatimento"]["valorAbatimento"] := 0.00 //"<double>"
+					
+		ElseIf p_cIndicador = 'D' //indicadorNegativar
+
+			// Indica a intenção de negativar ou cancelar negativação boleto. (Inclusão ou Cancelamento). Preencher se indicador = "S" (SIM).
+			oAlterBoleto["indicadorNegativar"] := '' //"<string>"
+
+			oAlterBoleto["negativacao"] := JsonObject():New()
+			oAlterBoleto["negativacao"]["quantidadeDiasNegativacao"] := 0 //"<integer>"
+			oAlterBoleto["negativacao"]["tipoNegativacao"] := 0 //"<integer>"
+					
+		ElseIf p_cIndicador = 'E' //indicadorNovaDataVencimento
+
+			// Indica a intenção de atribuir nova data de vencimento ao boleto. Preencher se indicador = "S" (SIM).
+			oAlterBoleto["indicadorNovaDataVencimento"] := 'S' //"<string>"
+
+			oAlterBoleto["alteracaoData"] := JsonObject():New()
+
+			 IF !empty((cAliasTMP)->E1_XNEWVEN)
+				oAlterBoleto["alteracaoData"]["novaDataVencimento"] := Day2Str((cAliasTMP)->E1_XNEWVEN) + '.' + Month2Str((cAliasTMP)->E1_XNEWVEN) + '.' + Year2Str((cAliasTMP)->E1_XNEWVEN) //"<string>"
+			Else
+				oAlterBoleto["alteracaoData"]["novaDataVencimento"] := Day2Str((cAliasTMP)->E1_VENCTO) + '.' + Month2Str((cAliasTMP)->E1_VENCTO) + '.' + Year2Str((cAliasTMP)->E1_VENCTO) //"<string>"
+
+			EndIf
+		ElseIf p_cIndicador = 'F' //indicadorProtestar
+
+			// Indica a intenção de protestar o boleto.. Preencher se indicador = "S" (SIM).
+			oAlterBoleto["indicadorProtestar"] := '' //"<string>"
+
+			oAlterBoleto["protesto"] := JsonObject():New()
+			oAlterBoleto["protesto"]["quantidadeDiasProtesto"] := 0 //"<integer>"
+					
+		ElseIf p_cIndicador = 'G' //indicadorSustacaoProtesto')
+
+			// Indica a intenção de sustar o protesto do boleto. Valores a informar: "S" -> Sim, desejo alterar ou "N" -> Não, não desejo alterar.
+			oAlterBoleto["indicadorSustacaoProtesto"] := 'S' //"<string>"
+			
+		EndIf
+
+		cRet := oAlterBoleto:ToJson()
+
+	EndIf
+
+    If Select(cAliasTMP) > 0
+        (cAliasTMP)->(DbCloseArea())
+    EndIf
+
+Return cRet
+
+
+/*/{Protheus.doc} F06A64XA
+@description Obtem dados do contas a receber antes de sofrer alteração.
+
+@author  Helitom Silva
+@since   18/11/2020
+@version 1.0
+/*/
+User Function F06A64XA()
+
+	Local aSE1Struct := SE1->(DbStruct())
+	Local nX 		 := 0
+
+	If Type('__aSE1FldData') = 'U'
+		Public __aSE1FldData := {}
+	Else
+		__aSE1FldData := {}
+	EndIf
+
+	For nX := 1 to Len(aSE1Struct)
+		If .not. aSE1Struct[nX][1] $ 'R_E_C_N_O_|D_E_L_E_T_'
+			aAdd(__aSE1FldData, {aSE1Struct[nX][1], SE1->&(aSE1Struct[nX][1]), CriaVar(aSE1Struct[nX][1], .F.)})
+		EndIf
+	Next
+
+Return
+
+
+/*/{Protheus.doc} F06A64XS
+@description Registra alterações para serem enviadas via Schedule ao Banco.
+
+@author  Helitom Silva
+@since   18/11/2020
+@version 1.0
+/*/
+User Function F06A64XS()
+
+	Local aSE1Struct := {}
+	Local nPosNBanco := ''
+	Local cTextJson  := ''
+	Local cTpAlt	 := ''
+	Local nX 		 := 0
+
+	If Type('__aSE1FldData') = 'A' .and. Len(__aSE1FldData) > 0
+		
+		aSE1Struct := SE1->(DbStruct())
+
+		For nX := 1 to Len(aSE1Struct)
+
+			If .not. aSE1Struct[nX][1] $ 'R_E_C_N_O_|D_E_L_E_T_'
+				
+				__aSE1FldData[nX][3] := SE1->&(aSE1Struct[nX][1])
+
+				If __aSE1FldData[nX][1] = 'E1_NUMBCO'
+					cNumBanco  := __aSE1FldData[nX][2]
+				EndIf
+
+			EndIf
+
+		Next
+		
+		For nX := 1 to Len(__aSE1FldData)
+
+			If .not. __aSE1FldData[nX][2] = __aSE1FldData[nX][3]
+
+				cTextJson := ''
+
+				If __aSE1FldData[nX][1] = 'E1_DESCFIN' 
+
+					If __aSE1FldData[nX][2] = 0
+						cTpAlt := '6' //indicadorAtribuirDesconto
+						cTextJson := U_F06A64XG(cTpAlt) 
+					Else
+						cTpAlt := '2' //indicadorAlterarDesconto
+						cTextJson := U_F06A64XG(cTpAlt) 
+					EndIf
+
+				ElseIf __aSE1FldData[nX][1] $ 'E1_VENCTO|E1_XNEWVEN'
+					
+					cTpAlt    := 'E' //indicadorNovaDataVencimento
+					cTextJson := U_F06A64XG(cTpAlt) 
+
+				ElseIf __aSE1FldData[nX][1] = 'E1_NUMBCO'
+
+					cTpAlt    := '5' //indicadorAlterarSeuNumero
+					cTextJson := U_F06A64XG( cTpAlt) 
+
+				EndIf
+		
+				If !Empty(cTextJson)
+
+					RecLock('ZHU', .T.)
+
+						ZHU->ZHU_FILIAL := FWxFilial('ZHU')
+						ZHU->ZHU_CODIGO := GetSXENum("ZHU", "ZHU_CODIGO")
+						ZHU->ZHU_DATA 	:= dDataBase
+						ZHU->ZHU_HORA 	:= Time()
+						ZHU->ZHU_PREFIX := SE1->E1_PREFIXO
+						ZHU->ZHU_NUM 	:= SE1->E1_NUM
+						ZHU->ZHU_PARCEL := SE1->E1_PARCELA
+						ZHU->ZHU_TIPO   := SE1->E1_TIPO
+						ZHU->ZHU_NUMBCO	:= PadL(Alltrim(cNumBanco), TamSX3('E1_NUMBCO')[1], '0')
+						ZHU->ZHU_TPALT 	:= cTpAlt
+						ZHU->ZHU_ALTERA := cTextJson
+						ZHU->ZHU_STATUS := '1' // Pendente
+						ZHU->ZHU_USER   := cUserName
+						ZHU->ZHU_CAMPO  := __aSE1FldData[nX][1]
+						ZHU->ZHU_ANTES  := cValToChar(__aSE1FldData[nX][2])
+						ZHU->ZHU_DEPOIS := cValToChar(__aSE1FldData[nX][3])
+
+					ZHU->(MsUnLock())
+
+				EndIf
+
+			EndIf
+
+		Next
+
+	EndIf
+
+	__aSE1FldData := Nil
+
+Return
+
+
+/*/{Protheus.doc} F06A64XS
+@description Envia eventos de alteração de títulos ao Banco do Brasil.
+
+@author  Helitom Silva
+@since   18/11/2020
+@version 1.0
+/*/
+User Function F06A64XV(p_lExecAuto)
+
+	Local oAlterBoleto  := ''
+	Local aArea := GetArea() 
+    Local oIntegra      := INTBOLBB():New(SuperGetMV('MV_XMSGBB',, .F.))
+	Local cAliZHU  := GetNextAlias()
+	Default p_lExecAuto := .F.
+
+	DbSelectArea('ZHU')
+
+	cQuery := ChangeQuery("Select * from " + RetSqlName("ZHU") + " Where ZHU_STATUS = '1' AND ZHU_FILIAL = '"+cFilAnt+"' ")
+	      
+
+	MPSysOpenQuery( cQuery, (cAliZHU),)
+
+	While .not. (cAliZHU)->(EoF())
+		ZHU->(dbgoto(((cAliZHU)->R_E_C_N_O_)))
+		
+			
+			oAlterBoleto := JsonObject():New()
+
+			If .not. ValType(oAlterBoleto:FromJson(ZHU->ZHU_ALTERA)) = 'U'
+				
+				If IsBlind()
+					ConOut( "F06A64XV - Falha ao transformar script json em objeto - ZHU_ALTERA." )
+				Else
+					IdaMsg("Falha ao transformar script json em objeto - ZHU_ALTERA.", "F06A64XV - Envio Alteração Boletos Bancos do Brasil")
+				EndIf
+
+			Else
+
+				If oIntegra:PostToken()[1]
+
+					aRet := oIntegra:PutBoleto(Padl(Alltrim((cAliZHU)->ZHU_NUMBCO), TamSX3('E1_NUMBCO')[1], '0'), oAlterBoleto)
+
+					If aRet[1]
+						If RecLock("ZHU", .F.)
+							ZHU->ZHU_STATUS := "2"
+							ZHU->ZHU_MSGAPI := ""
+							ZHU->(MsUnlock())
+						EndIf
+					ElseIF "4878006.1" $ aRet[2]:ToJson() 
+						If RecLock("ZHU", .F.)
+							ZHU->ZHU_STATUS := "4"
+							ZHU->ZHU_MSGAPI := "Desconto ja atribuido anteriormente"
+							ZHU->(MsUnlock())
+						EndIf
+					Else
+
+						cLogErro := 'Houve erro ao enviar alteração do Boleto:' + CR
+						cLogErro += '	Filial     -> ' + (cAliZHU)->ZHU_FILIAL + CR
+						cLogErro += '	Prefixo    -> ' + (cAliZHU)->ZHU_PREFIX + CR
+						cLogErro += '	Numero     -> ' + (cAliZHU)->ZHU_NUM + CR
+						cLogErro += '	Parcela    -> ' + (cAliZHU)->ZHU_PARCEL + CR
+						cLogErro += '	Tipo       -> ' + (cAliZHU)->ZHU_TIPO + CR
+						cLogErro += ' Nosso Numero -> ' + (cAliZHU)->ZHU_NUMBCO + CR
+						cLogErro += ' Descrição do Erro: ' + CR
+						cLogErro += SubStr(FwCutOff(aRet[2]:ToJson(), .T.), 1, 100) + CR
+
+						GravLog(cLogErro, 'SF06A63X', 'ENVIO_ALTERACAO_BOLETO_BANCO_BRASIL', !IsBlind())
+
+						If RecLock("ZHU", .F.)
+							ZHU->ZHU_STATUS := "3"
+							ZHU->ZHU_MSGAPI := SubStr(FwCutOff(aRet[2]:ToJson(), .T.), 1, 100)
+							ZHU->(MsUnlock())
+						EndIf
+
+					EndIf
+
+				EndIf
+			
+			EndIf
+				
+		If .not. p_lExecAuto
+			Exit
+		EndIf
+
+		(cAliZHU)->(DbSkip())
+    End
+	(cAliZHU)->(dbCloseArea())
+	RestArea(aArea)
+Return
+
+
+/*/{Protheus.doc} F06A64XT
+@description Obtem Descrição ou Numero do Status
+
+@author  Helitom Silva
+@since   19/11/2020
+@version 1.0
+
+@param p_cStatus, Caracter, Descrição ou Numero do Status
+@param p_nType, Numerico, Define o tipo do retorno da Função, sendo [1 - Descrição, 2 - Numero do Status]
+
+@return cRet, Caracter, Se p_nType for igual à 1 - Descrição ou 2 - Numero do Status
+
+/*/
+User Function F06A64XT(p_cStatus, p_nType)
+
+	Local cRet    := ''
+	Local aStatus := {}
+	Local nPos	  := 0
+	
+	Default p_cStatus := ''
+	Default p_nType	  := 0
+	
+	Aadd(aStatus, {'1', 'Pendente'})
+	Aadd(aStatus, {'2', 'Enviado'})
+	Aadd(aStatus, {'3', 'Erro no Envio'})
+	Aadd(aStatus, {'4', 'Cancelado'})
+	
+	If p_nType = 1 .and. (nPos := Ascan(aStatus, {|X| AllTrim(Upper(X[1])) = AllTrim(Upper(p_cStatus))})) > 0
+		cRet := aStatus[nPos][2]
+	ElseIf p_nType = 2 .and. (nPos := Ascan(aStatus, {|X| AllTrim(Upper(X[2])) = AllTrim(Upper(p_cStatus))})) > 0
+		cRet := aStatus[nPos][1]
+	EndIf
+	
+Return cRet
+
+
+/*/{Protheus.doc} F06A64XY
+@description Obtem Descrição ou Codigo do Alteracao
+
+@author  Helitom Silva
+@since   19/11/2020
+@version 1.0
+
+@param p_cStatus, Caracter, Descrição ou Numero do Status
+@param p_nType, Numerico, Define o tipo do retorno da Função, sendo [1 - Descrição, 2 - Numero do Status]
+
+@return cRet, Caracter, Se p_nType for igual à 1 - Descrição ou 2 - Numero do Status
+
+/*/
+User Function F06A64XY(p_cAltera, p_nType)
+
+	Local cRet    := ''
+	Local aBoxAlt := {}
+	Local nPos	  := 0
+	
+	Default p_cAltera := ''
+	Default p_nType	  := 0
+	
+	aBoxAlt := RetABox(U_F06A64XO())
+	
+	If p_nType = 1 .and. (nPos := Ascan(aBoxAlt, {|X| AllTrim(Upper(SubStr(X,1,1))) = AllTrim(Upper(p_cAltera))})) > 0
+		cRet := SubStr(aBoxAlt[nPos], 3)
+	ElseIf p_nType = 2 .and. (nPos := Ascan(aBoxAlt, {|X| AllTrim(Upper(SubStr(X,3))) = AllTrim(Upper(p_cAltera))})) > 0
+		cRet := SubStr(aBoxAlt[nPos], 1, 1)
+	EndIf
+	
+Return cRet
+
+
+/*/{Protheus.doc} F06A64XW
+@description Procedimento de geração de eventos de alteração de titulos junto ao banco do Brasil
+
+@author  Helitom Silva
+@since   21/11/2020
+@version 1.0
+
+/*/
+User Function F06A64XW()
+
+    Local cRet 		   := ''
+    Local oAlterBoleto := JsonObject():New()
+    Local cAliasADB    := GetNextAlias()
+    Local cQuery       := ""
+
+    cQuery += " SELECT  EA_FILIAL,EA_PREFIXO,EA_NUM,EA_PARCELA,EA_TIPO,EA_NUMBOR,EA_PORTADO,EA_AGEDEP,EA_NUMCON,EA_FORNECE,EA_LOJA,EA_XSTATUS,EA.R_E_C_N_O_ AS EA_RECNO,"
+    cQuery += " 		A6_FILIAL,A6_COD,A6_AGENCIA,A6_NUMCON,A6_XCONV,A6_XTPCART,A6_XVARCAR,"
+    cQuery += " 		E1_FILIAL,E1_NUMBCO,E1_NUMBOR,E1_PREFIXO,E1_NUM,E1_PARCELA,E1_TIPO,E1_CLIENTE,E1_LOJA,E1_EMISSAO,E1_VENCTO,E1_VENCREA,E1_VALOR,E1_IDCNAB,E1_DESCFIN,E1_XENVBOL, E1.R_E_C_N_O_ AS E1_RECNO,"
+    cQuery += " 		A1_FILIAL,A1_COD,A1_LOJA,A1_BAIRRO,A1_CEP,A1_MUNC,A1_END,A1_NOME,A1_PESSOA,A1_CGC,A1_EST"
+    cQuery += " FROM " + RetSqlName("SEA") + " EA "
+    cQuery += " INNER JOIN " + RetSqlName("SA6") + " A6 ON A6.A6_COD     = EA.EA_PORTADO "
+    cQuery += "              						   AND A6.A6_AGENCIA = EA.EA_AGEDEP "
+    cQuery += "              						   AND A6.A6_NUMCON  = EA.EA_NUMCON "
+    cQuery += "              						   AND A6.A6_FILIAL  = '" + xFilial("SA6") + "' "
+    cQuery += "              						   AND A6.D_E_L_E_T_ = ' '  "
+    cQuery += " INNER JOIN " + RetSqlName("SE1") + " E1 ON E1.E1_PREFIXO = EA.EA_PREFIXO "
+    cQuery += "                                        AND E1.E1_NUM     = EA.EA_NUM "
+    cQuery += "                                        AND E1.E1_PARCELA = EA.EA_PARCELA "
+    cQuery += "                                        AND E1.E1_TIPO    = EA.EA_TIPO "
+    cQuery += "                                        AND E1.E1_NUMBOR  = EA.EA_NUMBOR "
+    cQuery += "                                        AND E1.E1_DESCFIN > 0 "
+    cQuery += "                                        AND E1.E1_EMISSAO BETWEEN '20201103' AND '20201111' "
+    cQuery += " 									   AND E1.E1_FILIAL  = '" + xFilial("SE1") + "'"	
+    cQuery += "                                        AND E1.D_E_L_E_T_ = ' ' "
+    cQuery += " INNER JOIN " + RetSqlName("SA1") + " A1 ON A1.A1_COD     = E1.E1_CLIENTE "
+	cQuery += "              						   AND A1.A1_LOJA    = E1.E1_LOJA "
+    cQuery += " 									   AND A1.A1_FILIAL  = '" + xFilial("SA1") + "'"	
+	cQuery += "              						   AND A1.D_E_L_E_T_ = ' ' "
+    cQuery += " WHERE EA.EA_XSTATUS = '03' " // Títulos Enviados
+    cQuery += "   AND EA.EA_FILIAL  = '" + xFilial('SEA') + "' "
+    cQuery += "   AND EA.D_E_L_E_T_ = ' ' "
+    cQuery += "ORDER BY EA_FILIAL, EA_PREFIXO, EA_NUM, EA_PARCELA, EA_TIPO "
+	
+    cQuery := ChangeQuery(cQuery)
+
+    If Select(cAliasADB) > 0
+        (cAliasADB)->(DbCloseArea())
+    EndIf
+
+    DbUseArea(.T., "TOPCONN", TCGenQry(,,cQuery), cAliasADB, .F., .T.)
+
+    TcSetField(cAliasADB, 'EA_RECNO', 'N', 17, 0)
+    TcSetField(cAliasADB, 'E1_RECNO', 'N', 17, 0)
+
+	While .not. (cAliasADB)->(EoF())
+
+		DbSelectArea('SE1')
+		SE1->(DbGoTo((cAliasADB)->E1_RECNO))
+
+		If SE1->(Recno()) = (cAliasADB)->E1_RECNO
+
+			cTpAlt := '6' //indicadorAtribuirDesconto
+			cTextJson := U_F06A64XG(cTpAlt) 
+
+			If !Empty(cTextJson)
+
+				RecLock('ZHU', .T.)
+
+					ZHU->ZHU_FILIAL := FWxFilial('ZHU')
+					ZHU->ZHU_CODIGO := GetSXENum("ZHU", "ZHU_CODIGO")
+					ZHU->ZHU_DATA 	:= dDataBase
+					ZHU->ZHU_PREFIX := SE1->E1_PREFIXO
+					ZHU->ZHU_NUM 	:= SE1->E1_NUM
+					ZHU->ZHU_PARCEL := SE1->E1_PARCELA
+					ZHU->ZHU_TIPO   := SE1->E1_TIPO
+					ZHU->ZHU_NUMBCO	:= SE1->E1_NUMBCO
+					ZHU->ZHU_TPALT 	:= cTpAlt
+					ZHU->ZHU_ALTERA := cTextJson
+					ZHU->ZHU_STATUS := '1' // Pendente
+					ZHU->ZHU_USER   := 'Procedimento Automatico'
+
+				ZHU->(MsUnLock())
+
+			EndIf
+
+
+		EndIf
+
+		(cAliasADB)->(DbSkip())
+	End
+
+Return
+
+
+User Function F06A64XB()
+
+    Local oIntegra := Nil
+	Local cNumConv := ''
+	Local cFilOld  := ''
+	Local aRet     := {}
+
+	DbSelectArea('ZHU')
+	ZHU->(DbGoTop())
+	While .not. ZHU->(EoF())
+
+		cFilAnt := ZHU->ZHU_FILIAL
+
+		DbSelectArea('SE1')
+		SE1->(DbSetOrder(1))
+		If SE1->(DbSeek(ZHU->ZHU_FILIAL + ZHU->ZHU_PREFIX + ZHU->ZHU_NUM + ZHU->ZHU_PARCEL + ZHU->ZHU_TIPO))
+
+			oIntegra := INTBOLBB():New(SuperGetMV('MV_XMSGBB',, .F.))
+
+			If oIntegra:PostToken()[1]
+
+				//Carregando Retorno
+				aRet := oIntegra:GetBoleto(Padl(Alltrim(ZHU->ZHU_NUMBCO), TamSX3('E1_NUMBCO')[1],'0'), Posicione('SA6', 1, xFilial('SA6') + SE1->E1_PORTADO + SE1->E1_AGEDEP + SE1->E1_CONTA, 'A6_XCONV'))
+
+				If aRet[1]
+
+					If aRet[2]['desconto']['percentualDescontoTitulo'] = Int(SE1->E1_DESCFIN)
+
+						If RecLock("ZHU", .F.)
+							ZHU->ZHU_STATUS := "2"
+							ZHU->ZHU_MSGAPI := ""
+							ZHU->(MsUnlock())
+						EndIf
+
+					EndIf
+				
+				EndIf
+
+			EndIf
+			
+		EndIf
+
+		ZHU->(DbSkip())
+	End
+
+	cFilAnt := cFilOld
+
+Return
+
+
+/*/{Protheus.doc} F06A64XK
+@description Procedimento de geração de eventos de alteração de titulos junto ao banco do Brasil
+
+@author  Helitom Silva
+@since   29/01/2021
+@version 1.0
+
+@type Function
+
+@obs Solicitação Renata Lima - Criar Script para Gerar Lote de Alterações dos títulos emitidos  de 03/11/2020 a 17/12/2020 Data de vencimento até 31/03/2021 enviados via API com os seguintes tipos de alterações:
+4=indicadorAlterarPrazoBoletoVencido, 8=indicadorCobrarJuros e 9=indicadorCobrarMulta
+
+/*/
+User Function F06A64XK()
+
+    Local oAlterBoleto := JsonObject():New()
+    Local cAliasADB    := GetNextAlias()
+    Local cQuery       := ""
+	Local cLogText     := ""
+	Local oIntegra     := Nil
+
+    cQuery += " SELECT  EA_FILIAL,EA_PREFIXO,EA_NUM,EA_PARCELA,EA_TIPO,EA_NUMBOR,EA_PORTADO,EA_AGEDEP,EA_NUMCON,EA_FORNECE,EA_LOJA,EA_XSTATUS,EA.R_E_C_N_O_ AS EA_RECNO,"
+    cQuery += " 		A6_FILIAL,A6_COD,A6_AGENCIA,A6_NUMCON,A6_XCONV,A6_XTPCART,A6_XVARCAR,"
+    cQuery += " 		E1_FILIAL,E1_NUMBCO,E1_NUMBOR,E1_PREFIXO,E1_NUM,E1_PARCELA,E1_TIPO,E1_CLIENTE,E1_LOJA,E1_EMISSAO,E1_VENCTO,E1_VENCREA,E1_VALOR,E1_IDCNAB,E1_DESCFIN,E1_XENVBOL, E1.R_E_C_N_O_ AS E1_RECNO,"
+    cQuery += " 		A1_FILIAL,A1_COD,A1_LOJA,A1_BAIRRO,A1_CEP,A1_MUNC,A1_END,A1_NOME,A1_PESSOA,A1_CGC,A1_EST"
+    cQuery += " FROM " + RetSqlName("SEA") + " EA "
+    cQuery += " INNER JOIN " + RetSqlName("SA6") + " A6 ON A6.A6_COD     = EA.EA_PORTADO "
+    cQuery += "              						   AND A6.A6_AGENCIA = EA.EA_AGEDEP "
+    cQuery += "              						   AND A6.A6_NUMCON  = EA.EA_NUMCON "
+    cQuery += "              						   AND A6.A6_FILIAL  = '" + xFilial("SA6") + "' "
+    cQuery += "              						   AND A6.D_E_L_E_T_ = ' '  "
+    cQuery += " INNER JOIN " + RetSqlName("SE1") + " E1 ON E1.E1_PREFIXO = EA.EA_PREFIXO "
+    cQuery += "                                        AND E1.E1_NUM     = EA.EA_NUM "
+    cQuery += "                                        AND E1.E1_PARCELA = EA.EA_PARCELA "
+    cQuery += "                                        AND E1.E1_TIPO    = EA.EA_TIPO "
+    cQuery += "                                        AND E1.E1_NUMBOR  = EA.EA_NUMBOR "
+    cQuery += "                                        AND E1.E1_EMISSAO BETWEEN '20201103' AND '20201217' "
+    cQuery += "                                        AND E1.E1_VENCTO <= '20210331' "
+    cQuery += " 									   AND E1.E1_FILIAL  = '" + xFilial("SE1") + "'"	
+    cQuery += "                                        AND E1.D_E_L_E_T_ = ' ' "
+    cQuery += " INNER JOIN " + RetSqlName("SA1") + " A1 ON A1.A1_COD     = E1.E1_CLIENTE "
+	cQuery += "              						   AND A1.A1_LOJA    = E1.E1_LOJA "
+    cQuery += " 									   AND A1.A1_FILIAL  = '" + xFilial("SA1") + "'"	
+	cQuery += "              						   AND A1.D_E_L_E_T_ = ' ' "
+    cQuery += " WHERE EA.EA_XSTATUS = '03' " // Títulos Enviados
+    cQuery += "   AND EA.EA_FILIAL  = '" + xFilial('SEA') + "' "
+    cQuery += "   AND EA.D_E_L_E_T_ = ' ' "
+    cQuery += " ORDER BY EA_FILIAL, EA_PREFIXO, EA_NUM, EA_PARCELA, EA_TIPO "
+	
+    cQuery := ChangeQuery(cQuery)
+
+    If Select(cAliasADB) > 0
+        (cAliasADB)->(DbCloseArea())
+    EndIf
+
+    DbUseArea(.T., "TOPCONN", TCGenQry(,,cQuery), cAliasADB, .F., .T.)
+
+    TcSetField(cAliasADB, 'EA_RECNO', 'N', 17, 0)
+    TcSetField(cAliasADB, 'E1_RECNO', 'N', 17, 0)
+
+	While .not. (cAliasADB)->(EoF())
+
+		DbSelectArea('SE1')
+		SE1->(DbGoTo((cAliasADB)->E1_RECNO))
+
+		If SE1->(Recno()) = (cAliasADB)->E1_RECNO
+
+			If .not. Empty(cLogText)
+				cLogText += CR + CR
+			EndIf
+
+			cLogText += 'Titulo ' + CR
+			cLogText += '	PREFIXO: ' + SE1->E1_PREFIXO + CR
+			cLogText += '	NUMERO: ' + SE1->E1_NUM + CR
+			cLogText += '	PARCELA: ' + SE1->E1_PARCELA + CR
+			cLogText += '	TIPO: ' + SE1->E1_TIPO + CR
+			cLogText += '	NOSS.NUM.: ' + SE1->E1_NUMBCO + CR
+
+			oIntegra := INTBOLBB():New(SuperGetMV('MV_XMSGBB',, .F.))
+
+			If oIntegra:PostToken()[1]
+
+				// Carregando Retorno
+				aRet := oIntegra:GetBoleto(Padl(Alltrim(SE1->E1_NUMBCO), TamSX3('E1_NUMBCO')[1],'0'), Posicione('SA6', 1, xFilial('SA6') + SE1->E1_PORTADO + SE1->E1_AGEDEP + SE1->E1_CONTA, 'A6_XCONV'))
+
+				If aRet[1]
+
+					If aRet[2]:GetJsonText("codigoEstadoTituloCobranca") == "7"
+
+						DbSelectArea('SEA')
+						SEA->(DbGoTo((cAliasADB)->EA_RECNO))
+
+						If SEA->(Recno()) = (cAliasADB)->EA_RECNO
+
+							If RecLock("SEA", .F.)
+                                SEA->EA_XSTATUS := '06'
+                                SEA->EA_XMENSG  := 'Cancelado'
+								SEA->(MsUnlock())
+							EndIf
+
+							cLogText += '	Ação: Cancelado' + CR
+
+							(cAliasADB)->(DbSkip())
+							Loop
+
+						EndIf
+
+					EndIf
+				
+				EndIf
+
+			EndIf
+
+			cTpAlt 	  := '4' //indicadorAlterarPrazoBoletoVencido
+			cTextJson := U_F06A64XG(cTpAlt) 
+
+			If !Empty(cTextJson)
+
+				RecLock('ZHU', .T.)
+
+					ZHU->ZHU_FILIAL := FWxFilial('ZHU')
+					ZHU->ZHU_CODIGO := GetSXENum("ZHU", "ZHU_CODIGO")
+					ZHU->ZHU_DATA 	:= dDataBase
+					ZHU->ZHU_PREFIX := SE1->E1_PREFIXO
+					ZHU->ZHU_NUM 	:= SE1->E1_NUM
+					ZHU->ZHU_PARCEL := SE1->E1_PARCELA
+					ZHU->ZHU_TIPO   := SE1->E1_TIPO
+					ZHU->ZHU_NUMBCO	:= SE1->E1_NUMBCO
+					ZHU->ZHU_TPALT 	:= cTpAlt
+					ZHU->ZHU_ALTERA := cTextJson
+					ZHU->ZHU_STATUS := '1' // Pendente
+					ZHU->ZHU_USER   := 'Procedimento Automatico'
+
+				ZHU->(MsUnLock())
+
+				cLogText += '	Feito: [4]indicadorAlterarPrazoBoletoVencido' + CR
+
+			EndIf
+
+			cTpAlt    := '8' //indicadorCobrarJuros
+			cTextJson := U_F06A64XG(cTpAlt) 
+
+			If !Empty(cTextJson)
+
+				RecLock('ZHU', .T.)
+
+					ZHU->ZHU_FILIAL := FWxFilial('ZHU')
+					ZHU->ZHU_CODIGO := GetSXENum("ZHU", "ZHU_CODIGO")
+					ZHU->ZHU_DATA 	:= dDataBase
+					ZHU->ZHU_PREFIX := SE1->E1_PREFIXO
+					ZHU->ZHU_NUM 	:= SE1->E1_NUM
+					ZHU->ZHU_PARCEL := SE1->E1_PARCELA
+					ZHU->ZHU_TIPO   := SE1->E1_TIPO
+					ZHU->ZHU_NUMBCO	:= SE1->E1_NUMBCO
+					ZHU->ZHU_TPALT 	:= cTpAlt
+					ZHU->ZHU_ALTERA := cTextJson
+					ZHU->ZHU_STATUS := '1' // Pendente
+					ZHU->ZHU_USER   := 'Procedimento Automatico'
+
+				ZHU->(MsUnLock())
+
+				cLogText += '	Feito: [8]indicadorCobrarJuros' + CR
+
+			EndIf
+
+			cTpAlt    := '9' //indicadorCobrarMulta
+			cTextJson := U_F06A64XG(cTpAlt) 
+
+			If !Empty(cTextJson)
+
+				RecLock('ZHU', .T.)
+
+					ZHU->ZHU_FILIAL := FWxFilial('ZHU')
+					ZHU->ZHU_CODIGO := GetSXENum("ZHU", "ZHU_CODIGO")
+					ZHU->ZHU_DATA 	:= dDataBase
+					ZHU->ZHU_PREFIX := SE1->E1_PREFIXO
+					ZHU->ZHU_NUM 	:= SE1->E1_NUM
+					ZHU->ZHU_PARCEL := SE1->E1_PARCELA
+					ZHU->ZHU_TIPO   := SE1->E1_TIPO
+					ZHU->ZHU_NUMBCO	:= SE1->E1_NUMBCO
+					ZHU->ZHU_TPALT 	:= cTpAlt
+					ZHU->ZHU_ALTERA := cTextJson
+					ZHU->ZHU_STATUS := '1' // Pendente
+					ZHU->ZHU_USER   := 'Procedimento Automatico'
+
+				ZHU->(MsUnLock())
+
+				cLogText += '	Feito: [9]indicadorCobrarMulta' + CR
+
+			EndIf
+
+		EndIf
+
+		(cAliasADB)->(DbSkip())
+	End
+
+	If .not. Empty(cLogText)
+		MemoWrite('C:\temp\LOG_F06A64XK_FIL' + cFilAnt + '_' + DtoS(Date()) + StrTran(Time(), ':', '') + '.txt', cLogText)
+	EndIf
+
+Return
+
+
+/*/{Protheus.doc} F06A64XZ
+@description  Procedimento de Envio/Consulta/Alterações em Titulos do Banco do Brasil
+
+@author  Helitom Silva
+@since   30/01/2021
+@version 12.1.17
+
+/*/
+User Function F06A64XZ(p_aParam)
+
+    Local nX        := 0
+    Local aRetSM0   := {}
+    Local cCadastro := "Procedimento de Envio/Consulta/Alterações em Titulos do Banco do Brasil"
+
+    Default p_aParam := {}
+
+    Conout("F06A64XZ  - >>> Preparando Ambiente <<<")
+
+    //aqui chamar função protheus de execução
+    RpcClearEnv()
+
+    //Nao consome licensas
+    RPCSetType(3)
+
+    //Abertura do ambiente em rotinas automáticas
+    RpcSetEnv(p_aParam[1], p_aParam[2])
+
+    Conout("F06A64XZ  - >>> Carregando Filiais a Processar <<<")
+
+    //Carregando SM0
+    aRetSM0 := FWLoadSM0()
+
+    //Iniciando Processamento
+    If  Len(aRetSM0) > 0 .And. Len(p_aParam) > 0
+
+        For nX := 1 to Len(aRetSM0)
+
+            If SubStr(p_aParam[2],1,4) $ aRetSM0[nX,2]
+
+                //aqui chamar função protheus de execução
+                RpcClearEnv()
+
+                //Abertura do ambiente em rotinas automáticas
+                RpcSetEnv( aRetSM0[nX,1], aRetSM0[nX,2] )
+
+                ConOut("F06A64XZ Iniciou Job   - >>> " + aRetSM0[nX,2] + " " + Dtoc(Date()) + " " + Time() + " <<<")
+
+                BatchProcess(cCadastro, cCadastro, "FSPROCJOB", {|| FSPROCJOB()}, {|| .F. })
+
+                ConOut("F06A64XZ Finalizou Job - >>> " + aRetSM0[nX,2] + " " + Dtoc(Date()) + " " + Time() + " <<<")
+
+            EndIf
+
+        Next
+
+    Endif
+
+Return
+
+
+/*/{Protheus.doc} FSPROCJOB
+@description  Processo automatico de envio/consulta/alterações de titulos
+
+@author  Helitom Silva
+@since   30/01/2021
+@version 12.1.17
+
+/*/
+Static Function FSPROCJOB()
+
+    // Solicitação Renata Lima - Criar Script para Gerar Lote de Alterações dos títulos emitidos  de 03/11/2020 a 17/12/2020 Data de vencimento até 31/03/2021 enviados via API com os seguintes tipos de alterações:
+	// 4=indicadorAlterarPrazoBoletoVencido, 8=indicadorCobrarJuros e 9=indicadorCobrarMulta.
+    //U_F06A64XK()
+
+	// Envia eventos ao Banco
+	U_F06A64XV(.T.)
+
+	// Corrige Evento de Multa
+	//U_F06A64XM()
+
+Return
+
+
+/*/{Protheus.doc} F06A62XY
+@description  Rotina de geração de Evento de Alteração em Lote
+
+@author  Helitom Silva
+@since   31/01/2021
+@version 12.1.17
+
+/*/
+User Function F06A62XY()
+
+	// Declaração de cVariable dos componentes 
+	Private cGetBorAte := CriaVar('E1_NUMBOR', .F.)
+	Private cGetBorDe  := CriaVar('E1_NUMBOR', .F.)
+	Private cGetFilial := CriaVar('E1_FILIAL', .F.)
+	Private cGetNumAte := CriaVar('E1_NUM', .F.)
+	Private cGetNumDe  := CriaVar('E1_NUM', .F.)
+	Private cGetPreAte := CriaVar('E1_PREFIXO', .F.)
+	Private cGetPreDe  := CriaVar('E1_PREFIXO', .F.)
+	Private dGetEmiAte := CriaVar('E1_EMISSAO', .F.)
+	Private dGetEmiDe  := CriaVar('E1_EMISSAO', .F.)
+	Private dGetVenAte := CriaVar('E1_VENCTO', .F.)
+	Private dGetVenDe  := CriaVar('E1_VENCTO', .F.)
+	Private cEveAlter  := ""
+	Private aEveAlter  := {"4=indicadorAlterarPrazoBoletoVencido","6=indicadorAtribuirDesconto","8=indicadorCobrarJuros","9=indicadorCobrarMulta","A=indicadorDispensarJuros","B=indicadorDispensarMulta"}
+
+	// Declaração de Variaveis Private dos Objetos
+	SetPrvt("oDlgGerEve","oGrpFiltro","oSayFilial","oSayEmiDe","oSayEmiAte","oSayVenAte","oSayVenDe","oSayPreDe")
+	SetPrvt("oSayNumDe","oSayNumAte","oSayBorAte","oSayBorDe","oGetFilial","oGetEmiDe","oGetEmiAte","oGetVenAte")
+	SetPrvt("oGetPreDe","oGetPreAte","oGetNumDe","oGetNumAte","oGetBorAte","oGetBorDe","oGrp2","oCBoxEvento")
+
+	//Definicao do Dialog e todos os seus componentes.
+	oDlgGerEve := MSDialog():New( 129,223,415,683,"Geração de Eventos de Alterações de Boletos Banco do Brasil",,,.F.,,,,,,.T.,,,.T. )
+	oGrpFiltro := TGroup():New( 000,004,096,220," Filtro dos Boletos ",oDlgGerEve,CLR_BLACK,CLR_WHITE,.T.,.F. )
+	oSayFilial := TSay():New( 014,031,{||"Filial"},oGrpFiltro,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,012,008)
+	oSayEmiDe  := TSay():New( 026,015,{||"Emissão de"},oGrpFiltro,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,028,008)
+	oSayEmiAte := TSay():New( 027,113,{||"Emissão Até"},oGrpFiltro,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,032,008)
+	oSayVenDe  := TSay():New( 039,017,{||"Vencto de"},oGrpFiltro,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,027,008)	
+	oSayVenAte := TSay():New( 040,115,{||"Vencto Até"},oGrpFiltro,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,030,008)
+	oSayBorDe  := TSay():New( 051,015,{||"Borderô de"},oGrpFiltro,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,027,008)
+	oSayBorAte := TSay():New( 052,114,{||"Borderô Até"},oGrpFiltro,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,032,008)
+	oSayPreDe  := TSay():New( 064,017,{||"Prefixo de"},oGrpFiltro,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,027,008)
+	oSayPreAte := TSay():New( 065,114,{||"Prefixo Até"},oGrpFiltro,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,032,008)
+	oSayNumDe  := TSay():New( 077,015,{||"Numero de"},oGrpFiltro,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,027,008)
+	oSayNumAte := TSay():New( 080,114,{||"Numero Até"},oGrpFiltro,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,032,008)
+	oGetFilial := TGet():New( 013,044,{|u| If(PCount()>0,cGetFilial:=u,cGetFilial)},oGrpFiltro,060,008,'',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"SM0EMP","cGetFilial",,)
+	oGetEmiDe  := TGet():New( 026,044,{|u| If(PCount()>0,dGetEmiDe:=u,dGetEmiDe)},oGrpFiltro,060,008,'',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","dGetEmiDe",,)
+	oGetEmiAte := TGet():New( 027,145,{|u| If(PCount()>0,dGetEmiAte:=u,dGetEmiAte)},oGrpFiltro,060,008,'',{|| If(dGetEmiAte < dGetEmiDe, (MsgInfo('O valor desse campo deve ser superior ao "Emissão de"'), .F.), .T.)},CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","dGetEmiAte",,)
+	oGetVenDe  := TGet():New( 039,044,{|u| If(PCount()>0,dGetVenDe:=u,dGetVenDe)},oGrpFiltro,060,008,'',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","dGetVenDe",,)
+	oGetVenAte := TGet():New( 040,145,{|u| If(PCount()>0,dGetVenAte:=u,dGetVenAte)},oGrpFiltro,060,008,'',{|| If(dGetVenAte < dGetVenDe, (MsgInfo('O valor desse campo deve ser superior ao "Vencto de"'), .F.), .T.)},CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","dGetVenAte",,)
+	oGetBorDe  := TGet():New( 051,044,{|u| If(PCount()>0,cGetBorDe:=u,cGetBorDe)},oGrpFiltro,060,008,'',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","cGetBorDe",,)
+	oGetBorAte := TGet():New( 052,145,{|u| If(PCount()>0,cGetBorAte:=u,cGetBorAte)},oGrpFiltro,060,008,'',{|| If(cGetBorAte < cGetBorDe, (MsgInfo('O valor desse campo deve ser superior ao "Borderô de"'), .F.), .T.)},CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","cGetBorAte",,)	
+	oGetPreDe  := TGet():New( 064,044,{|u| If(PCount()>0,cGetPreDe:=u,cGetPreDe)},oGrpFiltro,060,008,'',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","cGetPreDe",,)
+	oGetPreAte := TGet():New( 065,145,{|u| If(PCount()>0,cGetPreAte:=u,cGetPreAte)},oGrpFiltro,060,008,'',{|| If(cGetPreAte < cGetPreDe, (MsgInfo('O valor desse campo deve ser superior ao "Prefixo de"'), .F.), .T.)},CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","cGetPreAte",,)
+	oGetNumDe  := TGet():New( 077,044,{|u| If(PCount()>0,cGetNumDe:=u,cGetNumDe)},oGrpFiltro,060,008,'',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","cGetNumDe",,)
+	oGetNumAte := TGet():New( 078,145,{|u| If(PCount()>0,cGetNumAte:=u,cGetNumAte)},oGrpFiltro,060,008,'',{|| If(cGetPreAte < cGetPreDe, (MsgInfo('O valor desse campo deve ser superior ao "Numero de"'), .F.), .T.)},CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","cGetNumAte",,)
+
+	oGrpEvento := TGroup():New( 100,004,124,220," Alteração a Enviar ",oDlgGerEve,CLR_BLACK,CLR_WHITE,.T.,.F. )
+	oCBoxEvent := TComboBox():New( 109,008,{|u| If(PCount()>0,cEveAlter:=u,cEveAlter)},aEveAlter,208,010,oGrpEvento,,,,CLR_BLACK,CLR_WHITE,.T.,,"",,,,,,,cEveAlter )
+
+	oSBtnConf  := SButton():New( 128,164,1,{|| Iif(ProcEventos(), oDlgGerEve:End(), Nil)},oDlgGerEve,,"", )
+	oSBtnCanc  := SButton():New( 128,193,2,{|| oDlgGerEve:End()},oDlgGerEve,,"", )
+
+	oDlgGerEve:Activate(,,,.T.)
+
+Return
+
+
+/*/{Protheus.doc} ProcEventos
+@description Processa a geração de Eventos
+
+@type  Function
+@author Helitom Silva
+@since 01/02/2021
+@version 12.1.17
+
+@return lRet, Logico, Se o processo for executado com sucesso retorna .T.
+/*/
+Static Function ProcEventos()
+	
+	Local lRet    := .T.
+	Local cEmpOld := cEmpAnt
+	Local cFilOld := cFilAnt
+	Local nX      := 0
+
+    //Carregando SM0
+    aRetSM0 := FWLoadSM0()
+
+    //Iniciando Processamento
+    If  Len(aRetSM0) > 0
+
+        For nX := 1 to Len(aRetSM0)
+
+            If aRetSM0[nX,2] = cGetFilial
+
+                cEmpAnt := aRetSM0[nX,1]
+                cFilAnt := aRetSM0[nX,2]
+
+				FwMsgRun(, {|| CursorWait(), lRet := GerarEvento(), CursorArrow()}, "Processando", "Aguarde, Gerando eventos na Empresa: " + aRetSM0[nX,1] + ", Filial: " + aRetSM0[nX,2] + "...")
+
+            EndIf
+
+        Next
+
+    Endif
+
+	If lRet
+		MsgInfo('Procedimento executado com Sucesso!')
+	EndIf
+
+	cEmpAnt := cEmpOld
+	cFilAnt := cFilOld
+
+Return lRet
+
+
+/*/{Protheus.doc} GerarEvento
+@description Realiza a geração de Eventos
+
+@type    Function
+@author  Helitom Silva
+@since   01/02/2021
+@version 12.1.17
+
+@return lRet, Logico, Se o processo for executado com sucesso retorna .T.
+/*/
+Static Function GerarEvento()
+	
+	Local lRet         := .T.
+    Local oAlterBoleto := JsonObject():New()
+    Local cAliasADB    := GetNextAlias()
+    Local cQuery       := ""
+	Local cLogText     := ""
+	Local oIntegra     := Nil
+	Local nHdlLog      := 0
+	Local cFile        := ''
+	Local cLibCli      := ''
+	Local lMacOS       := (GetRemoteType(@cLibCli), ('MAC' $ cLibCli))
+	Local cDescEvento  := aEveAlter[aScan(aEveAlter, {|X| cEveAlter + '=' $ X})]
+	Local cDirTemp 	   := GetTempPath(.T.)
+
+    cQuery += " SELECT  EA_FILIAL,EA_PREFIXO,EA_NUM,EA_PARCELA,EA_TIPO,EA_NUMBOR,EA_PORTADO,EA_AGEDEP,EA_NUMCON,EA_FORNECE,EA_LOJA,EA_XSTATUS,EA.R_E_C_N_O_ AS EA_RECNO,"
+    cQuery += " 		A6_FILIAL,A6_COD,A6_AGENCIA,A6_NUMCON,A6_XCONV,A6_XTPCART,A6_XVARCAR,"
+    cQuery += " 		E1_FILIAL,E1_NUMBCO,E1_NUMBOR,E1_PREFIXO,E1_NUM,E1_PARCELA,E1_TIPO,E1_CLIENTE,E1_LOJA,E1_EMISSAO,E1_VENCTO,E1_VENCREA,E1_VALOR,E1_IDCNAB,E1_DESCFIN,E1_XENVBOL, E1.R_E_C_N_O_ AS E1_RECNO,"
+    cQuery += " 		A1_FILIAL,A1_COD,A1_LOJA,A1_BAIRRO,A1_CEP,A1_MUNC,A1_END,A1_NOME,A1_PESSOA,A1_CGC,A1_EST"
+    cQuery += " FROM " + RetSqlName("SEA") + " EA "
+    cQuery += " INNER JOIN " + RetSqlName("SA6") + " A6 ON A6.A6_COD     = EA.EA_PORTADO "
+    cQuery += "              						   AND A6.A6_AGENCIA = EA.EA_AGEDEP "
+    cQuery += "              						   AND A6.A6_NUMCON  = EA.EA_NUMCON "
+    cQuery += "              						   AND A6.A6_FILIAL  = '" + xFilial("SA6") + "' "
+    cQuery += "              						   AND A6.D_E_L_E_T_ = ' '  "
+    cQuery += " INNER JOIN " + RetSqlName("SE1") + " E1 ON E1.E1_PREFIXO = EA.EA_PREFIXO "
+    cQuery += "                                        AND E1.E1_NUM     = EA.EA_NUM "
+    cQuery += "                                        AND E1.E1_PARCELA = EA.EA_PARCELA "
+    cQuery += "                                        AND E1.E1_TIPO    = EA.EA_TIPO "
+    cQuery += "                                        AND E1.E1_NUMBOR  = EA.EA_NUMBOR "
+    cQuery += "                                        AND E1.E1_EMISSAO BETWEEN '" + DtoS(dGetEmiDe) + "' AND '" + DtoS(dGetEmiAte) + "' "
+    cQuery += "                                        AND E1.E1_VENCTO BETWEEN '" + DtoS(dGetVenDe) + "' AND '" + DtoS(dGetVenAte) + "' "
+    cQuery += " 									   AND E1.E1_FILIAL  = '" + xFilial("SE1") + "'"	
+    cQuery += "                                        AND E1.D_E_L_E_T_ = ' ' "
+    cQuery += " INNER JOIN " + RetSqlName("SA1") + " A1 ON A1.A1_COD     = E1.E1_CLIENTE "
+	cQuery += "              						   AND A1.A1_LOJA    = E1.E1_LOJA "
+    cQuery += " 									   AND A1.A1_FILIAL  = '" + xFilial("SA1") + "'"	
+	cQuery += "              						   AND A1.D_E_L_E_T_ = ' ' "
+    cQuery += " WHERE EA.EA_XSTATUS = '03' " // Títulos Enviados
+    cQuery += "   AND EA.EA_PREFIXO BETWEEN '" + cGetPreDe + "' AND '" + cGetPreAte + "' "
+    cQuery += "   AND EA.EA_NUMBOR BETWEEN '" + cGetBorDe + "' AND '" + cGetBorAte + "' "
+    cQuery += "   AND EA.EA_FILIAL  = '" + xFilial('SEA') + "' "
+    cQuery += "   AND EA.D_E_L_E_T_ = ' ' "
+    cQuery += " ORDER BY EA_FILIAL, EA_PREFIXO, EA_NUM, EA_PARCELA, EA_TIPO "
+	
+    cQuery := ChangeQuery(cQuery)
+
+    If Select(cAliasADB) > 0
+        (cAliasADB)->(DbCloseArea())
+    EndIf
+
+    DbUseArea(.T., "TOPCONN", TCGenQry(,,cQuery), cAliasADB, .F., .T.)
+
+    TcSetField(cAliasADB, 'EA_RECNO', 'N', 17, 0)
+    TcSetField(cAliasADB, 'E1_RECNO', 'N', 17, 0)
+
+	(cAliasADB)->(DbGoTop())
+
+	If .not. (cAliasADB)->(EoF())
+		cFile     := 'LOG_F06A64XK_FIL' + cFilAnt + '_' + DtoS(Date()) + StrTran(Time(), ':', '') + '.log'
+		nHdlLog   := FCreate(cDirTemp + cFile , Nil, Nil, !lMacOs)
+	Else
+		MsgInfo('Nenhum registro válido encontrado para o filtro informado!')
+		lRet := .F.
+	EndIf
+
+	While .not. (cAliasADB)->(EoF())
+
+		DbSelectArea('SE1')
+		SE1->(DbGoTo((cAliasADB)->E1_RECNO))
+
+		If SE1->(Recno()) = (cAliasADB)->E1_RECNO
+
+			cLogText := 'Titulo ' + CR
+			cLogText += '	PREFIXO: ' + SE1->E1_PREFIXO + CR
+			cLogText += '	NUMERO: ' + SE1->E1_NUM + CR
+			cLogText += '	PARCELA: ' + SE1->E1_PARCELA + CR
+			cLogText += '	TIPO: ' + SE1->E1_TIPO + CR
+			cLogText += '	NOSS.NUM.: ' + SE1->E1_NUMBCO + CR
+
+			oIntegra := INTBOLBB():New(SuperGetMV('MV_XMSGBB',, .F.))
+
+			If oIntegra:PostToken()[1]
+
+				// Carregando Retorno
+				aRet := oIntegra:GetBoleto(Padl(Alltrim(SE1->E1_NUMBCO), TamSX3('E1_NUMBCO')[1],'0'), Posicione('SA6', 1, xFilial('SA6') + SE1->E1_PORTADO + SE1->E1_AGEDEP + SE1->E1_CONTA, 'A6_XCONV'))
+
+				If aRet[1]
+
+					If aRet[2]:GetJsonText("codigoEstadoTituloCobranca") == "7"
+
+						DbSelectArea('SEA')
+						SEA->(DbGoTo((cAliasADB)->EA_RECNO))
+
+						If SEA->(Recno()) = (cAliasADB)->EA_RECNO
+
+							If RecLock("SEA", .F.)
+                                SEA->EA_XSTATUS := '06'
+                                SEA->EA_XMENSG  := 'Cancelado'
+								SEA->(MsUnlock())
+							EndIf
+
+							cLogText += '	Feito: Cancelado' + CR
+
+							cLogText += CR + CR
+							
+							FWrite(nHdlLog, cLogText)
+							
+							(cAliasADB)->(DbSkip())
+							Loop
+
+						EndIf
+
+					EndIf
+				
+				EndIf
+
+			EndIf
+
+			cTpAlt 	  := cEveAlter
+			cTextJson := U_F06A64XG(cTpAlt) 
+
+			If !Empty(cTextJson)
+
+				RecLock('ZHU', .T.)
+
+					ZHU->ZHU_FILIAL := FWxFilial('ZHU')
+					ZHU->ZHU_CODIGO := GetSXENum("ZHU", "ZHU_CODIGO")
+					ZHU->ZHU_DATA 	:= dDataBase
+					ZHU->ZHU_PREFIX := SE1->E1_PREFIXO
+					ZHU->ZHU_NUM 	:= SE1->E1_NUM
+					ZHU->ZHU_PARCEL := SE1->E1_PARCELA
+					ZHU->ZHU_TIPO   := SE1->E1_TIPO
+					ZHU->ZHU_NUMBCO	:= SE1->E1_NUMBCO
+					ZHU->ZHU_TPALT 	:= cTpAlt
+					ZHU->ZHU_ALTERA := cTextJson
+					ZHU->ZHU_STATUS := '1' // Pendente
+					ZHU->ZHU_USER   := 'Procedimento Automatico'
+
+				ZHU->(MsUnLock())
+
+				cLogText += '	Feito: ' + cDescEvento + CR
+
+			EndIf
+
+		EndIf
+
+		cLogText += CR + CR
+		
+		FWrite(nHdlLog, cLogText)
+
+		(cAliasADB)->(DbSkip())
+	End
+
+	If nHdlLog > 0
+		FClose(nHdlLog)
+		WinExec(Iif(lMacOS, 'OPEN ', 'CMD /C START /WAIT NOTEPAD ') + '"' + cDirTemp + cFile + '"')
+	EndIf
+
+Return lRet
+
+
+
+/*/{Protheus.doc} F06A64XM
+@description Corrige evento de Multa de alteração de titulos junto ao banco do Brasil
+
+@author  Helitom Silva
+@since   01/01/2021
+@version 1.0
+
+/*/
+User Function F06A64XM()
+
+    Local cRet 		   := ''
+    Local oAlterBoleto := JsonObject():New()
+    Local cAliasADB    := GetNextAlias()
+    Local cQuery       := ""
+
+    cQuery += " SELECT  ZHU.R_E_C_N_O_ AS ZHU_RECNO,"
+    cQuery += " 		E1.R_E_C_N_O_ AS E1_RECNO"
+    cQuery += " FROM " + RetSqlName("ZHU") + " ZHU "
+    cQuery += " INNER JOIN " + RetSqlName("SE1") + " E1 ON E1.E1_PREFIXO = ZHU.ZHU_PREFIX "
+    cQuery += "                                        AND E1.E1_NUM     = ZHU.ZHU_NUM "
+    cQuery += "                                        AND E1.E1_PARCELA = ZHU.ZHU_PARCEL "
+    cQuery += "                                        AND E1.E1_TIPO    = ZHU.ZHU_TIPO "
+    cQuery += "                                        AND E1.E1_NUMBCO  = ZHU.ZHU_NUMBCO "
+    cQuery += "                                        AND E1.E1_FILIAL  = ZHU.ZHU_FILIAL "	
+    cQuery += "                                        AND E1.D_E_L_E_T_ = ' ' "
+    cQuery += " WHERE ZHU.ZHU_TPALT  = '9' " // Evento de Multa
+    cQuery += "   AND ZHU.ZHU_STATUS = '1' " // Pendente de Envio
+    cQuery += "   AND ZHU.ZHU_FILIAL = '" + xFilial('ZHU') + "' "
+    cQuery += "   AND ZHU.D_E_L_E_T_ = ' ' "
+    cQuery += "ORDER BY ZHU_FILIAL, ZHU_PREFIX, ZHU_NUM, ZHU_PARCEL, ZHU_TIPO "
+	
+    cQuery := ChangeQuery(cQuery)
+
+    If Select(cAliasADB) > 0
+        (cAliasADB)->(DbCloseArea())
+    EndIf
+
+    DbUseArea(.T., "TOPCONN", TCGenQry(,,cQuery), cAliasADB, .F., .T.)
+
+    TcSetField(cAliasADB, 'ZHU_RECNO', 'N', 17, 0)
+    TcSetField(cAliasADB, 'E1_RECNO', 'N', 17, 0)
+
+	While .not. (cAliasADB)->(EoF())
+
+		DbSelectArea('SE1')
+		SE1->(DbGoTo((cAliasADB)->E1_RECNO))
+
+		If SE1->(Recno()) = (cAliasADB)->E1_RECNO
+
+			cTpAlt := '9' //indicadorCobrarMulta
+			cTextJson := U_F06A64XG(cTpAlt) 
+
+			If !Empty(cTextJson)
+
+				DbSelectArea('ZHU')
+				ZHU->(DbGoTo((cAliasADB)->ZHU_RECNO)) 
+
+				If ZHU->(Recno()) = (cAliasADB)->ZHU_RECNO
+
+					RecLock('ZHU', .F.)
+
+						ZHU->ZHU_ALTERA := cTextJson
+
+					ZHU->(MsUnLock())
+
+				EndIf
+
+			EndIf
+
+
+		EndIf
+
+		(cAliasADB)->(DbSkip())
+	End
+
+Return

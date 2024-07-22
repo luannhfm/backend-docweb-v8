@@ -1,0 +1,505 @@
+#INCLUDE 'PROTHEUS.CH'
+
+/*/{Protheus.doc} SF73M01X
+	Rotina para importar cadastro de Prospects.
+ 
+@author j2a.luizjunior
+@since 23/01/2018
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+User Function SF73M01X()
+
+	Local   lRet	    := .F.
+	Local   nOpcoes     := GETF_LOCALHARD + GETF_NETWORKDRIVE
+	Private aEstrut     := {}
+	Private cArqTxt     := Space(50)
+	Private cMemo       := ""	
+	Private lMsErroAuto := .F.
+	Private aEstrGamb   := {}
+	Private nHdl        := 0
+	
+
+	cArqTxt :=  cGetFile('Arquivos csv (*.csv) |*.csv|', "Selecione o arquivo CSV", , , .T., nOpcoes )
+	
+	//Abre o Arquivo
+	nHdl    := fOpen(cArqTxt,68)
+
+	If nHdl == -1
+		MsgAlert("O arquivo de nome "+cArqTxt+" nao pode ser aberto! Verifique os parametros.","Atencao!")
+		Return
+	Endif
+
+	Processa({ |lEnd| aEstrut := SUSCSV(cArqTxt) }, "LENDO ARQUIVO CSV DE PROSPECTS" )
+	Processa({ |lEnd| lRet    := IMPSUS(aEstrut) }, "ATUALIZANDO REGISTROS"          )
+
+	MemoWrite("C:\plog\csv\Prospects" + cFilAnt + ".TXT", cMemo )
+	MsgAlert("FIM DA IMPORTACAO DO CADASTRO DE CLIENTES")
+
+Return
+
+/*/{Protheus.doc} SUSCSV
+(long_description)
+@author j2a.luizjunior
+@since 23/01/2018
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function SUSCSV(cArquivo)
+	
+	Local cBuffer     := ""
+	Local cAux        := ""
+	Local cString     := ""
+	Local cSeparador  := ""  //Verifica o tipo de separador do arquivo texto
+	Local aTmp        := {}
+	Local aEstrutura  := {}
+	Local nCont       := 0
+	Local cEof        := Chr(10)+ Chr(13)
+	Local nRec        := 0
+	Local lAspa       := .F.
+
+	//Leitura da quantidade de Registros do Arquivo
+	FT_FUSE(cArquivo)
+	FT_FGOTOP()
+	
+	While !FT_FEOF()
+		nRec++
+		FT_FSKIP()
+	End
+
+	ProcRegua(nRec)
+
+	//Leitura do arquivo e verificacao do ultimo caracter da linha lida para  consistencia da pesquisa
+	FT_FGOTOP()
+
+	While !FT_FEOF()
+	
+		cBuffer:= AllTrim(FT_FREADLN())
+	
+		If At(";",cBuffer) > 0
+			cSeparador:= ";" 
+		Else //linha de arquivo incorreta.
+			IncProc()
+			FT_FSKIP()
+			Loop
+		Endif
+	
+		If (SubStr(cBuffer,Len(cBuffer),1)<>cSeparador)
+			cBuffer += cSeparador + cEof + cSeparador
+		Else
+			cBuffer += cEof + cSeparador
+		Endif
+	
+		//Incrementa a regua
+		IncProc()
+	
+		//Carrega o array aEstrutura com o resultado da Importacao
+		cLinha:= fTAcento(cBuffer)
+		lAspa := .F.
+
+		For nCont := 1 To Len(cBuffer)
+		
+			cAux   := SubStr(cLinha,1,1)
+			cLinha := SubStr(cLinha,2)
+			
+			If (cAux == cEof)
+				Exit
+			Endif
+		
+			//Sao verificadas as marcacoes feitas pelo Excel para concatenacao de strings
+			Do Case
+			
+				Case cAux == '"'
+					lAspa := !lAspa
+					
+				Case cAux == cSeparador .And. !lAspa
+					aAdd(aTmp,cString)
+					cString := ""
+					
+				OtherWise
+					cString += cAux
+					
+			EndCase
+		
+		Next nCont
+	
+		For nCont := Len(aTmp)+1 To 11
+			aAdd(aTmp,"")
+		Next nCont
+	
+		//Validacao para nao salvar registros sem entidades
+		If !Empty(aTmp[1]) .OR. !Empty(aTmp[2])
+			//If Len(aEstrutura) <= 400
+				aAdd(aEstrutura,aTmp)
+			//EndIf
+			//If	Len(aEstrutura) >= 400 .And. Len(aEstrutura) <= 800
+			//	aAdd(aEstrGamb,aTmp)	
+			//EndIf
+			aTmp := {}
+		Endif
+		
+		FT_FSKIP()
+	End
+	
+	FClose(nHdl)
+	FT_FUSE()
+	//aAdd(aEstrGamb,aClone(aEstrutura))
+
+	//aEstrutura := aSize(aEstrutura,0)
+	//aEstrutura := nil		
+	
+Return(aEstrutura)
+
+/*/{Protheus.doc} IMPSUS
+(long_description)
+@author j2a.luizjunior
+@since 23/01/2018
+@version 1.0
+@param _aEstrut, ${param_type}, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function IMPSUS(aEstrut)
+	
+	Local lRet      := .F.
+	Local nContador	:= 0
+	Local i 		:= 0
+	Local cMsgAlt	:= "Carga Arrecadacao - por: "+ AllTrim(cUserName) + " - " + DtoC(dDataBase) + " - " + AllTrim(Time())
+	Local nRec		:= Len(aEstrut)-1
+	Local nOpc		:= 3
+	Local cTPessoa  := ""
+	Local cTipo     := "F"
+	Local lAchou    := .F.
+	//Local lParam    := .F.
+	Local nInc := 0
+	Local nAtu:= 0
+	
+	DbSelectArea("SUS")
+	SUS->(DbSetOrder(4))
+
+	For i := 2 to Len(aEstrut)
+
+		ProcRegua(nRec)
+	
+		//A1_CGC
+		cCGC	:= StrTran( StrTran( StrTran(aEstrut[i][1],".","" ),"/","" ),"-","" )
+		
+		//A1_NOME
+		cNome	:= AllTrim(aEstrut[i][2])
+		
+		//A1_NREDUZ
+		cNReduz	:= SubStr(AllTrim(aEstrut[i][3]),1,20)
+		
+		//A1_XSITREC
+		cSitRec := AllTrim(aEstrut[i][4])
+		
+		//A1_DTNASC
+		dDtNas	:= CtoD(aEstrut[i][5])
+		
+		//A1_CNAE
+		cCnae	:= AllTrim(aEstrut[i][6]) 
+		
+		//A1_XDSCNAE
+		cDscCnae := AllTrim(Posicione("CC3",1,xFilial("CC3") + PadR(cCnae,TAMSX3("CC3_COD")[1]),"CC3_DESC"))
+		
+		//A1_END
+		cEnd := AllTrim(aEstrut[i][7])
+		
+		//A1_BAIRRO
+		cBairro := AllTrim(aEstrut[i][8])
+		
+		//A1_CXPOSTA
+		cCxPost := AllTrim(aEstrut[i][9])
+		
+		//A1_CEP
+		cCEP := AllTrim( StrTran(StrTran(StrTran(aEstrut[i][10],".","" ),"/",""),"-","" ))
+		
+		//A1_EST
+		cEst	:= AllTrim(aEstrut[i][12])
+
+		//A1_MUN
+		cMun	:= aEstrut[i][11]
+
+		//A1_COD_MUN
+		cCodMun	:= Posicione("CC2", 2, xFilial("CC2") + PadR(cMun, TamSX3("CC2_MUN")[1]), "CC2_CODMUN")
+		
+		//A1_ENDCOB
+		If Empty(AllTrim(aEstrut[i][13]))
+			cEndCob := cEnd
+		Else
+			cEndCob := AllTrim(aEstrut[i][13])
+		EndIf
+		
+		//A1_BAIRROC
+		If Empty(AllTrim(aEstrut[i][14]))
+			cBairroC := cBairro
+		Else
+			cBairroC := AllTrim(aEstrut[i][14])
+		EndIf
+		
+		//A1_CEPC
+		If Empty( AllTrim(StrTran(StrTran(StrTran(aEstrut[i][15],".",""),"/",""),"-","" )) )
+			cCEPC := cCEP
+		Else
+			cCEPC := AllTrim(StrTran(StrTran(StrTran(aEstrut[i][15],".","" ),"/",""),"-","" ))
+		EndIf
+		
+		//A1_ESTC
+		If Empty( AllTrim(aEstrut[i][17]) )
+			cEstC := cEst
+		Else
+			cEstC := AllTrim(aEstrut[i][17])
+		EndIf
+		
+		//A1_MUNC
+		If Empty( AllTrim(aEstrut[i][16]) )
+			cMunC := cMun
+		Else
+			cMunC := AllTrim(aEstrut[i][16])
+		EndIf
+		
+		//A1_XPRDIN1
+		cPrdIn1 := AllTrim(aEstrut[i][18])
+		
+		//A1_XPRDIN2
+		cPrdIn2 := AllTrim(aEstrut[i][19])
+		
+		//A1_XPRDIN3
+		cPrdIn3 := AllTrim(aEstrut[i][20])
+		
+		//A1_XMATPR1
+		cMatPr1 := AllTrim(aEstrut[i][21])
+		
+		//A1_XMATPR2
+		cMatPr2 := AllTrim(aEstrut[i][22])
+		
+		//A1_XMATPR3
+		cMatPr3 := AllTrim(aEstrut[i][23])
+		
+		//A1_XPRRES1
+		cPrRes1 := AllTrim(aEstrut[i][24])
+		
+		//A1_XPRRES2
+		cPrRes2 := AllTrim(aEstrut[i][25])
+		
+		//A1_XPRRES3
+		cPrRes3 := AllTrim(aEstrut[i][26])
+		
+		//A1_XDESRES
+		cDesRes := AllTrim(aEstrut[i][27])
+		
+		//A1_XIMPEXP
+		cImpExp := AllTrim(aEstrut[i][28])
+		
+		//A1_CONTATO
+		cContat := Substr(AllTrim(aEstrut[i][29]),1,15)
+		
+		//A1_XEMLCON
+		cEmlCon := AllTrim(aEstrut[i][30])
+		
+		//A1_XDDDCON
+		cDDDCon := ""//SubStr(AllTrim(aEstrut[i][31] ), 1, 2)
+		
+		//A1_XTELCON
+		//cTelCon := SubStr(AllTrim(aEstrut[i][31]), 4)
+		cTelCon := StrTran(AllTrim(aEstrut[i][31]),"-","")
+		
+		//A1_XCELCON
+		//cCelCon := SubStr(AllTrim(aEstrut[i][32] ), 4)
+		cCelCon := StrTran(AllTrim(aEstrut[i][32]),"-","")
+		
+		//A1_XCGOCON
+		cCgoCon := AllTrim(aEstrut[i][33] )
+		
+		//A1_XQTEMP
+		cQtdEmp := Val(AllTrim(aEstrut[i][34] ))
+		
+		//A1_XPORTE
+		cPorte := AllTrim(aEstrut[i][35] )
+		
+		//A1_XSTATU
+		cStatu	:= AllTrim(aEstrut[i][36] )
+		
+		//A1_XMOTATU
+		cMotAtu	:= AllTrim(aEstrut[i][37] )
+		
+		//A1_XCARIEL
+		cCarIEL := dDataBase
+		
+		//Incrementa a regua
+		IncProc("Processando registro " + AllTrim(Str(i)) + " De " + AllTrim(Str(nRec)) + ": " + Transform(cCGC, "@R 99.999.999/9999-99"))
+
+		If Len(cCGC) = 11
+			cLoja    := "00PF"	
+			cTPessoa := "PF"
+			cCliente := Substr(cCGC,1,9)			
+		Else
+			cLoja    := "0001"
+			cTPessoa := "CI"
+			cCliente := Substr(cCGC,1,8)
+		EndIf
+		
+		DbSelectArea("SUS")
+		SUS->(DbSetOrder(1))	
+		SUS->(DbGotop())		
+		If SUS->(DbSeek(xFilial("SUS") + cCliente))
+			
+			While !SUS->(Eof()) .And. xFilial("SUS") + cCliente == SUS->US_FILIAL + AllTrim(SUS->US_COD) 
+			
+				If AllTrim(cCGC) == AllTrim(SUS->US_CGC)
+				
+					nAtu++
+				
+					lAchou   := .T.
+					lParam   := .F.				
+					cTPessoa := SUS->US_TPESSOA	
+					
+					If Len(cMotAtu) = 1
+						cMotAtu := "0" + cMotAtu	
+					EndIf
+					
+					cDescAtu := Posicione("ZCM",1,xFilial("ZCM") + cMotAtu,"ZCM_MOTIVO") 
+					
+					If RecLock("SUS",lParam)					
+						SUS->US_TPESSOA := cTPessoa
+						SUS->US_CGC     := cCGC    
+						SUS->US_TIPO    := cTipo   
+						SUS->US_NOME    := cNome	
+						SUS->US_NREDUZ  := cNReduz  
+						SUS->US_XSITREC := cSitRec						   
+						SUS->US_CNAE    := cCnae	   
+						SUS->US_END     := cEnd	   
+						SUS->US_BAIRRO  := cBairro  
+						SUS->US_CEP     := cCEP	   
+						SUS->US_EST     := cEST	   
+						SUS->US_MUN     := cMun	  
+						SUS->US_XDATNAS := dDtNas 
+						SUS->US_XENDCOB := cEndCob  
+						SUS->US_XBAIRRO := cBairroC 
+						SUS->US_XCEPC   := cCEPC	   
+						SUS->US_XMUNC   := cMunC	   
+						SUS->US_XESTC   := cEstC	
+						SUS->US_XCONTAT := cContat   
+						SUS->US_XPRDIN1 := cPrdIn1  
+						SUS->US_XPRDIN2 := cPrdIn2  
+						SUS->US_XPRDIN3 := cPrdIn3  
+						SUS->US_XMATPR1 := cMatPr1  
+						SUS->US_XMATPR2 := cMatPr2  
+						SUS->US_XMATPR3 := cMatPr3  
+						SUS->US_XPRRES1 := cPrRes1  
+						SUS->US_XPRRES2 := cPrRes2  
+						SUS->US_XPRRES3 := cPrRes3  
+						SUS->US_XDESRES := cDesRes						  
+						SUS->US_XEMLCON := cEmlCon  
+						SUS->US_XTELCON := cTelCon  
+						SUS->US_XCELCON := cCelCon
+						SUS->US_XCGOCON := cCgoCon
+						SUS->US_QTFUNC  := "1"  
+						SUS->US_XPORTE  := cPorte
+						SUS->US_XSTATU  := cStatu
+						SUS->US_XMOTATU := cDescAtu	
+						SUS->US_XUSIMP  := cUserName
+						SUS->US_XDTIMP  := dDataBase 
+						SUS->(MsUnlock())
+					EndIf
+									
+				EndIf
+			
+				SUS->(DbSkip())
+			EndDo
+							
+		EndIf	
+		
+		// CASO NAO TENHA ACHADO, INCLUI
+		If !lAchou
+		
+			nInc++
+			
+			If Len(cCGC) > 11
+				cLoja	:= SubStr(cCGC,9,4)	
+			EndIf
+			
+			lParam := .T.
+
+			If Len(cMotAtu) = 1
+				cMotAtu := "0" + cMotAtu	
+			EndIf
+			
+			cDescAtu := Posicione("ZCM",1,xFilial("ZCM") + cMotAtu,"ZCM_MOTIVO")
+			
+			If RecLock("SUS",lParam)
+			
+				SUS->US_COD     := cCliente
+				SUS->US_LOJA    := cLoja   
+				SUS->US_TPESSOA := cTPessoa
+				SUS->US_CGC     := cCGC    
+				SUS->US_TIPO    := cTipo   
+				SUS->US_NOME    := cNome	
+				SUS->US_NREDUZ  := cNReduz  
+				SUS->US_XSITREC := cSitRec						   
+				SUS->US_CNAE    := cCnae	   
+				SUS->US_END     := cEnd	   
+				SUS->US_BAIRRO  := cBairro  
+				SUS->US_CEP     := cCEP	   
+				SUS->US_EST     := cEST	   
+				SUS->US_MUN     := cMun	  
+				SUS->US_XDATNAS := dDtNas 
+				SUS->US_XENDCOB := cEndCob  
+				SUS->US_XBAIRRO := cBairroC 
+				SUS->US_XCEPC   := cCEPC	   
+				SUS->US_XMUNC   := cMunC	   
+				SUS->US_XESTC   := cEstC	
+				SUS->US_XCONTAT := cContat   
+				SUS->US_XPRDIN1 := cPrdIn1  
+				SUS->US_XPRDIN2 := cPrdIn2  
+				SUS->US_XPRDIN3 := cPrdIn3  
+				SUS->US_XMATPR1 := cMatPr1  
+				SUS->US_XMATPR2 := cMatPr2  
+				SUS->US_XMATPR3 := cMatPr3  
+				SUS->US_XPRRES1 := cPrRes1  
+				SUS->US_XPRRES2 := cPrRes2  
+				SUS->US_XPRRES3 := cPrRes3  
+				SUS->US_XDESRES := cDesRes						  
+				SUS->US_XEMLCON := cEmlCon  
+				SUS->US_XTELCON := cTelCon  
+				SUS->US_XCELCON := cCelCon
+				SUS->US_XCGOCON := cCgoCon
+				SUS->US_QTFUNC  := "1"  
+				SUS->US_XPORTE  := cPorte
+				SUS->US_XSTATU  := cStatu
+				SUS->US_XMOTATU := cDescAtu	
+				SUS->US_XUSIMP  := cUserName
+				SUS->US_XDTIMP  := dDataBase 
+				SUS->(MsUnlock())
+					
+			EndIf
+						
+		EndIf
+		
+		lAchou := .F.
+		
+		nContador++
+		
+		SysRefresh()
+		ProcessMessage()
+		
+	Next i
+
+	If nContador > 0
+		lRet := .T.
+	EndIf
+	
+	Alert("Total de registros incluidos: " + AllTrim(Str(nInc)) )
+	
+	Alert("Total de registros atualizados: " + AllTrim(Str(nAtu)) )
+	
+Return(lRet)

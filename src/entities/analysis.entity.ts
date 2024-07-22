@@ -1,8 +1,8 @@
-import { Entity, PrimaryGeneratedColumn, Column, PrimaryColumn } from 'typeorm';
+import { Entity, PrimaryColumn, Column } from 'typeorm';
 
 @Entity('analysis')
 export class Analysis {
-  @PrimaryColumn('uuid')
+  @PrimaryColumn({ type: 'varchar' })
   id_analysis: string;
 
   @Column({ type: 'json' })

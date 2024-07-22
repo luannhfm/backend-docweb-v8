@@ -1,0 +1,66 @@
+#INCLUDE 'RWMAKE.CH'
+#INCLUDE 'PROTHEUS.CH'
+
+#DEFINE	CR	Chr(13) + Chr(10)
+
+/*/{Protheus.doc} SF12A02X
+@description Consulta NCCs do Cliente.
+
+@author  Helitom Silva
+@since   30/08/2019
+@version 1.0
+
+@return aRetNCC, Array, Lista com NCCs
+
+@type function
+@see (links_or_references)
+/*/
+User Function SF12A02X(p_cCliente, p_cLoja, p_lView)
+
+	Local cCliente  	:= p_cCliente					// Cliente corrente
+	Local cLoja     	:= p_cLoja						// Loja corrente
+	Local cMVCliPad 	:= SuperGetMV("MV_CLIPAD") 		// Cliente padrao
+	Local cMVLojaPad	:= SuperGetMV("MV_LOJAPAD")		// Loja Padrao
+	Local bValBlock 	:= Nil							// Bloco para validacao de vencimento da NCC
+	Local lVldNCC   	:= GetRpoRelease("R5") .and. SuperGetMV("MV_LJVLNCC",,.F.)
+	Local aRetNCC		:= {}
+	Local cMV_CRNEG		:= MV_CRNEG + "|" + GetNewPar("MV_ADTPCR", "NCC|RA ")
+	Local _nTxMoeda		:= 0
+
+	If ValType('nTxMoeda') = 'N'
+		_nTxMoeda := nTxMoeda
+	Else
+		_nTxMoeda := 1
+	EndIf
+
+	If (Alltrim(cMVLojaPad) + Alltrim(cMVCliPad)) <> (Alltrim(cLoja) + Alltrim(cCliente))
+
+		DbSelectArea('SE1')	
+		SE1->(DbSetOrder(8))
+		SE1->(DbSeek(xFilial("SE1") + cCliente + cLoja + "A"))
+		While ! SE1->(EOF()) .and. SE1->E1_FILIAL = xFilial("SE1") .and. SE1->E1_CLIENTE == cCliente .and. SE1->E1_LOJA == cLoja .and. SE1->E1_STATUS == "A" 
+
+			//Tipos permitidos pelo parametro MV_ADTPCR
+			If SE1->E1_TIPO $ cMV_CRNEG /*.and. ( !p_lView )*/
+				
+				//	Verifica se usa validade na NCC. Se usar Valida
+				bValBlock := IIf(lVldNCC, {||SE1->E1_VENCREA >= dDataBase}, {||.T.} )
+				
+				If Eval(bValBlock)
+
+					//Adiciona item no aNCCItens
+					If FindFunction("LjNCCItens")
+						LjNCCItens(@aRetNCC, _nTxMoeda)
+					EndIf
+
+				Endif
+				
+			EndIf
+
+			SE1->(dbSkip())
+
+		EndDo
+
+	EndIf
+
+Return (aRetNCC)

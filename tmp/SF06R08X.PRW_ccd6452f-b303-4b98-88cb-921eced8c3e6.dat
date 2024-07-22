@@ -1,0 +1,183 @@
+#INCLUDE "PROTHEUS.CH"
+
+/*/{Protheus.doc} SF06R08X
+(long_description)
+@type class
+@author Luiz
+@since 24/10/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+User Function SF06R08X
+
+	Local   cMask    := "Arquivos Texto (*.RET) |*.ret|"
+	Private cCaminho := cGetFile(cMask,"")		
+	
+	If !File(cCaminho)
+		Help(" ",1,"NOARQPAR")
+		Return .F.
+	Else
+		nHdlConf := FOPEN(cCaminho,0+64)
+	EndIf
+
+	If TRepInUse()
+		oReport  := ReportDef()
+		oReport:PrintDialog()
+	EndIf 
+	
+Return
+
+/*/{Protheus.doc} ReportDef
+(long_description)
+@type class
+@author Luiz
+@since 24/10/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ReportDef
+
+	Local oReportÇ
+	Local cIDCelula	:= ""	
+	Local cNomeRel	:= "SF06R08X"
+	Local cTitRel	:= "Retorno Cobrança"
+	Local cDescRel	:= "Retorno Cobrança"
+	
+	oReport := TReport():New( cNomeRel, cTitRel,, { |oReport| ReportPrint(oReport) }, cDescRel )
+	oReport:SetPortrait() 
+	oReport:SetTotalInLine(.F.) 
+	oReport:Page()
+	
+	//-> Retorno
+	oRetorno := TRSection():New(oReport, "Titulos Enviados a Terceirizada", {"SE1"})
+	oCPF     := TRCell():New(oRetorno,"A1_CGC"       ,"SA1")
+	oCPF:SetSize(30)
+	oNome    := TRCell():New(oRetorno,"A1_NOME"      ,"SA1")
+	//oEnvio   := TRCell():New(oRetorno,"Dt. Envio"  ,"SE1")
+	oEnvio   := TRCell():New(oRetorno,"Venc. TIT"    ,"SE1")
+	oEnvio:SetSize(20)
+	oStatus  := TRCell():New(oRetorno,"Situação"     ,"SE1")	
+	oStatus:SetSize(60)
+	oValor   := TRCell():New(oRetorno,"VALOR"        ,"SE1","Vlr. Titulo","@E 99,999,999.99" )
+	oValor:SetSize(40)
+	
+Return(oReport) 
+
+/*/{Protheus.doc} ReportPrint
+(long_description)
+@type function
+@author Luiz
+@since 24/10/2016
+@version 1.0
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ReportPrint(oReport)
+
+	Local oSec1     := oReport:Section(1)	
+	Local cDtMovimo := "" 
+	Local cCPFCNPJ  := ""
+	Local cBuffer   := ""
+	Local cNome     := "" 
+	Local cStatus   := ""
+	Local cBanco    := "" 
+	Local nValTit   := 0 		
+	Local cBanco    := GetNewPar("MV_XBANCO")
+	Local cTipo     := "R"
+	
+	FT_FUSE(cCaminho)	
+	FT_FGOTOP()	
+	
+	While !FT_FEOF()
+
+		cBuffer := FT_FReadLn()
+		/*
+		If Empty(cDtMovimo)
+			If Substr(cBuffer,1,2) == "00"
+				cDtMovimo := Substr(cBuffer,39,8)				
+			EndIf
+		EndIf
+		*/
+		
+		/* * * * * * * * * * * * * */
+		/* Detalhe 01 - Consumidor */		
+		/* * * * * * * * * * * * * */           
+		
+		If Substr(cBuffer,1,2) == "01"
+		
+			//-> CPF/CNPJ
+			If Substr(cBuffer,56,1) == "2"
+				cCPFCNPJ := Substr(cBuffer,61,11)
+				cMasc := "@R 999.999.999-99"
+			Else
+				//-> CNPJ
+				cCPFCNPJ := Substr(cBuffer,58,14)
+				cMasc := "@R 99.999.999/9999-99"
+			EndIf
+			
+			//-> Nome
+			cNome := Substr(cBuffer,11,45)			
+			
+			//cBordero := SUBSTR(cCaminho,(RAt("\",cCaminho)+1),AT(".",SUBSTR(cCaminho,(RAt("\",cCaminho)+1),(AT(".",cCaminho))))-1)
+			
+			//-> Status			
+			//DbSelectArea("SEB")
+			//cStatus := Posicione("SEB",1,xFilial("SEB") + cBanco + Substr(cBuffer,333,2)+Space(01) + cTipo ,"EB_DESCRI")
+			
+		EndIf
+		
+		/* * * * * * * * * * * * * */
+		/* Detalhe 02 - SPC        */		
+		/* * * * * * * * * * * * * */ 
+		
+		If Substr(cBuffer,1,2) == "02"
+			DbSelectArea("SEB")
+			cStatus := Posicione("SEB",1,xFilial("SEB") + cBanco + Substr(cBuffer,333,2)+Space(01) + cTipo ,"EB_DESCRI")
+		
+			//nValTit   := Transform(Val(Substr(cBuffer,37,13)),PesqPict("SE1","E1_VALOR"))
+			nValTit   := Val(Substr(cBuffer,37,11) + "." + Substr(cBuffer,48,2))
+			cDtMovimo := DToc(SToD(SubStr(Substr(cBuffer,29,8),5,4) + SubStr(Substr(cBuffer,29,8),3,2) + SubStr(Substr(cBuffer,29,8),1,2)))
+			oSec1:Init()			
+			//oSec1:SetPicture(PicCli(cMasc))			
+			oSec1:Cell("A1_CGC"):SetPicture(cMasc)			
+			oSec1:Cell("A1_CGC"):SetValue(AllTrim(cCPFCNPJ))
+			oSec1:Cell("A1_NOME"):SetValue(AllTrim(cNome))
+			oSec1:Cell("Venc. TIT"):SetValue(cDtMovimo)
+			oSec1:Cell("Situação"):SetValue(AllTrim(cStatus))
+			oSec1:Cell("VALOR"):SetValue(nValTit)
+			oSec1:Printline()	
+			cDtMovimo := ""		
+		EndIf
+
+		/* * * * * * * * * * * * * */
+		/* Detalhe 03 - CHQ        */		
+		/* * * * * * * * * * * * * */ 
+
+		If Substr(cBuffer,1,2) == "03"
+			nValTit :=  AllTrim(Transform(Val(Substr(cBuffer,52,13)),"@E 9,999,999,999,999.99"))
+			oSec1:Init()	
+			oSec1:Cell("A1_CGC"):SetPicture(cMasc)
+			oSec1:Cell("A1_CGC"):SetValue(AllTrim(cCPFCNPJ))
+			oSec1:Cell("A1_NOME"):SetValue(AllTrim(cNome))
+			oSec1:Cell("Venc. TIT"):SetValue(DToc(SToD(cDtMovimo)))
+			oSec1:Cell("Situação"):SetValue(AllTrim(cStatus))
+			oSec1:Cell("VALOR"):SetValue(AllTrim(nValTit))		
+			oSec1:Printline()	
+		EndIf
+		
+		FT_FSKIP()		
+	EndDo
+
+	oReport:EndPage()
+	oSec1:Finish()	
+
+Return	

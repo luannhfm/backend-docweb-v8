@@ -1,0 +1,100 @@
+#INCLUDE "PROTHEUS.CH"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³MT110VLD  ºAutor  ³Microsiga           º Data ³  27/04/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Bloqueia alteracao de SC's com processo orcamentario iniciado±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                   º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function MT110VLD()
+Local _lRet     := .t.
+Local _lBlqSC   := GetMv("SI_XBLQORC", .T.) // Habilita bloqueio de SC por orçamento
+Local _cAreaAKD := AKD->(GetArea())
+
+// Inclusão - Peder Munksgaard (Do.it Sistemas) em 11/12/2014
+Local _cFilial  := SC1->C1_FILIAL
+Local _cNumSC   := SC1->C1_NUM
+Local _cConta   := SC1->C1_CONTA
+Local _cPrefix  := SC1->C1_PREFIX
+Local _nRecno   := SC1->(Recno())
+Local _aAreaSC1 := SC1->(GetArea())
+
+Begin Transaction
+      
+   If Isincallstack("A110Altera")
+      
+      dbSelectArea("SC1")
+      SC1->(dbSetOrder(1))
+      
+      If SC1->(dbSeek(_cFilial+_cNumSC))
+      
+         While SC1->(!Eof()) .And. SC1->(C1_FILIAL+C1_NUM) == _cFilial+_cNumSC
+         
+            Reclock("SC1",.F.)
+            Replace C1_CONTA  With _cConta
+            Replace C1_PREFIX With _cPrefix
+            SC1->(Msunlock())
+            
+            SC1->(dbSkip())
+            
+         End
+      
+      Endif
+      
+      SC1->(dbGoto(_nRecno))
+            
+   Endif
+          
+End Transaction
+//   
+
+
+
+IF IsInCallStack("U_SICOMA51")
+	cCusto   := aRet[3]
+	cPrefixo := Left(aRet[6],2)
+ENDIF
+
+IF IsInCallStack("A110Deleta") .or. IsInCallStack("A110Altera")
+	
+	IF SC1->C1_APROV == "O"
+		MsgStop("Esta SC foi bloqueada por orçamento e não poderá ser alterada ou excluída. Verifique!")
+		_lRet := .f.
+	ELSEIF SC1->C1_APROV == "C"
+		MsgStop("Esta SC está em processo de contingência e não poderá ser alterada ou excluída. Verifique!")
+		_lRet := .f.
+	ELSEIF SC1->C1_APROV == "F"
+		MsgStop("Esta SC foi bloqueada pelo PCO e não poderá ser alterada ou excluída. Verifique!")
+		_lRet := .f.
+	ELSEIF SC1->C1_APROV == "L"
+		AKD->(dbSetOrder(10))
+		IF AKD->(dbSeek(XFilial("AKD")+"SC1"+SC1->(C1_FILIAL+C1_NUM)))
+			MsgStop("Esta SC possui movimentos orçamentários gerados e não pode ser alterada ou excluída. Verifique!")
+			_lRet := .f.
+		ENDIF
+	ENDIF
+	
+	// Verifica se existe mutuo cadastrado
+	IF _lRet .and. AliasIndic("SZW")
+		SZW->(dbSetOrder(1))
+		IF SZW->(dbSeek(XFilial("SZW")+SC1->C1_NUM)) .And. SZW->ZW_PERC <> 100
+			MsgStop("SC com regra de mútuo cadastrada. Verifique!")  
+			_lRet := .f.
+		ENDIF
+	ENDIF
+	
+ENDIF
+
+RestArea(_cAreaAKD)
+RestArea(_aAreaSC1)
+
+Return(_lRet)

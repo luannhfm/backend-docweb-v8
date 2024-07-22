@@ -1,0 +1,126 @@
+#Include 'Protheus.ch'
+#INCLUDE "TOPCONN.CH"
+
+/*/{Protheus.doc} SF06A68X
+	Criação dos títulos de Contas a Pagar conforme Baixa de Contas a Receber para os 
+	programas relacionados a Integração Sócio Industria
+	@author Daniel Castro - TOTVS
+	@since 06/12/2021
+	@param Prefixo,Numero,Tipo,Parcela,Saldo, Executado em Tela ( .T.,.F.)
+	@see https://tdn.totvs.com/pages/releaseview.action?pageId=6070752
+/*/
+
+USER FUNCTION SF06A68X(cPref,cNum,cTipo,cParcel,lTela)
+
+	LOCAL aArray := {}
+	Local cNatureza := ""
+	Local cCliente  := ""
+	Local cLoja     := ""
+	Local x			:= ""
+	Local cId 		:= GetSxeNum("SE2","E2_NUM")
+	Local nParc		:= 0
+
+	PRIVATE lMsErroAuto := .F.
+
+	dbSelectArea("SE1")
+	SE1->(dbSetOrder(1))
+	SE1->(dbSeek(xFilial("SE1") + cPref + cNum + cParcel + cTipo))
+
+	dbSelectArea("SEZ")
+	SEZ->(dbSetOrder(1))
+	SEZ->(dbSeek(xFilial("SEZ") + cPref + cNum + cParcel + cTipo))
+
+	While SEZ->(!EOF()) .And. SEZ->EZ_PREFIXO == cPref .And. SEZ->EZ_NUM == cNum .And. SEZ->EZ_PARCELA == cParcel .And. SEZ->EZ_TIPO == cTipo
+
+		If SEZ->EZ_NATUREZ == "1300000036"
+
+			cCliente := "33665126"
+			cLoja := "0001"
+
+			dbSelectArea("SA2")
+			SA2->(dbSetOrder(1))
+			SA2->(dbSeek(xFilial("SA2") + cCliente + cLoja))
+			cNatureza := SA2->A2_NATUREZ
+
+		ElseIf SEZ->EZ_NATUREZ = "1300000037"
+			cCliente := "03750189"
+			cLoja := "0001"
+			cNatureza := SEZ->EZ_NATUREZ
+
+		ElseIf SEZ->EZ_NATUREZ = "1300000038"
+			cCliente := "03750189"
+			cLoja := "0001"
+			cNatureza := SEZ->EZ_NATUREZ
+			cNatureza := "2000000000" //provisorio
+
+		ElseIf SEZ->EZ_NATUREZ = "1300000039"
+			cCliente := "03750189"
+			cLoja := "0001"
+			cNatureza := SEZ->EZ_NATUREZ
+
+		ElseIf SEZ->EZ_NATUREZ = "1300000040"
+
+			cQuery := " SELECT * FROM " + RetSqlTab("SA2") + " "
+			cQuery += " INNER JOIN " + RetSqlTab("ZCA") + " ON ZCA_CGC = A2_CGC "
+			cQuery += " INNER JOIN  "+ RetSqlTab("SA1") + "  ON SA1.D_E_L_E_T_ = ' ' "
+			cQuery += " AND A1_XCODSIN = ZCA_CODIGO "
+			cQuery += " AND A1_COD = '" + SEZ->EZ_CLIFOR + "' "
+			cQuery += " AND A1_LOJA = '" + SEZ->EZ_LOJA + "' "
+			cQuery += " WHERE SA2.D_E_L_E_T_ = ' ' "
+
+			If Select("TMP")>0
+				TMP->(DbCloseArea())
+			Endif
+
+			TCQuery cQuery New Alias "TMP"
+
+			cCliente := TMP->A2_COD
+			cLoja := TMP->A2_LOJA
+			cNatureza := TMP->A2_NATUREZ
+			cNatureza := "2000000000" //provisorio
+
+			TMP->(DbCloseArea())
+
+		EndIf
+
+		If Empty(cNatureza)
+			cNatureza := "2000000000"
+		EndIf
+		nParc++
+
+		aArray := { { "E2_PREFIXO"  , "SIN"     , NIL },;
+			{ "E2_NUM"      , cId			    , NIL },;
+			{ "E2_PARCELA"  , cValtoChar(nParc) , NIL },;
+			{ "E2_TIPO"     , "OP"              , NIL },;
+			{ "E2_NATUREZ"  , cNatureza         , NIL },;
+			{ "E2_FORNECE"  , cCliente          , NIL },;
+			{ "E2_LOJA"     , cLoja             , NIL },;
+			{ "E2_EMISSAO"  , dDataBase         , NIL },;
+			{ "E2_VENCTO"   , dDataBase         , NIL },;
+			{ "E2_VENCREA"  , dDataBase         , NIL },;
+			{ "E2_VALOR"    , SEZ->EZ_VALOR     , NIL } ,;
+			{ "E2_VLCRUZ"   , SEZ->EZ_VALOR     , NIL } ,;
+			{ "E2_SALDO"    , SEZ->EZ_VALOR     , NIL } ,;
+			{ "E2_CONTAD"   , SEZ->EZ_CONTA     , NIL } ,;
+			{ "E2_CCD"      , SEZ->EZ_CCUSTO    , NIL } ,;
+			{ "E2_ITEMD"    , SEZ->EZ_ITEMCTA   , NIL } ,;
+			{ "E2_XPREFIX"  , cPref             , NIL } ,;
+			{ "E2_XNUM"     , cNum              , NIL } ,;
+			{ "E2_XPARCE"   , cParcel           , NIL } ,;
+			{ "E2_XTIPO"    , cTipo             , NIL } }
+
+		MsExecAuto( { |x,y,z| FINA050(x,y,z)}, aArray,, 3)  // 3 - Inclusao, 4 - Alteração, 5 - Exclusão
+
+		If lMsErroAuto
+			aAdd(aLog ,MostraErro("/dirdoc", "error.log"))
+			RollbackSx8()
+			DisarmTransaction()
+		Else
+			ConfirmSx8()
+			aAdd(aLog ,"Título de Contas a Pagar SIN/" +cId+"/"+cValtoChar(nParc)+"/OP incluído com sucesso!" )
+		Endif
+
+		SEZ->(dbSkip())
+	EndDo
+
+Return

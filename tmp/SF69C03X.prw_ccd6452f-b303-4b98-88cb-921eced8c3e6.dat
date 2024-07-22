@@ -1,0 +1,219 @@
+#Include 'Protheus.ch'
+#include 'fwmvcdef.ch'
+#INCLUDE "TOPCONN.CH"
+
+/*/{Protheus.doc} SF69C03X
+Amarração de Fornecedor e Docente do SGE
+    @type  User Function
+    @author Daniel Castro - Totvs
+    @since 16/10/2020
+    @version 1
+    /*/
+
+User Function SF69C03X(oModel)
+
+	Local aArea	:= GetArea()
+	Local oButton1
+	Local oButton2
+	Local oGet1
+	Local oGroup1
+	Local oListBox1
+	Local oSay1
+	Local oDlg
+
+	Private cGet1 := (Alltrim(SA2->A2_NOME))
+	Private cCodF := SA2->A2_COD
+	Private aTabela := {}
+
+	//=================================================================================
+	Processa( {|| Carrega() }, "Aguarde...", "Carregando dados...",.F.)
+	//=================================================================================
+
+	DEFINE MSDIALOG oDlg TITLE "Docente / Fornecedor" FROM 000, 000  TO 500, 700 COLORS 0, 16777215 PIXEL
+
+	@ 004, 004 GROUP oGroup1 TO 057, 344 PROMPT "Informação Docente" OF oDlg COLOR 0, 16777215 PIXEL
+	@ 060, 004 LISTBOX oListBox1 FIELDS HEADER " Filial"," Coligada", " Cod. Professor", " Nome Professor" ;
+		SIZE 340, 160 OF oDlg COLORS 0, 16777215 PIXEL WHEN .F.
+	oListBox1:SetArray( aTabela )
+	oListBox1:bLine := {|| {aTabela[oListBox1:nAt,1],;
+		aTabela[oListBox1:nAt,2],;
+		aTabela[oListBox1:nAt,3],;
+		aTabela[oListBox1:nAt,4]} }
+	@ 017, 016 SAY oSay1 PROMPT "Docente" SIZE 025, 007 OF oDlg COLORS 0, 16777215 PIXEL
+	@ 026, 016 MSGET oGet1 VAR cGet1 SIZE 209, 010 OF oDlg COLORS 0, 16777215 PIXEL WHEN .F.
+	@ 230, 200 BUTTON oButton1 PROMPT "Cancelar" SIZE 037, 012 OF oDlg PIXEL ACTION oDlg:END()
+	@ 230, 241 BUTTON oButton2 PROMPT "Excluir" SIZE 037, 012 OF oDlg PIXEL ACTION { || ExcProf(), oDlg:End()}
+	@ 230, 282 BUTTON oButton2 PROMPT "Incluir" SIZE 037, 012 OF oDlg PIXEL ACTION { || AtuProf(), oDlg:End()}
+
+
+	ACTIVATE MSDIALOG oDlg CENTERED
+
+	RestArea(aArea)
+
+Return
+
+//=========================================================================
+Static Function AtuProf()
+
+	Local aProfNew := {}
+	Local cMsg	:= "Confirma a amarração do Docente " + CRLF
+
+	aProfNew := U_SF69A02W()
+	If Empty(aProfNew[1]) .OR. Empty(aProfNew[2]) .OR. Empty(aProfNew[3])
+		MsgInfo("Verifique se os campos FILIAL, COLIGADA, COD. PROFESSOR e NOME PROFESSOR estão preenchidos","Campos não Preenchidos")
+		Return
+	endif 
+
+	If !Empty(aProfNew)	.And. aScan(aTabela,{ |x,y| x[1] == xFilial("ZBF") .And. x[2] == aProfNew[1] }) == 0
+
+		cMsg += "Codigo:" + Alltrim(aProfNew[2]) + "- Docente: " + Alltrim(aProfNew[3]) + CRLF
+		cMsg += " Coligada: " + Alltrim(aProfNew[1]) + CRLF
+
+		If MsgYesNo( cMsg )
+
+			If Alltrim(aProfNew[1]) == SubStr(xFilial("ZBF"),2,1)
+
+				Begin Transaction
+					RecLock("ZBF",.T.)
+					ZBF->ZBF_FILIAL	:= xFilial("ZBF")
+					ZBF->ZBF_CODCOL	:= aProfNew[1]
+					ZBF->ZBF_CODPRO := aProfNew[2]
+					ZBF->ZBF_NOMPRO := aProfNew[3]
+					ZBF->ZBF_FORNEC := cCodF
+					ZBF->(MsUnlock())
+				End Transaction
+
+			Else
+				Help(NIL, NIL, "Operação Inválida", NIL, "Docente NÃO pertence a essa Filial", ;
+					1, 0, NIL, NIL, NIL, NIL, NIL, {"Selecione o Docente com Coligada e Filial correspondente."})
+			EndIf
+		EndIf
+
+	ElseIf Empty(aProfNew)
+		MsgAlert("Não existe Docente selecionado.","Informação não será gravada!")
+	Else
+		MsgAlert("Já existe cadastro para essa Filial/Coligada.","Informação não será gravada!")
+	EndIf
+
+
+Return
+//=========================================================================
+Static Function Carrega()
+
+	Local cQuery := ""
+	Local nTotal := 0
+
+	cQuery := " SELECT * FROM " + RetSqlTab("ZBF") + CRLF
+	cQuery += " WHERE ZBF.D_E_L_E_T_ = ' ' "
+	cQuery += " AND ZBF_FORNEC = '" + cCodF + "' "
+
+	TCQuery cQuery New Alias "QRY"
+
+	//Setando o tamanho da régua
+	Count To nTotal
+
+	If nTotal <> 0
+		QRY->(dbGotop())
+
+		While QRY->(!EOF())
+			aAdd(aTabela,{Alltrim(QRY->ZBF_FILIAL),;
+				Alltrim(QRY->ZBF_CODCOL),;
+				Alltrim(QRY->ZBF_CODPRO),;
+				Alltrim(QRY->ZBF_NOMPRO),;
+				.F.})
+			QRY->(dbSkip())
+		EndDo
+	Else
+		aAdd(aTabela,{"","","",""})
+	EndIf
+
+	QRY->(dbCloseArea())
+
+Return
+
+//==============================================================================================================
+
+Static Function ExcProf()
+
+	Local oDlg     := Nil
+	Local cTitulo  := "Exclusão de Docente"
+	Local lMark    := .F.
+	Local oOk      := LoadBitmap( GetResources(), "CHECKED" )   //CHECKED    //LBOK  //LBTIK
+	Local oNo      := LoadBitmap( GetResources(), "UNCHECKED" ) //UNCHECKED  //LBNO
+	Local oChk     := Nil
+
+	Private lChk    := .F.
+	Private oLbx 	:= Nil
+
+
+	DEFINE MSDIALOG oDlg TITLE cTitulo FROM 0,0 TO 240,500 PIXEL
+
+	@ 10,10 LISTBOX oLbx VAR cVar FIELDS HEADER ;
+		" ", " Filial"," Coligada", " Cod. Professor", " Nome Professor";
+		SIZE 230,095 OF oDlg PIXEL ON dblClick(aTabela[oLbx:nAt,5] := !aTabela[oLbx:nAt,5],oLbx:Refresh())
+
+	oLbx:SetArray( aTabela )
+	oLbx:bLine := {|| {Iif(aTabela[oLbx:nAt,5],oOk,oNo),;
+		aTabela[oLbx:nAt,1],;
+		aTabela[oLbx:nAt,2],;
+		aTabela[oLbx:nAt,3],;
+		aTabela[oLbx:nAt,4]}}
+
+	@ 110,10 CHECKBOX oChk VAR lChk PROMPT "Marca/Desmarca" SIZE 60,007 PIXEL OF oDlg ;
+		ON CLICK(aEval(aTabela,{|x| x[1]:=lChk}),oLbx:Refresh())
+
+	DEFINE SBUTTON FROM 107,213 TYPE 1 ACTION { || EXCDC(),oDlg:End() } ENABLE OF oDlg
+	ACTIVATE MSDIALOG oDlg CENTER
+
+Return
+
+//==================================================================================================
+
+Static Function EXCDC()
+
+	Local x
+
+	For x := 1 to Len(aTabela)
+
+		If aTabela[x,5]
+
+			BeginSQL alias "TMPCNA"
+				SELECT * FROM %table:CNA% CNA
+				WHERE CNA_FILIAL = %exp:aTabela[x,1]%
+				AND CNA_FORNEC = %exp:SA2->A2_COD%
+				AND CNA_LJFORN = %exp:SA2->A2_LOJA%
+				AND CNA.%notDel%
+			EndSQl
+
+			If Empty(TMPCNA->CNA_CONTRA)
+
+				BeginSQL alias "TMPZBF"
+					SELECT R_E_C_N_O_ AS REC FROM %table:ZBF% ZBF
+					WHERE ZBF_FILIAL = %exp:aTabela[x,1]%
+					AND ZBF_FORNEC = %exp:SA2->A2_COD%
+					AND ZBF_CODPRO = %exp:aTabela[x,3]%
+					AND ZBF.%notDel%
+				EndSql
+
+				dbSelectArea("ZBF")
+				ZBF->(dbGoto(TMPZBF->REC))
+
+				Begin Transaction
+					RecLock("ZBF", .F.)
+					dbDelete()
+					ZBF->(MsUnlock())
+				End Transaction
+
+				TMPZBF->(dbCloseArea())
+
+			Else
+				Help(NIL, NIL, "Operação Inválida", NIL, "Não é possivel excluir docente que ja tenha um contrato", ;
+					1, 0, NIL, NIL, NIL, NIL, NIL, {"Não é possivel completar a operação."})
+			EndIf
+
+			TMPCNA->(dbCloseArea())
+
+		EndIf
+
+	Next x
+Return

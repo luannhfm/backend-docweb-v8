@@ -1,0 +1,119 @@
+#include 'protheus.ch'
+#include 'ap5mail.ch'
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ SICOMA35 ºAutor  ³ Carlos A. Queiroz  º Data ³  01/02/13   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Job para enviar e-mail aos fornecedores.                   º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP                                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function SICOMA54(aParExe)
+
+Local cEmp        := aParExe[1]
+Local cFil        := aParExe[2]
+Local cNumPed     := ""
+Local cQuery      := ""
+Local cQry        := GetNextAlias()
+Local lProcessa   := .T.
+Local cRotina     := "Envia Workflow"
+Local cEOL        := Chr(13) + Chr(10)
+Local aPedCompras := {}
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Verifica se a rotina foi chamada via menu ou schedule ...    ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+Private lAuto := Iif(Select("SM0")>0,.F.,.T.)
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Prepara Environment ou abre tabelas ...                      ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If lAuto
+	U_CONSOLE("Preparando Environment... "+cEmp+cFil+" - "+DTOC(Date()) + " - "+Time(),"SICOMA54")
+	RpcSetType(3)
+	RpcSetEnv( cEmp, cFil,,,'COM',,{"SC7", "SA2"})
+		
+	cQuery := " SELECT DISTINCT"
+	
+	cQuery += " SC7.C7_FILIAL, SC7.C7_NUM "
+
+//	cQuery += " SC7.C7_FILIAL, SC7.C7_NUM, SC7.C7_CONTRA, SC7.C7_RESIDUO, SC7.C7_DTEMIPT, SC7.C7_QUJE, SC7.C7_QTDACLA, SC7.C7_XSTATUS, SC7.R_E_C_N_O_  "
+	
+	cQuery += " FROM " + RetSQLName("SC7") + " SC7 "
+	
+	cQuery += " WHERE SC7.D_E_L_E_T_ <> '*' AND SC7.C7_CONTRA <> '' AND SC7.C7_RESIDUO = '' AND SC7.C7_DTEMIPT = '' AND "
+	
+	cQuery += " SC7.C7_QUJE = '0' AND SC7.C7_QTDACLA = '0' AND  SC7.C7_XSTATUS = '' "
+	
+	cQuery += " ORDER BY SC7.C7_FILIAL, SC7.C7_NUM "
+	
+	cQuery := ChangeQuery(cQuery)
+	
+	dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cQry,.F.,.T.)
+	
+	dbSelectArea(cQry)
+	(cQry)->(dbGoTop())
+	While (cQry)->(!EOF())
+		aAdd(aPedCompras,{(cQry)->C7_FILIAL,(cQry)->C7_NUM})
+		(cQry)->(dbskip())
+	EndDo
+	
+	RpcClearEnv()
+	
+	For i:=1 to Len(aPedCompras)
+		cFil        := aPedCompras[i][1]
+		cNumPed     := aPedCompras[i][2]
+		
+		U_CONSOLE("Preparando Environment... "+cEmp+cFil+" - "+DTOC(Date()) + " - "+Time(),"SICOMA54")
+		RpcSetType(3)
+		RpcSetEnv( cEmp, cFil,,,'COM',,{"SC7", "SA2"})
+		
+		dbselectarea("SA2")
+		dbselectarea("SC7")
+		dbsetorder(1)
+		If dbseek(cFil + cNumPed)
+			
+			// Verifica se o pedido esta liberado
+			If SC7->C7_QUJE >= SC7->C7_QUANT
+				U_CONSOLE("O e-mail não será enviado porque o Pedido de Compra "+cFil + cNumPed+" não possui saldo.","SICOMA54")
+				lProcessa := .F.
+				// Verifica se o PC esta bloqueado
+			ElseIf SC7->C7_CONAPRO # "L"
+				U_CONSOLE("O e-mail não será enviado porque o Pedido "+cFil + cNumPed+" não está liberado.","SICOMA54")
+				lProcessa := .F.
+				// Verifica se o PC está eliminado
+			ElseIf SC7->C7_RESIDUO == "S"
+				U_CONSOLE("O e-mail não será enviado porque o Resíduo do Pedido "+cFil + cNumPed+" foi eliminado.","SICOMA54")
+				lProcessa := .F.
+				// Verifica se existe e-mail no cadastro do Fornecedor
+			ElseIf Empty(Posicione("SA2",1,xFilial("SA2")+SC7->C7_FORNECE+SC7->C7_LOJA,"A2_EMAIL") )
+				U_CONSOLE("O e-mail não será enviado para o pedido "+cFil + cNumPed+" porque não existe endereço de e-mail informado no cadastro do Fornecedor "+xFilial("SA2")+SC7->C7_FORNECE+SC7->C7_LOJA+".","SICOMA54")
+				lProcessa := .F.
+			EndIf
+			
+			If lProcessa
+				Begin Transaction
+				U_CONSOLE("Disparo de e-mail para o Pedido "+cFil + cNumPed+".","SICOMA54")
+				U_CWKFA005(SC7->C7_NUM,.T.)
+				U_CONSOLE("Saída da rotina de disparo de e-mail para o Pedido "+cFil + cNumPed+".","SICOMA54")
+				End Transaction
+			EndIf
+			lProcessa := .T.
+		EndIf
+		
+		RpcClearEnv()
+		
+	Next i
+	
+	U_CONSOLE("Encerrando Job... "+cEmp+cFil+" - "+DTOC(Date()) + " - "+Time(),"SICOMA54")
+	
+EndIf
+
+Return 

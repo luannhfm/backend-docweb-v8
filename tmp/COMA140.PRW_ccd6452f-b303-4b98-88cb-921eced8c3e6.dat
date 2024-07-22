@@ -1,0 +1,91 @@
+#INCLUDE "protheus.ch"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³_fWF_SC   ºAutor  ³Microsiga           º Data ³  26/11/10   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Envia solicitacao para aprovacao                           º±±
+±±º          ³                                                            º±±
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+++ Alteração ¹ (13/08/2014) Contemplada a remoção dos registros da SCR caso++
+++           ¹  a opção de 'Apenas Salvar' seja cahamada na alteração da SC++
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ Projeto CNI                                                º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+-----------------------------------------------------------------------------
+Peder Munksgaard (Do.it Sistemas) 								   13/08/2014 
+	Tratativa para opção de 'Apenas Salvar' / 'Salvar e Enviar' na alteração 
+	de uma SC.
+-----------------------------------------------------------------------------
+Franklin B. Oliveira											   07/07/2016
+	Padronização do fonte e correção para que o workflow da solicitação de
+	compra seja enviado ao término do processo.
+-----------------------------------------------------------------------------
+*/
+
+User Function _fWF_SC(cNum,_lCopia)
+
+	DbSelectArea("SC1")
+	DbSetOrder(1)
+	// If !_lCopia .and. (DbSeek(xFilial("SC1")+cNum))
+	
+	If DbSeek(xFilial("SC1") + cNum)     //Tratamento para envio de WF na cópia da SC
+		If SC1->C1_APROV == "L" // verifica se ja foi liberado
+			MsgStop("Esta solicitação já foi liberada, para reenviar é necessário bloquear a solicitação novamente!")
+			Return()
+		EndIf
+		
+		If SC1->C1_WFE // verifica se o e-mail já foi enviado
+			//IF Aviso("Atencao","Esta solicitaçãojá foi enviada para aprovação, deseja enviar novamente ?",{"Sim","Não"}) <> 1
+			If !MsgYesNo("Esta solicitação já foi enviada para aprovação, deseja enviar novamente ?","Atenção")
+	           DbSelectArea("SCR")
+			   SCR->( DbSetOrder(1) )
+			   
+			   If SCR->( dbSeek(SC1->(C1_FILIAL + "SC" + C1_NUM)) )	   
+			      While SCR->( !Eof() ) .And. Alltrim(SCR->(CR_FILIAL + "SC" + CR_NUM)) == Alltrim(SC1->(C1_FILIAL + "SC" + C1_NUM))
+			         Reclock("SCR",.F.)
+					 Replace CR_OBS With "[M110STTS] DEL.SOM.SALVAR"
+			         SCR->(dbDelete())
+			         SCR->(MsUnlock())
+			                 				           				         				         
+					 SCR->(dbSkip())
+				  EndDo
+		       EndIf
+		       
+			   If SC1->( dbSeek(xFilial("SC1") + cNum) ) //.And. SC1->C1_APROV == 'W'
+	              While SC1->( !EoF() ) .And. SC1->(C1_FILIAL + C1_NUM) == xFilial("SC1") + cNum
+				     RecLock("SC1", .F.)
+	 		         Replace C1_XWFSTAT With '1'
+					 Replace C1_APROV   With 'W'	// Pendente de envio do WF
+			  		 SC1->(MsUnLock())
+			  		 
+					 SC1->(DbSkip())
+				  EndDo   
+	           EndIf			       
+			Else
+				If SCR->( dbSeek(SC1->(C1_FILIAL + "SC" + C1_NUM)) )	   
+			      While SCR->( !Eof() ) .And. Alltrim(SCR->(CR_FILIAL + "SC" + CR_NUM)) == Alltrim(SC1->(C1_FILIAL + "SC" + C1_NUM))
+			         Reclock("SCR", .F.)
+						 Replace CR_STATUS With "02"
+						 Replace CR_DATALIB With CtoD("  /  /  ")
+						 Replace CR_USERLIB With ""
+						 Replace CR_LIBAPRO With ""
+						 Replace CR_VALLIB With 0.0
+						 Replace CR_TIPOLIM With ""
+			         SCR->(MsUnlock())
+			                 				           				         				         
+					 SCR->(dbSkip())
+				  EndDo
+		       EndIf
+			EndIf
+		EndIf
+		                 
+		MsgRun('Enviando solicitação para aprovação...',, {|| U_CWKFA001( , xFilial("SC1"), SC1->C1_NUM) } )
+		
+	EndIf
+
+Return (Nil)

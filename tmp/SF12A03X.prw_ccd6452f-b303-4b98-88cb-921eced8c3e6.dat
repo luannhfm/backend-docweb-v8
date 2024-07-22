@@ -1,0 +1,155 @@
+#INCLUDE 'PROTHEUS.CH'
+
+
+/*/{Protheus.doc} SF12A03X
+@description Insere/Altera registro de Pagamento na tela de vendas.
+
+@author Helitom Silva
+@since  25/09/2013
+
+@param p_dPagto, Data, Data de pagamento
+@param p_cFormPg, Caracter, Forma de pagamento
+@param p_nValor, Numerico, Valor
+@param p_aAdmCH, Array, Array com a Administradora de cheque
+@param p_nOpc, Numerico, Opção de operação - mais informações no corpo da Função.
+
+/*/
+User Function SF12A03X(p_dPagto, p_cFormPg, p_nValor, p_aAdmCH, p_nOpc)
+	
+	Local nPos		  := 0
+	Local nI		  := 0
+	Local cAux		  := ''
+	Local cSimbMoeda  := SuperGetMV("MV_SIMB1")	// Simbolo Moeda Principal - Dinheiro (R$)
+	Local cFormGT  	  := GetNewPar('MV_XFORMGT', 'GT') // Forma de Pagamento Gratuito.
+			
+	Default p_dPagto  := dDataBase
+	Default p_cFormPg := cSimbMoeda
+	Default p_nValor  := 0.00  
+	Default p_aAdmCH  := {}
+	Default p_nOpc    := 0
+	
+	/*--------------------------------------------|p_nOpc|--------------------------------------------
+		0 - Adiciona/Altera lançamento nas formas de pagamento 
+		1 - Adiciona lançamento nas formas de pagamento 
+		2 - Exclui o lançamento que estiver com a sigla, data e valor informada no parametro 
+		3 - Exclui o lançamento que estiver com a sigla (forma de pagamento) informada no parametro 
+		4 - Exclui todos os pagamentos registrados 
+	*/
+	
+	If !(IsInCallStack('Lj7Venda') .or. IsInCallStack('FTVDVenda'))	
+		Return
+	EndIf
+	
+	If p_nOpc = 0 // Adiciona/Altera lançamento nas formas de pagamento 	
+			
+		If (nPos := aScan(aPgtos, {|X| ((X[3] = p_cFormPg .and. X[1] = p_dPagto) .or. Empty(AllTrim(X[3])))})) > 0		
+			aPgtos[nPos] := {p_dPagto, p_nValor, p_cFormPg, p_aAdmCH, Nil, Nil, Nil, '', 0, .F., 109}		
+		Else
+			aAdd(aPgtos, {p_dPagto, p_nValor, p_cFormPg, p_aAdmCH, Nil, Nil, Nil, '', 0, .F., 109})	
+		EndIf
+	
+	ElseIf p_nOpc = 1 // Adiciona lançamento nas formas de pagamento 
+	
+		aAdd(aPgtos, {p_dPagto, p_nValor, p_cFormPg, p_aAdmCH, Nil, Nil, Nil, '', 0, .F., 109})	
+	
+	ElseIf p_nOpc = 2 // Exclui o lançamento que estiver com a sigla, data e valor informada no parametro 
+		
+		If (nPos := aScan(aPgtos, {|X| (X[1] = p_dPagto .and. X[2] = p_nValor .and. X[3] = p_cFormPg)})) > 0		
+			
+			aDel(aPgtos, nPos)
+			aSize(aPgtos, Len(aPgtos) - 1)
+			
+		EndIf
+
+	ElseIf p_nOpc = 3 // Exclui o lançamento que estiver com a sigla (forma de pagamento) informada no parametro 
+	
+		While (nI := aScan(aPgtos, {|x| X[3] = p_cFormPg})) > 0
+			aDel(aPgtos, nI)
+			aSize(aPgtos, Len(aPgtos) - 1)
+		End	
+
+	ElseIf p_nOpc = 4 // Exclui todos os pagamentos registrados 
+	
+		aPgtos := {}
+							
+	EndIf
+	
+	// Para as condicoes do tipo GT preencho os dados da Adm Financeira (Credito Proprio) 
+	For nI := 1 To Len(aPgtos)
+	
+		If AllTrim(aPgtos[nI][3]) = AllTrim(cFormGT)
+			
+			If Empty(cAux := CheckAdm(aPgtos[nI][3]))
+			   MsgInfo('Atenção, nenhuma Administradora Financeira cadastrada para a forma de pagamento "' + aPgtos[nI][3] + '", entre em contato com o Administrador do Sistema!')
+			EndIf
+
+			aPgtos[nI][4] := {aPgtos[nI][1], aPgtos[nI][2], StrZero(nI, 2), Nil, cAux + " - " + Capital(Posicione("SAE", 1, xFilial("SAE") + cAux, "AE_DESC")), .T.}
+						
+		EndIf
+		
+	Next
+				
+	// A Forma R$ sempre sera a primeira 
+	aSort(aPgtos,,,{|a| a[3] = cSimbMoeda})
+	
+	If !(Type('oPgtos') == 'U')
+	
+		oPgtos:SetArray( aPgtos )
+		
+		oPgtos:Refresh()
+		
+		// Ajusta o Valor das Parcelas e o Valor do Troco 
+		Lj7AjustaTroco()
+		
+		// Ajusta os valores de PIS/COFINS caso Haja 
+		Lj7PisCof()
+			
+		aPgtosSint := Lj7MontPgt(aPgtos)
+		oPgtosSint:SetArray( aPgtosSint )
+		oPgtosSint:Refresh()			
+	
+	EndIf
+	
+Return
+
+
+/*/{Protheus.doc} CheckAdm
+@description Retorna Codigo de Administradora conforme Forma de Pagamento.
+
+@author Helitom Silva
+@since  07/03/2014
+
+@param p_cFormPg, Caracter, Codigo da forma de pagamento.
+
+/*/
+Static Function CheckAdm(p_cFormPg)
+	
+	Local cRet	:= ''
+	
+	Default p_cFormPg := ''
+	
+	If Select('TSAE') > 0
+		TSAE->(DbCloseArea())
+	EndIf
+	
+	BeginSQL Alias 'TSAE'
+		
+		SELECT SAE.AE_COD
+		FROM %TABLE:SAE% SAE
+		WHERE SAE.AE_TIPO   = %EXP:p_cFormPg%
+		  AND SAE.AE_FILIAL = %XFILIAL:SAE%		  
+		  AND SAE.%NOTDEL%
+		  
+	EndSQL
+	
+	TSAE->(DbGoTop())
+	
+	If !TSAE->(Eof())
+		cRet := TSAE->AE_COD
+	EndIf
+	
+	If Select('TSAE') > 0
+		TSAE->(DbCloseArea())
+	EndIf
+		
+Return cRet

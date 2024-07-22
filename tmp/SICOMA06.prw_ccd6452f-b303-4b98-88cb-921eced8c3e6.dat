@@ -1,0 +1,210 @@
+#Include "TOTVS.Ch"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SICOMA06  ºAutor  ³Microsiga           º Data ³  10/05/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Rotina de transferencia do mutuo da NFE para Financeiro    º±±
+±±º          ³ GAP091                                                     º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function SICOMA06()
+
+Local cArqTRB    := GetNextAlias()
+Local _cArea     := GetArea()
+Local _lMutuo    := .F.
+Local _cItem     := ""
+Local _nTotal    := 0
+Local cArqTR2    := GetNextAlias()
+Local cItRatCtb  := ""
+Local nPerTotRat := 0
+Local nVlrTotRat := 0
+Local nVlrTotCtb := 0
+Local aItRateio  := {}
+Local nW         := 0
+Local aVlrRatCtb := {}
+Local nVlrRatCtb := 0
+Local cCodEmp    := ""
+Local nX		 := 0
+
+BeginSQL Alias cArqTRB
+	select ZW_CODEMP, sum((D1_TOTAL + D1_VALIPI - D1_VALDESC) * (ZW_PERC / 100)) as VALOR
+	 from %Table:SD1% SD1
+	inner join %Table:SC7% SC7 on SC7.%NotDel% and C7_FILIAL = %xFilial:SC7% and C7_NUM   = D1_PEDIDO and C7_ITEM =  D1_ITEMPC
+	inner join %Table:SC1% SC1 on SC1.%NotDel% and C1_FILIAL = %xFilial:SC1% and C1_NUM   = C7_NUMSC  and C1_ITEM =  C7_ITEMSC
+	inner join %Table:SZW% SZW on SZW.%NotDel% and ZW_FILIAL = %xFilial:SZW% and ZW_NUMSC = C1_NUM    and ZW_ITEMSC = C1_ITEM
+	where SD1.%NotDel% and D1_FILIAL = %xFilial:SD1%
+	  and D1_DOC = %Exp:SF1->F1_DOC% and D1_SERIE = %Exp:SF1->F1_SERIE% and D1_FORNECE = %Exp:SF1->F1_FORNECE% and D1_LOJA = %Exp:SF1->F1_LOJA%
+	group by ZW_CODEMP
+	order by ZW_CODEMP
+EndSQL
+
+dbSelectArea(cArqTRB)                                                                                                	
+If Select(cArqTRB) > 0
+	_lMutuo := .T.
+	_cItem := StrZero(1,TamSX3("ZX_ITEM")[1])
+	_cNumRat := U_SIFIN11Num()
+	
+	AcessaPerg("FIN050",.F.) // Posiciona grupo de perguntas do contas a pagar
+	
+	_nTipoRat := mv_par06 // 1 = Bruto; 2 = Liquido
+	
+	Pergunte("MTA103",.F.) // Restaura grupo de perguntas do compras
+	
+	_nInss    := SE2->E2_INSS
+	
+	SED->(dbSetOrder(1))
+	IF SED->(dbSeek(XFilial("SED")+SE2->E2_NATUREZ)) .and. SED->(FieldPos("ED_DEDINSS")) > 0
+		IF SED->ED_DEDINSS == "2"  //Nao desconta o INSS do principal
+			_nInss := 0
+		Endif
+	ENDIF
+	
+	SA2->(dbSetOrder(1))
+	SA2->(dbSeek(XFilial("SA2")+SE2->(E2_FORNECE+E2_LOJA)))
+	
+	// Controla o Pis Cofins e Csll na baixa
+	lPCCBaixa := SuperGetMv("MV_BX10925",.T.,"2") == "1"  .and. (!Empty( SE5->( FieldPos( "E5_VRETPIS" ) ) ) .And. !Empty( SE5->( FieldPos( "E5_VRETCOF" ) ) ) .And. ;
+	             !Empty( SE5->( FieldPos( "E5_VRETCSL" ) ) ) .And. !Empty( SE5->( FieldPos( "E5_PRETPIS" ) ) ) .And. ;
+	             !Empty( SE5->( FieldPos( "E5_PRETCOF" ) ) ) .And. !Empty( SE5->( FieldPos( "E5_PRETCSL" ) ) ) .And. ;
+	             !Empty( SE2->( FieldPos( "E2_SEQBX"   ) ) ) .And. !Empty( SFQ->( FieldPos( "FQ_SEQDES"  ) ) ) )
+	
+	// Controla IRPF na Baixa
+	lIRPFBaixa := IIf( ! Empty( SA2->( FieldPos( "A2_CALCIRF" ) ) ), SA2->A2_CALCIRF == "2", .F.) .And. ;
+	              !Empty( SE2->( FieldPos( "E2_VRETIRF" ) ) ) .And. !Empty( SE2->( FieldPos( "E2_PRETIRF" ) ) ) .And. ;
+	              !Empty( SE5->( FieldPos( "E5_VRETIRF" ) ) ) .And. !Empty( SE5->( FieldPos( "E5_PRETIRF" ) ) )
+	
+	// Controla ISS na Baixa
+	lCalcIssBx := !Empty( SE5->( FieldPos( "E5_VRETISS" ) ) ) .and. !Empty( SE2->( FieldPos( "E2_SEQBX"   ) ) ) .And. ;
+               	  !Empty( SE2->( FieldPos( "E2_TRETISS" ) ) ) .and. GetNewPar("MV_MRETISS","1") == "2"  //Retencao do ISS pela emissao (1) ou baixa (2)
+	
+	_nTotal   := Iif(_nTipoRat == 1, SE2->E2_VALOR + If(lIRPFBaixa,0,SE2->E2_IRRF) ;
+	                                               + If(!lCalcIssBx,SE2->E2_ISS,0) + _nInss+SE2->(E2_RETENC+E2_SEST) ;
+	                                               + IIF(lPccBaixa,0,SE2->(E2_PIS+E2_COFINS+E2_CSLL)), ;
+	                                 SE2->E2_VALOR)	
+EndIf
+
+While (cArqTRB)->(!Eof()) .and. _lMutuo
+	RecLock("SZX",.T.)
+		SZX->ZX_FILIAL  := xFilial("SZX")
+		SZX->ZX_RATEIO	:= _cNumRat
+		SZX->ZX_ITEM	:= _cItem
+		SZX->ZX_CODEMP	:= (cArqTRB)->ZW_CODEMP
+		SZX->ZX_PERC	:= ((cArqTRB)->VALOR / SF1->F1_VALBRUT) * 100
+		SZX->ZX_VALOR	:= _nTotal * ((cArqTRB)->VALOR / SF1->F1_VALBRUT)
+		
+		// Atualiza dados de fornecedore e loja
+		SZE->(dbSetOrder(2))
+		// Atualiza cliente - variavel
+		IF SZE->(dbSeek(XFilial("SZE")+(cArqTRB)->ZW_CODEMP))
+			SZX->ZX_CODCLI	:= SZE->ZE_CODCLI
+			SZX->ZX_LOJCLI	:= SZE->ZE_LOJCLI
+		ENDIF
+		// Atualiza fornecedor - fixo
+		IF SZE->(dbSeek(XFilial("SZE")+cFilAnt))
+			SZX->ZX_CODFOR	:= SZE->ZE_CODFOR
+			SZX->ZX_LOJFOR	:= SZE->ZE_LOJFOR
+		ENDIF		
+	SZX->(MsUnlock())
+	
+	aAdd( aItRateio, {(cArqTRB)->ZW_CODEMP, _cItem} )
+	_cItem     := Soma1(_cItem)
+	nPerTotRat += ((cArqTRB)->VALOR / SF1->F1_VALBRUT) * 100
+	nVlrTotRat += _nTotal * ((cArqTRB)->VALOR / SF1->F1_VALBRUT)
+
+	(cArqTRB)->(dbSkip())
+Enddo
+
+/* Grava o Rateio do Mutuo CTB */
+BeginSQL Alias cArqTR2
+	select 
+	   ZW_CODEMP, D1_CC, D1_ITEMCTA, D1_CONTA, D1_CLVL ,sum((D1_TOTAL + D1_VALIPI - D1_VALDESC) * (ZW_PERC / 100)) as VALOR_CTB
+	 from %Table:SD1% SD1
+	inner join %Table:SC7% SC7 on SC7.%NotDel% and C7_FILIAL = %xFilial:SC7% and C7_NUM   = D1_PEDIDO and C7_ITEM =  D1_ITEMPC
+	inner join %Table:SC1% SC1 on SC1.%NotDel% and C1_FILIAL = %xFilial:SC1% and C1_NUM   = C7_NUMSC  and C1_ITEM =  C7_ITEMSC
+	inner join %Table:SZW% SZW on SZW.%NotDel% and ZW_FILIAL = %xFilial:SZW% and ZW_NUMSC = C1_NUM    and ZW_ITEMSC = C1_ITEM
+	where SD1.%NotDel% and D1_FILIAL = %xFilial:SD1%
+	  and D1_DOC = %Exp:SF1->F1_DOC% and D1_SERIE = %Exp:SF1->F1_SERIE% and D1_FORNECE = %Exp:SF1->F1_FORNECE% and D1_LOJA = %Exp:SF1->F1_LOJA%
+	group by ZW_CODEMP, D1_CC, D1_ITEMCTA, D1_CONTA, D1_CLVL
+	order by ZW_CODEMP, D1_CC, D1_ITEMCTA, D1_CONTA, D1_CLVL
+EndSQL
+
+dbSelectArea(cArqTR2)
+If Select(cArqTR2) > 0
+	While (cArqTR2)->(!Eof())
+		nVlrTotCtb += (cArqTR2)->VALOR_CTB
+		If Empty(cCodEmp)
+			cCodEmp 	:= (cArqTR2)->ZW_CODEMP
+			nVlrRatCtb	:= (cArqTR2)->VALOR_CTB
+		ElseIf cCodEmp == (cArqTR2)->ZW_CODEMP
+			nVlrRatCtb 	+= (cArqTR2)->VALOR_CTB
+		ElseIf cCodEmp # (cArqTR2)->ZW_CODEMP
+			aAdd(aVlrRatCtb, {cCodEmp,nVlrRatCtb})
+			cCodEmp 	:= (cArqTR2)->ZW_CODEMP
+			nVlrRatCtb	:= (cArqTR2)->VALOR_CTB	
+		EndIf
+		(cArqTR2)->(dbSkip())
+		If (cArqTR2)->(Eof())
+			aAdd(aVlrRatCtb, {cCodEmp,nVlrRatCtb})
+		EndIf
+	Enddo
+	(cArqTR2)->(DbGoTop())
+	cItRatCtb := StrZero(0,TamSX3("ZY_ITEM")[1])
+	While (cArqTR2)->(!Eof()) .and. _lMutuo
+		cItRatCtb     := Soma1(cItRatCtb)
+		RecLock("SZY",.T.)
+			SZY->ZY_FILIAL  := xFilial("SZY")
+			SZY->ZY_RATEIO	:= _cNumRat
+			For nW := 1 to Len(aItRateio)
+				If aItRateio[nW][1]==(cArqTR2)->ZW_CODEMP
+					SZY->ZY_ITEMRAT := aItRateio[nW][2]
+					Exit
+				EndIf
+			Next nW
+			SZY->ZY_ITEM	:= cItRatCtb
+			//SZY->ZY_PERCTB	:= ((cArqTR2)->VALOR_CTB / nVlrTotCtb) * 100                                                                   && por Kley em 19nov2012
+			For nX := 1 to Len(aVlrRatCtb)
+				If aVlrRatCtb[nX][1]==(cArqTR2)->ZW_CODEMP
+					SZY->ZY_PERCEN	:= ((cArqTR2)->VALOR_CTB / aVlrRatCtb[nX][2]) * 100                                                    && por Kley em 19nov2012
+					Exit
+				EndIf
+			Next nX
+			SZY->ZY_VALOR	:= nVlrTotRat * ((cArqTR2)->VALOR_CTB / nVlrTotCtb)
+			SZY->ZY_HIST	:= "Rateio do Mutuo - FIL: " + (cArqTR2)->ZW_CODEMP + " - DOC/SER/FOR/LOJA: " + ;
+			                   SF1->F1_DOC + "/" + SF1->F1_SERIE + "/" + SF1->F1_FORNECE + "/" + SF1->F1_LOJA
+			SZY->ZY_DEBITO	:= (cArqTR2)->D1_CONTA
+			SZY->ZY_CCD		:= (cArqTR2)->D1_CC
+			SZY->ZY_ITEMD	:= (cArqTR2)->D1_ITEMCTA
+			SZY->ZY_CLVLDB	:= (cArqTR2)->D1_CLVL
+		SZY->(MsUnlock())		
+		(cArqTR2)->(dbSkip())
+	Enddo
+EndIf
+
+(cArqTR2)->(dbCloseArea())
+FErase(cArqTR2+GetDBExtension())
+FErase(cArqTR2+OrdBagExt())
+/* Fim da gravacao do Rateio do Mutuo CTB */
+
+// Atualiza tabela do financeiro
+IF _lMutuo
+	RecLock("SE2",.f.)
+	SE2->E2_XMUTUO  := _cNumRat
+	SE2->E2_XSTATUS := "1"
+	SE2->E2_XORIGEM := "1"
+	SE2->(msUnlock())
+ENDIF
+
+(cArqTRB)->(dbCloseArea())
+FErase(cArqTRB+GetDBExtension())
+FErase(cArqTRB+OrdBagExt())
+RestArea(_cArea)
+
+Return()

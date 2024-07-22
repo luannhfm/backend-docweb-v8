@@ -1,0 +1,210 @@
+#Include "Protheus.Ch"
+#include "rwmake.ch" 
+#include "Topconn.ch"
+#include "Ap5Mail.ch"
+
+/*/{Protheus.doc} MT110COR
+Manipula o Array com as regras e cores da Mbrowse
+@author Microsiga
+@since 23/04/12
+@param PARAMIXB, Array contendo as regras para a apresentação das cores do status do pedido de compras na mbrowse
+@return aNewCores, Array de retorno contendo as regras para a apresentação das cores do status do pedido de compras na mbrowse já manipuladas pelo usuario.
+@type user function
+@history 21/02/2018, Franklin B. Oliveira, Ajustado legenda para desconsiderar solicitações eliminadas por residuo.
+@history 01/10/2019, Franklin B. Oliveira, Removido atualização do campo C1_XXTPLEG.
+/*/
+User Function MT110COR()
+
+	Local  _aArea        := GetArea()
+	Local  _aDone        := {}
+	Local  _nY           := 0
+	Local  _cFilter      := ""
+	Local  _cTpFix       := "('"+Alltrim(GetMv("MV_XXLGSC"))+"')"
+
+	Public _aMT110Cor    := aClone(ParamIXB[1])
+
+	aAdd(_aMT110Cor,{'C1_APROV == "O"',"PMSTASK3"		})	//SC Bloqueada por Orçamento
+	aAdd(_aMT110Cor,{'C1_APROV == "C"',"PMSEDT3"  		})	//SC Aguardando Contingencia
+	aAdd(_aMT110Cor,{'C1_APROV == "F"',"BR_CANCEL"		})	//SC Peprovada por Orçamento
+
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³Solicitação Pendente de Envio    	   ³
+	//³Adic. por Eduardo(DOIT) em 03/03/14     ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	//aAdd(_aMT110Cor,{'SC1->C1_QUJE == 0 .And. SC1->C1_COTACAO == Space(Len(SC1->C1_COTACAO)) .And. SC1->C1_APROV == "B" .And. SC1->C1_XWFSTAT <> "2"' ,"BPMSTSK1A"})  //Solicitação Pendente de Envio
+	aAdd(_aMT110Cor,{'C1_APROV == "W" ' ,"BPMSTSK1A"})  //Solicitação Pendente de Envio
+	//Anexo TR C1_APROV == 'L'
+	aAdd(_aMT110Cor, {'C1_XSTTR == "N" .AND. EMPTY(C1_RESIDUO)', "BR_AZUL_CLARO"})//TR em Analise
+	aAdd(_aMT110Cor, {'C1_XSTTR == "R" .AND. EMPTY(C1_RESIDUO)', "PMSTASK1"	    })//TR em Correção 
+
+	For _nY := 1 to Len(_aMT110Cor)
+		
+		_cFilter := _aMT110Cor[_nY][1]
+		
+		//Se não existir C1_XSTTR na regra é adicionado
+		If !( "C1_XSTTR" $ _aMT110Cor[_nY][1]  ) .And. !("!Empty(C1_RESIDUO)" $ _aMT110Cor[_nY][1])
+		
+			_cAux := _aMT110Cor[_nY][1]
+			_aMT110Cor[_nY][1] := _cAux + "  .And. (C1_XSTTR != 'N' .And. C1_XSTTR != 'R') " 	
+			_cFilter := _aMT110Cor[_nY][1]
+		EndIf
+		
+		//_cFilter += " .And. !(C1_XXTPLEG $ '" + _cTpFix + "')" 
+		//_cFilter += " .And. C1_XXTPLEG <> '" + StrZero(_nY,2) + "'"
+
+		ZD3->(DBSETORDER(1))
+		IF ! ZD3->(DBSEEK(XFILIAL('ZD3')+'MATA110   '+StrZero(_nY,2)))
+			ZD3->(RECLOCK('ZD3',.T.))
+			ZD3->ZD3_ROTINA:='MATA110'
+			ZD3->ZD3_COR   :=StrZero(_nY,2)
+			ZD3->ZD3_ADVPL :=_cFilter
+			ZD3->(MSUNLOCK('ZD3'))
+		ELSEIF !(ALLTRIM(_aMT110Cor[_nY][1]) == ALLTRIM(ZD3->ZD3_ADVPL))
+			ZD3->(RECLOCK('ZD3',.F.))
+			ZD3->ZD3_ADVPL :=_cFilter
+			ZD3->(MSUNLOCK('ZD3'))
+		ENDIF     
+
+	/*/
+	_cExec := " UPDATE "+RetSqlName('SC1')+" SET C1_XXTPLEG='"+StrZero(_nY,2)+"' "
+	_cExec += " WHERE D_E_L_E_T_ = ' ' "
+	_cExec += "   AND C1_XXTPLEG NOT IN "+_cTpFix 
+	_cExec += "   AND C1_XXTPLEG <> '"+StrZero(_nY,2)+"' "
+	//_cExec += "   AND C1_XSTTR <> ' ' "
+
+	IF ! EMPTY(ZD3->ZD3_SQL)
+		_cExec += " AND "+ZD3->ZD3_SQL
+		If TcSqlExec( _cExec ) # 0
+			_cMens:=""
+			_cMens+='Erro Comando sql Tabela ZD3 Cor: '+ZD3->ZD3_ADVPL+CHR(10)+CHR(13)
+			_cMens+=CHR(10)+CHR(13)
+			_cMens+=_cExec
+			MsgBox(_cMens,'Atencao','Info')
+			Return()
+		EndIf
+	ELSE   
+		If MsgYesNo('Legenda SQL inconsistente para cor: '+ZD3->ZD3_COR+' Legendas Filtro Nao consistente preencha Amarraçao tabela ZD3 Continua!! ')
+		Else
+			Return()
+		endif   
+	ENDIF    
+
+		
+		X:=1
+		dbSelectArea("SC1")
+		SC1->(dbSetFilter({||&(_cFilter)}, _cFilter))
+		SC1->(dbGotop())
+		While SC1->(!Eof())
+			
+			If aScan(_aDone, {|x| x[1] == SC1->(Recno())}) == 0
+				aAdd(_aDone, {SC1->(Recno())})
+				RecLock("SC1",.F.)
+				Replace C1_XXTPLEG With StrZero(_nY,2)
+				SC1->(MsUnlock())
+			Endif
+			SC1->(dbSkip())
+			
+		End
+		SC1->(dbClearFilter())
+		/*/
+	Next _nY
+
+	SF110FILG()
+	RestArea(_aArea)
+
+Return _aMT110Cor
+
+Static Function SF110FILG()
+
+	Local _cFor			:= ''
+	Local _aSel			:= {}
+	
+	Local _oDlg			:= GetWndDefault()
+	Local _nI			:= 0
+	Local nSeq			:= 0
+	Local nPos			:= 0
+	Local cAliasZD		:= GetNextAlias()
+	Local _oObjBrow
+	Local _oFilter
+	
+	Public _aVals		:= {}
+	
+	BeginSql Alias cAliasZD
+		SELECT
+			X5_CHAVE, X5_DESCRI, ZD3_ADVPL
+		FROM %Table:SX5% SX5
+		INNER JOIN %Table:ZD3% ZD3 
+			ON TRIM(ZD3_COR) = TRIM(X5_CHAVE)
+			AND ZD3_ROTINA = 'MATA110'
+			AND ZD3.%NotDel%
+		WHERE
+			X5_TABELA = 'ZE'
+			AND X5_FILIAL = %Exp:xFilial("SX5")%
+			AND SX5.%NotDel%
+	EndSql
+
+	While (cAliasZD)->(!Eof())
+		nSeq++
+		nPos := aScan(_aMT110Cor,{|x| UPPER(AllTrim(x[1])) == UPPER(AllTrim((cAliasZD)->(ZD3_ADVPL)))})
+		If nPos > 0
+			aAdd( _aVals , {nSeq, AllTrim(X5_DESCRI), _aMT110Cor[nPos][2],UPPER(AllTrim((cAliasZD)->(ZD3_ADVPL))) } )
+		EndIf
+		(cAliasZD)->(DbSkip())
+	EndDo
+	/*
+	_oObjBrow 	:= GetObjBrow()
+	_oObjBrow:oFWFilter:CleanFilter()
+	
+	For nX := 1 to Len(_aVals) 
+		_oObjBrow:AddFilter('Legenda: '+AllTrim(_aVals[nX][2]), _aVals[nX][4])
+	Next nX
+
+	If !Empty(_nI) .And. _aVals[_nI][1] <> "X"
+		_cFor := _aVals[_nI][4]
+		_oObjBrow:AddFilter('Legenda: '+AllTrim(_aVals[_nI][2]),_cFor)
+		_oObjBrow:oFWFilter:aCheckFil[1] := .T.
+		//_oObjBrow:ExecuteFilter(.T.)
+	Else
+		_oObjBrow:CleanFilter()
+	EndIf
+*/
+Return
+
+/*/{Protheus.doc} SF110AFL
+	(long_description)
+	@type  Static Function
+	@author user
+	@since date
+	@version version
+	@param param, param_type, param_descr
+	@return return, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+	/*/
+User Function SF110AFL
+
+	Local nX
+	Local nY
+	Local nZ := ""
+
+	_oObjBrow 	:= GetObjBrow()
+	//_oObjBrow:oFWFilter:CleanFilter()
+	
+	For nX := 1 to Len(_aVals) 
+		nZ := ""
+		If !(AllTrim(_aVals[nX][2]) == "Elim. por Residuo")
+			nZ := " .AND. Empty(C1_RESIDUO) "
+		EndIf
+		If (AllTrim(_aVals[nX][2]) == "Solicitacao Parcialmente Atendida")
+			nZ += " .AND. C1_QUJE < C1_QUANT "
+		ElseIf (AllTrim(_aVals[nX][2]) == "Solicitação Pendente de Envio")
+			nZ += " .AND. C1_QUJE != C1_QUANT "
+		EndIf
+		_oObjBrow:AddFilter('Legenda: '+cValToChar(_aVals[nX][1])+" - "+AllTrim(_aVals[nX][2]), _aVals[nX][4] + nZ)
+	Next nX
+
+	_oObjBrow:Refresh()
+	MsgInfo("Filtros Atualizados!")
+
+Return

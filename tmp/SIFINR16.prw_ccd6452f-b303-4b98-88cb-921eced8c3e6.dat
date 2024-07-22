@@ -1,0 +1,569 @@
+#INCLUDE 'PROTHEUS.CH'
+#include 'topconn.ch'
+
+/*/{Protheus.doc} SIFINR16
+@description  Relatorio de acompanhamento de titulos Protheus SGE
+
+@author Joao Tavares S Junior
+@since 21/08/2020
+@version 12.1.17
+
+/*/
+User Function SIFINR16()
+
+	Local oReport 	:= Nil
+	Local cPerg   	:= PadR('SFINR16',10,Space(1))
+
+	Private aRet 	:= {}
+	Private cSitMat	:= ""
+
+	//Criando Pergunta
+	If !AjustaSX1(cPerg)
+		RETURN
+	EndIf
+
+	//Inicializando Pergunta
+//	If Pergunte(cPerg, .T.)
+
+	//Cria as definições do relatório
+	oReport := ReportDef(cPerg)
+
+	If Valtype( oReport ) == 'O'
+
+		// If !Empty( oReport:uParam )
+		// 	Pergunte( oReport:uParam, .F. )
+		// EndIf
+
+		oReport:PrintDialog()
+	Endif
+
+
+
+Return
+
+
+
+/*/{Protheus.doc} ReportDef
+@description Definicoes do relatorio de inconsistencias.
+
+@author Joao Tavares S Junior
+@since 30/07/2020
+@version 12.1.27
+/*/
+
+Static Function ReportDef(cPerg)
+
+	Local oReport	:= Nil
+	Local oSection	:= Nil
+	Local cTitulo   := "Demonstrativo Divergencia"
+	Local cDescTit  := "Demostra a divergencia entre os titulos no Protheus contra o SGE"
+
+	//Criação do componente de impressão
+	oReport:=TReport():New("SIFINR16",cTitulo,cPerg,{|oReport| ReportPrint(oReport)},cDescTit)
+	oReport:SetTotalInLine(.F.)
+	oReport:SetTitle(cTitulo)
+	oReport:SetLandscape(.F.)
+	oReport:SetLineHeight(40)
+	oReport:SetColSpace(1)
+	oReport:SetLeftMargin(0)
+	oReport:cFontBody := 'Courier New'
+	oReport:nFontBody := 6
+	oReport:lBold := .F.
+	oReport:lUnderLine := .F.
+	oReport:lHeaderVisible := .T.
+	oReport:lFooterVisible := .T.
+	oReport:lParamPage := .F.
+
+	//Criando a seção de dados
+	oSection:= TRSection():New(oReport,"oSection",{"TRBREL"})
+	oSection:AddTable("oSection")
+	oSection:SetHeaderPage(.T.)
+
+	//Criando Cell
+	TRCell():New(oSection,"UNIDADE"		,, "Unidade"    ,                   ,20			, .F.)
+	TRCell():New(oSection,"MODALID"     ,, "Modalidade" ,                   ,24	, .F.)
+	TRCell():New(oSection,"TIPOFIN"     ,, "Tipo Financiamento" ,                   ,34	, .F.)
+
+	TRCell():New(oSection,"CURSO"	    ,, "Curso"      ,                   ,40	    , .F.)
+	TRCell():New(oSection,"CODTUR"	    ,, "Codigo Turma"  ,                   ,12, .F.)
+	TRCell():New(oSection,"PERLET"	    ,, "Periodo Letivo"  ,                   ,8, .F.)
+	TRCell():New(oSection,"RA"	        ,, "RA"         ,                   ,9							, .F.)
+	TRCell():New(oSection,"ALUNO"	    ,, "Aluno"      ,                   ,40	, .F.)
+	//TRCell():New(oSection,"STATMAT"      ,, "Situacao Matricula",                   ,TamSX3("E1_VENCTO")[1]		, .F.)
+	TRCell():New(oSection,"STATMAT"     ,, "Situacao Matricula" ,                   ,16	, .F.)
+//	TRCell():New(oSection,"SITTIT"      ,, "Situacao Titulo"    ,                   ,10	    , .F.)
+
+	TRCell():New(oSection,"CLICOD"	    ,, "Codigo"    ,                   ,TamSX3("A1_COD")[1]+TamSX3("A1_LOJA")[1] +2     , .F.)
+	TRCell():New(oSection,"CLINOME"	    ,, "Nome"   ,                   ,20					        , .F.)
+	TRCell():New(oSection,"TITNUM"	    ,, "Titulo Numero" ,                   ,TamSX3("E1_NUM")[1]+TamSX3("E1_PARCELA")[1]      , .F.)
+	TRCell():New(oSection,"TOTTIT"	    ,, "Valor"      ,"@R 999,999,999.99",TamSX3("E1_VALOR")[1]		,,,"RIGHT",,"RIGHT"	)
+	TRCell():New(oSection,"VENCIMEN"    ,, "Vencimento" ,                   ,TamSX3("e1_vencrea")[1]		,.F.)
+	TRCell():New(oSection,"CancProt"	,, "Tit Cancelado Protheus"  ,                   ,3	,.F.)
+	TRCell():New(oSection,"SPC"	        ,, "SPC"        ,                   ,3	,.F.)
+	TRCell():New(oSection,"DtCanc"      ,, "Data Cancelamento Contrato",                   ,TamSX3("E1_VENCTO")[1]		, .F.)
+
+//	TRCell():New(oSection,"SPC"	        ,, "SPC"        ,                   ,3	,.F.)
+//	TRCell():New(oSection,"DtCanc"      ,, "Dt Cancel",                   ,TamSX3("E1_VENCTO")[1]		, .F.)
+//   TRCell():New(oSection,"STATMAT"     ,, "Status Mat" ,                   ,16	, .F.)
+//	TRCell():New(oSection,"SITTIT"      ,, "Situac Tit"    ,                   ,10	    , .F.)
+//   TRCell():New(oSection,"STATTIT"     ,, "Status Tit"    ,                   ,10	    , .F.)
+
+Return oReport
+
+
+/*/{Protheus.doc} ReportPrint
+@description Funcao para impressao do relatorio de inconsistencias.
+
+@author Joao Tavares S Junior
+@since 30/07/2020
+@version 12.1.27
+/*/
+
+Static Function ReportPrint(oReport)
+
+	Local cQuery      := ""
+	Local oSection    := oReport:Section(1)
+	Local nTotRec    := 0
+	//Montando consulta de dados
+
+	cQuery +=" SELECT DISTINCT" + CRLF
+	cQuery +=" scontrato.CODCOLIGADA, " + CRLF
+	cQuery +=" (CASE" + CRLF
+	cQuery +="    WHEN ZMDCOMPL.ID IS NOT NULL" + CRLF
+	cQuery +="        THEN 'JA INICIADA'" + CRLF
+	cQuery +="    ELSE  'NÃO INICIADA'" + CRLF
+	cQuery +=" END) AS TURMA_INICIADA," + CRLF
+	cQuery +=" (CASE" + CRLF
+	cQuery +="    WHEN SCONTRATO.DTCANCELAMENTO IS NOT NULL" + CRLF
+	cQuery +="        THEN 'CANCELADO'" + CRLF
+	cQuery +="    ELSE  ' '" + CRLF
+	cQuery +=" END) AS sitContrato," + CRLF
+	cQuery +=" SCONTRATO.DTCANCELAMENTO," + CRLF
+	cQuery +=" CASE SE1.E1_FILIAL" + CRLF
+//   cQuery +="     WHEN '02MT0001' THEN 'SESI DEPARTAMENTO REGIONAL'" + CRLF
+//   cQuery +="     WHEN '02MT0005' THEN 'SESI VARZEA GRANDE'" + CRLF
+//   cQuery +="     WHEN '02MT0006' THEN 'SESI SINOP'" + CRLF
+//   cQuery +="     WHEN '02MT0008' THEN 'SESI CACERES'" + CRLF
+//   cQuery +="     WHEN '02MT0009' THEN 'SESI SAUDE RONDONOPOLIS'" + CRLF
+//   cQuery +="     WHEN '02MT0010' THEN 'SESI ESCOLA CUIABA'" + CRLF
+//   cQuery +="     WHEN '02MT0011' THEN 'SEGURANCA SAUDE CUIABA'" + CRLF
+//   cQuery +="     WHEN '02MT0012' THEN 'SESI PARK'" + CRLF
+//   cQuery +="     WHEN '02MT0013' THEN 'SESI CLUBE RONDONOPOLIS'" + CRLF
+//   cQuery +="     WHEN '02MT0014' THEN 'SESI JUINA'" + CRLF
+//   cQuery +="     WHEN '02MT0015' THEN 'SESI RONDONOPOLIS'" + CRLF
+	cQuery +="     WHEN '03MT0001' THEN 'SENAI DEPARTAMENTO REGIONAL'" + CRLF
+	cQuery +="     WHEN '03MT0002' THEN 'SENAI CUIABA'" + CRLF
+	cQuery +="     WHEN '03MT0003' THEN 'SENAI RONDONOPOLIS'" + CRLF
+	cQuery +="     WHEN '03MT0004' THEN 'SENAI VARZEA GRANDE'" + CRLF
+	cQuery +="     WHEN '03MT0005' THEN 'SENAI BARRA DO GARCAS'" + CRLF
+	cQuery +="     WHEN '03MT0007' THEN 'SENAI SINOP'" + CRLF
+	cQuery +="     WHEN '03MT0008' THEN 'SENAI CACERES'" + CRLF
+	cQuery +="     WHEN '03MT0010' THEN 'SENAI JUINA'" + CRLF
+	cQuery +="     WHEN '03MT0011' THEN 'SENAI COLIDER'" + CRLF
+	cQuery +="     WHEN '03MT0012' THEN 'ESCOLA SENAI DA CONSTRUCAO'" + CRLF
+	cQuery +="     WHEN '03MT0015' THEN 'SENAI BARRA DO BUGRES'" + CRLF
+	cQuery +="     WHEN '03MT0016' THEN 'SENAI NOVA MUTUM'" + CRLF
+	cQuery +="     WHEN '03MT0017' THEN 'SENAI FATEC MT'" + CRLF
+	cQuery +="     WHEN '03MT0018' THEN 'SENAI INST DE TECNOLOGIA DE MT'" + CRLF
+	cQuery +="     WHEN '03MT0019' THEN 'SENAI SORRISO'" + CRLF
+	cQuery +="     WHEN '03MT0020' THEN 'SENAI ALTA FLORESTA'" + CRLF
+	cQuery +="     WHEN '03MT0021' THEN 'SENAI LUCAS DO RIO VERDE'" + CRLF
+	cQuery +="     ELSE 'Nao Especificada no Script'" + CRLF
+	cQuery +=" END PROT_FILIAL," + CRLF
+
+	cQuery +="    SCONTRATO.CODCONTRATO RM_CODCONTRATO, " + CRLF
+	cQuery +="    SCONTRATO.RA RM_RA, " + CRLF
+	cQuery +="    STURMA.CODTURMA RM_CODTURMA, " + CRLF
+	cQuery +="    STURMA.NOME RM_CURSO, " + CRLF
+	cQuery +="    SALUNO.CODPESSOA RM_CODPESSOA, " + CRLF
+	cQuery +="    PPESSOA.NOME RM_ALUNO, " + CRLF
+	cQuery +="    se1.e1_cliente PROT_CLI, " + CRLF
+	cQuery +="    se1.e1_loja PROT_LOJA, " + CRLF
+	cQuery +="    se1.e1_nomcli PROT_NOM, " + CRLF
+	cQuery +="    se1.e1_num||se1.e1_parcela  PROT_NUM, " + CRLF
+	cQuery +="    se1.e1_status PROT_STATUS, " + CRLF
+	cQuery +="    se1.e1_xspc PROT_SPC, " + CRLF
+	cQuery +="    se1.e1_vencrea PROT_VENC, " + CRLF
+	cQuery +="    SE1.E1_PARCELA PROT_PARCELA,  " + CRLF
+	cQuery +="    SE1.E1_VALOR PROT_VALOR, " + CRLF
+	cQuery +="    SE1.E1_SALDO PROT_SALDO, " + CRLF
+	cQuery +="    GFILIAL.NOMEFANTASIA AS FILIAL, " + CRLF
+	cQuery +="    SCURSO.NOME AS CURSO, " + CRLF
+	cQuery +="    SMODALIDADECURSO.DESCRICAO AS RM_MODALIDADE, " + CRLF
+	cQuery +="    SPLETIVO.CODPERLET AS RM_CODPERLET, " + CRLF
+	cQuery +="    SSTATUS.DESCRICAO AS RM_MATRICULA_STATUS, " + CRLF
+	cQuery +="    GCONSIST.DESCRICAO AS RM_TIPO_FINANCIAMENTO, " + CRLF
+
+	//    --Se o título estiver em aberto calcula o valor atualizado.
+	cQuery +="    (Case When SE1.E1_SALDO > 0 Then " + CRLF
+	cQuery +="        ROUND((SE1.E1_SALDO -  " + CRLF
+	//    --Subtrai o decrescimo e desconto financeiro se houver "
+	cQuery +="        (SE1.E1_DECRESC + Case When TO_DATE(SE1.E1_VENCTO,'YYYYMMDD') < SYSDATE " + CRLF
+	cQuery +="            Then (SE1.E1_VALOR * (SE1.E1_DESCFIN / 100)) Else 0 End)) + " + CRLF
+	//       --Soma a Multa
+	cQuery +="        (Case When TO_DATE(SE1.E1_VENCTO,'YYYYMMDD') < SYSDATE  " + CRLF
+	cQuery +="            Then SE1.E1_SALDO * (2/100) Else 0 End) + " + CRLF
+	//       --Soma os Juros
+	cQuery +="        (Case When TO_DATE(SE1.E1_VENCTO,'YYYYMMDD') < SYSDATE  " + CRLF
+	cQuery +="            Then ROUND(((SE1.E1_SALDO * SE1.E1_PORCJUR)/100) * (ROUND(SYSDATE - TO_DATE(SE1.E1_VENCTO,'YYYYMMDD') )-1),2) Else 0 End),2) " + CRLF
+	cQuery +="    Else 0 End) as PROT_SALDO_ATUALIZADO, " + CRLF
+	cQuery +=" Coalesce(( " + CRLF
+	cQuery +="         Select 'SIM' From "+RetSQLName("SE5")+"  " + CRLF
+	cQuery +="        Where D_E_L_E_T_ = ' ' AND E5_MOTBX = 'CAN' AND E5_HISTOR = 'Distrato/Cancelamento CTR' " + CRLF
+	cQuery +="        AND SE1.E1_FILIAL = E5_FILIAL AND SE1.E1_PREFIXO = E5_PREFIXO AND SE1.E1_NUM = E5_NUMERO   " + CRLF
+	cQuery +="        AND SE1.E1_PARCELA = E5_PARCELA AND SE1.E1_TIPO = E5_TIPO " + CRLF
+	cQuery +="        AND (SUBSTR(E5_USERLGI, 3,1)|| " + CRLF
+	cQuery +="            SUBSTR(E5_USERLGI, 7,1)|| " + CRLF
+	cQuery +="            SUBSTR(E5_USERLGI,11,1)|| " + CRLF
+	cQuery +="            SUBSTR(E5_USERLGI,15,1)|| " + CRLF
+	cQuery +="            SUBSTR(E5_USERLGI, 2,1)|| " + CRLF
+	cQuery +="            SUBSTR(E5_USERLGI, 6,1)|| " + CRLF
+	cQuery +="             SUBSTR(E5_USERLGI,10,1)|| " + CRLF
+	cQuery +="            SUBSTR(E5_USERLGI,14,1)) = '#@      ' " + CRLF
+	cQuery +="    ), 'NÃO') PROT_PARCELA_CANCELADA, " + CRLF
+	cQuery +=" Case When SE1.E1_XIDCNAB = ' '  " + CRLF
+	cQuery +="     Then 'SIM'  " + CRLF
+	cQuery +="    Else 'NÃO'  " + CRLF
+	cQuery +="    End PROT_PROVISORIO_NO_SGE " + CRLF
+
+	cQuery +="  FROM RM.SCONTRATO@RMSGE SCONTRATO " + CRLF
+
+	cQuery +=" INNER JOIN RM.SMATRICPL@RMSGE SMATRICPL ON SMATRICPL.CODCOLIGADA = SCONTRATO.CODCOLIGADA " + CRLF
+	cQuery +="                    AND SMATRICPL.RA = SCONTRATO.RA " + CRLF
+	cQuery +="                    AND SMATRICPL.IDHABILITACAOFILIAL = SCONTRATO.IDHABILITACAOFILIAL " + CRLF
+	cQuery +="                    AND SMATRICPL.IDPERLET = SCONTRATO.IDPERLET " + CRLF
+
+	cQuery +=" INNER JOIN RM.SMATRICPLCOMPL@RMSGE SMATRICPLCOMPL  " + CRLF
+	cQuery +="        ON SMATRICPLCOMPL.CODCOLIGADA = SCONTRATO.CODCOLIGADA " + CRLF
+	cQuery +="        AND SMATRICPLCOMPL.IDHABILITACAOFILIAL = SMATRICPL.IDHABILITACAOFILIAL " + CRLF
+	cQuery +="        AND SMATRICPLCOMPL.IDPERLET = SMATRICPL.IDPERLET " + CRLF
+	cQuery +="        AND SMATRICPLCOMPL.RA = SMATRICPL.RA " + CRLF
+
+	cQuery +=" INNER JOIN RM.SSTATUS@RMSGE SSTATUS " + CRLF
+	cQuery +="        ON SSTATUS.CODCOLIGADA = SCONTRATO.CODCOLIGADA " + CRLF
+	cQuery +="        AND SSTATUS.CODSTATUS = SMATRICPL.CODSTATUS " + CRLF
+	cQuery +="        AND SSTATUS.CODSTATUS IN " + cSitMat + CRLF //Filtra por Situação da Matricula - Daniel Castro - 22/09/21
+
+	cQuery +=" INNER JOIN RM.STURMA@RMSGE STURMA ON STURMA.CODCOLIGADA = SCONTRATO.CODCOLIGADA " + CRLF
+	cQuery +="        AND STURMA.CODTURMA = SMATRICPL.CODTURMA " + CRLF
+	cQuery +="         AND STURMA.IDPERLET = SMATRICPL.IDPERLET " + CRLF
+	cQuery +="        AND STURMA.CODFILIAL = SMATRICPL.CODFILIAL " + CRLF
+
+	cQuery +=" INNER JOIN RM.SALUNO@RMSGE SALUNO " + CRLF
+	cQuery +="       ON SALUNO.CODCOLIGADA = SCONTRATO.CODCOLIGADA " + CRLF
+	cQuery +="        AND SALUNO.RA = SMATRICPL.RA " + CRLF
+
+
+	cQuery +=" INNER JOIN RM.PPESSOA@RMSGE PPESSOA  " + CRLF
+	cQuery +="      ON PPESSOA.CODIGO = SALUNO.CODPESSOA " + CRLF
+
+	cQuery +="   INNER JOIN RM.SPLETIVO@RMSGE SPLETIVO   " + CRLF
+	cQuery +="        ON SPLETIVO.CODCOLIGADA = SCONTRATO.CODCOLIGADA " + CRLF
+	cQuery +="         AND SPLETIVO.IDPERLET = SMATRICPL.IDPERLET " + CRLF
+
+	cQuery +=" INNER JOIN RM.SHABILITACAOFILIAL@RMSGE SHABILITACAOFILIAL  " + CRLF
+	cQuery +="        ON SHABILITACAOFILIAL.CODCOLIGADA = SCONTRATO.CODCOLIGADA " + CRLF
+	cQuery +="         AND SHABILITACAOFILIAL.IDHABILITACAOFILIAL = SMATRICPL.IDHABILITACAOFILIAL " + CRLF
+
+	cQuery +=" INNER JOIN RM.SHABILITACAO@RMSGE SHABILITACAO " + CRLF
+	cQuery +="        ON SHABILITACAO.CODCOLIGADA = SCONTRATO.CODCOLIGADA " + CRLF
+	cQuery +="        AND SHABILITACAO.CODHABILITACAO = SHABILITACAOFILIAL.CODHABILITACAO " + CRLF
+	cQuery +="        AND SHABILITACAO.CODCURSO = SHABILITACAOFILIAL.CODCURSO " + CRLF
+
+	cQuery +=" INNER JOIN RM.SGRADE@RMSGE SGRADE " + CRLF
+	cQuery +="         ON SGRADE.CODCOLIGADA = SCONTRATO.CODCOLIGADA " + CRLF
+	cQuery +="         AND SGRADE.CODCURSO = SHABILITACAOFILIAL.CODCURSO " + CRLF
+	cQuery +="         AND SGRADE.CODHABILITACAO = SHABILITACAOFILIAL.CODHABILITACAO " + CRLF
+	cQuery +="         AND SGRADE.CODGRADE = SHABILITACAOFILIAL.CODGRADE " + CRLF
+
+	cQuery +=" INNER JOIN RM.SCURSO@RMSGE SCURSO " + CRLF
+	cQuery +="         ON SCURSO.CODCOLIGADA = SCONTRATO.CODCOLIGADA " + CRLF
+	cQuery +="         AND SCURSO.CODCURSO = SHABILITACAOFILIAL.CODCURSO " + CRLF
+
+	cQuery +=" INNER JOIN RM.SMODALIDADECURSO@RMSGE SMODALIDADECURSO " + CRLF
+	cQuery +="        ON SMODALIDADECURSO.CODCOLIGADA = SCONTRATO.CODCOLIGADA " + CRLF
+	cQuery +="        AND SMODALIDADECURSO.CODMODALIDADECURSO = SCURSO.CODMODALIDADECURSO " + CRLF
+
+	cQuery +=" LEFT JOIN RM.GCONSIST@RMSGE GCONSIST " + CRLF
+	cQuery +="        ON GCONSIST.CODCOLIGADA = SMATRICPLCOMPL.CODCOLIGADA " + CRLF
+	cQuery +="         AND GCONSIST.CODCLIENTE = smatricplcompl.tipograt " + CRLF
+	cQuery +="        AND GCONSIST.CODTABELA = 'TIPOGRAT' " + CRLF
+
+	cQuery +=" INNER JOIN RM.GFILIAL@RMSGE GFILIAL " + CRLF
+	cQuery +="        ON GFILIAL.CODCOLIGADA = scontrato.CODCOLIGADA " + CRLF
+	cQuery +="        AND GFILIAL.CODFILIAL = SMATRICPL.CODFILIAL " + CRLF
+
+	cQuery +=" INNER JOIN "+RetSQLName("SE1")+" SE1  " + CRLF
+	cQuery +="         ON SE1.D_E_L_E_T_ = ' ' " + CRLF
+	cQuery +="         AND SUBSTR(SE1.E1_FILIAL,1,4) = '03MT' " + CRLF
+	cQuery +="         AND SE1.E1_PREFIXO = 'SGE'  " + CRLF
+	// cQuery +="        AND se1.e1_vencrea > '20201231' " + CRLF
+	cQuery +="         AND TRIM(SE1.E1_NUM) = TRIM(SCONTRATO.CODCONTRATO) " + CRLF
+
+	//=======================================================================================================
+	//Filtro Data da Emissão dos Títulos a Receber e Por baixa
+	//Autor: Daniel Castro - 09/22/21
+	If Alltrim(aRet[4]) == "EM ABERTO"
+		cQuery +="     AND E1_BAIXA = ' ' " + CRLF
+	ElseIf Alltrim(aRet[4]) == "BAIXADOS"
+		cQuery +="     AND E1_BAIXA <> ' '" + CRLF
+	EndIf
+
+	cQuery +="         AND E1_EMISSAO BETWEEN '" + DtoS(aRet[1]) +"' AND '" + DtoS(aRet[2]) +"' " + CRLF
+	//=======================================================================================================
+
+	cQuery +=" LEFT JOIN " + CRLF
+	cQuery +="    RM.ZMD_TURMAS_COMPL@RMSGE ZMDCOMPL " + CRLF
+	cQuery +="        ON ZMDCOMPL.CODCOLIGADA = STURMA.CODCOLIGADA " + CRLF
+	cQuery +="        AND ZMDCOMPL.CODTURMA = STURMA.CODTURMA " + CRLF
+	cQuery +="        AND ZMDCOMPL.IDPERLET = STURMA.IDPERLET " + CRLF
+	cQuery +="        AND ZMDCOMPL.CODFILIAL = STURMA.CODFILIAL " + CRLF
+	cQuery +="        AND ZMDCOMPL.TURMA_INI = 1 " + CRLF
+
+	cQuery +=" WHERE" + CRLF
+	//   cQuery +=" scontrato.CODCOLIGADA = 3 and " + CRLF
+	//================================================================================
+	//Filtro de Situação de Contratos
+	//Autor: Daniel Castro - 09/22/21
+	If Alltrim(aRet[3]) == "NÃO" //Contratos diferentes de Cancelados
+		cQuery +=" scontrato.dtcancelamento = ' ' and " + CRLF
+	ElseIf Alltrim(aRet[3]) == "SIM" //Contratos Cancelados
+		cQuery +=" scontrato.dtcancelamento  >= to_date('04/06/2018', 'DD/MM/YYYY') and " + CRLF
+	EndIf
+	//================================================================================
+
+	cQuery +=" SE1.E1_SALDO > 0" + CRLF
+
+	cQuery +=" ORDER BY 4,12 " + CRLF
+	cQuery:= ChangeQuery(cQuery)
+
+	//Executa a Query e cria uma tabela temporária
+	MPSysOpenQuery( cQuery, "TRBREL",)
+//	DbUseArea(.T.,"TOPCONN",TCGenQry(,,cQuery),"TRBREL",.F.,.T.)
+	Count to nTotRec
+	//Define o limite da régua de progressão do relatório.
+	oReport:SetMeter(nTotRec)
+
+	//Enquanto houver dados
+	TRBREL->(DbGoTop())
+	While TRBREL->(!Eof())
+
+		If  TRBREL->CODCOLIGADA == 2 .OR. (TRBREL->sitContrato == "CANCELADA" .AND. TRBREL->PROT_PARCELA_CANCELADA == "SIM" .AND. TRBREL->PROT_PROVISORIO_NO_SGE == "SIM")
+			TRBREL->(DbSkip())
+			Loop
+		EndIf
+		// Impressao da oSection
+		oSection:Init()
+		oReport:IncMeter()
+
+		If oReport:Cancel()
+			Exit
+		EndIf
+
+		// TRCell():New(oSection,"UNIDADE"		,, "Unidade"    ,                   ,20			, .F.)
+		oSection:Cell("UNIDADE"):SetValue(Alltrim(TRBREL->PROT_FILIAL))
+		//TRCell():New(oSection,"MODALID"     ,, "Modalidade" ,                   ,24	, .F.)
+		oSection:Cell("MODALID"):SetValue(Alltrim(TRBREL->RM_MODALIDADE))
+		//TRCell():New(oSection,"TIPOFIN"     ,, "Tipo Financiamento" ,                   ,34	, .F.)
+		oSection:Cell("TIPOFIN"):SetValue(Alltrim(TRBREL->RM_TIPO_FINANCIAMENTO))
+		//    TRCell():New(oSection,"STATMAT"     ,, "Situacao Matricula" ,                   ,16	, .F.)
+		oSection:Cell("STATMAT"):SetValue(Alltrim(TRBREL->RM_MATRICULA_STATUS))
+		//    IF TRBREL->PROT_STATUS == "B"
+		//    		oSection:Cell("SITTIT"):SetValue(Alltrim("Baixado"))
+		//	Else
+		//           oSection:Cell("SITTIT"):SetValue(Alltrim("Aberto"))
+		//          IF StoD(TRBREL->PROT_VENC) < ddatabase
+		//  	    	    oSection:Cell("STATTIT"):SetValue(Alltrim("Vencido"))
+		//	       Else
+		//               oSection:Cell("STATTIT"):SetValue(Alltrim("A Vencer"))
+		//         EndIf
+		//EndIf
+
+		//TRCell():New(oSection,"CODTUR"	    ,, "Codigo Turma"  ,                   ,12, .F.)
+		oSection:Cell("CODTUR"):SetValue(Alltrim(TRBREL->RM_CODTURMA))
+		//TRCell():New(oSection,"PERLET"	    ,, "Periodo Letivo"  ,                   ,8, .F.)
+		oSection:Cell("PERLET"):SetValue(Alltrim(TRBREL->RM_CODPERLET))
+		//TRCell():New(oSection,"CURSO"	    ,, "Curso"      ,                   ,40	    , .F.)
+		oSection:Cell("CURSO"):SetValue(Alltrim(TRBREL->RM_CURSO))
+		//TRCell():New(oSection,"RA"	        ,, "RA"         ,                   ,9							, .F.)
+		oSection:Cell("RA"):SetValue(TRBREL->RM_RA )
+		//TRCell():New(oSection,"ALUNO"	    ,, "Aluno"      ,                   ,40	, .F.)
+		oSection:Cell("ALUNO"):SetValue((TRBREL->RM_ALUNO))
+		//	oSection:Cell("SITMAT"):SetValue((TRBREL->sitContrato))
+		//  TRCell():New(oSection,"CLICOD"	    ,, "Codigo"    ,                   ,TamSX3("A1_COD")[1]+TamSX3("A1_LOJA")[1] +2     , .F.)
+		oSection:Cell("CLICOD"):SetValue(TRBREL->PROT_CLI + '-'+ TRBREL->PROT_LOJA)
+		// TRCell():New(oSection,"CLINOME"	    ,, "Nome"   ,                   ,20					        , .F.)
+		oSection:Cell("CLINOME"):SetValue(Alltrim(TRBREL->PROT_NOM))
+		//	TRCell():New(oSection,"TITNUM"	    ,, "Titulo Numero" ,                   ,TamSX3("E1_NUM")[1]+TamSX3("E1_PARCELA")[1]      , .F.)
+		oSection:Cell("TITNUM"):SetValue(TRBREL->PROT_NUM)
+		//	TRCell():New(oSection,"TOTTIT"	    ,, "Valor"      ,"@R 999,999,999.99",TamSX3("E1_VALOR")[1]		,,,"RIGHT",,"RIGHT"	)
+		oSection:Cell("TOTTIT"):SetValue(TRBREL->PROT_VALOR)
+		//	TRCell():New(oSection,"VENCIMEN"    ,, "Vencimento" ,                   ,TamSX3("e1_vencrea")[1]		,.F.)
+		oSection:Cell("VENCIMEN"):SetValue(StoD(TRBREL->PROT_VENC))
+
+
+		If TRBREL->PROT_SPC == "S"
+			oSection:Cell("SPC"):SetValue("Sim")
+		Else
+			oSection:Cell("SPC"):SetValue("Não")
+		EndIf
+		//	TRCell():New(oSection,"CancProt"	,, "Tit Cancelado Protheus"  ,                   ,3	,.F.)
+		oSection:Cell("CancProt"):SetValue(TRBREL->PROT_PARCELA_CANCELADA)
+		//	TRCell():New(oSection,"CancSGE"     ,, "Contrato Cancelado SGE"   ,                   ,3	,.F.)
+		//  oSection:Cell("CancSGE"):SetValue(TRBREL->PROT_PROVISORIO_NO_SGE)
+		// TRCell():New(oSection,"DtCanc"      ,, "Data Cancelamento Contrato",                   ,TamSX3("E1_VENCTO")[1]		, .F.)
+		oSection:Cell("DtCanc"):SetValue((TRBREL->DTCANCELAMENTO))
+
+
+
+//TRCell():New(oSection,"STATMAT"      ,, "Situacao Matricula",                   ,TamSX3("E1_VENCTO")[1]		, .F.)
+//	TRCell():New(oSection,"SITTIT"      ,, "Situacao Titulo"    ,                   ,10	    , .F.)
+
+
+
+		//Imprimindo a linha atual
+		oSection:PrintLine()
+
+		TRBREL->(DbSkip())
+
+	End
+
+	TRBREL->(DbCloseArea())
+
+	//Fechando Secao
+	oSection:Finish()
+
+Return
+
+
+
+/*/{Protheus.doc} AjustaSx1
+@description Criando as Perguntas
+
+@author Joao Tavares S Junior
+@since 30/07/2020
+@version 12.1.27
+/*/
+Static Function AjustaSx1(p_cPerg)
+
+//	Local aHelp     := {}
+	Local aPergs    := {}
+	Local aCombo1    := {"NÃO","SIM","AMBOS"}
+	//Local aCombo2    := {"CANCELADO","PRE-MATRICULA","TRANCADO"}
+	Local aCombo3    := {"EM ABERTO","BAIXADOS","AMBOS"}
+	Local lRet          := .T.
+
+	// AAdd(aHelp, {{""}, {""}, {""}})
+
+	// iPutSX1( p_cPerg , "01", "Da  Filial","","","MV_CH1","C", 08,00,00,"G","","SM0EMP","","","MV_PAR01","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")
+	// iPutSX1( p_cPerg , "02", "Ate  Filial","","","MV_CH2","C", 08,00,00,"G","","SM0EMP","","","MV_PAR02","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")
+	// iPutSX1( p_cPerg , "03", "Da  Emissao","","","MV_CH3","D", 08,00,00,"G","","","","","MV_PAR03","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")
+	// iPutSX1( p_cPerg , "04", "Ate  Emissao","","","MV_CH4","D", 08,00,00,"G","","","","","MV_PAR04","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")
+	// iPutSX1( p_cPerg , "05", "Status","","","MV_CH5","C", 02,00,00,"G","","ZX","","","MV_PAR05","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")
+
+	aAdd(aPergs,{1,"Emissão De  ",dDataBase,"","","","",70,.T.})
+	aAdd(aPergs,{1,"Emissão Até  ",dDataBase,"","","","",70,.T.})
+	aAdd(aPergs,{2,"Cancelado no SGE  ","AMBOS",aCombo1,50,"",.T.})
+	aAdd(aPergs,{2,"Situação do Título  ","AMBOS",aCombo3,50,"",.T.})
+
+	If !ParamBox(aPergs ,"Parametros",aRet)
+		MsgAlert("Processo Cancelado pelo usuário","ATENÇÃO")
+		lRet := .F.
+	else
+		lRet := f_SitMat()
+	EndIf
+
+Return(lRet)
+
+//============================================================================
+Static Function f_SitMat()
+
+	Local cQuery := ""
+	Local oDlg     := Nil
+	Local cTitulo  := "Situação da Matricula"
+	Local oOk      := LoadBitmap( GetResources(), "CHECKED" )   //CHECKED    //LBOK  //LBTIK
+	Local oNo      := LoadBitmap( GetResources(), "UNCHECKED" ) //UNCHECKED  //LBNO
+	Local oChk     := Nil
+	Local cCodCol	:= ""
+
+	Private lChk     := .F.
+	Private oLbx := Nil
+	Private aVetor := {}
+
+	If SubStr(SM0->M0_CODFIL,1,4) == "03MT"
+		cCodCol := "3"
+	ElseIf SubStr(SM0->M0_CODFIL,1,4) == "02MT"
+		cCodCol := "2"
+	else
+		Alert("Não é possivel executar esse relatório nessa filial!","Atenção")
+		Return(.F.)
+	EndIf
+
+	cQuery:= " SELECT DISTINCT SMATRICPL.CODSTATUS AS CODIGO , SSTATUS.DESCRICAO AS DESCRICAO"
+	cQuery+= " FROM RM.SMATRICPL@RMSGE SMATRICPL "
+	cQuery+= " INNER JOIN RM.SSTATUS@RMSGE SSTATUS ON SSTATUS.CODSTATUS = SMATRICPL.CODSTATUS "
+	cQuery+= " AND SSTATUS.CODCOLIGADA = SMATRICPL.CODCOLIGADA "
+	cQuery+= " WHERE SMATRICPL.CODCOLIGADA = " + cCodCol + " "
+	cQuery+= " ORDER BY 1"
+
+	cQuery:= ChangeQuery(cQuery)
+
+	//Executa a Query e cria uma tabela temporária
+	MPSysOpenQuery( cQuery, "TRBSIT",)
+
+	dbSelectArea("TRBSIT")
+	TRBSIT->(dbGoTop())
+	While TRBSIT->(!EOF())
+		aAdd(aVetor,{.F.,Alltrim(TRBSIT->DESCRICAO), TRBSIT->CODIGO })
+		TRBSIT->(dbSkip())
+	EndDo
+
+	DEFINE MSDIALOG oDlg TITLE cTitulo FROM 0,0 TO 500,800 PIXEL
+
+	@ 10,10 LISTBOX oLbx VAR cVar FIELDS HEADER " ", "Descrição" ;
+		SIZE 380,200 OF oDlg PIXEL ON dblClick(aVetor[oLbx:nAt,1] := !aVetor[oLbx:nAt,1],oLbx:Refresh())
+
+	oLbx:SetArray( aVetor )
+	oLbx:bLine := {|| {Iif(aVetor[oLbx:nAt,1],oOk,oNo),;
+		aVetor[oLbx:nAt,2]}}
+
+	@ 235,10 CHECKBOX oChk VAR lChk PROMPT "Marca/Desmarca" SIZE 60,007 PIXEL OF oDlg ;
+		ON CLICK(aEval(aVetor,{|x| x[1]:=lChk}),oLbx:Refresh())
+
+	DEFINE SBUTTON FROM 235,300 TYPE 1 ACTION {||Gera(aVetor),oDlg:End()} ENABLE OF oDlg
+	ACTIVATE MSDIALOG oDlg CENTER
+
+	TRBSIT->(dbCloseArea())
+Return(.T.)
+
+//=================================================================
+Static Function Gera(aVetor)
+
+	Local x
+
+	cSitMat := "("
+	For x := 1 to Len(aVetor)
+		If aVetor[x,1]
+			cSitMat += "'" + cValtoChar(aVetor[x,3]) + "',"
+		EndIf
+	Next x
+	cSitMat := SubStr(cSitMat,1,Len(cSitMat) - 1) +")"
+
+Return
+
+///////////////////////////////////////////////////////////////////////////////////
+//+-----------------------------------------------------------------------------+//
+//| PROGRAMA  | ListBoxMark.prw      | AUTOR | Robson Luiz  | DATA | 18/01/2004 |//
+//+-----------------------------------------------------------------------------+//
+//| DESCRICAO | Funcao - u_ListBoxMar()                                         |//
+//|           | Fonte utilizado no curso oficina de programacao.                |//
+//|           | Funcao que marca ou desmarca todos os objetos                   |//
+//+-----------------------------------------------------------------------------+//
+///////////////////////////////////////////////////////////////////////////////////
+Static Function Marca(lMarca)
+	Local i := 0
+	For i := 1 To Len(aVetor)
+		aVetor[i][1] := lMarca
+	Next i
+	oLbx:Refresh()
+Return

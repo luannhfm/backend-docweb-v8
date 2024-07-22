@@ -1,0 +1,223 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+
+/*/{Protheus.doc} FT600TOK
+Validação utilizada pelo SENAI para Produtos STI que registrarão o percentual de participação na proposta.
+@author marcel.rodrigues
+@since 14/05/2018
+@type function
+/*/
+User Function FT600TOK()
+	Local oModel := ParamIXB
+	Local nX := 0
+	Local cFolder := "ADZPRODUTO"
+	Local cFilPrST := SuperGetMV("MV_XFLPRST", .F., "03MT0001/03MT0017/03MT0018")
+	Local _nPct01 := VAL(M->ADY_XPCT01)
+	Local _nPct02 := VAL(M->ADY_XPCT02)
+	Local _lReturn	:= .T.
+
+	Do Case
+	Case Substr(cFilAnt,1,4) == "01MT"
+		
+	Case Substr(cFilAnt,1,4) == "02MT" 
+		
+	Case Substr(cFilAnt,1,4) == "03MT" 
+		If M->ADY_TABELA == "001"
+			If	_nPct01 + _nPct02 > 100
+				Help(;
+						NIL, ;
+						NIL, ;
+						"Atenção", ;
+						NIL, ;
+						'A soma dos percentuais de participação da filial na proposta é maior que 100%', ;
+						1, ;
+						0, ;
+						NIL, ;
+						NIL, ;
+						NIL, ;
+						NIL, ;
+						NIL, ;
+						{"Corriga os percentuais de participação da filial"};
+					)
+				M->ADY_XPCT01 := ' '
+				M->ADY_XPCT02 := ' '
+				_lReturn	:= .F.
+			ElseIf _nPct01 + _nPct02 < 100
+				Help(;
+						NIL, ;
+						NIL, ;
+						"Atenção", ;
+						NIL, ;
+						'A soma dos percentuais de participação da filial na proposta é menor que 100%', ;
+						1, ;
+						0, ;
+						NIL, ;
+						NIL, ;
+						NIL, ;
+						NIL, ;
+						NIL, ;
+						{"Corriga os percentuais de participação da filial"};
+					)
+				M->ADY_XPCT01 := ' '
+				M->ADY_XPCT02 := ' '
+				_lReturn	:= .F.
+			EndIf
+		EndIf
+
+		If _lReturn
+		
+			// **** Alteração Fonte J2A - 03/12/2019
+			// * Filial Participação 01 obrigatorio
+			If EMPTY(M->ADY_XFIL01)
+				Help(;
+						NIL, ;
+						NIL, ;
+						"Atenção", ;
+						NIL, ;
+						'Filial de participação 01 obrigatória', ;
+						1, ;
+						0, ;
+						NIL, ;
+						NIL, ;
+						NIL, ;
+						NIL, ;
+						NIL, ;
+						{"Preencha a filial de participação 01"};
+					)
+				M->ADY_XFIL01 := '' 			
+				Return ( .f. )
+			EndIf
+
+			// * Percentual participação 01 obrigatório
+			If Empty(_nPct01) 
+				Help(;
+						NIL, ;
+						NIL, ;
+						"Atenção", ;
+						NIL, ;
+						'Percentual participação 01 Obrigatório', ;
+						1, ;
+						0, ;
+						NIL, ;
+						NIL, ;
+						NIL, ;
+						NIL, ;
+						NIL, ;
+						{"Preencha o percentual de participação 01"};
+					)
+				Return ( .f. )
+			EndIF
+
+			// * regras para Percentual 01 < 100 
+			If _nPct01 < 100 
+				//* filial participação obritória
+				If Empty(M->ADY_XFIL02) 
+					Help(;
+							NIL, ;
+							NIL, ;
+							"Atenção", ;
+							NIL, ;
+							'Filial Participação 02 obrigatória', ;
+							1, ;
+							0, ;
+							NIL, ;
+							NIL, ;
+							NIL, ;
+							NIL, ;
+							NIL, ;
+							{"Preencha a filial Participação 02"};
+						)
+					Return ( .f. )
+				EndIf 
+
+				//* Campo percentual participação 02 obritório
+				If Empty(_nPct02)
+					Help(;
+							NIL, ;
+							NIL, ;
+							"Atenção", ;
+							NIL, ;
+							'Percentual participação 02 obrigatório', ;
+							1, ;
+							0, ;
+							NIL, ;
+							NIL, ;
+							NIL, ;
+							NIL, ;
+							NIL, ;
+							{"Preencha o percentual de participação 02"};
+						)
+					Return ( .f. )
+				EndIf
+
+				If	_nPct01 + _nPct02 <> 100
+					Help(;
+							NIL, ;
+							NIL, ;
+							"Atenção", ;
+							NIL, ;
+							'A soma dos percentuais de participação da filial na proposta tem que ser 100%', ;
+							1, ;
+							0, ;
+							NIL, ;
+							NIL, ;
+							NIL, ;
+							NIL, ;
+							NIL, ;
+							{"Corriga os percentuais de participação"};
+						)
+					Return ( .f. )
+				EndIf
+
+			EndIf
+
+			// Nao permitir tipo de produto ST para filiais diferente das filiais definidas no parâmetro MV_XFLPRST
+			If !(cFilAnt $ cFilPrST)
+
+				DbSelectArea("SB1")
+				SB1->( dBSetOrder( 1 ))
+				
+				If !( oModel:GetModel(cFolder):IsEmpty() )
+					For nX := 1 To oModel:GetModel(cFolder):Length()
+						oModel:GetModel(cFolder):GoLine(nX)
+						If (oModel:GetModel(cFolder):IsUpdated() .Or. oModel:GetModel(cFolder):IsInserted()) .AND. !Empty(oModel:GetModel(cFolder):GetValue("ADZ_PRODUT"))
+							If DbSeek(xFilial("SB1")+oModel:GetModel(cFolder):GetValue("ADZ_PRODUT"))
+								If SB1->B1_TIPO == "ST" .and. SB1->B1_XPRDFIL == "03"
+									Help(;
+											NIL, ;
+											NIL, ;
+											"Atenção", ;
+											NIL, ;
+											'Produto do Tipo ST permitido somente para Filiais ' + cFilPrST, ;
+											1, ;
+											0, ;
+											NIL, ;
+											NIL, ;
+											NIL, ;
+											NIL, ;
+											NIL, ;
+											{"Utilize produto que não seja do tipo ST"};
+										)
+									Return ( .f. )
+								EndIf
+							EndIf
+						EndIf
+					Next nX
+				EndIf	
+			EndIF
+			if cFilAnt=='03MT0018'
+				if oModel:GetModel("ADYMASTER"):GetValue("ADY_XPROTE")=='1'	//Proposta Tecnica? 1=Sim;2=Nao;
+					if Empty(oModel:GetModel("ADYMASTER"):GetValue("ADY_XCONST"))
+						Help(NIL, NIL, "Sem consultor técnico", NIL, ;
+							"O consultor técnico não foi informado", 1, 0, NIL, NIL, NIL, NIL, NIL, ;
+							{"Informe o consultor técnico na aba 'SENAI'"})
+						Return .F.
+					endif
+				endif
+			endif
+		EndIf
+	Case Substr(cFilAnt,1,4) == "04MT"
+
+	EndCase
+
+Return (_lReturn)

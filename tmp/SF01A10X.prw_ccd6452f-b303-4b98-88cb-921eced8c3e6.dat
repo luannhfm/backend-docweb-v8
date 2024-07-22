@@ -1,0 +1,53 @@
+#Include 'Protheus.ch'
+
+User Function SF01A10X()
+Local _nSel		:=	0
+Local _aAlSNM	:=	SNM->(GetArea())
+Local _cChvSol	:=	SNM->(NM_FILIAL+NM_TIPOSOL+NM_XSOLIC)
+Local _cUSRACT	:=	GetNewPar("MV_XUSRACT","",_cXFIL)
+
+If Empty(_cUSRACT)
+	Aviso("Atenção", "Não foi definido o controle de acesso para esta rotina [MV_XUSRACT]." + CRLF+;
+						"**Controle de acesso exclusivo (por FILIAL).**", {"Ok"})
+	Return
+EndIf
+
+If SNM->NM_TIPOSOL = '2' .And. SNM->NM_XACEIT == .F. .And. RetCodUsr() $ _cUSRACT .And. SNM->NM_FILDEST == _cXFIL
+	_nSel := Aviso("Aceite de Transferência","Clique em 'Ok' para efetuar o aceite da "+;
+									"Solicitação de Transferência.", {"Ok", "Cancelar"})
+	
+	If	_nSel == 1
+		RecLock("SNM")
+		Replace NM_XACEIT	With .T.
+		Replace NM_XACUSR	With RetCodUsr()
+		MsUnLock()
+
+		DBSelectArea("SNM")
+		DBOrderNickName("SNMSOL")
+		If SNM->(dbSeek(_cChvSol))
+			While SNM->(!Eof()) .And. SNM->(NM_FILIAL+NM_TIPOSOL+NM_XSOLIC) == _cChvSol
+				If (SNM->(NM_TIPOSOL) == '2' .And. SNM->(NM_SITSOL) == '1')
+					RecLock("SNM")
+					Replace NM_XACEIT	With .T.
+					Replace NM_XACUSR	With RetCodUsr()
+					MsUnLock()
+				EndIf
+				SNM->(DbSkip())
+			EndDo
+		EndIf
+		
+		MSGInfo("Aceite Realizado com Sucesso!","SUCESSO")
+	EndIf
+ElseIf SNM->NM_TIPOSOL = '2' .And. SNM->NM_XACEIT == .T.
+	Aviso("Atenção", "Esta Solicitação de Transferência já foi Aceita.", {"Ok"})
+ElseIf SNM->(NM_TIPOSOL) == '2' .And. !(RetCodUsr() $ _cUSRACT) .And. SNM->NM_FILDEST == _cXFIL
+	Aviso("Atenção", "Esta rotina só pode ser acessada por usuários autorizados [MV_XUSRACT]." + CRLF+;
+						"**Controle de acesso exclusivo (por FILIAL).**",{"Ok"})
+ElseIf SNM->(NM_TIPOSOL) == '2' .And. !(SNM->NM_FILDEST == _cXFIL) 
+	Aviso("Atenção", "Você precisa logar na filial de destino da transferência para efetuar o Aceite.", {"Ok"})
+Else
+	Aviso("Atenção", "A rotina de Aceite é exclusiva para Sol de Transferências.", {"Ok"})
+EndIf
+
+RestArea(_aAlSNM)
+Return

@@ -1,0 +1,1305 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "TBICONN.CH"
+#INCLUDE "TBICODE.CH"
+#INCLUDE "AP5MAIL.CH"   
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"  
+#INCLUDE "PARMTYPE.CH"     
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"    
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <SN7301X>
+   Browser MVC para lancamentos dos [ZCG-Viabilidade de Atendimento]
+
+@author Antonio Dantas 
+@since 13/10/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/                                                                       
+User Function SN7301X()
+Local _oBrowse 		:= FWMBrowse():New()
+Local _cFilderD		:= ""
+//Salvando as variáveis quando vindo de outra rotina.
+Local _aSlvRot		:= IIF(Type("aRotina")   != "U"	, aRotina, {} )
+Local _cSlvCad		:= IIF(Type("cCadastro") != "U"		, cCadastro, "" )
+//-- 
+Private aRotina 	:= MenuDef()
+Private _lALTEROU	:= .f. 
+//-- 
+DbSelectArea("ZCG")                                                                                  	
+DbSetOrder(1)
+ZCG->(DbGoTop())
+//-- Define o Alias
+_oBrowse:SetAlias("ZCG")
+//-- Descricao
+_oBrowse:SetDescription("Viabilidade de Atendimento")
+//-- Define a Legenda conforme o STATUS
+_oBrowse:AddLegend("ZCG_STATUS == '1'"		,"BR_BRANCO"	,"Em Preparação" 		)
+_oBrowse:AddLegend("ZCG_STATUS == '2'"		,"BR_LARANJA"	,"Aberta" 				) 
+_oBrowse:AddLegend("ZCG_STATUS == '3'"		,"ENABLE"		,"Aprovada" 			)
+_oBrowse:AddLegend("ZCG_STATUS == '4'"		,"BR_AZUL"		,"Aguardando Produto"	)
+_oBrowse:AddLegend("ZCG_STATUS == '5'"		,"DISABLE"		,"Rejeitada" 			)
+//-- Implementa FILTRO nas Viabilidade pela oportunidade posicionada.
+_cFilderD	:= "ZCG_FILIAL = '"+FwxFilial("ZCG")+"' "
+_oBrowse:lLocate	:= .T.
+_oBrowse:oBrowseUI:lDetails	:= .F.	//PARA NÃO APRESENTAR OS DETALHES (FICA VISUALMENTE MELHOR)
+_oBrowse:SetFilterDefault(_cFilderD)
+//--
+_oBrowse:SetChgAll(.F.) //INDICA SE O USUÁRIO TEM PERMISSÃO PARA ALTERAR REGISTROS DE OUTRAS FILIAIS
+_oBrowse:SetSeeAll(.F.) //INDICA SE O USUÁRIO TEM PERMISSÃO PARA VISUALIZAR REGISTROS DE OUTRAS FILIAIS
+//-- Ativa o browse
+_oBrowse:Activate()
+aRotina		:= aClone(_aSlvRot)
+cCadastro	:= _cSlvCad
+Return Nil
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <MenuDef>
+   Responsavel pela criacao dos botoes, alterar, incluir, excluir e demais. 
+
+@author Antonio Dantas 
+@since 13/10/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/                                                                       
+Static Function MenuDef()
+Local _aRotina 	:= {}
+ADD OPTION _aRotina TITLE "Pesquisar"  		ACTION "PESQBRW"         	OPERATION 1 ACCESS 0
+ADD OPTION _aRotina TITLE "Visualizar" 		ACTION "VIEWDEF.SN7301X" 	OPERATION 2 ACCESS 0
+ADD OPTION _aRotina TITLE "Incluir"    		ACTION "VIEWDEF.SN7301X" 	OPERATION 3 ACCESS 0
+ADD OPTION _aRotina TITLE "Alterar"    		ACTION "VIEWDEF.SN7301X" 	OPERATION 4 ACCESS 0
+ADD OPTION _aRotina TITLE "Excluir"   			ACTION "VIEWDEF.SN7301X" 	OPERATION 5 ACCESS 0
+ADD OPTION _aRotina TITLE "Imprimir"   		ACTION "VIEWDEF.SN7301X" 	OPERATION 8 ACCESS 0
+ADD OPTION _aRotina TITLE "Modalidades"		ACTION "U_SN7302X()" 		OPERATION 4 ACCESS 0
+ADD OPTION _aRotina TITLE "Liberadores"		ACTION "U_SN7303X()" 		OPERATION 4 ACCESS 0
+ADD OPTION _aRotina TITLE "Adicionar Aditivos"	ACTION "u_fJustif()"		OPERATION 4 ACCESS 0
+Return _aRotina
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <ModelDef>
+   Contem  a  construcao e a definicao do Model, lembrando que o Modelo de
+   dados (Model) contem as regras de negocio.
+
+@author Antonio Dantas 
+@since 13/10/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function ModelDef()
+Local _oModel	:= Nil 
+Local _oStZCG	:= FWFormStruct(1,"ZCG")
+//-- Objeto de modelo de dados
+_oModel := MPFormModel():New("SN7301XX",/*PreValid*/,{|_oMod| fVldForm(_oMod)},{|_oMod| fGrava(_oMod)},/*Cancel*/)
+//-- A  estrutura  do  modelo  de  dados  (Model) 
+_oModel:AddFields("ZCGMASTER",/*cOwner*/,_oStZCG)
+//-- Chave Primaria
+_oModel:SetPrimaryKey({"ZCG_FILIAL","ZCG_CODIGO"})
+//VALIDANDO A ATIVAÇÃO DO MODELO.
+_oModel:SetVldActivate( {|_oModel| fVldActivate(_oModel) })
+Return _oModel
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <ViewDef>
+   Contem a construcao e a definicao da View, ou seja, contrucao da interface
+
+@author Antonio Dantas 
+@since 13/10/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function ViewDef()
+Local _oModel 		:= FWLoadModel("SN7301X")
+Local _oStZCGV		:= FWFormStruct(2,"ZCG") 
+Local _oView   	:= FWFormView():New()
+Local _aFildsLib	:= {"ZCG_PROJET","ZCG_DIDATI","ZCG_DOCENT","ZCG_TECNOL","ZCG_FISICO","ZCG_OBSANA","ZCG_PRODUT"}
+Local _nPosX 		:= 0
+Local _aArea   	:= {}
+//+------------------------------------------------------------------+
+//| Ajustando os campos de edicao exclusiva dos liberadores.         |
+//+------------------------------------------------------------------+
+If fELiber()
+	_aArea := GetArea()
+	//-- 
+	dbSelectArea("SX3")
+	SX3->(dbSetOrder(1))
+	SX3->(dbSeek("ZCG"))
+	Do While SX3->(!Eof()) .And. X3_ARQUIVO = "ZCG"
+		If x3Uso(SX3->X3_USADO) .And. cNivel >= SX3->X3_NIVEL
+			_nPosX := Ascan(_aFildsLib, {|x| x == UPPER(Alltrim(SX3->X3_CAMPO)) })
+			If _nPosX == 0 
+				_oStZCGV:SetProperty(UPPER(Alltrim(SX3->X3_CAMPO))	,MVC_VIEW_CANCHANGE	,.F.)
+			Endif 
+		Endif  	
+		SX3->(dbskip())
+	Enddo  
+	RestArea(_aArea)
+Else
+	_nCtaA := 0
+	For _nCtaA := 1 to Len(_aFildsLib)
+		_oStZCGV:SetProperty(_aFildsLib[_nCtaA]	,MVC_VIEW_CANCHANGE	,.F.)
+	Next _nCtaA
+Endif                                                 
+//-- Defino modelo da view
+_oView:SetModel(_oModel)
+//-- Mesma regra do modeldef
+_oView:AddField("VW_ZCG",_oStZCGV,"ZCGMASTER")
+//-- Crio a tela
+_oView:CreateHorizontalBox("AFASTAR",100)
+//-- Defino owner da tela
+_oView:SetOwnerView("VW_ZCG","AFASTAR")
+//-- Adiciona Botão para incluir Aditivos da Viabilidade 
+_oView:AddUserButton("Modificar Status"		,'CLIPS', { |_oView| u_fJustif(.t.) }	)
+Return _oView
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldForm>
+   Validacao PADRAO do Fomulario MVC:   
+   Valida o Periodo Data e Hora informados como parametros.
+
+@author Antonio Dantas 
+@since 13/10/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+Modificações:
+08/02/2017 - Franklin B. Oliveira:
+	Adicionado validação para os campo ZCG_CLIENT e ZCG_PROSPE, um deles deve
+	estar preenchido.
+-------------------------------------------------------------------------------
+*/ 
+Static Function fVldForm(_oModel)
+Local _lReturn 		:= .t. 
+Local _nOper		:= _oModel:GetOperation()
+Local _oStruZCG		:= _oModel:GetModel("ZCGMASTER")
+//-- 
+Local _dDataINI		:= _oStruZCG:GetValue("ZCG_DATAIN")
+Local _cHoraINI		:= _oStruZCG:GetValue("ZCG_HORAIN")
+Local _dDataFIM		:= _oStruZCG:GetValue("ZCG_DATAFI")
+Local _cHoraFIM		:= _oStruZCG:GetValue("ZCG_HORAFI")
+Local _cCodCli		:= _oStruZCG:GetValue("ZCG_CLIENT")
+Local _cLoja		:= _oStruZCG:GetValue("ZCG_LOJA")
+Local _cCodPro		:= _oStruZCG:GetValue("ZCG_PROSPE")
+Local _cLojPro		:= _oStruZCG:GetValue("ZCG_LOJPRO")
+//--
+Local _lExecVld		:= .f.		//-- (.t.) - Executa as validacoes; (.f.) - Nao Executa as Validacoes 
+//--
+Do Case
+	Case _nOper == 3 		//-- Incluir
+		_lReturn 	:= .t.
+		_lExecVld	:= .t.
+	Case _nOper == 4 		//-- Alterar
+		_lReturn 	:= .t.
+		_lExecVld	:= .t.
+	Case _nOper == 5 		//-- Excluir 
+		_lReturn 	:= .t.
+	Case _nOper == 8 		//-- Imprimir 
+		_lReturn 	:= .t.
+	Case _nOper == 9 		//-- Copiar  
+		_lReturn 	:= .t.
+EndCase
+//-- 
+If _lExecVld
+	_lReturn	:= u_fVldDta(_dDataINI,_cHoraINI,_dDataFIM,_cHoraFIM)
+	//&&-- _lReturn	:= u_f03CliPJ(_cCodCli,_cLoja)
+	If _lReturn .And. Substr(cFilAnt,1,4) == "03MT"
+		//Verifica se a entidade é do tipo Pessoa Jurídica
+		If .Not. Empty(_cCodCli) .And. .Not. (Posicione("SA1", 1, FwxFilial("SA1") + AD1->AD1_CODCLI + AD1->AD1_LOJCLI, "A1_PESSOA") == "J")
+			Help(,,FunName()+"/"+ProcName(),,"O Cliente [" + AD1->AD1_CODCLI + "/" + AD1->AD1_LOJCLI + "] não é Pessoa Jurídica." , 1, 0)
+			_lReturn	:= .F.
+		EndIf
+	Endif 
+Endif
+
+
+//Validação dos campos do codigo de cliente e prospect
+If _lReturn .And. Empty(_cCodCli) .And. Empty(_cCodPro)
+	Help(,,FunName()+"/"+ProcName(),,"É obrigatório a seleção de um Cliente ou Prospect, antes de gravar a Viabilidade de Atendimento.",1,0)
+	_lReturn := .F.
+ElseIf _lReturn .And. .Not. Empty(_cCodCli) .And. .Not. Empty(_cCodPro)
+	Help(,,FunName()+"/"+ProcName(),,"Não é possível a seleção de um Cliente ou Prospect, preencha apenas um campo.",1,0)
+	_lReturn := .F.
+EndIf
+
+Return _lReturn 
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fGrava>
+   Funcao de GRAVACAO do Formulario MVC
+
+@author Antonio Dantas 
+@since 13/10/2015
+@version<1.00>
+@receive
+<  _oModel (o) - Objeto Model  
+>
+
+@return
+<  _lReturn (l) - (.t.) - Gravado OK; (.f.) Nao Gravou o Registro  
+>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function fGrava(_oModel)
+Local _aArea		:= GetArea()
+Local _lReturn 		:= .t. 
+Local _nOper		:= _oModel:GetOperation()
+Local _oModelZCG	:= _oModel:GetModel("ZCGMASTER")
+Local _cCodProd		:= _oModelZCG:GetValue("ZCG_PRODUT")
+Local _cStatus		:= _oModelZCG:GetValue("ZCG_STATUS")
+//-- Acoes ANTES de Gravar o Registro 
+Do Case 
+	Case _nOper == 3		//-- Inclusao  
+		_lReturn	:= .t. 
+	Case _nOper == 04		//-- Alteracao 
+		//+------------------------------------------------------------------+
+		//| Se NAO for LIBERADOR da Viabilidade e NAO estiver [Em Preparacao]|
+		//| nao permite Alterar.                                             |
+		//+------------------------------------------------------------------+
+		If !(fELiber() .And. (_cStatus == "2" .Or. _cStatus == "4" ))	 	//-- Em Preparacao ou Aguardando Produto                                                 
+			IF _cStatus != "1" 		//-- Em Preparacao 
+				_lReturn	:= .F.
+				Help(,,FunName()+"/"+ProcName(),,"Não é permitido ALTERAR viabilidade com status diferênte de [Em Preparação].",1,0)
+			Endif 
+		Endif 
+	Case _nOper == 05		//-- Exclusao 
+		IF _cStatus != "1" 			//-- Em Preparacao
+			_lReturn	:= .F.
+			Help(,,FunName()+"/"+ProcName(),,"HELP",,"Não é permitido EXCLUIR viabilidade com status diferênte de [Em Preparação].",1,0)
+		EndIF
+EndCase 
+//-- Grava o Registro  
+If _lReturn  
+	_lReturn := FWFormCommit(_oModel)
+Endif 	
+//-- Se Gravou 	
+If _lReturn  
+	//-- Acoes APOS de Gravar o Registro 
+	Do Case 
+		Case _nOper == 3		//-- Inclusao  
+			//Nil 
+		Case _nOper == 4		//-- Alteracao  
+			If !Empty(Alltrim(_cCodProd))
+				fLibZCG(_oModel)
+				_lALTEROU	:= .t.
+			Endif 
+		Case _nOper == 5		//-- Exclusao  
+			//Nil 
+	EndCase 
+Endif 	
+RestArea(_aArea)
+Return _lReturn 
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldDta>
+   Valida o Periodo Data e Hora informados como parametros.
+
+@author Antonio Dantas 
+@since 13/10/2015
+@version<1.00>
+@receive
+<  _dDataINI (d) - Data Inicial do Afastamento 
+   _cHoraINI (c) - Hora Inicial do Afastamento [HHMMSS]
+   _dDataFIM (d) - Data Final do Afastamento
+   _cHoraFIM (c) - Hora Final do Afastamento [HHMMSS]
+>
+
+@return
+<  _lReturn (l) - (.t.) - Perido Valido; (.f.) Periodo Invalido.  
+>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+User Function fVldDta(_dDataINI,_cHoraINI,_dDataFIM,_cHoraFIM)
+Local _lReturn		:= .t. 
+If _dDataINI > _dDataFIM
+	_lReturn := .f. 
+	Help(,,FunName()+"/"+ProcName(),,"Período Invalido: Data Inicial maior que a Data Final!",1,0)
+Endif 
+If _dDataINI == _dDataFIM
+	If _cHoraINI > _cHoraFIM
+		_lReturn := .f. 
+		Help(,,FunName()+"/"+ProcName(),,"Período Invalido: HORA Inicial maior que a HORA Final!",1,0)
+	Endif 	
+Endif 
+Return _lReturn 
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldHr>
+   Valida a Hora informada como parametro.
+
+@author Antonio Dantas 
+@since 13/10/2015
+@version<1.00>
+@receive
+<   _cTime (c) - Valor das Horas fornecida como Argumento
+>
+@return
+< _lReturn (L) - (.t.) - Valor valido para Horas; (.f.) - Valor Invalido  
+>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+User Function fVldHr(_cTime)
+Local _lReturn		:= .t. 
+Local _chora		:= Substr(_cTime,1,2)
+Local _cMimuto		:= Substr(_cTime,3,2)
+Local _cSegundo		:= Substr(_cTime,5,2)
+If _chora > "23"
+	_lReturn := .f.	
+Endif 
+If _lReturn .And. _cMimuto > "59"
+	_lReturn := .f.	
+Endif 
+If _lReturn .And. _cSegundo > "59"
+	_lReturn := .f.	
+Endif 
+Return _lReturn 
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fJustif>
+  Abre interface "Tela" para que o operador possa informar as ocorrencias 
+  relativos ao processo construcao da Viabiliade de Atendimento  
+
+@author Antonio Dantas 
+@since 15/10/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/ 
+/*
+--------------------------------------------------------------------------------
+|Alterações sofridas															|
+|Desenvolvedor	|Data		|Alteração											|
+---------------------------------------------------------------------------------
+|Franklin 		|25/04/2016	|Adicionado tratamento para permitir mudança de		| 
+|				|			|status apenas quando a operação for alteração		|
+---------------------------------------------------------------------------------
+*/
+User Function fJustif(_lTrocaS)
+Local _aArea		:= GetArea()
+Local _cAvCab		:= "Ocorrência"
+//-- 
+Local _cJustif 		:= ""
+Local _cTitulo		:= ""
+
+Local oModel
+
+Local _nOperation	
+  
+Private _aStatus	:= {"Em Preparação","Aberta","Aprovada","Aguardando Produto","Rejeitada"}
+Private _nStatus 	:= Val(ZCG->ZCG_STATUS) 
+//-- 
+Default _lTrocaS	:= .f.
+//+------------------------------------------------------------------+
+//| Caso esteja Modificando o STATUS de [Em Preparação] para [Aberto]|
+//| valida a existencia dos APROVADORES, e dispara E-MAIL de aviso   |
+//| aos liberadores da disponibilidade da viabilidade para APROVACAO/|
+//| REPROVACAO.                                                      |  
+//+------------------------------------------------------------------+
+If _lTrocaS
+	oModel 		:= FWModelActive()
+	_nOperation	:= oModel:GetOperation()
+	If ZCG->ZCG_STATUS == "1"
+		dbSelectArea("ZCH")
+		ZCH->(dbSetOrder(1))	//ZCH_FILIAL+ZCH_VIABIL+ZCH_APROV
+		If !(ZCH->(dbSeek(FwxFilial("ZCH")+ZCG->ZCG_CODIGO)))
+			Help(,,FunName()+"/"+ProcName(),,"STATUS da Viabilidade não pode ser modificada. Ainda não existem aprovadores indicados para a Viabilidade!",1,0)
+			Return .t. 
+		Endif
+	//Os demais status serão modificados pela rotina de liberação da viabilidade.
+	Else
+		Help(,,FunName()+"/"+ProcName(),,"STATUS da Viabilidade não pode ser modificada.",1,0)
+		Return .T. 
+	Endif
+	
+	//Só poderá executar caso seja Alteração
+	If _nOperation != MODEL_OPERATION_UPDATE
+		Help( , , FunName() + "/" + ProcName(), , "STATUS da Viabilidade não pode ser modificada. Utilize a opção 'Alterar'!", 1, 0)
+		Return .T. 
+	EndIf
+	 
+	//-- Identifica qual o STATUS Atual 
+	_cCombo  := _aStatus[_nStatus+1] 
+Else 	
+	_cCombo  := _aStatus[_nStatus] 
+Endif 
+//-- Inicializa os Obejetos da interface 
+SetPrvt("_oDlgOBJ","_oFontOBJ","_oMemoOBJ","_oCombo")
+//-- Defini qual o Titulo  
+_cTitulo := Iif(_lTrocaS ,"Modificar Status","Adicionar Aditivos")  
+//-- Solicita ao cliente a justificativa
+DEFINE FONT _oFontOBJ NAME "MS Sans Serif" SIZE 05,11
+DEFINE MSDIALOG _oDlgOBJ From 003,000 to 340,545 PIXEL STYLE DS_MODALFRAME TITLE OemToAnsi(_cTitulo)
+If _lTrocaS
+	@ 13,05 SAY _oSayBox PROMPT "STATUS : " SIZE 040,007 OF _oDlgOBJ PIXEL
+	@ 11,30 MsComboBox _oCombo VAR _cCombo ITEMS _aStatus  WHEN .F. SIZE 070,010 OF _oDlgOBJ PIXEL
+	@ 26,05 GET _oMemoOBJ VAR _cJustif MEMO SIZE 265,120 OF _oDlgOBJ PIXEL 
+Else
+	@ 05,05 GET _oMemoOBJ VAR _cJustif MEMO SIZE 265,145 OF _oDlgOBJ PIXEL 
+Endif 
+_oMemoOBJ:bRClicked := {||AllwaysTrue()}
+_oMemoOBJ:oFont:=_oFontOBJ
+DEFINE SBUTTON  FROM 153,215 TYPE 2 ACTION _oDlgOBJ:End()						ENABLE OF _oDlgOBJ PIXEL //Cancela 
+DEFINE SBUTTON  FROM 153,245 TYPE 1 ACTION fFimOco(_cJustif,_lTrocaS,_cCombo)	ENABLE OF _oDlgOBJ PIXEL //OK
+ACTIVATE MSDIALOG _oDlgOBJ CENTER
+RestArea(_aArea)
+Return .t.
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fJustif>
+  Valida, formata a ocorrencia e grava na tabela [ZCG - Viabilidade]
+  no campo [ZCG_ADENDO - Alteracoes e Adendos]  
+
+@author Antonio Dantas 
+@since 15/10/2015
+@version<1.00>
+@receive
+<    _cJustif (c) - Texto com a ocorrencia a ser gravada 
+>
+@return
+<    _lReturn (l) - (.t.) Ocorrencia gravada com sucesso; 
+                    (.f.) Ocorrencia não foi gracada 
+>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/ 
+Static Function fFimOco(_cJustif,_lTrocaS,_cNewStatu)
+Local _lReturn 		:= .t. 
+Local _cOcorrenc	:= "" 
+Local _cCabec		:= ""
+Local _nStaNew  	:= 1 
+//-- 
+Default _lTrocaS	:= .f. 
+//-- 
+If Empty(Alltrim(_cJustif))
+	Aviso(FunName()+"/"+ProcName(),"Não pode estar em branco. Preencha a Ocorrência!", {"OK"})
+	_lReturn := .f. 
+Endif 
+If _lTrocaS
+	//-- Valida a troca do status
+	_nStaNew  := aScan(_aStatus, {|X| X == _cNewStatu } ) 
+    If	_nStaNew == _nStatus
+		Aviso(FunName()+"/"+ProcName(),"Modifique o STATUS para Continuar!", {"OK"})
+		_lReturn := .f. 
+    Endif 
+	_cCabec := Replicate('-',100)+CRLF
+	_cCabec += "Troca [STATUS para "+Upper(_aStatus[_nStaNew])+"] em "+dtoc(dDataBase)+" as "+Time()+", User: "+Alltrim(cUserName)+CRLF
+Else
+	_cCabec := Replicate('-',100)+CRLF
+	_cCabec += "Ocorrencia de "+dtoc(dDataBase)+" as "+Time()+",  User: "+Alltrim(cUserName)+CRLF
+Endif 
+_cOcorrenc := _cCabec
+_cOcorrenc += Alltrim(_cJustif)+CRLF+CRLF
+If _lReturn  
+	RecLock("ZCG",.f.)
+	Replace ZCG->ZCG_ADENDO	With _cOcorrenc+ZCG->ZCG_ADENDO
+	If _lTrocaS
+		Replace ZCG->ZCG_STATUS	With Alltrim(Str(_nStaNew))
+	Endif 
+	ZCG->(MsUnLock())
+	ZCG->(dbCommit())
+	//+---------------------------------------------------------------------+
+	//| Envia mensagem ao LIBERADORES da disponibilidade do Pedido de       |
+	//| liberacao da Viabilidade para APROVACAO/REPROVACAO.                 |     
+	//+---------------------------------------------------------------------+
+	fPrepMsg(ZCG->ZCG_CODIGO,Alltrim(Str(_nStaNew)))	
+	//-- 
+	_oDlgOBJ:End()
+EndIf
+Return _lReturn
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldActivate>
+   Valida a Tentetiva de Modificacao da Viabilidade 
+
+@author Fabio Oliveira
+@since 28/10/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function fVldActivate(_oModel)
+Local _lReturn  	:= .T.
+Local _nOper		:= _oModel:GetOperation()
+Local _oModelZCG	:= _oModel:GetModel("ZCGMASTER")
+Do Case 
+	Case _nOper == 04		//-- Alteracao 
+		If !_lALTEROU
+			//+------------------------------------------------------------------+
+			//| Se NAO for LIBERADOR da Viabilidade e NAO estiver [Em Preparacao]|
+			//| nao permite Alterar.                                             |
+			//+------------------------------------------------------------------+
+			If !(fELiber() .And. (ZCG->ZCG_STATUS == "2" .Or. ZCG->ZCG_STATUS == "4" ) ) 	//-- Em Preparacao                                                 
+				IF ZCG->ZCG_STATUS != "1" 	//-- Em Preparacao 
+					_lReturn 	:= .F.
+					Help(,,FunName()+"/"+ProcName(),, "Não é permitido ALTERAR viabilidade com status diferênte de [Em Preparação].",1,0)
+				Endif 
+			Endif 
+		Endif 
+	Case _nOper == 05		//-- Exclusao 
+		IF ZCG->ZCG_STATUS != "1" 	//-- Em Preparacao
+			_lReturn 	:= .F.
+			Help(,,FunName()+"/"+ProcName(),,"Não é permitido EXCLUIR viabilidade com status diferênte de [Em Preparação].",1,0)
+		EndIF
+EndCase 
+Return _lReturn
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fPrepMsg>
+   Inicia localizacao dos [ZCH - Liberadores] para remessa das mensagem ao 
+   LIBERADORES da disponibilidade do Pedido de Liberacao da Viabilidade para 
+   APROVACAO/REPROVACAO.    
+
+@author Antonio Dantas 
+@since 06/10/2015
+@version<1.00>
+@receive
+<   _cCodViab (c) - Codigo da Viabilidade  
+     _cStatus (c) - Status da Viabilidade 
+>
+@return
+<   _lReturn (l) - SEMPRE (.t.) 
+>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function fPrepMsg(_cCodViab,_cStatus)	
+Local _lReturn  	:= .t.
+Local _aArea		:= GetArea()
+//-- So sera execurada se for modificacao de STATUS para 2=Aberta
+If _cStatus != "2"
+	Return _lReturn
+Endif 
+//-- Localiza os Aprovadores da Viabilidade  
+dbSelectArea("ZCH")
+ZCH->(dbSetOrder(1))
+ZCH->(dbSeek(FwxFilial("ZCH")+ZCG->ZCG_CODIGO))
+//-- Loop nos Aprovadores para remessa da mensagem 
+Do While ZCH->(!Eof()) .And. ZCH->ZCH_FILIAL == FwxFilial("ZCH") .And. ZCH->ZCH_VIABIL == _cCodViab  
+	fSdPedLb(ZCH->ZCH_APROV,ZCG->ZCG_CODIGO)
+	ZCH->(dbSkip())
+Enddo
+RestArea(_aArea)
+Return _lReturn
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fSdPedLb>
+   Monta mensagem ao LIBERADOR da disponibilidade do Pedido de liberacao da 
+   Viabilidade para APROVACAO/REPROVACAO. Chama funcao de remessa da mensagem.    
+
+@author Antonio Dantas 
+@since 06/10/2015
+@version<1.00>
+@receive
+<   _cUserLib (c) - Codigo do Liberador
+    _cCodViab (c) - Codigo da Viabilidade  
+    _cOrigem  (c) - Origem da Mensagem  
+>
+@return
+<   _lReturn (l) - SEMPRE (.t.) 
+>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function fSdPedLb(_cUserLib,_cCodViab)	
+Local _lReturn  	:= .t.
+Local _aArea		:= GetArea()
+Local _cMens 		:= ""
+Local _cEnd			:= " "
+//-- 
+Local _cMailDest	:= ""
+Local _cDescAssu	:= ""
+Local _cMens 		:= ""
+//-- Variaveis utilizadas no Formulario de Mensagem (e-mail) ao Liberador 
+Local _WfDtEnvio	:= ""
+Local _WfEmpresa	:= ""
+Local _Wfilial		:= ""
+Local _WfAprovado	:= ""
+Local _WfCodViab	:= ""
+Local _WfData		:= ""
+Local _WfHora		:= ""
+Local _WfCurso		:= ""
+//-- Localiza a Viabilidade 
+dbSelectArea("ZCG")
+ZCG->(dbSetOrder(1))
+ZCG->(dbSeek(FwxFilial("ZCG")+_cCodViab))
+//-- Localiza os Aprovadores da Viabilidade  
+dbSelectArea("ZCH")
+ZCH->(dbSetOrder(1))
+ZCH->(dbSeek(FwxFilial("ZCH")+_cCodViab+_cUserLib))
+//-- Posiciona Empresa/Filial 
+dbSelectArea("SM0")
+SM0->(dbSetOrder(1))
+SM0->(dbSeek(cEmpAnt+cFilAnt))
+//+------------------------------------------------------------------+
+//| Preenche as Variaveis do Corpo da mensagem ao Liberador.         |   
+//+------------------------------------------------------------------+
+_cMailDest	:= UsrRetMail(ZCH->ZCH_APROV)
+_cDescAssu	:= "Solicitação de Liberação da Viabilidade ["+_cCodViab+"]."
+//-- 
+_WfDtEnvio	:= dtoc(dDataBase)+" - "+Time()
+_WfEmpresa	:= cEmpAnt+" - "+Rtrim(SM0->M0_NOME)
+_Wfilial	:= cFilAnt+" - "+Rtrim(SM0->M0_FILIAL)
+_WfAprovado	:= UsrRetName(ZCH->ZCH_APROV) 
+_WfCodViab	:= ZCG->ZCG_CODIGO
+_WfData		:= Dtoc(ZCG->ZCG_DATA)
+_WfHora		:= Transform(ZCG->ZCG_HORA,"@R 99:99:99")  
+_WfCurso	:= ZCG->ZCG_CURSO 
+//+------------------------------------------------------------------+
+//| Monta o Corpo da mensagem de e-mail                              | 
+//+------------------------------------------------------------------+
+_cMens := '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">'+_cEnd
+_cMens += '<html xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns:m="http://schemas.microsoft.com/office/2004/12/omml" xmlns="http://www.w3.org/TR/REC-html40" lang="pt-br">'+_cEnd
+_cMens += '<head>'+_cEnd
+_cMens += '  <title>Protheus 11> Pronatec</title>'+_cEnd
+_cMens += '</head>'+_cEnd
+_cMens += '<body style="" lang="PT-BR" link="#efefef" vlink="#cccccc">'+_cEnd
+_cMens += '<div class="WordSection1">'+_cEnd
+/*
+	----------------------------------------------------------------------------
+	Antonio Dantas                                                  16/11/2015
+	Intencionamente deixamos inibido a apresentacao do simbulo da TOTVS pois a 
+	rede naoo permite acesso ao site.
+	----------------------------------------------------------------------------
+	_cMens += '<div align="center">'+_cEnd
+	_cMens += '<table class="MsoNormalTable" style="width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760">'+_cEnd
+	_cMens += '  <tbody>'+_cEnd
+	_cMens += '    <tr style="height: 0.75pt;">'+_cEnd
+	_cMens += '      <td style="padding: 0cm; width: 100%; height: 0.75pt;" width="100%">'+_cEnd
+	_cMens += '      <p class="MsoNormal" style="text-align: center;" align="center"><span style="font-family: &quot;Arial&quot;,&quot;sans-serif&quot;;"><img id="_x0000_i1030" src="http://gps.totvs.com/workflow/titulo__Wf_totvs.png" border="0" height="62" width="760"></span></p>'+_cEnd
+	_cMens += '      </td>'+_cEnd
+	_cMens += '    </tr>'+_cEnd
+	_cMens += '  </tbody>'+_cEnd
+	_cMens += '</table>'+_cEnd
+	_cMens += '</div>'+_cEnd
+*/
+_cMens += '<div align="center">'+_cEnd
+_cMens += '<table class="MsoNormalTable" style="width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760">'+_cEnd
+_cMens += '  <tbody>'+_cEnd
+_cMens += '    <tr style="height: 2.25pt;">'+_cEnd
+_cMens += '      <td style="padding: 7.5pt 0cm 0cm; height: 2.25pt;">'+_cEnd
+_cMens += '      <p class="MsoNormal" style="" align="left"><span style="font-size: 13pt; font-family: &quot;Verdana&quot;,&quot;sans-serif&quot;; color: rgb(32, 38, 100);">CRM - Liberação de Viabilidade.<o:p></o:p></span></p>'+_cEnd
+_cMens += '      </td>'+_cEnd
+_cMens += '    </tr>'+_cEnd
+_cMens += '  </tbody>'+_cEnd
+_cMens += '</table>'+_cEnd
+_cMens += '</div>'+_cEnd
+_cMens += '<div align="center">'+_cEnd
+_cMens += '<table class="MsoNormalTable" style="width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760">'+_cEnd
+_cMens += '  <tbody>'+_cEnd
+_cMens += '	<!-- Idenfifica Data do Envio da Mensagem -->'+_cEnd				
+_cMens += '      <td style="padding: 7.5pt 0cm 0cm; width: 570pt; height: 2.25pt;" width="200">'+_cEnd
+_cMens += '      	<p class="MsoNormal" style="text-align: left;" align="right"><span style="font-size: 08pt; font-family: &quot;Verdana&quot;,&quot;sans-serif&quot;; '+_cEnd 
+_cMens += '			color: rgb(33, 38, 100);">'+_WfDtEnvio+'<o:p></o:p></span></p>'+_cEnd
+_cMens += '      </td>'+_cEnd
+_cMens += '	<!-- Idenfifica a Empresa e Filial-->'+_cEnd				
+_cMens += '	<tr style="height: 2.25pt;">'+_cEnd
+_cMens += '      <td style="padding: 7.5pt 0cm 0cm; width: 570pt; height: 2.25pt;" width="200">'+_cEnd
+_cMens += '      <p class="MsoNormal" style="text-align: left;" align="right"><span style="font-size: 10pt; font-family: &quot;Verdana&quot;,&quot;sans-serif&quot;; color: rgb(33, 38, 100);">'+_WfEmpresa+'/'+_Wfilial+'<o:p></o:p></span></p>'+_cEnd
+_cMens += '	  <o:p>&nbsp;</o:p>'+_cEnd
+_cMens += '      </td>'+_cEnd
+_cMens += '    </tr>'+_cEnd
+_cMens += '  </tbody>'+_cEnd
+_cMens += '</table>'+_cEnd
+_cMens += '<table class="MsoNormalTable" style="width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760">'+_cEnd
+_cMens += '  <tbody>'+_cEnd
+_cMens += '	<!-- Idenfifica o Liberador -->'+_cEnd				
+_cMens += '	<tr style="height: 2.25pt;">'+_cEnd
+_cMens += '      <td style="padding: 7.5pt 0cm 0cm; width: 570pt; height: 2.25pt;" width="200">'+_cEnd
+_cMens += '      <p class="MsoNormal" style="text-align: left;" align="right"><span style="font-size: 08pt; font-family: &quot;Verdana&quot;,&quot;sans-serif&quot;; color:'+_cEnd 
+_cMens += '	  rgb(33, 38, 100);">Sr(a). '+_WfAprovado+'<o:p></o:p></span></p>'+_cEnd
+_cMens += '      </td>'+_cEnd
+_cMens += '    </tr>'+_cEnd
+_cMens += '  </tbody>'+_cEnd
+_cMens += '</table>'+_cEnd
+_cMens += '<table class="MsoNormalTable" style="width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760">'+_cEnd
+_cMens += '  <tbody>'+_cEnd
+_cMens += '	<!-- Mensagem com Codigo da Viabilidade, data e hora de Abertura -->'+_cEnd				
+_cMens += '	<tr style="height: 2.25pt;">'+_cEnd
+_cMens += '      <td style="padding: 7.5pt 0cm 0cm; width: 570pt; height: 2.25pt;" width="200">'+_cEnd
+_cMens += '      <p class="MsoNormal" style="text-align: left;" align="right"><span style="font-size: 08pt; font-family: &quot;Verdana&quot;,&quot;sans-serif&quot;; color: rgb(33, 38, 100);">Encontra-se disponíveis para APROVAÇÃO/REPROVAÇÃO a Viabilidade ['+_WfCodViab+'] aberta em '+_WfData+' as '+_WfHora+'.<o:p></o:p></span></p>'+_cEnd
+_cMens += '	  <p class="MsoNormal"><o:p>&nbsp;</o:p></p>'+_cEnd
+_cMens += '      </td>'+_cEnd
+_cMens += '    </tr>'+_cEnd
+_cMens += '  </tbody>'+_cEnd
+_cMens += '</table>'+_cEnd
+_cMens += '</div>'+_cEnd
+_cMens += '<div align="center">'+_cEnd
+_cMens += '<table class="MsoNormalTable" style="background: rgb(164, 194, 222) none repeat scroll 0% 50%; -moz-background-clip: initial; -moz-background-origin: initial; -moz-background-inline-policy: initial; width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760">'+_cEnd
+_cMens += '  <tbody>'+_cEnd
+_cMens += '    <tr style="">'+_cEnd
+_cMens += '      <td style="padding: 0.75pt;">'+_cEnd
+_cMens += '      <p class="MsoNormal" align="left"><span style="font-size: 9pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: white;"'+_cEnd
+_cMens += '	  >Para Curso de: <o:p></o:p></span></p>'+_cEnd
+_cMens += '      </td>'+_cEnd
+_cMens += '    </tr>'+_cEnd
+_cMens += '    <tr style="">'+_cEnd
+_cMens += '      <td style="padding: 0.75pt;">'+_cEnd
+_cMens += '      <table class="MsoNormalTable" style="background: white none repeat scroll 0% 50%; -moz-background-clip: initial; -moz-background-origin: initial; -moz-background-inline-policy: initial; width: 100%;" border="0" cellpadding="0" cellspacing="0" width="100%">'+_cEnd
+_cMens += '        <tbody>'+_cEnd
+_cMens += '          <tr style="">'+_cEnd
+_cMens += '            <td style="padding: 0.3cm; width: 550.0pt;" nowrap="nowrap" width="150">'+_cEnd
+_cMens += '            <p class="MsoNormal" align="left"><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);">'+_cEnd
+_cMens += '				<!-- Apresenta a Descrição do Curso -->'+_cEnd				
+_cMens += '				'+_WfCurso+CRLF
+_cMens += '			</td>'+_cEnd
+_cMens += '		  </tr>'+_cEnd
+_cMens += '        </tbody>'+_cEnd
+_cMens += '      </table>'+_cEnd
+_cMens += '      </td>'+_cEnd
+_cMens += '    </tr>'+_cEnd
+_cMens += '  </tbody>'+_cEnd
+_cMens += '</table>'+_cEnd
+_cMens += '</div>'+_cEnd
+_cMens += '<p class="MsoNormal"><o:p>&nbsp;</o:p></p>'+_cEnd
+_cMens += '<div align="center">'+_cEnd
+_cMens += '<table class="MsoNormalTable" style="width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760">'+_cEnd
+_cMens += '  <tbody>'+_cEnd
+_cMens += '    <tr style="">'+_cEnd
+_cMens += '      <td style="padding: 0cm;">'+_cEnd
+_cMens += '      <p class="MsoNormal" style="text-align: center;" align="center">'+_cEnd
+_cMens += '	  <em><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);"'+_cEnd
+_cMens += '	  >&copy;2009 TOTVS S/A - TDI-Tecnologia da Informação, desenvolvimento e Infra-estrutura</span></em><i><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);"><br>'+_cEnd
+_cMens += '      <em><span style="font-family: &quot;Arial&quot;,&quot;sans-serif&quot;;">Mensagem gerada automaticamente pelo Protheus Workflow.</span></em></span></i><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);"><o:p></o:p></span></p>'+_cEnd
+_cMens += '      <p class="MsoNormal" style="text-align: center;" align="center">'+_cEnd
+_cMens += '	 <em><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);"'+_cEnd
+_cMens += '	  >Por favor, não responda a este e-mail.</span></em><i><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);"><br><o:p></o:p></span></p>'+_cEnd
+_cMens += '      </td>'+_cEnd
+_cMens += '    </tr>'+_cEnd
+_cMens += '  </tbody>'+_cEnd
+_cMens += '</table>'+_cEnd
+_cMens += '</div>'+_cEnd
+_cMens += '<p class="MsoNormal"><o:p>&nbsp;</o:p></p>'+_cEnd
+_cMens += '</div>'+_cEnd
+_cMens += '</body>'+_cEnd
+_cMens += '</html>'+_cEnd
+//+------------------------------------------------------------------+
+//|   Executa a função de Remessa de E-mail                          | 
+//+------------------------------------------------------------------+
+/* Franklin B. Oliveira 28/03/2018:
+	Substituida a função ACSendMail pela SFEnvEmail.
+  
+	ACSendMail(,,,,_cMailDest,_cDescAssu,_cMens)
+	U_SFEnvEmail(de:, p_cTo, p_cCC, ccopiaoculta , p_cSubject, p_cBody, p_cAttach)
+
+*/
+U_SFEnvEmail( , _cMailDest, , , _cDescAssu, _cMens)
+RestArea(_aArea)
+Return _lReturn
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fMoutMLb>
+   Monta mensagem ao LIBERADOR das Solicitacoes de Viabilidade que ainda  
+   nao foram analizar, e encontra-se em aberto.
+   
+   Rotina para ser executada via SCHEDULE.    
+
+@author Antonio Dantas 
+@since 06/10/2015
+@version
+< 
+   ------------------------------------------------------------------
+    Antonio Dantas                                       14/12/2015
+    Se houver valor para o parametro para [MV_XFATORD - FATOR D],
+    considera somente o anterior a data prevista pelo FATOR D.
+    Exemplo: Considerado fator D=3 e a data de hoje=14/12/2015, ira
+             listar somente as Pendencias anteriores a 10/12/2015.    
+   ------------------------------------------------------------------
+>
+@receive
+<		_aParans (a) - Parametros Passados pela rotina de SCHEDULE 
+			_aParans[1] - Empresa			
+			_aParans[2] - Filial			
+			_aParans[3] - Modulo			
+>
+@return<.t.>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+User Function fMoutMLb(_aParans)
+Local _cQuery		:= "" 
+Local _cCodLiber 	:= ""
+Local _lSCHEDLE 	:= .f.
+Local _aPedLibs		:= {}
+Local _nFatorD		:= 0
+Local _dDataBase 	:= ""
+//+------------------------------------------------------------------+
+//| Prepara o Ambiente para empresa selecionada no SHEDULE           |   
+//+------------------------------------------------------------------+
+If Valtype(_aParans) != "U"
+	PREPARE ENVIRONMENT EMPRESA _aParans[1] FILIAL _aParans[2]
+	_lSCHEDLE := .t.
+Endif     
+//+------------------------------------------------------------------+
+//| Antonio Dantas                                       14/12/2015  |
+//| Se houver valor para o parametro para [MV_XFATORD - FATOR D],    |
+//| considera somente o anterior a data prevista pelo FATOR D.       |
+//| Exemplo: Considerado fator D=3 e a data de hoje=14/12/2015, ira  |
+//|          listar somente as Pendencias anteriores a 10/12/2015.   |    
+//+------------------------------------------------------------------+
+_nFatorD := GetNewPar("MV_XFATORD",0)
+If _nFatorD > 0
+	_dDataBase := dDataBase - _nFatorD
+Endif 
+//+------------------------------------------------------------------+
+//| Monta consulta para verificar as Solicitacoes ainda em Aberto.   |   
+//+------------------------------------------------------------------+
+_cQuery := ""
+_cQuery := "Select ZCH.ZCH_APROV, ZCH.ZCH_FILIAL, ZCH.ZCH_VIABIL, ZCH.ZCH_NOME, ZCH.ZCH_NIVEL, "+CRLF
+_cQuery += "       ZCG.ZCG_DATA, ZCG.ZCG_HORA, ZCG.ZCG_CLIENT, ZCG.ZCG_LOJA, ZCG.ZCG_NOME "+CRLF
+_cQuery += "From "+RetSqlName("ZCH")+" ZCH "+CRLF
+_cQuery += "Inner Join "+RetSqlName("ZCG")+" ZCG on ZCG.ZCG_FILIAL = ZCH.ZCH_FILIAL And ZCG.ZCG_CODIGO = ZCH.ZCH_VIABIL "+CRLF
+_cQuery += "Where ZCH.D_E_L_E_T_ = ' ' "+CRLF
+_cQuery += "And ZCH.ZCH_TOPASS = '0' "+CRLF
+//+------------------------------------------------------------------+
+//| Antonio Dantas                                       14/12/2015  |
+//| Se houver valor para o parametro para [MV_XFATORD - FATOR D],    |
+//| considera somente o anterior a data prevista pelo FATOR D.       |
+//| Exemplo: Considerado fator D=3 e a data de hoje=14/12/2015, ira  |
+//|          listar somente as Pendencias anteriores a 10/12/2015.   |    
+//+------------------------------------------------------------------+
+If _nFatorD > 0
+	_cQuery += "And ZCG.ZCG_DATA < '"+Dtos(_dDataBase)+"' "+CRLF
+Endif 
+//-- 
+_cQuery += "Order by ZCH.ZCH_APROV, ZCH.ZCH_FILIAL "+CRLF
+//+------------------------------------------------------------------+
+//| Grava o Resultado da Query para consulta                         |
+//+------------------------------------------------------------------+
+If Select("TMP_ZCH")>0
+	TMP_ZCH->(DbCloseArea())
+Endif
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMP_ZCH",.t.,.t.)
+//+------------------------------------------------------------------+
+//| Converte os campos tipo DATA                                     |
+//+------------------------------------------------------------------+
+TCSETFIELD("TMP_ZCH","ZCG_DATA"	,"D",8,0 )
+//-- Vai para top da Tabela 
+TMP_ZCH->(dbGotop())
+//-- Inicializa a variavel de controle do LIBERADOR atual 
+_cCodLiber := TMP_ZCH->ZCH_APROV 
+//-- Loop na Tabela de consulta 
+Do While TMP_ZCH->(!Eof())
+	//-- Posiciona a VIABILIDADE 
+	dbSelectArea("ZCG")
+	ZCG->(dbSetOrder(1))
+	ZCG->(dbSeek(TMP_ZCH->ZCH_FILIAL+TMP_ZCH->ZCH_VIABIL))
+	//-- Monta o Array com as infomacoes da Liberacao.
+	aAdd( _aPedLibs, {	TMP_ZCH->ZCH_APROV	,;
+						TMP_ZCH->ZCH_FILIAL	,;
+						TMP_ZCH->ZCH_VIABIL	,;
+						TMP_ZCH->ZCG_CLIENT	,;
+						TMP_ZCH->ZCG_LOJA	,;
+						TMP_ZCH->ZCG_NOME	,;
+						TMP_ZCH->ZCG_DATA	,; 
+						ZCG->ZCG_CURSO 		} )
+	TMP_ZCH->(dbSkip())
+	//+------------------------------------------------------------------+
+	//| Se modificou o liberador Envia a mensagem                        |
+	//+------------------------------------------------------------------+
+	If _cCodLiber != TMP_ZCH->ZCH_APROV .Or. TMP_ZCH->(Eof())
+		fSdMailL(_aPedLibs)
+		_cCodLiber 	:= TMP_ZCH->ZCH_APROV
+		_aPedLibs	:= {}
+	Endif 
+Enddo  
+TMP_ZCH->(DbCloseArea())
+//+------------------------------------------------------------------+
+//| Desmonta o Ambiente e Encerra                                    |   
+//+------------------------------------------------------------------+
+If _lSCHEDLE
+	RESET ENVIRONMENT    
+Endif 
+Return .t.
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fSdMailL>
+   Envia e-mail ao LIBERADOR com a relacao das Solicitacoes de Viabilidade 
+   que ainda nao foram analizar, e encontra-se em aberto.
+
+@author Antonio Dantas 
+@since 06/10/2015
+@version
+< 
+   ------------------------------------------------------------------
+    Antonio Dantas                                        14/12/2015
+    Implementa o PARAMETRO: MV_XMAIL73 - E-mail do Coordenador CRM
+    Envia ao Coordenador informado cujo codigo esta informano no
+    parametro Copia do E-mail das Pendencias do Liberador  
+   ------------------------------------------------------------------
+>
+@receive
+<   _aPedLibs (a) - Array com as informacoes da Solicitacao de Liberacao
+      	_aPedLibs[N,1] (c) - Codigo do Aprovador 
+      	_aPedLibs[N,2] (c) - Codigo da Filial  
+		_aPedLibs[N,3] (c) - Codigo da Viabilidade   
+		_aPedLibs[N,4] (c) - Codigo do Cliente    
+		_aPedLibs[N,5] (c) - Loja do Cliente     
+		_aPedLibs[N,6] (c) - Nome do Cliente (Razao Social)     
+		_aPedLibs[N,7] (D) - Data da Solicitacao      
+		_aPedLibs[N,8] (D) - Descricao do Curso      
+>
+@return<.t.>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function fSdMailL(_aPedLibs)
+Local _cMailDest	:= ""
+Local _cDescAssu	:= ""
+Local _cMens 		:= ""
+Local _nCtaA 		:= 0
+Local _cEnd			:= " " 
+Local _cCodMailC	:= GetNewPar("MV_XMAIL73","")
+Local _cEMailCor 	:= ""
+//+------------------------------------------------------------------+
+//| Preenche as Variaveis do Corpo da mensagem ao Liberador.         |   
+//+------------------------------------------------------------------+
+_cMailDest	:= UsrRetMail(_aPedLibs[1,1])
+_cDescAssu	:= "Solic de Liberacao Viabilidade Pendentes de Analise."
+//+------------------------------------------------------------------+
+//| Monta a mensagem do corpo do e-mail                              |   
+//+------------------------------------------------------------------+
+_cMens := '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">'+_cEnd
+_cMens += '<html xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns:m="http://schemas.microsoft.com/office/2004/12/omml" xmlns="http://www.w3.org/TR/REC-html40" lang="pt-br">'+_cEnd
+_cMens += '<head>'+_cEnd
+_cMens += '  <title>Protheus 11> Pronatec</title>'+_cEnd
+_cMens += '</head>'+_cEnd
+_cMens += '<body style="" lang="PT-BR" link="#efefef" vlink="#cccccc">'+_cEnd
+_cMens += '<div class="WordSection1">'+_cEnd
+/*
+	----------------------------------------------------------------------------
+	Antonio Dantas                                                  16/11/2015
+	Intencionamente deixamos inibido a apresentacao do simbulo da TOTVS pois a 
+	rede naoo permite acesso ao site.
+	----------------------------------------------------------------------------
+	_cMens += '<div align="center">'+_cEnd
+	_cMens += '<table class="MsoNormalTable" style="width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760">'+_cEnd
+	_cMens += '  <tbody>'+_cEnd
+	_cMens += '    <tr style="height: 0.75pt;">'+_cEnd
+	_cMens += '      <td style="padding: 0cm; width: 100%; height: 0.75pt;" width="100%">'+_cEnd
+	_cMens += '      <p class="MsoNormal" style="text-align: center;" align="center"><span style="font-family: &quot;Arial&quot;,&quot;sans-serif&quot;;"><img id="_x0000_i1030" src="http://gps.totvs.com/workflow/titulo__Wf_totvs.png" border="0" height="62" width="760"></span></p>'+_cEnd
+	_cMens += '      </td>'+_cEnd
+	_cMens += '    </tr>'+_cEnd
+	_cMens += '  </tbody>'+_cEnd
+	_cMens += '</table>'+_cEnd
+	_cMens += '</div>'+_cEnd
+*/
+_cMens += '<!-- Cabecalho -->'+_cEnd				
+_cMens += '<div align="center">'+_cEnd
+_cMens += '<table class="MsoNormalTable" style="width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760">'+_cEnd
+_cMens += '  <tbody>'+_cEnd
+_cMens += '    <tr style="height: 2.25pt;">'+_cEnd
+_cMens += '      <td style="padding: 7.5pt 0cm 0cm; height: 2.25pt;">'+_cEnd
+_cMens += '      <p class="MsoNormal" style="" align="left"><span style="font-size: 13pt; font-family: &quot;Verdana&quot;,&quot;sans-serif&quot;; color: rgb(32, 38, 100);">CRM - Liberação de Viabilidade.<o:p></o:p></span></p>'+_cEnd
+_cMens += '      </td>'+_cEnd
+_cMens += '    </tr>'+_cEnd
+_cMens += '  </tbody>'+_cEnd
+_cMens += '</table>'+_cEnd
+_cMens += '</div>'+_cEnd
+_cMens += '<!-- --------------------- -->'+_cEnd
+_cMens += '<!--   CORPO DA MENSAGEM   -->'+_cEnd
+_cMens += '<!-- --------------------- -->'+_cEnd
+_cMens += '<div align="center">'+_cEnd
+_cMens += '	<table class="MsoNormalTable" style="width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760">'+_cEnd
+_cMens += '	  <tbody>'+_cEnd
+_cMens += '		<!-- Data e Hora da Mensagem -->'+_cEnd
+_cMens += '		  <td style="padding: 7.5pt 0cm 0cm; width: 570pt; height: 2.25pt;" width="200">'+_cEnd
+_cMens += '			<p class="MsoNormal" style="text-align: left;" align="right"><span style="font-size: 08pt; font-family: &quot;Verdana&quot;,&quot;sans-serif&quot;; color: rgb(33, 38, 100);">'+dtoc(dDatabase)+'-'+Time()+'<o:p></o:p></span></p>'+_cEnd
+_cMens += '			<p class="MsoNormal"></p>'+_cEnd
+_cMens += '		  </td>'+_cEnd
+_cMens += '	  </tbody>'+_cEnd
+_cMens += '	</table>'+_cEnd
+_cMens += '	<table class="MsoNormalTable" style="width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760">'+_cEnd
+_cMens += '	  <tbody>'+_cEnd
+_cMens += '		<!-- Idenfifica o Liberador -->'+_cEnd
+_cMens += '		<tr style="height: 2.25pt;">'+_cEnd
+_cMens += '		  <td style="padding: 7.5pt 0cm 0cm; width: 570pt; height: 2.25pt;" width="200">'+_cEnd
+_cMens += '		  <p class="MsoNormal" style="text-align: left;" align="right"><span style="font-size: 08pt; font-family: &quot;Verdana&quot;,&quot;sans-serif&quot;; color:'+_cEnd 
+_cMens += '		  rgb(33, 38, 100);">Sr(a). '+UsrRetName(_aPedLibs[1,1])+'<o:p></o:p></span></p>'+_cEnd
+_cMens += '			<o:p>&nbsp;</o:p>'+_cEnd
+_cMens += '			<o:p>&nbsp;</o:p>'+_cEnd
+_cMens += '		  </td>'+_cEnd
+_cMens += '		</tr>'+_cEnd
+_cMens += '		<!-- Mensagem ao Aprovador -->'+_cEnd
+_cMens += '		<tr style="height: 2.25pt;">'+_cEnd
+_cMens += '		  <td style="padding: 7.5pt 0cm 0cm; width: 570pt; height: 2.25pt;" width="200">'+_cEnd
+_cMens += '		  <p class="MsoNormal" style="text-align: left;" align="right"><span style="font-size: 08pt; font-family: &quot;Verdana&quot;,&quot;sans-serif&quot;; color:'+_cEnd 
+_cMens += '		  rgb(33, 38, 100);">Encontran-se pendentes de analise as Solicitações de Liberação de Viabilidade listadas abaixo!<o:p></o:p></span></p>'+_cEnd
+_cMens += '			<o:p>&nbsp;</o:p>'+_cEnd
+_cMens += '			<o:p>&nbsp;</o:p>'+_cEnd
+_cMens += '		  </td>'+_cEnd
+_cMens += '		</tr>'+_cEnd
+_cMens += '	  </tbody>'+_cEnd
+//-- 
+_cMens += '	</table>'+_cEnd
+_cMens += '	<!-- Monta Tabela -->'+_cEnd
+_cMens += '	<table class="MsoNormalTable" style="width: 570pt;" border="1" cellpadding="0" cellspacing="0" width="760">'+_cEnd
+_cMens += '		<!-- Monta o Cabeçalho da Tabela -->'+_cEnd
+_cMens += '		<th Width=10%>Filial</th>'+_cEnd
+_cMens += '		<th Width=10%>Viabilidade</th>'+_cEnd 
+_cMens += '		<th Width=30%>Cliente</th>'+_cEnd
+_cMens += '		<th Width=10%>Data</th>'+_cEnd
+_cMens += '		<th Width=40%>Curso</th>'+_cEnd 
+_cMens += '		<!-- Implementa os Itens da Tabela -->'+_cEnd
+//-- 
+_nCtaA := 0
+For _nCtaA := 1 to Len(_aPedLibs) 
+	//-- Monta a Descricao do Cliente 	
+	_cCliente := _aPedLibs[_nCtaA,4]+"/"+_aPedLibs[_nCtaA,5]+" - "+_aPedLibs[_nCtaA,6] 
+	//-- Adiciona ao array do Html  	
+	_cMens += '		<tr>'+_cEnd
+	_cMens += '			<td align="center" >'+_aPedLibs[_nCtaA,2]+'</td>'+_cEnd 
+	_cMens += '			<td align="center" >'+_aPedLibs[_nCtaA,3]+'</td>'+_cEnd
+	_cMens += '			<td align="left" >'+_cCliente+'</td>'+_cEnd
+	_cMens += '			<td align="center" >'+Dtoc(_aPedLibs[_nCtaA,7])+'</td>'+_cEnd
+	_cMens += '			<td align="left" >'+_aPedLibs[_nCtaA,8]+'</td>'+_cEnd
+Next _nCtaA 
+//--
+_cMens += '		<tr>'+_cEnd
+_cMens += '	</table>'+_cEnd
+_cMens += '</div>'+_cEnd
+_cMens += '<!-- ---------------------- -->'+_cEnd
+_cMens += '<!--   RODAPE DA MENSAGEM   -->'+_cEnd
+_cMens += '<!-- ---------------------- -->'+_cEnd
+_cMens += '<p class="MsoNormal"><o:p>&nbsp;</o:p></p>'+_cEnd
+_cMens += '<div align="center">'+_cEnd
+_cMens += '<table class="MsoNormalTable" style="width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760">'+_cEnd
+_cMens += '  <tbody>'+_cEnd
+_cMens += '    <tr style="">'+_cEnd
+_cMens += '      <td style="padding: 0cm;">'+_cEnd
+_cMens += '      <p class="MsoNormal" style="text-align: center;" align="center">'+_cEnd
+_cMens += '	  <em><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);"'+_cEnd
+_cMens += '	  >&copy;2009 TOTVS S/A - TDI-Tecnologia da Informação, desenvolvimento e Infra-estrutura</span></em><i><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);"><br>'+_cEnd
+_cMens += '      <em><span style="font-family: &quot;Arial&quot;,&quot;sans-serif&quot;;">Mensagem gerada automaticamente pelo Protheus Workflow.</span></em></span></i><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);"><o:p></o:p></span></p>'+_cEnd
+_cMens += '      <p class="MsoNormal" style="text-align: center;" align="center">'+_cEnd
+_cMens += '	 <em><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);"'+_cEnd
+_cMens += '	  >Por favor, não responda a este e-mail.</span></em><i><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);"><br><o:p></o:p></span></p>'+_cEnd
+_cMens += '      </td>'+_cEnd
+_cMens += '    </tr>'+_cEnd
+_cMens += '  </tbody>'+_cEnd
+_cMens += '</table>'+_cEnd
+_cMens += '</div>'+_cEnd
+_cMens += '<p class="MsoNormal"><o:p>&nbsp;</o:p></p>'+_cEnd
+_cMens += '</div>'+_cEnd
+_cMens += '</body>'+_cEnd
+_cMens += '</html>'+_cEnd
+//+------------------------------------------------------------------+
+//|   Executa a função de Remessa de E-mail                          | 
+//+------------------------------------------------------------------+
+ACSendMail(,,,,_cMailDest,_cDescAssu,_cMens)
+//+------------------------------------------------------------------+
+//| Antonio Dantas                                        14/12/2015 |
+//| Envia ao Coordenador informado cujo codigo esta informano no     |
+//| parametro Copia do E-mail das Pendencias do Liberador            |  
+//+------------------------------------------------------------------+
+If !Empty(Alltrim(_cCodMailC))
+	_cEMailCor := UsrRetMail(_cCodMailC)
+	ACSendMail(,,,,_cEMailCor,_cDescAssu+" (Cop)",_cMens)
+Endif 
+Return .t.
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldZCG>
+  Funcao utilizada para validar o Codigo de Viabilidade informadfa no campo
+  [AD1->AD1_XVIABI] no momento do Lancamento da Oportunidade de Venda. 
+  E obrigatorio SOMENTE para Contratos SENAI. O Codigo de Viabilidade 
+  informado nao pode ser utilizado em uma outra Oportunidade de venda; 
+  Então a Relação e [1 <--> 1].
+
+@author Antonio Dantas 
+@since 11/12/2015
+@version<1.00>
+@receive
+<   _cOportun (c) - Oportunidade Atual 
+    _cRevisao (c) - Revisao da Oportunidade 
+    _cCodViab (c) - Codigo da Viabilidade Informada
+>
+@return
+<    _lReturn (l) - (.t.) - Codigo nao Encontrado. LIBERADO PARA USO;
+                    (.f.) - Codigo de Viabilidade já utilizado em uma 
+                            Oportunidade de Venda. 
+>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/ 
+User Function fVldZCG(_cOportun,_cRevisao,_cCodViab)
+Local _lReturn 	:= .t.  
+Local _aArea   	:= GetArea()
+Local _cQuery	:= ""
+Local _cAlias	:= GetNextAlias()
+_cQuery	:= ""
+_cQuery	+= "Select * From "+RetSqlName("AD1")+" AD1 "+CRLF
+_cQuery	+= "Where AD1.AD1_FILIAL = '"+ xFilial('AD1') +"'"+CRLF 
+_cQuery	+= "And AD1.AD1_NROPOR <> '"+_cOportun+"' "+CRLF
+_cQuery	+= "And AD1.AD1_REVISA <> '"+_cRevisao+"' "+CRLF
+_cQuery	+= "And AD1.AD1_XVIABI = '"+_cCodViab+"' "+CRLF
+_cQuery	+= "And AD1.D_E_L_E_T_ <> '*' "+CRLF 
+If Select(_cAlias)>0
+	(_cAlias)->(DbCloseArea())
+Endif  
+//-- 
+dbUseArea(.t.,"TOPCONN",TCGENQRY(,,_cQuery),_cAlias,.t.,.t.)
+dbSelectArea(_cAlias)
+(_cAlias)->(dbGoTop())
+If (_cAlias)->(!Eof()) .And. (_cAlias)->(!Bof()) 
+	//-- Codigo ja esta sendo utilizado em Outra Oportunidade
+ 	Aviso(FunName()+"/"+ProcName(),"Esta Viabilidade já está sendo utilizada em outra Oportunidade!", {"OK"})
+	_lReturn := .f.  
+Endif 
+(_cAlias)->(DbCloseArea())
+RestArea(_aArea)
+Return _lReturn
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fELiber>
+ Verifica se o operador atual e LIBERADOR da viabilidade, no caso de tentativa
+ de ALTERACAO o Liberador, pode executar ALTERACAO para edicao dos campos:
+ ZCG_PROJET, ZCG_DIDATI, ZCG_DOCENT, ZCG_TECNOL, ZCG_FISICO ,ZCG_OBSANA
+ 
+@author Antonio Dantas 
+@since 26/02/2016
+@version<1.00>
+@receive<Nil>
+@return
+<    _lReturn (l) - (.t.) - SIM o operador Atual e um LIBERADOR
+                    (.f.) - NAO o operador Atual nao e um LIBERADOR
+>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/ 
+Static Function fELiber()
+Local _aArea   	:= GetArea()
+Local _lReturn 		:= .f. 
+Local _cCodViabi	:= ""
+//-- Verifica se o Usuario atual E Liberador da Viabilidade 
+If ALTERA
+	_cCodViabi	:= ZCG->ZCG_CODIGO
+	dbSelectArea("ZCH")
+	ZCH->(dbSetOrder(1))
+	_lReturn := (ZCH->(dbSeek(FwxFilial("ZCH")+_cCodViabi+__cUserID)))
+Endif 
+//-- 
+RestArea(_aArea)
+Return _lReturn   
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fLibZCG>
+  Trata da inclusao do CODIGO DO PRODUTO na Viabilidade; Considerando-se as
+  Regras de Liberacao, no momento da Alteracao da Viabilidade se o campo
+  [ZCG_PRODUT], for preenchido e os liberadores ja tiverem LIBERADO a 
+  Viabilidade, o STATUS da Viabililde sera modificado para [3=Aprovada.].  
+  
+@author Antonio Dantas 
+@since 13/10/2015
+@version<1.00>
+@receive
+<  _oModel (o) - Objeto Model  
+>
+
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/  
+Static Function fLibZCG(_oModel)
+Local _aArea		:= GetArea()
+Local _lReturn 		:= .t. 
+Local _nOper		:= _oModel:GetOperation()
+Local _oModelZCG	:= _oModel:GetModel("ZCGMASTER")
+Local _cCodProd		:= _oModelZCG:GetValue("ZCG_PRODUT")
+Local _cCodViab		:= _oModelZCG:GetValue("ZCG_CODIGO")
+Local _lAprovada 	:= .t. 
+//-- Seleciona a Tabela de Liberacoes  
+dbSelectArea("ZCH")
+ZCH->(dbSetOrder(1))
+ZCH->(dbSeek(FwxFilial("ZCH")+_cCodViab))
+//-- Loop nos LIBERADORES: Verifica se estao TODAS APROVADAS. 
+Do While ZCH->(!Eof()) .And. ZCH->ZCH_FILIAL == FwxFilial("ZCH") .And. ZCH->ZCH_VIABIL == _cCodViab
+	If ZCH->ZCH_TOPASS != "1"
+		_lAprovada := .f. 
+		Exit 
+	Endif 
+	ZCH->(dbSkip())
+Enddo
+If _lAprovada 
+	If !Empty(Alltrim(_cCodProd))
+		If (ZCG->(RecLock("ZCG",.f.)))
+			Replace ZCG->ZCG_STATUS With  "3"		//-- 1=Em Elaboracao;2=Aberta;3=Aprovada;4=Aguardando Produto;5=Rejeitada                                                            
+			ZCG->(MsUnLock())
+			ZCG->(dbCommit())
+		Endif 		//-- ZCG->(RecLock("ZCG",.f.)))
+	Endif		//-- !Empty(Alltrim(_cCodProd)) 
+Endif	//-- _lAprovada 
+RestArea(_aArea)
+Return _lReturn 
+
+                                              

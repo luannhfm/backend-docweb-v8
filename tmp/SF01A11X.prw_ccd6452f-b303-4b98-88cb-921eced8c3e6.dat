@@ -1,0 +1,415 @@
+#Include "ATFA125.CH"
+#Include "PROTHEUS.CH"
+
+/*/
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÚÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄ¿±±
+±±³Fun‡„o	 ³ AF125LeSN3 ³ Autor ³ Microsiga             ³ Data ³ 27/08/10 ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Descri‡„o ³ Leitura do SN3          										³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³ Uso		 ³ Generico 													³±±
+±±ÀÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+User Function SF01A11X( cAlias, aVar, aCpDigit, dDataTrans, cFilDest, cFilOrig,;
+cExpFiltro, lAutomatico, cTipoAprov )
+
+Local aArea      := GetArea()
+Local cPatrim    := ""
+Local nProcRec 	 := 0
+Local nRecAtu  	 := 0
+Local lUltReg  	 := .F.
+Local nHdlPrv  	 := 0
+Local cArquivo   := ""
+Local aCtb		 := { { }, { } }		// Retorno para contabilizacao
+Local lAst		 := .F.
+Local nRegSN3	 := 0
+Local nEntDigit  := 1
+Local nCpDigit	 := 1
+Local aBackVar	 := {}
+Local lGspInUseM := If(Type('lGspInUse')=='L', lGspInUse, .F.)
+Local lNgaTfMnt  := FindFunction("NGATFMNT")
+Local dUltDepr 	 := GetMV("MV_ULTDEPR")
+Local nTaxaMedia := Af060moeda(If(lGspInUseM,MsSomaMes(dUltDepr,-1,.T.),dUltDepr))
+Local cTxPad	 := ""
+Local cDataSol	 := dDataBase
+Local cHoraSol	 := StrTran(Left(Time(),5),':','')
+Local cCodSol	 := ""
+//Walmir Junior - 20/04/2017 - Variáveis Controle Solicitação
+Local _aSolBx	 := {}
+Local _cSolic
+
+Private nTotal := 0
+Private lPrim  := .T.
+
+If Left( cTipoAprov, 1 ) == "2" // Resp. Geral
+	cCodSol := GetSxENum( "SNM", "NM_CODIGO" )
+Endif
+
+dbSelectArea( "SN1" )
+SN1->( dbSetOrder(1) )
+SN1->( MsSeek( xFilial( "SN1" ) + cBasei + cItemi, .T. ) )
+ProcRegua( SN1->(RecCount()) )
+
+dbSelectArea( "SN3" )
+SN3->( dbSetOrder(1) )
+
+If cFilDest == cFilOrig
+	
+	While SN1->(!Eof()) .And. xFilial( "SN1" ) == SN1->N1_FILIAL .And. SN1->N1_CBASE <= cBasef .And. SN1->N1_ITEM <= cItemf
+		IncProc()
+
+		//bem pendente de classificacao
+		If SN1->N1_STATUS == "0"
+			SN1->( dbSkip() )
+			Loop
+		EndIf
+
+		// Se nao existir o filtro do usuario ou se ele retornar .T., marca o registro
+		dbSelectArea( "SN3" )
+		If Empty( cExpFiltro ) .Or. SN1->( &(cExpFiltro) )
+			
+			SN3->( dbSeek( xFilial( "SN3" ) + SN1->N1_CBASE + SN1->N1_ITEM ) )
+			
+			If SN1->N1_OK == cMarca
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//³	No caso de contas de Capital, nÆo vai a corre‡Æo monet ria. ³
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+				cPatrim	:= SN1->N1_PATRIM
+				
+				If SN1->( FieldPos( "N1_TAXAPAD" ) ) > 0
+					cTxPad := SN1->N1_TAXAPAD
+				EndIf
+				
+				nValor	:= Iif( cPatrim # "C" , SN3->N3_VORIG1 + SN3->N3_VRCACM1 + SN3->N3_AMPLIA1, SN3->N3_VORIG1 + SN3->N3_AMPLIA1 )
+				
+				If Left( cTipoAprov, 1 ) == "1" // Resp. Individual
+					//Verifica se WorkFlow está ativado
+					If SuperGetMv( "MV_ATFWFM", , .F. )
+						// Preenche a matriz PRIVATE aEmailSol com o e-mail dos responsaveis
+						A125VlRspWF( SN3->N3_CBASE, SN3->N3_ITEM )
+					EndIf
+					cCodSol := GetSxENum( "SNM", "NM_CODIGO" )
+				Endif
+				GravaTr( SN3->N3_CBASE												,; //Codigo do Bem
+				SN3->N3_ITEM												,; //Item do Bem
+				SN3->N3_TIPO												,; //Tipo do Bem
+				cFilDest													,; //Filial Destino
+				SN1->N1_GRUPO												,; //Grupo do Bem
+				IIf(AllTrim(aVar[1][6]) == "*", SN3->N3_CCUSTO , aVar[1][6])	,; //Centro de Custo destino - cCCustoDst
+				/*IIf(AllTrim(aVar[1][7]) == "*", SN3->N3_LOCAL  , aVar[1][7])*/""	,; //Local destino - cLocalDst
+				IIf(AllTrim(aVar[1][1]) == "*", SN3->N3_CCONTAB, aVar[1][1])	,; //Conta do Bem destino - cCContabDst
+				IIf(AllTrim(aVar[1][2]) == "*", SN3->N3_CCORREC, aVar[1][2])	,; //Conta - cCCorrecDst
+				IIf(AllTrim(aVar[1][3]) == "*", SN3->N3_CDEPREC, aVar[1][3])	,; //Conta - cCDeprecDst
+				IIf(AllTrim(aVar[1][4]) == "*", SN3->N3_CCDEPR , aVar[1][4])	,; //Conta - cCDDeprDst
+				IIf(AllTrim(aVar[1][5]) == "*", SN3->N3_CDESP  , aVar[1][5])	,; //Conta - cCDespDst
+				IIf(AllTrim(aVar[2][1]) == "*", SN3->N3_CUSTBEM, aVar[2][1])	,; //Centro de Custo - cCustBemDst
+				IIf(AllTrim(aVar[2][2]) == "*", SN3->N3_CCCORR , aVar[2][2])	,; //Centro de Custo - cCCCorrDst
+				IIf(AllTrim(aVar[2][3]) == "*", SN3->N3_CCDESP , aVar[2][3])	,; //Centro de Custo - cCCDespDst
+				IIf(AllTrim(aVar[2][4]) == "*", SN3->N3_CCCDEP , aVar[2][4])	,; //Centro de Custo - cCCCDepDst
+				IIf(AllTrim(aVar[2][5]) == "*", SN3->N3_CCCDES , aVar[2][5])	,; //Centro de Custo - cCCCDESDst
+				IIf(Len(aVar) < 3 .Or. AllTrim(aVar[3][1]) == "*", SN3->N3_SUBCCON, aVar[3][1])	,; //Item Contabil  - cItBemDst
+				IIf(Len(aVar) < 3 .Or. AllTrim(aVar[3][2]) == "*", SN3->N3_SUBCCOR, aVar[3][2])	,; //Item Contabil - cItCorrDst
+				IIf(Len(aVar) < 3 .Or. AllTrim(aVar[3][3]) == "*", SN3->N3_SUBCDEP, aVar[3][3])	,; //Item Contabil - cItDespDst
+				IIf(Len(aVar) < 3 .Or. AllTrim(aVar[3][4]) == "*", SN3->N3_SUBCCDE, aVar[3][4])	,; //Item Contabil - cItCDepDst
+				IIf(Len(aVar) < 3 .Or. AllTrim(aVar[3][5]) == "*", SN3->N3_SUBCDES, aVar[3][5])	,; //Item Contabil - cItCDesDst
+				IIf(Len(aVar) < 4 .Or. AllTrim(aVar[4][1]) == "*", SN3->N3_CLVLCON, aVar[4][1])	,; //Classe de Valor - cClVlBemDst
+				IIf(Len(aVar) < 4 .Or. AllTrim(aVar[4][2]) == "*", SN3->N3_CLVLCOR, aVar[4][2])	,; //Classe de Valor - cClVlCorDst
+				IIf(Len(aVar) < 4 .Or. AllTrim(aVar[4][3]) == "*", SN3->N3_CLVLDEP, aVar[4][3])	,; //Classe de Valor - cClVlDepDst
+				IIf(Len(aVar) < 4 .Or. AllTrim(aVar[4][4]) == "*", SN3->N3_CLVLCDE, aVar[4][4])	,; //Classe de Valor - cClVlCDeDst
+				IIf(Len(aVar) < 4 .Or. AllTrim(aVar[4][5]) == "*", SN3->N3_CLVLDES, aVar[4][5])	,; //Classe de Valor - cClVlDesDst
+				_cGeraNF													,; //Gera NF?
+				_cClasNF													,; //Classificacao da NF
+				_cTesS														,; //TES de Saida
+				_cTesE														,; //TES de entrada
+				_cNota														,; //Numero da NF (Caso já haja)
+				_cSerie														,; //Serie da NF
+				cDataSol													,; //Data da solicitacao
+				cHoraSol													,; //Hora da Solicitacao
+				__cUserID													,; //Codigo do solicitante
+				_cHistSol													,; //Historico da solicitacao
+				cCodSol														,; //Codigo da solicitacao
+				_cCondpag													)  //Condicao de pagamento
+				
+				If Left(cTipoAprov,1) == "1" // Resp. Individual
+					ConfirmSx8()
+					
+					If SuperGetMV( 'MV_ATFWFM' ,, .F. )
+						//Chamada do WorkFlow
+						A125WfTr( cCodSol )
+					EndIf
+				Endif
+				//Walmir Junior - 20/04/2017 - Array códigos solicitações de baixa.	
+				If aScan(_aSolBx, cCodSol) = 0
+					aAdd(_aSolBx, cCodSol)
+				EndIf
+			Endif
+		Endif
+		SN1->( DbSkip() )
+	EndDo
+	
+	If Left( cTipoAprov, 1 ) == "2" // Resp. Geral
+		ConfirmSx8()
+		If SuperGetMV( 'MV_ATFWFM', , .F. )
+			//Chamada do WorkFlow
+			A125WfTr(cCodSol)
+		EndIf
+	Endif
+	
+Else
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³cFilOrig <> cFilDest       ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³Verifica se contas transferidas existem na filial destino³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	lAst := .F.
+	For nEntDigit := 1 to Len(aVar)
+		For nCpDigit := 1 To Len(aVar[nEntDigit])
+			If AllTrim( aVar[nEntDigit][nCpDigit] ) == "*"
+				lAst := .T.
+				Exit
+			EndIf
+		Next nCpDigit
+		If lAst
+			Exit
+		EndIf
+	Next nEntDigit
+	
+	aBackVar := aClone( aVar )
+	SN1->( MsSeek( xFilial( "SN1" ) + cBasei + cItemi, .T. ) )
+	
+	While SN1->(!Eof()) .And.;
+		xFilial( "SN1" ) == SN1->N1_FILIAL .And.;
+		SN1->N1_CBASE <= cBasef .And.;
+		SN1->N1_ITEM <= cItemf
+		//bem pendente de classificacao
+		If SN1->N1_STATUS == "0"
+			SN1->( dbSkip() )
+			Loop
+		EndIf
+		
+		// Se nao existir o filtro do usuario ou se ele retornar .T., marca o registro
+		If Empty( cExpFiltro ) .Or. SN1->(&( cExpFiltro ))
+			If SN1->N1_OK == cMarca
+				SN3->( dbSeek( xFilial( "SN3" ) + SN1->N1_CBASE + SN1->N1_ITEM ) )
+				aVar := aClone( aBackVar )			/// RESTAURA O aVar PARA O PRÓXIMO ITEM (PODE TER ORIGENS DIFERENTES)
+				If lAst								/// SE TIVER ASTERISCO NO CONTEÚDO DE ALGUMA VARIAVEL (VALIDA ORIGEM = DESTINO)
+					For nEntDigit := 1 to Len(aVar)
+						For nCpDigit := 1 To Len(aVar[nEntDigit])
+							If ALLTRIM(aVar[nEntDigit][nCpDigit]) == "*"
+								aVar[nEntDigit][nCpDigit] := &( "SN3->" + aCpDigit[nEntDigit][nCpDigit] )
+							EndIf
+						Next nCpDigit
+					Next nEntDigit
+				EndIf
+				
+				If !AF060ExiFil( aVar[1][1], aVar[1][2], aVar[1][3],aVar[1][4],aVar[1][5],;
+					aVar[1][6], cFilDest, cFilOrig, aCpDigit, aVar )
+					MsgInfo( STR0026 + " " + SN1->N1_CBASE + " " + STR0027 + " " + SN1->N1_ITEM, STR0068 )	//"Código" | "Item" | "Dados Contábeis"
+					Return
+				Endif
+			EndIf
+		Endif
+		SN1->( dbSkip() )
+	EndDo
+	
+	SN3->( dbGoTo( nRegSN3 ) )
+	aVar := aClone( aBackVar )
+	SN1->( MsSeek( xFilial( "SN3" ) + cBasei + cItemi, .T. ) )
+	
+	While SN1->(!Eof()) .And.;
+		xFilial( "SN3" ) == SN1->N1_FILIAL .And.;
+		SN1->N1_CBASE <= cBasef .And.;
+		SN1->N1_ITEM <= cItemf
+
+		//bem pendente de classificacao
+		If SN1->N1_STATUS == "0"
+			SN1->( dbSkip() )
+			Loop
+		EndIf
+
+		// Se NAO existir o filtro do usuario E se ele retornar .T., marca o registro
+		If !Empty( cExpFiltro ) .and. SN1->(&( cExpFiltro ))
+			
+			SN3->( dbSeek( xFilial( "SN3" ) + SN1->N1_CBASE + SN1->N1_ITEM ) )
+			
+			If SN1->N1_OK == cMarca
+				If Left( cTipoAprov, 1 ) == "1" // Resp. Individual
+					//Verifica se WorkFlow está ativado
+					If SuperGetMv( "MV_ATFWFM", , .F. )
+						// Preenche a matriz PRIVATE aEmailSol com o e-mail dos responsaveis
+						A125VlRspWF( SN1->N1_CBASE, SN1->N1_ITEM )
+					EndIf
+					cCodSol := GetSxENum( "SNM", "NM_CODIGO" )
+				Endif
+				GravaTr( SN3->N3_CBASE												,; //Codigo do Bem
+				SN3->N3_ITEM												,; //Item do Bem
+				SN3->N3_TIPO												,; //Tipo do Bem
+				cFilDest													,; //Filial Destino
+				SN1->N1_GRUPO												,; //Grupo do Bem
+				IIf(AllTrim(aVar[1][6]) == "*", SN3->N3_CCUSTO , aVar[1][6])	,; //Centro de Custo destino - cCCustoDst
+				/*IIf(AllTrim(aVar[1][7]) == "*", SN3->N3_LOCAL  , aVar[1][7])*/""	,; //Local destino - cLocalDst
+				IIf(AllTrim(aVar[1][1]) == "*", SN3->N3_CCONTAB, aVar[1][1])	,; //Conta do Bem destino - cCContabDst
+				IIf(AllTrim(aVar[1][2]) == "*", SN3->N3_CCORREC, aVar[1][2])	,; //Conta - cCCorrecDst
+				IIf(AllTrim(aVar[1][3]) == "*", SN3->N3_CDEPREC, aVar[1][3])	,; //Conta - cCDeprecDst
+				IIf(AllTrim(aVar[1][4]) == "*", SN3->N3_CCDEPR , aVar[1][4])	,; //Conta - cCDDeprDst
+				IIf(AllTrim(aVar[1][5]) == "*", SN3->N3_CDESP  , aVar[1][5])	,; //Conta - cCDespDst
+				IIf(AllTrim(aVar[2][1]) == "*", SN3->N3_CUSTBEM, aVar[2][1])	,; //Centro de Custo - cCustBemDst
+				IIf(AllTrim(aVar[2][2]) == "*", SN3->N3_CCCORR , aVar[2][2])	,; //Centro de Custo - cCCCorrDst
+				IIf(AllTrim(aVar[2][3]) == "*", SN3->N3_CCDESP , aVar[2][3])	,; //Centro de Custo - cCCDespDst
+				IIf(AllTrim(aVar[2][4]) == "*", SN3->N3_CCCDEP , aVar[2][4])	,; //Centro de Custo - cCCCDepDst
+				IIf(AllTrim(aVar[2][5]) == "*", SN3->N3_CCCDES , aVar[2][5])	,; //Centro de Custo - cCCCDESDst
+				IIf(Len(aVar) < 3 .Or. AllTrim(aVar[3][1]) == "*", SN3->N3_SUBCCON, aVar[3][1])	,; //Item Contabil  - cItBemDst
+				IIf(Len(aVar) < 3 .Or. AllTrim(aVar[3][2]) == "*", SN3->N3_SUBCCOR, aVar[3][2])	,; //Item Contabil - cItCorrDst
+				IIf(Len(aVar) < 3 .Or. AllTrim(aVar[3][3]) == "*", SN3->N3_SUBCDEP, aVar[3][3])	,; //Item Contabil - cItDespDst
+				IIf(Len(aVar) < 3 .Or. AllTrim(aVar[3][4]) == "*", SN3->N3_SUBCCDE, aVar[3][4])	,; //Item Contabil - cItCDepDst
+				IIf(Len(aVar) < 3 .Or. AllTrim(aVar[3][5]) == "*", SN3->N3_SUBCDES, aVar[3][5])	,; //Item Contabil - cItCDesDst
+				IIf(Len(aVar) < 4 .Or. AllTrim(aVar[4][1]) == "*", SN3->N3_CLVLCON, aVar[4][1])	,; //Classe de Valor - cClVlBemDst
+				IIf(Len(aVar) < 4 .Or. AllTrim(aVar[4][2]) == "*", SN3->N3_CLVLCOR, aVar[4][2])	,; //Classe de Valor - cClVlCorDst
+				IIf(Len(aVar) < 4 .Or. AllTrim(aVar[4][3]) == "*", SN3->N3_CLVLDEP, aVar[4][3])	,; //Classe de Valor - cClVlDepDst
+				IIf(Len(aVar) < 4 .Or. AllTrim(aVar[4][4]) == "*", SN3->N3_CLVLCDE, aVar[4][4])	,; //Classe de Valor - cClVlCDeDst
+				IIf(Len(aVar) < 4 .Or. AllTrim(aVar[4][5]) == "*", SN3->N3_CLVLDES, aVar[4][5])	,; //Classe de Valor - cClVlDesDst
+				_cGeraNF													,; //Gera NF?
+				_cClasNF													,; //Classificacao da NF
+				_cTesS														,; //TES de Saida
+				_cTesE														,; //TES de entrada
+				_cNota														,; //Numero da NF (Caso já haja)
+				_cSerie														,; //Serie da NF
+				cDataSol													,; //Data da solicitacao
+				cHoraSol													,; //Hora da Solicitacao
+				__cUserID													,; //Codigo do solicitante
+				_cHistSol													,; //Historico da solicitacao
+				cCodSol														,; //Codigo da solicitacao
+				_cCondpag													)  //Condicao de pagamento
+				If Left( cTipoAprov, 1 ) == "1" // Resp. Individual
+					ConfirmSx8()
+					If SuperGetMV( 'MV_ATFWFM' ,, .F. )
+						//Chamada do WorkFlow
+						A125WfTr( cCodSol )
+					EndIf
+				Endif
+				//Walmir Junior - 20/04/2017 - Array códigos solicitações de baixa.	
+				If aScan(_aSolBx, cCodSol) = 0
+					aAdd(_aSolBx, cCodSol)
+				EndIf
+			Endif
+		Endif
+		IncProc()
+		SN1->(dbSkip())
+	Enddo
+	
+	If Left( cTipoAprov, 1 ) == "2" // Resp. Geral
+		ConfirmSx8()
+		If SuperGetMV( 'MV_ATFWFM' ,, .F. )
+			//Chamada do WorkFlow
+			A125WfTr( cCodSol )
+		EndIf
+	Endif
+Endif
+
+//Walmir Junior - 20/04/2017 - Chamada do Relatório Termo de Baixa.
+If Len(_aSolBx) > 0
+	
+	_cSolic := U_SF01A04X()
+	
+	DBSelectArea("SNM")
+	DBSetOrder(1)
+	Begin Transaction
+	_nItCont := 1
+	For _nx := 1 to Len(_aSolBx)
+		SNM->(dbGoTop())
+		
+		If SNM->(DBSeek(xFilial("SNM")+_aSolBx[_nx]))
+			while (SNM->(!Eof()) .AND. xFilial("SNM")+_aSolBx[_nx] == SNM->NM_FILIAL+SNM->NM_CODIGO)
+				SNM->(RecLock("SNM", .F.))
+					SNM->NM_XSOLIC 	:= _cSolic
+					SNM->NM_XSOLITM	:= StrZero(_nItCont, 3)
+				SNM->(MsUnLock())
+				SNM->(dbCommit())
+				_nItCont++
+				SNM->(dbSkip())
+			End
+		EndIf
+	Next
+	End Transaction
+	If Aviso("Gerar Relatório", "Deseja gerar o relatório de Transferência?", {"Sim", "Não"}) == 1
+		U_SF01R02X({{xFilial("SNM"), _cSolic}})
+	EndIf
+EndIf
+
+RestArea( aArea )
+
+Return
+
+Static Function GravaTr(cCBase,cItem,cTipo,cFilDest, cGrupo,cCCustoDst,cLocalDst,cCContabDst,;
+cCCorrecDst,cCDeprecDst,cCDDeprDst,cCDespDst,cCustBemDst,cCCCorrDst,;
+cCCDespDst,cCCCDepDst,cCCCDESDst,cItBemDst,cItCorrDst,cItDespDst,;
+cItCDepDst,cItCDesDst,cClVlBemDst,cClVlCorDst,cClVlDepDst,cClVlCDeDst,;
+cClVlDesDst,cGeraNF,cClasNFE,cTESNFS,cTESNFE,cNota,cSerie,dDatSol,dHorSol,;
+cUsrSol,cHistSol,cCodSol,cCondpg,cArmz)
+
+
+RecLock( "SNM", .T. )
+SNM->NM_FILIAL	:= xFilial( "SNM" )
+SNM->NM_CODIGO	:= cCodSol
+SNM->NM_DATSOL	:= dDatSol
+SNM->NM_HORSOL	:= StrTran( Left( dHorsol, 5 ), ":", "" )
+SNM->NM_CBASE	:= cCBase
+SNM->NM_ITEM	:= cItem
+SNM->NM_TIPO	:= cTipo
+SNM->NM_SITSOL	:= "1" //Pendente
+SNM->NM_USRSOL	:= cUsrSol
+SNM->NM_TIPOSOL	:= "2" //Transferencia
+SNM->NM_FILDEST := cFilDest
+SNM->NM_GRUPO	:= cGrupo
+SNM->NM_CCUSTO	:= cCCustoDst
+SNM->NM_LOCAL	:= cLocalDst
+SNM->NM_CCONTAB	:= cCContabDst
+SNM->NM_CCORREC	:= cCCorrecDst
+SNM->NM_CDEPREC	:= cCDeprecDst
+SNM->NM_CDDEPR	:= cCDDeprDst
+SNM->NM_CDESP	:= cCDespDst
+SNM->NM_CUSTBEM	:= cCustBemDst
+SNM->NM_CCCORR	:= cCCCorrDst
+SNM->NM_CCDESP	:= cCCDespDst
+SNM->NM_CCCDEP	:= cCCCDepDst
+SNM->NM_CCCDES	:= cCCCDESDst
+SNM->NM_ITBEM	:= cItBemDst
+SNM->NM_ITCORR	:= cItCorrDst
+SNM->NM_ITDESP	:= cItDespDst
+SNM->NM_ITCDEP	:= cItCDepDst
+SNM->NM_ITCDES	:= cItCDesDst
+SNM->NM_CLVLBEM	:= cClVlBemDst
+SNM->NM_CLVLCOR	:= cClVlCorDst
+SNM->NM_CLVLDEP	:= cClVlDepDst
+SNM->NM_CLVLCDE	:= cClVlCDeDst
+SNM->NM_CLVLDES	:= cClVlDesDst
+SNM->NM_GERANF	:= SubStr(cGeraNF,1,1)
+SNM->NM_NOTA	:= cNota
+SerieNfId('SNM',1,'NM_SERIE',dDataBase,,cSerie)
+SNM->NM_TESNFS	:= cTESNFS
+SNM->NM_CLASNFE	:= SubStr(cClasNFE,1,1)
+SNM->NM_TESNFE	:= cTESNFE
+SNM->NM_CONDPG	:= cCONDPG
+If FieldPos('NM_ARMAZEM') > 0 
+SNM->NM_ARMAZEM	:= cArmz
+EndIf
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³Grava historico³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+MSMM( SNM->NM_CDHSOL, , , cHistSol, 1, , , "SNM", "NM_CDHSOL" )
+SNM->( MsUnlock() )
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Ponto de entrada executado para complementar informações ao workflow	        	³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	If ExistBlock( "AF125GRVTR" )
+		ExecBlock( "AF125GRVTR" , .F., .F. )
+	EndIf
+
+
+Return Nil

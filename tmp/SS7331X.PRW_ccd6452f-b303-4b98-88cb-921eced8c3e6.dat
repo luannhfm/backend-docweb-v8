@@ -1,0 +1,572 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "PARMTYPE.CH"
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <SS7331X>
+ 31 - Metas de Contratos Previsto x Realizado: Compara o volume de produtos
+      com Pedidos de Venda GERADOS x Previsão de Vendas.    
+ 
+@author<Antonio Dantas>
+@since<04/03/2015>
+@version<1.00>
+@return<Nil>,<>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function SS7331X()
+Local _oReport			:= Nil     
+Private _lCancel			:= .f.  
+Private _cPerg 			:= ""
+Private _cAlias			:= GetNextAlias()   
+Private _cAceAll   		:= SuperGetMv("MV_XACEALL",,"")       
+//+------------------------------------------------------------------+
+//| Verifica se o operador esta logado na filail DR que tem acesso   |
+//| a todas as filiais, ou somente na filial em que esta logada.     |
+//+------------------------------------------------------------------+
+_cPerg	:= FunName()			//-- Define o Grupo de Perguntas   
+//+------------------------------------------------------------------+
+//|   Interface de impressao                                         |
+//+------------------------------------------------------------------+
+_oReport := ReportDef()
+If !_lCancel
+	_oReport:PrintDialog()
+Endif	    
+Return
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <ReportDef>
+ 31 - Metas de Contratos Previsto x Realizado.   
+
+@author<Antonio Dantas>
+@since<12/02/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function ReportDef()
+Local _cTitulo		:= "31 - Metas de Contratos Previsto x Realizado"
+Local _cSubTit		:= ""  
+Local _oReport		:= Nil
+//--
+Local _oRealizado		:= Nil
+Local _oVendedor		:= Nil	
+Local _aMeses 		:= {"JANEIRO","FEVEREIRO","MARCO","ABRIL","MAIO","JUNHO","JULHO","AGOSTO","SETEMBRO","OUTUBRO","NOVEMBRO","DEZEMBRO"}
+Local _cMaskNumb		:= "@E 9,999.99"
+Local _nTamMASK		:= Len(_cMaskNumb)-2
+
+//+------------------------------------------------------------------+
+//| Carrega as perguntas relativas aos parametros de Impressao       |
+//|  Mv_par01 - Filial DE?                                           |
+//|  Mv_par02 - Filial ATE?                                          |
+//|  Mv_par03 - Unid. Venda DE?                                      |
+//|  Mv_par04 - Unid. Venda ATE?                                     |
+//|  Mv_par05 - Vendedor DE?                                         |
+//|  Mv_par06 - Vendedor ATE?                                        |
+//|  Mv_par07 - Produto DE?                                          |
+//|  Mv_par08 - Produto ATE?                                         |
+//|  Mv_par09 - Grupo de Prod DE?                                    |
+//|  Mv_par10 - Grupo de Prod ATE?                                   |
+//|  Mv_par11 - Ano ?                                                |
+//|  Mv_par12 - Mes DE ?                                             |
+//|  Mv_par13 - Mês ATE ?                                            |
+//|  Mv_par14 - CNAE Indústria ?                                     |
+//+------------------------------------------------------------------+
+xParPerg(_cPerg)      
+//+------------------------------------------------------------------+
+//|  Monta tela de paramentos para usuario, se cancelar sair         |
+//+------------------------------------------------------------------+
+If !Pergunte(_cPerg,.t.)  
+	_lCancel := .T. 
+   Return
+Endif 
+If Mv_par12 > Mv_par13
+	Aviso(FunName()+"/"+ProcName(),"Favor corrigir, o Mês inicial informado ["+Mv_par12+"] é maior que o Mês Final informado ["+Mv_par13+"]!",{"OK"})
+	_lCancel := .T. 
+   Return
+Endif 
+//+------------------------------------------------------------------+
+//| Verifica se o operador esta logado na filail DR que tem acesso   |
+//| a todas as filiais, ou somente na filial em que esta logada.     |
+//+------------------------------------------------------------------+
+If !(cFilAnt $ _cAceAll)
+	Mv_par01	:= cFilAnt
+	Mv_par02	:= cFilAnt
+Endif 
+//-- Defini o sub-titulo do Relatorio 
+_cSubTit := " - Periodo: "+Mv_par11+" dos mêses [De: "+_aMeses[Val(Mv_par12)]+" Ate: "+_aMeses[Val(Mv_par13)]+"] "  
+//+------------------------------------------------------------------+
+//|   Seleciona a tabela temporaria que sera referencia              | 
+//+------------------------------------------------------------------+
+FWMsgRun(, {|| u_fGetPedV() }, "Processando a Consulta aos Pedidos de Venda!", "Aguarde...")
+//+------------------------------------------------------------------+
+//|    Construcao do Objeto de Impressao do Relatorio                |
+//+------------------------------------------------------------------+
+//                    New(cReport,cTitle,uParam,bAction,cDescription,lLandscape,uTotalText,lTotalInLine,cPageTText,lPageTInLine,lTPageBreak,nColSpace)
+_oReport := TReport():New(_cPerg,_cTitulo+_cSubTit,_cPerg,{|_oReport|  ReportPrint(_oReport) },_cSubTit,.t.)
+_oReport:SetLandScape() 			//-- Modo Paisagem 
+//&&--  _oReport:SetPortrait() 			//-- Modo Retrato 
+//+------------------------------------------------------------------+
+//|    *****      S e c a o  -  1      *****                         |
+//+------------------------------------------------------------------+
+_oVendedor := TRSection():New(_oReport,"Vendedor",{"SA3"} )
+TRCell():New(_oVendedor,"A3_COD"		,"SA3" 	,"Codigo"		,PesqPict("SA3","A3_COD")  	,TamSX3("A3_COD")[1]		,.F.)    
+TRCell():New(_oVendedor,"A3_NOME"		,"SA3" 	,"Nome"		,PesqPict("SA3","A3_NOME")	,TamSX3("A3_NOME")[1]	,.F.)   
+TRCell():New(_oVendedor,"A3_ADMISS"	,"SA3" 	,"Admissão"	,"@!"							,10							,.F.) 
+TRCell():New(_oVendedor,"A3_CEL"		,"SA3" 	,"Celular"		,PesqPict("SA3","A3_CEL")  	,TamSX3("A3_CEL")[1]		,.F.)    
+//+------------------------------------------------------------------+
+//|    *****      S e c a o  -  2      *****                         |
+//+------------------------------------------------------------------+
+_oRealizado := TRSection():New(_oReport,"Produto",{"SB1"} )
+TRCell():New(_oRealizado,"B1_COD"		,"SB1"	,"Produto"		,PesqPict("SB1","B1_COD")	,TamSX3("B1_COD")[1]	,.F.) 
+TRCell():New(_oRealizado,"B1DESCR"		,"" 	,"Descricao"	,"@!"			,70		,.F.)
+TRCell():New(_oRealizado,"C6TIPO"		,"" 	,"Tipo"		,"@!"			,10		,.F.)
+TRCell():New(_oRealizado,"C6JAN"		,"" 	,"Janeiro"		, _cMaskNumb	, _nTamMASK	,.F.)    
+TRCell():New(_oRealizado,"C6FEV"		,"" 	,"Fevereiro"	, _cMaskNumb	, _nTamMASK	,.F.)    
+TRCell():New(_oRealizado,"C6MAR"		,"" 	,"Marco"		, _cMaskNumb	, _nTamMASK	,.F.)    
+TRCell():New(_oRealizado,"C6ABR"		,"" 	,"Abril"		, _cMaskNumb	, _nTamMASK	,.F.)    
+TRCell():New(_oRealizado,"C6MAI"		,"" 	,"Maio"		, _cMaskNumb	, _nTamMASK	,.F.)    
+TRCell():New(_oRealizado,"C6JUN"		,"" 	,"Junho"		, _cMaskNumb	, _nTamMASK	,.F.)    
+TRCell():New(_oRealizado,"C6JUL"		,"" 	,"Julho"		, _cMaskNumb	, _nTamMASK	,.F.)    
+TRCell():New(_oRealizado,"C6AGO"		,"" 	,"Agosto"		, _cMaskNumb	, _nTamMASK	,.F.)    
+TRCell():New(_oRealizado,"C6SET"		,"" 	,"Setembro"	, _cMaskNumb	, _nTamMASK	,.F.)    
+TRCell():New(_oRealizado,"C6OUT"		,"" 	,"Outubro"		, _cMaskNumb	, _nTamMASK	,.F.)    
+TRCell():New(_oRealizado,"C6NOV"		,"" 	,"Novembro"	, _cMaskNumb	, _nTamMASK	,.F.)    
+TRCell():New(_oRealizado,"C6DEZ"		,"" 	,"Dezembro"	, _cMaskNumb	, _nTamMASK	,.F.)    
+Return _oReport
+
+/*
++--------------------------------------------------------------------------+
+ {Protheus.doc}<ReportPrint>
+  31 - Metas de Contratos Previsto x Realizado
+
+@Author<Antonio Dsantas>
+@since<28/03/2014>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
++--------------------------------------------------------------------------+
+*/
+Static Function ReportPrint(_oReport)
+Local _oVendedor 		:= _oReport:Section(1)
+Local _oRealizado		:= _oReport:Section(2)
+Local _cDescProd		:= ""
+Local _nTamCompl		:= 0
+Local _aMetas			:= {}
+Local _nRecs			:= 0
+Local _cCodVend 		:= ""
+Local _lFirstTime		:= .t. 
+Local _lImpVend		:= .t.
+//+------------------------------------------------------------------+
+//| Posiciona no inicio o Arquivo Resultado da Consulta Sql          | 
+//+------------------------------------------------------------------+
+dbSelectArea(_cAlias)  
+(_cAlias)->(dbgotop())    
+//-- Conta o numero do Registro da Tabela Temporaria
+(_cAlias)->(dbEval({|| _nRecs++ }))
+_oReport:SetMeter(_nRecs)
+//-- 
+dbSelectArea(_cAlias)  
+(_cAlias)->(dbgotop())
+//+------------------------------------------------------------------+
+//| Inicializa com Codigo do Vendedor atual                          |
+//+------------------------------------------------------------------+
+_cCodVend 	:= (_cAlias)->C5_VEND1
+//+------------------------------------------------------------------+
+//| Inicia Laco para impressao do Relatorio                          |
+//+------------------------------------------------------------------+
+Do While (_cAlias)->(!eof())   
+	_oReport:IncMeter()    
+	//+------------------------------------------------------------------+
+	//|  Imprime a IDENTIFICAÇÃO DO VENDEDOR                             |
+	//+------------------------------------------------------------------+
+	If _lImpVend  
+		_oVendedor:Init()
+		If !_lFirstTime
+			//-- Salta linha dupla 
+			_oReport:SkipLine()
+			_oReport:SkipLine()
+			_oReport:SkipLine()
+		Endif    
+		//-- Localiza o cadastro do vendedor 
+		dbSelectArea("SA3")
+		SA3->(dbSetOrder(1))
+		SA3->(dbSeek(FwxFilial("SA3")+(_cAlias)->C5_VEND1))		
+		//-- Imprime os dados do vendedor 
+		_oReport:SetLeftMargin(3)		//-- Seta a Margem a partir da posição 1
+		_oVendedor:Cell( "A3_COD"		):SetBlock({|| (_cAlias)->C5_VEND1		})    
+		_oVendedor:Cell( "A3_NOME"		):SetBlock({|| SA3->A3_NOME				})   
+		_oVendedor:Cell( "A3_ADMISS"	):SetBlock({|| DTOC(SA3->A3_ADMISS)	}) 
+		_oVendedor:Cell( "A3_CEL"		):SetBlock({|| SA3->A3_CEL				})  
+		_oVendedor:PrintLine()		//-- Imprime e alinha   
+		_lImpVend := .f.
+	Endif 
+	//--
+	_cDescProd		:= Rtrim(Substr(Posicione("SB1",1,FwxFilial("SB1")+(_cAlias)->C6_PRODUTO,"B1_DESC"),1,70))
+	_nTamCompl		:= 70 - Len(_cDescProd)
+	_cDescProd	 	:= _cDescProd+Replicate(".",_nTamCompl)	
+	//--	
+	_aMetas 	:= fGetMeta(FwxFilial("SCT"),(_cAlias)->C6_PRODUTO,Mv_par11)
+	//+------------------------------------------------------------------+
+	//|  Imprime a Previsão para o PRODUTO                               |
+	//+------------------------------------------------------------------+
+	_oRealizado:Init()
+	_oReport:SetLeftMargin(5)		//-- Seta a Margem a partir da posição 5
+	_oRealizado:Cell( "B1_COD"	):SetBlock({|| "" 			}) 
+	_oRealizado:Cell( "B1DESCR"	):SetBlock({|| ""			  	})
+	_oRealizado:Cell( "C6TIPO"	):SetBlock({|| "Previsto" 	})
+	_oRealizado:Cell( "C6JAN"	):SetBlock({|| _aMetas[01]	})    
+	_oRealizado:Cell( "C6FEV"	):SetBlock({|| _aMetas[02]	})    
+	_oRealizado:Cell( "C6MAR"	):SetBlock({|| _aMetas[03]	})    
+	_oRealizado:Cell( "C6ABR"	):SetBlock({|| _aMetas[04]	})    
+	_oRealizado:Cell( "C6MAI"	):SetBlock({|| _aMetas[05]	})    
+	_oRealizado:Cell( "C6JUN"	):SetBlock({|| _aMetas[06]	})    
+	_oRealizado:Cell( "C6JUL"	):SetBlock({|| _aMetas[07]	})    
+	_oRealizado:Cell( "C6AGO"	):SetBlock({|| _aMetas[08]	})    
+	_oRealizado:Cell( "C6SET"	):SetBlock({|| _aMetas[09]	})    
+	_oRealizado:Cell( "C6OUT"	):SetBlock({|| _aMetas[10]	})    
+	_oRealizado:Cell( "C6NOV"	):SetBlock({|| _aMetas[11]	})    
+	_oRealizado:Cell( "C6DEZ"	):SetBlock({|| _aMetas[12]	})    
+	_oRealizado:PrintLine()		//-- Imprime e alinha   
+
+	//+------------------------------------------------------------------+
+	//|  Imprime o Realizado                                             |
+	//+------------------------------------------------------------------+
+	_oRealizado:Cell( "B1_COD"	):SetBlock({|| (_cAlias)->C6_PRODUTO	}) 
+	_oRealizado:Cell( "B1DESCR"	):SetBlock({|| _cDescProd				})
+	_oRealizado:Cell( "C6TIPO"	):SetBlock({|| "Realizado"				})
+	_oRealizado:Cell( "C6JAN"	):SetBlock({|| (_cAlias)->MES01  		})    
+	_oRealizado:Cell( "C6FEV"	):SetBlock({|| (_cAlias)->MES02  		})    
+	_oRealizado:Cell( "C6MAR"	):SetBlock({|| (_cAlias)->MES03 		})    
+	_oRealizado:Cell( "C6ABR"	):SetBlock({|| (_cAlias)->MES04  		})    
+	_oRealizado:Cell( "C6MAI"	):SetBlock({|| (_cAlias)->MES05 		})    
+	_oRealizado:Cell( "C6JUN"	):SetBlock({|| (_cAlias)->MES06  		})    
+	_oRealizado:Cell( "C6JUL"	):SetBlock({|| (_cAlias)->MES07 		})    
+	_oRealizado:Cell( "C6AGO"	):SetBlock({|| (_cAlias)->MES08  		})    
+	_oRealizado:Cell( "C6SET"	):SetBlock({|| (_cAlias)->MES09 		})    
+	_oRealizado:Cell( "C6OUT"	):SetBlock({|| (_cAlias)->MES10 		})    
+	_oRealizado:Cell( "C6NOV"	):SetBlock({|| (_cAlias)->MES11 		})    
+	_oRealizado:Cell( "C6DEZ"	):SetBlock({|| (_cAlias)->MES12 		})    
+	_oRealizado:PrintLine()		//-- Imprime e alinha   
+	_oReport:SkipLine()
+	//+------------------------------------------------------------------+
+	//|    Vai para o Proximo Registro da TABELA TEMPORARIA              | 
+	//+------------------------------------------------------------------+
+	(_cAlias)->(dbskip()) 	
+	If (_cAlias)->C5_VEND1 != _cCodVend
+		_cCodVend	:= (_cAlias)->C5_VEND1
+		_oRealizado:Finish()
+		_lImpVend	:= .t.   
+	Endif 
+Enddo 
+//+------------------------------------------------------------------+
+//|     Finaliza todas as sessões por definitivo                     |
+//+------------------------------------------------------------------+
+_oVendedor:Finish()
+_oRealizado:Finish()
+//+------------------------------------------------------------------+
+//|     Fecha o Arquivo de Trabalho                                  |
+//+------------------------------------------------------------------+
+(_cAlias)->(dbCloseArea())
+//+------------------------------------------------------------------+
+//|     Finaliza as sessoes                                          |
+//+------------------------------------------------------------------+
+Return
+
+
+/*
++--------------------------------------------------------------------------+
+{Protheus.doc}<fGetPedV>
+ Monta query de consulta dos Pedidos de Venda.
+
+@Author<Antonio Dsantas>
+@since<24/06/2014>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
++--------------------------------------------------------------------------+
+*/
+User Function fGetPedV()
+Local _cQuery		:= "" 
+Local _nCtaA 		:= 0
+_cQuery := "" 
+_cQuery += "Select "+CRLF
+_cQuery += "SC5.C5_VEND1, SC6.C6_PRODUTO "+CRLF
+_nCtaA := 0
+For _nCtaA := 1 to 12 
+	_cQuery += " ,SUM(CASE WHEN Substr(SC5.C5_EMISSAO,5,2) = '"+Strzero(_nCtaA,2)+"' THEN SC6.C6_QTDVEN ELSE 0 END) AS MES"+Strzero(_nCtaA,2)+" "+CRLF 
+Next _nCtaA
+_cQuery += "From "+RetSqlName("SC6")+" SC6 "+CRLF
+_cQuery += "Inner Join "+RetSqlName("SC5")+" SC5 on SC5.D_E_L_E_T_ = ' ' "+CRLF 
+_cQuery += "             And SC5.C5_FILIAL = SC6.C6_FILIAL "+CRLF
+_cQuery += "             And SC5.C5_NUM = SC6.C6_NUM "+CRLF
+_cQuery += "             And Substr(SC5.C5_EMISSAO,1,4) = '"+Mv_par11+"' "+CRLF
+_cQuery += "             And Substr(SC5.C5_EMISSAO,5,2) Between '"+Mv_par12+"' And '"+Mv_par13+"' "+CRLF 
+_cQuery += "             And SC5.C5_VEND1 Between '"+Mv_par05+"' And '"+Mv_par06+"' "+CRLF 
+_cQuery += "Inner Join "+RetSqlName("SA3")+" SA3 on SA3.D_E_L_E_T_ = ' ' "+CRLF 
+_cQuery += "             And SA3.A3_FILIAL = '"+FwxFilial("SA3")+"' "+CRLF 
+_cQuery += "             And SA3.A3_COD = SC5.C5_VEND1 "+CRLF
+_cQuery += "             And SA3.A3_UNIDAD Between '"+Mv_par03+"' And '"+Mv_par04+"' "+CRLF
+_cQuery += "Inner Join "+RetSqlName("SB1")+" SB1 on SB1.D_E_L_E_T_ = ' ' "+CRLF 
+_cQuery += "             And SB1.B1_FILIAL = '"+FwxFilial("SB1")+"' "+CRLF
+_cQuery += "             And SB1.B1_COD = SC6.C6_PRODUTO "+CRLF
+_cQuery += "             And SB1.B1_GRUPO Between '"+Mv_par09+"' And '"+Mv_par10+"' "+CRLF
+_cQuery += "Inner Join "+RetSqlName("SA1")+" SA1 on SA1.D_E_L_E_T_ = ' ' "+CRLF
+_cQuery += "             And SA1.A1_FILIAL = '"+FwxFilial("SA1")+"' "+CRLF
+_cQuery += "             And SA1.A1_COD = SC5.C5_CLIENTE "+CRLF
+_cQuery += "             And SA1.A1_LOJA = SC5.C5_LOJACLI "+CRLF 
+If Mv_par14 != 3
+	_cQuery += "             And SA1.A1_XTRATIN = '"+Iif(Mv_par14==1,"S","N")+"' "+CRLF
+Endif 
+_cQuery += "Where SC6.D_E_L_E_T_ = ' ' "+CRLF 
+_cQuery += "And SC6.C6_NUMORC <> '        ' "+CRLF 
+_cQuery += "And Substr(SC6.C6_FILIAL,1,4) = '"+Substr(cFilAnt,1,4)+"' "+CRLF
+_cQuery += "And SC6.C6_FILIAL Between '"+Mv_par01+"' And '"+Mv_par02+"' "+CRLF 
+_cQuery += "And SC6.C6_PRODUTO  Between '"+Mv_par07+"' And '"+Mv_par08+"' "+CRLF 
+_cQuery += "Group By SC5.C5_VEND1, SC6.C6_PRODUTO  "+CRLF 
+//+------------------------------------------------------------------+
+//| Grava o Resultado da Query para consulta                         |
+//+------------------------------------------------------------------+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select(_cAlias)>0
+	(_cAlias)->(DbCloseArea())
+Endif
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),_cAlias,.t.,.t.)
+Return .t.
+
+
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <xParPerg>
+ Cria as perguntas.	  
+
+@author<Antonio Dantas>
+@since<13/02/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function xParPerg()	
+Local _aPerg := {}
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//   //-- MAPEAMENTOS DOS CAMPOS DE SX1
+//   aAdd (_aPerg,{"X1_PERGUNT","X1_PERPA","X1_PERENG","MV_CHL","C",5,0,0,"X1_GSC","X1_VALID",;
+//								"X1_VAR01",("X1_DEF01" e "X1_PYNE"),"X1_DEFSPA1","X1_DEFENG1","X1_CNT01",;
+//								"X1_VAR02","X1_DEF02","X1_DEFSPA2","X1_DEFENG2","X1_CNT02",;
+//								"X1_VAR03","X1_DEF03","X1_DEFSPA3","X1_DEFENG3","X1_CNT03",;
+//								"X1_VAR04","X1_DEF04","X1_DEFSPA4","X1_DEFENG4","X1_CNT04",;
+//								"X1_VAR05","X1_DEF05","X1_DEFSPA5","X1_DEFENG5","X1_CNT05",;
+//								"X1_F3","X1_GRPSXG","","X1_HELP","X1_PICTURE",{"Descricao para Tela PTG"},{"Descricao para Tela EPA"},{"Descricao para Tela USA"}})
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//+------------------------------------------------------------------+
+//| Verifica se o operador esta logado na filail DR que tem acesso   |
+//| a todas as filiais, ou somente na filial em que esta logada.     |
+//+------------------------------------------------------------------+
+//-- Mv_par01 =     Filial DE?
+aAdd(_aPerg, {"Filial DE?","Filial DE?","Filial DE?","MV_CH1","C",TamSX3("AD5_FILIAL")[1],0,0,"G","u_fVldfil()",;
+					"MV_PAR01","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"SM0EPU","","","","",{"Codigo da Filial"},{"Codigo da Filial"},{"Codigo da Filial"}})
+
+//-- Mv_par02 =     Filial ATE?
+aAdd(_aPerg, {"Filial ATE?","Filial ATE?","Filial ATE?","MV_CH2","C",TamSX3("AD5_FILIAL")[1],0,0,"G","u_fVldfil()",;
+					"MV_PAR02","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"SM0EPU","","","","",{"Codigo da Filial"},{"Codigo da Filial"},{"Codigo da Filial"}})
+
+//-- Mv_par03 =     Unid. Venda DE?
+aAdd(_aPerg, {"Unid. Venda DE?","Unid. Venda DE?","Unid. Venda DE??","MV_CH3","C",TamSX3("ADK_COD")[1],0,0,"G","",;
+					"MV_PAR03","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"ADK","","","","",{"Unidade de Venda DE"},{"Unidade de Venda DE"},{"Unidade de Venda DE"}})
+
+//-- Mv_par04 =     Unid. Venda ATE?
+aAdd(_aPerg, {"Unid. Venda ATE?","Unid. Venda ATE?","Unid. Venda ATE?","MV_CH4","C",TamSX3("ADK_COD")[1],0,0,"G","",;
+					"MV_PAR04","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"ZCD","","","","",{"Unidade de Venda ATE"},{"Unidade de Venda ATE"},{"Unidade de Venda ATE"}})
+
+//-- Mv_par05 =     Vendedor DE?
+aAdd(_aPerg, {"Vendedor DE?","Vendedor DE?","Vendedor DE?","MV_CH5","C",TamSX3("A3_COD")[1],0,0,"G","",;
+					"MV_PAR05","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"SA3","","","","",{"Codigo do Vendedor"},{"Codigo do Vendedor"},{"Codigo do Vendedor"}})
+
+//-- Mv_par06 =     Vendedor ATE?
+aAdd(_aPerg, {"Vendedor ATE?","Vendedor ATE?","Vendedor ATE?","MV_CH6","C",TamSX3("A3_COD")[1],0,0,"G","",;
+					"MV_PAR06","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"SA3","","","","",{"Codigo do Vendedor"},{"Codigo do Vendedor"},{"Codigo do Vendedor"}})
+
+//-- Mv_par07 =     Produto DE?
+aAdd(_aPerg, {"Produto DE?","Produto DE?","Produto DE?","MV_CH7","C",TamSX3("B1_COD")[1],0,0,"G","",;
+					"MV_PAR07","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"SB1","","","","",{"Codigo do Produto"},{"Codigo do Produto"},{"Codigo do Produto"}})
+
+//-- Mv_par08 =     Produto ATE?
+aAdd(_aPerg, {"Produto ATE?","Produto ATE?","Produto ATE?","MV_CH8","C",TamSX3("B1_COD")[1],0,0,"G","",;
+					"MV_PAR08","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"SB1","","","","",{"Codigo do Produto"},{"Codigo do Produto"},{"Codigo do Produto"}})     
+
+//-- Mv_par09 =     Grupo de Prod DE?
+aAdd(_aPerg, {"Grupo de Prod DE?","Grupo de Prod DE?","Grupo de Prod DE?","MV_CH9","C",TamSX3("BM_GRUPO")[1],0,0,"G","",;
+					"MV_PAR09","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"SBM","","","","",{"Cod Grupo de Prod"},{"Cod Grupo de Prod"},{"Cod Grupo de Prod"}})
+
+//-- Mv_par10 =     Grupo de Prod ATE?
+aAdd(_aPerg, {"Grupo de Prod ATE?","Grupo de Prod ATE?","Grupo de Prod ATE?","MV_CHA","C",TamSX3("BM_GRUPO")[1],0,0,"G","",;
+					"MV_PAR10","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"SBM","","","","",{"Cod Grupo de Prod"},{"Cod Grupo de Prod"},{"Cod Grupo de Prod"}})     
+					
+//-- Mv_par11 =     Ano ?
+aAdd(_aPerg, {"ANO ?","ANO ?","ANO ?","MV_CHB","C",04,0,0,"G","u_fVAnoMes('A')",;
+					"MV_PAR11","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Ano de referência do Periodo."},{"Ano de referência do Periodo."},{"Ano de referência do Periodo."}})
+
+//-- Mv_par12 =     Mes DE ?
+aAdd(_aPerg, {"Mês DE ?","Mês DE ?","Mês DE ?","MV_CHC","C",2,0,0,"G","u_fVAnoMes('M')",;
+					"MV_PAR12","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Mês de referência DE ?"},{"Mês de referência DE ?"},{"Mês de referência DE ?"}})
+
+//-- Mv_par13 =     Mês ATE ?
+aAdd(_aPerg, {"Mês ATE ?","Mês ATE ?","Mês ATE ?","MV_CHD","C",2,0,0,"G","u_fVAnoMes('M')",;
+					"MV_PAR13","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Mês de referência ATE ?"},{"Mês de referência ATE ?"},{"Mês de referência ATE ?"}})
+
+//-- Mv_par14 =     CNAE Indústria ?
+aAdd(_aPerg, {"CNAE Indústria ?","CNAE Indústria ?","CNAE Indústria ?","MV_CHE","N",1,0,1,"C",,;
+					"MV_PAR14","Sim","Sim","Sim","",;
+					"","Não","Não","Não","",;
+					"","Ambos","Ambos","Ambos","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Somente CNAE de Industria?"},{"Somente CNAE de Industria?"},{"Somente CNAE de Industria?"}})
+
+u_SFAJUSX1(_cPerg,_aPerg) 
+Return 
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fGetMeta>
+ Monta Array de 12 posições (12 Meses) com as Metas/Mes do Periodo para o 
+ Produto informado como parametros.	  
+
+@author<Antonio Dantas>
+@since<19/02/2015>
+@version<1.00>
+@receive
+<    _cFilial (c) - Codigo da Filial relativo a Tabel SCT
+    _cProduto (c) - Codigo do Produto
+        _cAno (c) - Ano de referencia 
+>
+@return
+<     _aMetas (a) - Array de 12 posições com as metas de cada mês do periodo 
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function fGetMeta(_cFilial,_cProduto,_cAno)
+Local _aArea		:= GetArea()
+Local _aMetas		:= {0,0,0,0,0,0,0,0,0,0,0,0} 
+Local _nMes		:= 0 
+Local _cQuery		:= "" 
+Local _nCtaA 		:= 0
+//--
+_cQuery := "" 
+_cQuery += "Select *From "+RetSqlName("SCT")+" Where D_E_L_E_T_ = ' ' "+CRLF
+_cQuery += "and CT_FILIAL = '"+_cFilial+"' "+CRLF
+_cQuery += "and CT_PRODUTO = '"+_cProduto+"' "+CRLF
+_cQuery += "and Substr(CT_DATA,1,4) = '"+_cAno+"' "+CRLF
+_cQuery += "order by CT_DATA "+CRLF
+//+------------------------------------------------------------------+
+//| Grava o Resultado da Query para consulta                         |
+//+------------------------------------------------------------------+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TMPSCT")>0
+	TMPSCT->(DbCloseArea())
+Endif
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPSCT",.t.,.t.)
+TMPSCT->(dbGotop())
+Do While TMPSCT->(!Eof())
+	_nMes				:= Val(Substr(TMPSCT->CT_DATA,5,2)) 
+	_aMetas[_nMes]	:= TMPSCT->CT_QUANT  
+	TMPSCT->(dbSkip())
+Enddo
+TMPSCT->(dbCloseArea())
+RestArea(_aArea)
+Return _aMetas
+
+
+
+ 

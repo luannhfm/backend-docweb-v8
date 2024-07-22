@@ -1,0 +1,118 @@
+#Include 'Protheus.ch'
+
+User Function SF0705X()
+Local _cQuery	:= ""
+Local _cMask    := "Arquivos Texto (*.*) |*.*|"
+Local _cDir		:= cGetFile(_cMask,"Selecione o diretório de destino",,,.T.,nOR(GETF_RETDIRECTORY,GETF_LOCALHARD))
+Local _cUsAut	:= GetMV("MV_XUSEZET", ,'')
+
+//Verifica se o diretório existe, se não existir, cria o diretório.
+If !ExistDir(_cDir)
+	MakeDir(_cDir)
+EndIf
+
+If RetCodUsr() $ _cUsAut .And. !Empty(_cDir)
+	FWMsgRun(,{|| fExpFun(_cDir) }, "Gerando Arquivo...", "Aguarde...")
+ElseIf Empty(_cDir)
+	Return
+Else
+	Aviso("Acesso Negado!", "Você não tem permissão para executar esta operação."+CRLF+"[MV_XUSEZET]", {"Ok"})
+EndIf
+
+Return
+
+Static Function fExpFun(_cDir)
+Local _cQuery	:=	""
+Local _cPFolM	:= GetMV("MV_FOLMES")
+Local _cFolMs	:=	StrZero(Val(SubStr(_cPFolM, 5, 2)) - 1,2)
+Local _cFolAn	:=	SubStr(_cPFolM, 3, 2)
+Local _cArq		:=	""
+Local _cTxtAux	:=	""
+Local _nOpen
+
+//Carrega a informação do ano, trata o caso de passagem de ano.
+_cFolAn			:=	Iif(_cFolMs == "00", AllTrim(Str(Val(_cFolAn)-1)), _cFolAn)
+
+//Reutiliza a variável para demonstrar o período do desconto.
+_cPFolM			:=	Iif(_cFolMs == "00", "12", _cFolMs) + ;
+					Iif(_cFolMs == "00", AllTrim(Str(Val(SubStr(_cPFolM, 1, 4))-1)), SubStr(_cPFolM, 1, 4))
+
+//Carrega a informação do mês, trata o caso de passagem de ano.
+_cFolMs			:=  Iif(_cFolMs == "00", "12", _cFolMs)
+
+_cArq := "RET_" + _cFolMs + _cFolAn + "_" + ;
+					AllTrim(Str(Day(Date()))) + StrTran(time(),":","") + ".txt"
+
+//Tenta abrir o arquivo, caso o arquivo não exista, a variável _nOpen é preenchida com -1.
+_nOpen := FOpen(_cDir+_cArq,2)
+
+//Efetua Consulta de Funcionários.
+_cQuery +=	"Select	"
+_cQuery +=	"RA_FILIAL, "
+_cQuery +=	"RA_MAT, "
+_cQuery +=	"RA_CIC, "
+_cQuery +=	"RA_NOME, "
+_cQuery +=	"RA_NASC, "
+_cQuery +=	"RA_ADMISSA, "
+_cQuery +=	"RA_RG, "
+_cQuery +=	"RA_RGUF, "
+_cQuery +=	"RC_VALOR As VLR_PREV, "
+_cQuery +=	"RC_VALOR As VLR_REAL, "
+_cQuery +=	"RC_PD, "
+_cQuery +=	"Case When RC_VALOR > 0 Then 'T' Else 'R' End As SIT_DES "
+_cQuery +=	"From  "
+_cQuery +=	"	"+RetSqlName("SRA")+" SRA LEFT JOIN "
+_cQuery +=	"	RC" + FWGrpCompany() + _cFolAn + _cFolMs +" RC ON RC.D_E_L_E_T_ = ' ' AND SRA.RA_FILIAL = RC.RC_FILIAL AND SRA.RA_MAT = RC.RC_MAT AND ('465' = RC.RC_PD OR '473' = RC.RC_PD)"
+_cQuery +=	"Where  "
+_cQuery +=	"	SRA.D_E_L_E_T_ = ' ' AND "
+_cQuery +=	"	SRA.RA_SITFOLH != 'D' AND "
+_cQuery +=	"	SRA.RA_CATFUNC in ('M','J') AND "
+_cQuery +=	"	SRA.RA_SITFOLH in (' ', 'A', 'F') AND "
+_cQuery +=	"	(SubStr( RC.RC_DATA , 3, 2) = '"+_cFolAn+"' AND SubStr( RC.RC_DATA , 5, 2) = '"+_cFolMs+"' ) "
+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+
+If Select("TMP")>0
+	TMP->(DbCloseArea())
+EndIf
+
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMP",.t.,.t.)  
+
+If _nOpen == -1
+	_nOpen := FCreate(_cDir+_cArq)
+EndIf
+
+If _nOpen == -1 
+	Alert("Erro ao abrir ou gerar o arquivo: '" +_cDir+_cArq+"'")
+Else
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Seleciona a Tabela temporaria e Inicia Loop para Tratar os Dados |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	dbSelectArea("TMP")
+	TMP->(dbGoTop())    
+	Do While TMP->(!Eof())
+		_cTxtAux := StrZero(Val(TMP->RA_MAT), 10) 									+; //Matrícula
+					TMP->RA_CIC														+; //CPF
+					PadR(AllTrim(TMP->RA_NOME),50)									+; //Nome do Servidor
+					StrZero(Val(SubStr(TMP->RA_FILIAL,1,2)), 3)						+; //Estabelecimento
+					StrZero(Val(SubStr(TMP->RA_FILIAL,6,3)), 3)						+; //Órgão
+					TMP->RC_PD														+; //Código Cadastrado na Folha
+					StrZero(TMP->VLR_PREV,10,2)										+; //Valor Previsto do Desconto em Folha
+					StrZero(TMP->VLR_REAL,10,2)										+; //Valor Real do Desconto em Folha
+					Space(100)														+; //Motivo do Não Desconto em Folha
+					TMP->SIT_DES													+; //Situação
+					_cPFolM											+ Space(1) + CRLF  //Período Folha					
+		
+		//Posiciona no fim do arquivo.
+		FSeek(_nOpen,0,2) 
+		//Escreve Linha no arquivo.
+		FWrite(_nOpen, _cTxtAux)
+		
+		TMP->(DbSkip())
+	EndDo 
+	FClose(_nOpen)
+EndIf
+
+Aviso("Atenção", "O arquivo '"+_cDir+_cArq+"' foi gerado com sucesso!", {"Ok"})
+
+Return

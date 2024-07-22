@@ -1,0 +1,175 @@
+#Include 'Protheus.ch'
+#Include 'TopConn.ch'
+
+User Function GP010VALPE()
+
+Local lRet			:= .T.
+Local cAliasQr1  	:= GetNextAlias()
+Local nCont			:= 0
+Local cPeriodo  	:= GETMV('MV_FOLMES')
+Local cFil			:= xFilial("SRA")
+Local cSituacao		:= SRA->RA_SITFOLH
+Local cAnoMesDem	:= ANOMES(SRA->RA_DEMISSA)
+Local _aArea		:= GetArea()
+Local _cCracha		:= ''
+
+If !lGp010Auto
+	IF SUBSTR(M->RA_CC,1,6) = '130104'
+		If M->RA_XTPRAT <> '1'
+			lRet := .F.
+			MSGALERT("Funcionário com Centro de Custo de Gestão. O tipo de rateio deve ser COMPARTILHADO. Por favor, corrija para prosseguir.")
+			Return( lRet ) 
+		EndIF
+	EndIf
+		
+	IF SUBSTR(cFil,1,2) = '05'
+		IF M->RA_XTPRAT <> '3'
+			lRet := .F.
+			MSGALERT("Funcionário da empresa Condomínio. Seu valores não devem ser rateados. Por favor corrija o campo TIPO RATEIO, na aba OUTROS.")
+			Return( lRet )
+		EndIf
+	EndIf
+	
+	If (SUBSTR(M->RA_CC,1,6) <> '130104' .AND. SUBSTR(cFil,1,2) <> '05')
+	
+		IF M->RA_XTPRAT == '1'
+			lRet := .F.
+			MSGALERT("Funcionário não participa do Grupo de Gestão. Deve ser informado Tipo de Rateio PROJETO, na aba OUTROS")
+			Return( lRet )
+		EndIf
+		IF M->RA_XTPRAT == '3'
+			lRet := .F.
+			MSGALERT("Funcionário não pertence a empresa Condomínio. Deve ser informado Tipo de Rateio PROJETO, na aba OUTROS")
+			Return( lRet )
+		EndIf
+		
+	EndIf
+	
+	/* 29-07-15 - Jose Leite - CSI
+		Tratamento para verificar se ja existe o codigo de matricula cadastrado,
+		se ja existir, incrementa 1
+	
+	//Inicio
+	If INCLUI .And. lRet
+		
+		_aArea := GetArea()
+		
+		If Select('TMP') > 0
+			DbSelectArea('TMP')
+			TMP->(DbCloseArea())
+		EndIf
+		
+		_cQuery := " SELECT MAX(RA_MAT) RA_MAT "
+		_cQuery += " FROM " + RetSQLName("SRA")
+		_cQuery += " WHERE RA_FILIAL <> '04MT0002' "
+		_cQuery += " AND SubStr(RA_FILIAL,1,4) = '"+_cFilRe+"'
+		_cQuery += " AND RA_MAT <> '13' AND RA_MAT < '900000'	"
+		
+		_cQuery := ChangeQuery(_cQuery)
+						
+		TcQUERY _cQuery NEW ALIAS 'TMP'
+						
+		DbSelectArea('TMP')
+		TMP->(DbGoTop())
+		
+		_cRaMat := StrZero(Val(TMP->(RA_MAT)) + 1, TamSx3("RA_MAT")[1])
+		
+		TMP->(DbCloseArea())
+		
+		If .Not. Empty(_cRaMat)
+			If M->RA_MAT <> _cRaMat
+				M->RA_MAT := _cRaMat
+			EndIf
+		EndIf
+			
+		RestArea(_aArea)
+		
+	EndIf
+	//Fim
+	*/
+	_cCracha := U_SF07E02J()
+	
+	If INCLUI
+		MsgInfo("Matrícula registrada: " + M->RA_MAT ,"Atenção")
+		If .Not. Empty(_cCracha)
+			If M->RA_CRACHA <> _cCracha
+				M->RA_CRACHA := _cCracha
+			EndIf
+		EndIf	
+	EndIf
+	
+	If ALTERA
+		If .Not. Empty(_cCracha)
+			If SRA->RA_CRACHA <> _cCracha
+				SRA->RA_CRACHA := _cCracha
+			EndIf
+		EndIf
+	EndIf
+	
+	//-----------------------------------------------------------------------
+	//
+	// Insere registro na ZD6, caso não exista registro de estrutura para o 
+	// Funcionário. Isto deve ocorrer sempre quando foi Admissão ou se 
+	// por acidente foi apagado a estrutura na ZD6.
+	//
+	//------------------------------------------------------------------------
+	
+	IF cSituacao <> 'D' .OR. (cSituacao = 'D' .AND. cAnoMesDem = cPeriodo)
+	
+		_aArea := GetArea() 
+		
+		cQuery := "SELECT * FROM "+RetSqlName("ZD6")+" "
+		cQuery += "WHERE ZD6_MAT = '"+M->RA_MAT+"' AND ZD6_FILIAL = '"+cFil+"' AND D_E_L_E_T_ <> '*'"
+		
+		cQuery := ChangeQuery( cQuery )
+		dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery), cAliasQr1, .T., .T. ) 
+		
+		
+		WHILE (cAliasQr1)->(!EOF())
+		
+			nCont := nCont + 1
+		
+			(cAliasQr1)->(DbSkip())
+		EndDo
+		
+		(cAliasQr1)->(DbCloseArea())
+		
+		RestArea(_aArea)
+		
+		If nCont = 0
+			_aArea := GetArea()	
+			RecLock("ZD6", .t.)
+				IF altera
+					ZD6->ZD6_FILIAL 	:=	SRA->RA_FILIAL
+					ZD6->ZD6_FILIMP 	:=	SUBSTR(SRA->RA_FILIAL,1,4)
+					ZD6->ZD6_MESANO		:=	cPeriodo
+					ZD6->ZD6_MAT    	:=	SRA->RA_MAT
+					ZD6->ZD6_CC     	:= SRA->RA_CC
+					ZD6->ZD6_ITEM   	:= SRA->RA_ITEM
+					ZD6->ZD6_HRMES		:= SRA->RA_HRSMES
+					ZD6->ZD6_HRTRAB 	:= SRA->RA_HRSMES
+					ZD6->ZD6_PERCEN 	:= 100
+					ZD6->ZD6_USRIMP 	:= "Protheus"
+					ZD6->ZD6_DATIMP 	:= dDataBase
+					ZD6->ZD6_HORIMP 	:= Time()
+				ELSE
+					ZD6->ZD6_FILIAL 	:= xFilial("SRA")
+					ZD6->ZD6_FILIMP 	:= SUBSTR(xFilial("SRA"),1,4)
+					ZD6->ZD6_MESANO		:= cPeriodo
+					ZD6->ZD6_MAT    	:= M->RA_MAT
+					ZD6->ZD6_CC     	:= M->RA_CC
+					ZD6->ZD6_ITEM   	:= M->RA_ITEM
+					ZD6->ZD6_HRMES		:= M->RA_HRSMES
+					ZD6->ZD6_HRTRAB 	:= M->RA_HRSMES
+					ZD6->ZD6_PERCEN 	:= 100
+					ZD6->ZD6_USRIMP 	:= "Protheus"
+					ZD6->ZD6_DATIMP 	:= dDataBase
+					ZD6->ZD6_HORIMP 	:= Time()
+				ENDIF
+			RestArea(_aArea)
+			ZD6->( MsUnLock() )
+		EndIf
+	EndIf
+EndIf
+
+Return lRet

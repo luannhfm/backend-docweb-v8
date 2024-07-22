@@ -9,6 +9,10 @@ export class HistRepository {
     this.repository = appDataSource.getRepository(Hist);
   }
 
+  async create(data: Partial<Hist>): Promise<Hist> {
+    return this.repository.save(data);
+  }
+  
   async findByFonte(fonte: string): Promise<Hist[]> {
     return this.repository.find({ where: { fonte }, order: { id: 'DESC' } });
   }

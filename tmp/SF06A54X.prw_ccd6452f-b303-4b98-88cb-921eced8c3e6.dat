@@ -1,0 +1,741 @@
+#include "Rwmake.ch"
+#include "Protheus.ch"
+#INCLUDE "TBICONN.CH"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  |SF06A54X    ºAutor  ³Caio Renan          º Data ³24/10/2011   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³FUNCAO QUE FAZ A VERIFICACAO DE QUAIS CLIENTE ESTAO NA      º±±
+±±º          ³LISTA DE COBRANCA E ENVIA SMS AVISANDO DA DIVIDA.           º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³                                                            º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+O CLIENTE TEM UM CONTRATO COM O SITE WWW.IAGENTESMS.COM.BR
+O SITE POSSUI UM SERVICO DE ENVIO DE SMS 
+A FUNCAO httpGet() - FAZ UMA REQUISICAO EM URL E TRAS O RETORNO.
+EXEMPLO DE ENVIO DO SMS ATRAVES DE ADVPL E PELO SITE IAGENTESMS.
+
+httpget("http://www.iagentesms.com.br/gateway/sms.php?usuario=brisot&senha=1126SET2111&dest=556599710860&texto=Mensagem")
+		 http://ww2.iagentesms.com.br/webservices/http.php?metodo=envio&usuario=brisot&senha=1126SET2111&celular=556596461591&mensagem=ola-mundo
+RETORNO COM INFORMACAO SE CONSEGUIU ENVIAR, OU NAO.
+
+SERA PRECISO UM RELATORIO PARA VERIFICAR RETORNOS DO ENVIO E RETORNO SE A MSG FOI ENVIADA.
+E QUAIS OS PROBLEMAS NO ENVIO E NO RETORNO
+
+CRIAR 
+PARAMETRO PARA USUARIO E SENHA
+MV_SMSSENH - caractere
+MV_SMSUSER - caractere
+
+PARAMETRO PARA URL DO SITE
+MV_SMSURLE - URL PARA ENVIAR SMS - caractere
+MV_SMSURLR - URL PARA VERIFICAR COMO SMS ESTA SE FOI ENTREGUE SE NAO... - caractere
+
+PARAMETRO PARA DEFINICAO DO TEXTO DA MSG
+MV_SMSTXT - caractere
+COM VARIAVEIS PADROES.
+
+PARAMETRO PARA IDENTIFICAR QUAIS FASE DE COBRANCA IRA ENVIA SMS.
+PODENDO SER MAIS DE UMA
+MV_SMSFASE - caractere
+
+PARAMETRO PARA IDENTIFICAR O MOTIVO A SER USADO EM UM NOVO ATENDIMENTO VIA SMS
+MV_SMSMOT - caractere
+
+PARAMETRO PARA IDENTIFICAR O OPERADOR PADRAO EM UM NOVO ATENDIMENTO.
+MV_SMSOPER - caractere
+
+PARAMETRO QUE INFORMA PARA QUAIS RETORNOS DEVERA REFAZER A CHECAGEM SE JA ENVIO SIM OU NAO.
+MV_SMSCHKR - caractere
+
+PARAMETRO PARA INFORMAR O TELEFONE DE CADA FILIAL.
+MV_SMSTL01, MV_SMSTL02, MV_SMSTL03, MV_SMSTL04, ...  MV_SMSTL14.
+
+ID DO SMS SERA DEFINIDO POR SXE - SXF.
+
+(COLOCAR NO CODIGO RETORNOS POSSIVEIS OU CRIAR TABELA GENERICA PARA TAL.)
+
+DEVERA VERIFICAR FASE ANTES DE SABER SE DEVERA ENVIAR.
+
+ÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ
+CRIAR TABELA ZAP - COMPARTILHADA
+INDICES-
+1 - ZAP_FILIAL+ZAP_ID 
+2 - ZAP_FILIAL+ZAP_FILTIT+ZAP_PREFIX+ZAP_NUM+ZAP_PARCEL+ZAP_TIPO+ZAP_ENV
+3 - ZAP_FILIAL+ZAP_DATA
+4 - ZAP_FILIAL+ZAP_CLIENT+ZAP_LOJA
+ÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ
+ZAP_ID - caracter - 10 - Id sms
+CAMPO QUE IDENTIFICA O ULTIMO SMS ENVIADO AO CLIENTE
+ÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ
+ZAP_DATA - data - 8
+CAMPO QUE IDENTIFICA A DATA DO ULTIMO SMS ENVIADO AO CLIENTE
+QUANDO CAMPO ESTIVER VAZIO NAO FOI ENVIADO NENHUMA SMS AINDA.
+VERIFICAR ULTIMA DATA DO ENVIO SE MENOR QUE DATABASE MAIS PARAMETRO(MV_SMSNDV) REENVIAR.
+ÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ
+ZAP_FILTIT + ZAP_PREFIX + ZAP_NUM + ZAP_PARCELA + ZAP_TIPO
+CHAVE PARA IDENTIFICAR A QUAL TITULO PERTENCE AQUELE SMS.
+SEMPRE REFERENTE AO TITULO MAIS ANTIGO.
+ÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ
+ZAP_TXT - 140 CARACTERE
+TEXTO ENVIADO AO CLIENTE.
+ÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ
+ZAP_CLIENTE + ZAP_LOJA + (ZAP_CELULA - caracter - 12)
+CLIENTE QUE FOI ENVIADO O SMS.
+ÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ
+ZAP_ENV - caracter - 3
+CAMPO ALIMENTO NO MOMENTO DO ENVIO DO SMS, COM O RETORNO QUE FOI GERADO NO MOMENTO DO ENVIO.
+IDENTIFICANDO POSSIVEIS PROBLEMAS NO ENVIO, OU SE FOI ENVIADO COM SUCESSO
+ÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ
+ZAP_RET - caracter - 2
+CAMPO ALIMENTADO NA HORA QUE BUSCA O RETORNO DO ENVIO, IDENTIFICA SE O SMS FOI RECEBIDO PELO CELULAR DE DESTINO OU SE TEVE ALGUM PROBLEMA.
+ÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ
+ZAP_FASE - caracter 3
+CAMPO COM A INFORMACAO DE QUAL FASE O CLIENTE ESTAVA NA HORA QUE FOI GERADO O SMS
+ÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ
+ZAP_VENCTO - data
+DATA DO VENCIMENTO DO TITULO
+ÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ
+ZAP_CELULA - caracter - 12
+CAMPO QUE SALVA PARA QUAL CELULAR FOI ENVIADO A MENSAGEM.
+ÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ
+
+CRIAR INDICE ZAE - ZAE_FILIAL + ZAE_PRZDE
+
+VERIFICACOES PARA ENVIAR O SMS SIM OU NAO.
+VARRER TABELA ZAJ, VERIFCAR SE FASE QUE O CLIENTE SE ENCONTRA ENVIA SMS, VERIFICAR TITULO MAIS ANTIGO EM ABERT DO CLIENTE INFORMADO NA ZAJ
+SE DETERMINADO TITULO NAO GEROU NENHUM ENVIO DE SMS AINDA (NAO ENCONTROU REGISTRO REFERENTE AQUELE TITULO NA ZAP), FAZ O ENVIO.
+
+DEPOIS DE ENVIAR SMS GERAR REGISTRO NA ZAK COM A DATA DO PROXIMO ATENDIMENTO QUE AO GERAR A LISTA CAIA NA PROXIMA FASE 
+UMA FASE DEPOIS DA QUE ESTA NO MOMENTO.
+
+MANDAR SMS APENAS UMA VEZ POR COBRANCA.
+
+TABELA DE SMS 
+COM RELACIONAMENTO COM A SE1 DO MAIS ANTIGO.
+
+CAMPO NO CADASTRO DE CLIENTE, QUE VERIFICA SE ENVIA SMS SIM OU NAO.
+ÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ
+A1_SF06A54X - caractere - 2 - Cob. via SMS?
+ÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ
+
+*/
+User Function SF06A54X(_aParams)
+//User Function SF06A54X(_nFo , _nER )
+
+Local _nSchTel   := Iif(IsBlind(),1,2)
+Local _nEnvRet := _aParams[1]//_nArray[1,2]
+
+//Local _nSchTel   := _nFo
+//Local _nEnvRet := _nER
+
+//Local _nSchTel   := 2
+//Local _nEnvRet := 2
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³_nSchTel, variavel que controla de rotina esta sendo executada³
+//³de fora do protheus via schedule. 1-Schedule 2-Tela           ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+Default _nSchTel := 2
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³_nEnvRet - variavel que controla se funcao esta sendo chamada para³
+//³efetuar o envio de SMS ou checar o retorno                        ³
+//³1- envio 2- checar retorno                                        ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+Default _nEnvRet := 2
+
+ConOut("SF06A54X -> Inicio da rotina. " + Str(_nSchTel))
+AutoGrLog("SF06A54X -> Inicio da rotina. " + DToC(MSDate()) + Time())
+
+If _nSchTel = 1
+	ConOut("SF06A54X -> Preparando ambiente")
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³funcao que inicializa ambiente da empresa permite manipular         ³
+	//³informacoes do banco fora do protheus.                              ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	Prepare Environment Empresa _aParams[2] Filial _aParams[3] Tables 'ZAP','ZAJ','ZAK','ZAE' MODULO "FIN"
+/*	ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	³ Redefine nModulo de forma a Garantir que o Modulo seja o SIGAPON		³
+	ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ*/
+EndIf
+
+_cFases	:= SuperGetMV("MV_SMSFASE",,"003" )
+
+If _nSchTel <> 1 // se _nSchTel diferente de 1 quer dizer que rotina esta sendo executada de dentro do protheus (tera tela)
+	Do Case
+		Case _nEnvRet = 1 // envio de sms
+			_cMsg := "V1.0 - Essa rotina tem a funcao de enviar SMS para clientes com titulos vencidos."+CRLF
+			_cMsg += "apenas ira enviar para clientes que nao foram enviados SMS ainda,"+CRLF
+			_cMsg += "e clientes que estao na fase de cobranca: "+_cFases+CRLF
+			_cMsg += "Deseja continuar?"
+			If MsgYesNo(_cMsg,"Atencao!")
+				Processa({|| SF06A54X(_nSchTel) }, "Processando..." , "Processando..." )
+			EndIf
+		Case _nEnvRet = 2 // checar retorno das SMS enviadas 
+			_cMsg := "V1.0 - Essa rotina tem a funcao de verifcar se mensagens enviadas aos clientes"+CRLF
+			_cMsg += "foram entregues com sucesso, caso tenham sido entregues gera um atendimento"+CRLF
+			_cMsg += "e agenda para ser atendido apenas quando estiver na proxima fase"+CRLF
+			_cMsg += "Deseja continuar?"
+			If MsgYesNo(_cMsg,"Atencao!")
+				Processa({|| SMSRET(_nSchTel) }, "Processando..." , "Processando..." )
+			EndIf
+	EndCase
+Else // rotina sendo executada de fora do prtheus sem interacao com o usuario
+	Do Case
+		Case _nEnvRet = 1 // envio de SMS
+			SF06A54X(_nSchTel)
+		Case _nEnvRet = 2 // checar retorno das SMS enviadas
+			SMSRET(_nSchTel)
+	EndCase
+EndIf
+
+AutoGrLog("SF06A54X -> FIM da rotina. " + DToC(MSDate()) + Time())
+_cErro := Mostraerro("zzz")
+MemoWrite("\log_schedule\log_SF06A54X_" + DToS(dDataBase) + "_"+StrTran(Time(),":","-") + ".txt" , _cErro)
+
+If _nSchTel = 1
+	RESET ENVIRONMENT
+EndIf
+Return
+
+// altercao Caio Lima - j2a consultoria - 29/05/2014
+// a partir de agora o usuario e senha serao controlado separadamentes por fase e nao mais por parametro
+// criado o campo na ZAE para ser o usuario e senha para envio de sms
+
+Static Function SF06A54X(_nSchTel)
+Local _cSql 	:= ""
+Local _nzz 		:= 0
+Local _cAlias	:= GetNextAlias()
+Local _dData 	:= dDataBase
+Local _cSenha 	:= SuperGetMV("MV_SMSSENH",,"14072017" ) //Nova Senha 14/07/2017
+Local _cUser 	:= SuperGetMV("MV_SMSUSER",,"brisot" )
+Local _cURLLoc 	:= SuperGetMV("MV_SMSURLE",,"http://ww2.iagentesms.com.br/webservices/http.php?metodo=envio" )
+Local _cFases	:= SuperGetMV("MV_SMSFASE",,"003" )
+Local _cTXT 	:= ""
+Local _cVarTel	:= ""
+//Local _cTXTMV 	:= SuperGetMV("MV_SMSTXT",,"Ola <NOME>, favor comparecer em uma loja megamodas e verificar divida de <VALORTOT> em seu nome." + ;
+//		" att. equipe de cobranca megamodas." )
+Local _cTxtMV 	:= SuperGetMV("MV_SMSTXT",,	"Aviso <NOMEENTIDADE>,  ola <PRIMEIRONOME>, constam pendencias relativas ao seu contrato. "+;
+											"Duvidas ligue para <FONEFIL>, evite transtornos.")
+Local _cEntid	:= ""
+Local _cTelEnt  := ""
+
+Private _cURL2 := _cURLLoc // URL sem o usuario e senha partir do parametro
+
+Private _cURL := ""
+
+If _nSchTel <> 1
+	ProcRegua(0)
+EndIf
+
+//Obtenho os parametros da ZAO
+_aParams := U_TcParam()
+
+_cSql += " SELECT ZAJ_DATA,  "+CRLF
+_cSql += " ZAJ_CODFAS,  "+CRLF
+_cSql += " ZAJ_CLIENT,  "+CRLF
+_cSql += " E1_VENCTO,  "+CRLF
+_cSql += " A1_TEL,  "+CRLF
+_cSql += " A1_FILIAL,  "+CRLF
+_cSql += " E1_PREFIXO,  "+CRLF
+_cSql += " E1_NUM,  "+CRLF
+_cSql += " E1_PARCELA,  "+CRLF
+_cSql += " E1_TIPO,  "+CRLF
+_cSql += " E1_VALOR,  "+CRLF
+_cSql += " E1_SALDO,  "+CRLF
+_cSql += " ZAJ_VLRDIV, "+CRLF
+_cSql += " E1_FILIAL, "+CRLF
+_cSql += " A1_NREDUZ, "+CRLF
+_cSql += " A1_NOME, "+CRLF
+_cSql += " E1_LOJA, "+CRLF
+_cSql += " E1_VENCREA, "+CRLF
+_cSql += " ZAJ_FILDON, "+CRLF
+_cSql += " A1_DDD, "+CRLF
+_cSql += " A1_PESSOA, "+CRLF
+_cSql += " E1_XCOBJ, "+CRLF
+_cSql += " ZAE_SMSUSE, "+CRLF
+_cSql += " ZAE_SMSSEN, "+CRLF
+_cSql += " E1_XNUMBCO, ZAE_MSGESP, ZAE_FILS, E1_EMISSAO "+CRLF
+_cSql += " FROM "+RetSQLName("ZAJ")+" ZAJ "+CRLF
+
+_cSql += " INNER JOIN "+RetSQLName("SE1")+" SE1 ON SE1.E1_CLIENTE = ZAJ_CLIENT AND SE1.E1_LOJA = ZAJ.ZAJ_LOJA AND SE1.D_E_L_E_T_ = ' ' "+CRLF
+_cSql += " INNER JOIN "+RetSQLName("SA1")+" SA1 ON SA1.A1_COD = ZAJ_CLIENT AND SA1.A1_LOJA = ZAJ.ZAJ_LOJA AND SA1.D_E_L_E_T_ = ' ' "+CRLF
+_cSql += " INNER JOIN "+RetSQLName("ZAE")+" ZAE ON ZAE.D_E_L_E_T_<>'*' AND ZAE_COD=ZAJ_CODFAS "+CRLF
+_cSql += " WHERE ZAJ_DATA = '"+DTOS(dDataBase)+"' "+CRLF
+//_cSql += " WHERE ZAJ_DATA = '20111027' "+CRLF
+_cSql += " AND ZAJ.D_E_L_E_T_ = ' ' "+CRLF
+_cSql += " AND SE1.E1_SALDO > 0 "+CRLF// apenas titulos em aberto
+_cSql += " AND SE1.E1_XTITFUN <> 'S' "+CRLF
+_cSql += " AND SA1.A1_XCOBRAN = '1' AND SA1.A1_TEL <> ' ' "+CRLF // apenas clientes que possuirem algum celular informado.
+_cSql += " AND SA1.A1_DDD <> ' ' "+CRLF // apenas clientes que possuirem ddd informado
+_cSql += " AND ZAJ.ZAJ_CODFAS IN ('"+StrTran(AllTrim(_cFases),";","','")+"') "+CRLF // apenas fases que estao no parametro.
+//_cSql += " AND SA1.A1_SMSCOB = '1' "+CRLF
+_cSql += " AND SE1.E1_VENCREA <= ZAJ_DATA "+CRLF // APENAS TITULOS QUE ESTEJAM VENCIDOS E EM ABERTO.
+_cSql += " AND SE1.E1_TIPO IN ("+_aParams[8]+") "+CRLF
+
+/*
+	Autor       : Carlos Ryve Gandini
+	Data/Time   : 25/10/18 às 15:19:24
+	Detalhe     : Utilizado pela FW para envio Teste
+*/
+//_cSql += " AND SE1.E1_CLIENTE = '018528' "+CRLF
+
+_cSql += " ORDER BY ZAJ_CLIENT, E1_VENCTO, E1_NUM, E1_PARCELA ASC "+CRLF
+
+MemoWrite("C:\Tmp\SQLSMS.TXT" , _cSql )
+
+DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSql)), _cALias, .F., .F.)
+
+(_cAlias)->( dbGoTop() )
+
+dbSelectARea("ZAP")
+ZAP->( dbSetOrder(2) ) // indice do titulo mais antigo do cliente.
+//Alert("Envio SMS")
+While !(_cAlias)->( Eof() )
+
+		_cCliente	:= (_cAlias)->ZAJ_CLIENT
+	IF !Juridico((_cAlias)->ZAJ_CLIENT, (_cAlias)->E1_LOJA) //(_cAlias)->E1_XCOBJ <> 'S'  
+
+		IF (_cAlias)->A1_PESSOA == "J" .AND. ((_cAlias)->E1_FILIAL == "02MT0001" .OR. (_cAlias)->E1_FILIAL == "03MT0001" )
+			(_cAlias)->( dbSkip() )
+			Loop
+		EndIf
+
+		IF  (_cAlias)->E1_SALDO < (_cAlias)->E1_VALOR - ( (_cAlias)->E1_VALOR * 0.90)
+			(_cAlias)->( dbSkip() )
+			Loop
+		EndIf
+
+    	If (_cAlias)->E1_PREFIXO $ ("SGE|RMC") .AND.  Empty((_cAlias)->E1_XNUMBCO)
+			(_cAlias)->( dbSkip() )
+			Loop
+		EndIf
+
+		//Caso seja mensagem especial, mas a filial não estar na relação de filiais e o vencimento for menor que 2021
+		If !Empty((_cAlias)->ZAE_MSGESP) .AND. (!((_cAlias)->E1_FILIAL $ (_cAlias)->ZAE_FILS) .AND. Val(SubStr((_cAlias)->E1_VENCTO,1,4)) < 2021)
+			(_cAlias)->( dbSkip() )
+			Loop
+		EndIf
+ 
+		_cEntid		:= ""
+		_cTelEnt	:= ""
+		_cNome		:= ""
+		_cDDD		:= ""
+		_cCelular	:= ""
+		_cSenha		:= ""
+		_cUser		:= ""
+		_cURL		:= ""
+		
+		_cDDD 		:= cValToChar(Val((_cAlias)->A1_DDD))
+	
+
+		/*
+			Autor       : Carlos Ryve Gandini
+			Data/Time   : 25/10/18 às 15:23:33
+			Detalhe     : Utilizado pela FW para teste envio unico
+		*/
+		
+		_cCelular := "55"+_cDDD+StrTran(AllTrim((_cAlias)->A1_TEL),"-","")
+
+		_cNome 		:= AllTrim((_cAlias)->A1_NOME)
+		
+		_cTelEnt 	:= SUPERGETMV("MV_XSMSTL",,"3611 7777", (_cAlias)->E1_FILIAL )
+		
+		_cSenha 	:= SuperGetMV("MV_SMSSENH",,"", (_cAlias)->E1_FILIAL )
+		_cUser 		:= SuperGetMV("MV_SMSUSER",,"", (_cAlias)->E1_FILIAL )
+		
+		_cURL 		:= _cURLLoc+"&usuario="+_cUser+"&senha="+_cSenha
+		
+		Do Case
+			Case SUBSTR((_cAlias)->E1_FILIAL,1,4) == '02MT'
+				_cEntid := 'SESI MT'
+			Case SUBSTR((_cAlias)->E1_FILIAL,1,4) == '03MT'	
+				_cEntid := 'SENAI MT' 
+			Case SUBSTR((_cAlias)->E1_FILIAL,1,4) == '04MT'
+				_cEntid := 'IEL MT'
+			OtherWise
+				_cEntid := 'MTSISTEMA-S'
+		EndCase
+		
+		//_cTXT := StrTran(_cTxtMV,"<VALORTOT>" , cValToChar((_cAlias)->ZAJ_VLRDIV) )
+		//_cTXT := StrTran(_cTxt,"<VALOR>" , cValToChar((_cAlias)->E1_VALOR) )
+		//_cTXT := StrTran(_cTxt,"<NOME>" ,  AllTrim((_cAlias)->A1_NREDUZ) )
+		
+		If Empty((_cAlias)->ZAE_MSGESP)
+			_cTXT := StrTran(_cTxtMV,"<NOMEENTIDADE>" , _cEntid )
+		Else
+			_cTXT := StrTran(AllTrim((_cAlias)->ZAE_MSGESP),"<NOMEENTIDADE>" , _cEntid )
+		EndIf
+
+		_cTXT := StrTran(_cTxt,"<PRIMEIRONOME>" ,  UPPER(SubStr(_cNome,01,AT(" ", _cNome) - 1 )) )
+		_cTXT := StrTran(_cTxt,"<FONEFIL>" ,  _cTelEnt )
+		_cTXT := StrTran(_cTxt,"<>" ,  "" )
+		_cTXT := SubStr(_cTxt,1,140)//tamanho maximo da msg a ser enviada: 140 caracteres
+		_cTXT := StrTran(_cTxt," " ,  "%20" )
+		
+		//Verifico se existe agendamento para o cliente 
+		//Deve ser verificado o agendamento com data maior, ou seja, se o cliente tiver agendamento para o dia 1 e 5, ele só vai pra lista no dia 5 
+		_cQuery := ""
+		_cQuery += " SELECT * FROM " + RetSqlName("ZAK")
+		_cQuery += " WHERE ROWNUM = 1 AND "
+		_cQuery += " ZAK_CLIENT+ZAK_LOJA = '" + (_cAlias)->ZAJ_CLIENT+(_cAlias)->E1_LOJA + "' AND "
+		_cQuery += " ZAK_DTPATE > '" + DtoS(_dData) + "' AND  "
+		_cQuery += " D_E_L_E_T_ <> '*' "
+		_cQuery += " ORDER BY ZAK_DTPATE DESC "
+		If Select("tAte") > 0
+			DbSelectArea("tAte") 
+			tAte->(DbCloseArea())
+		EndIf 
+		
+		DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cQuery)), "tAte", .F., .F.)
+		
+		If !tAte->(Eof())
+			// se o select retornar algum registro entao existe um atendimento agendado para esse cliente 
+			// por isso nao envia sms 
+			_lContinua := .F.
+		Else
+			_lContinua := .T.
+		EndIf
+		
+		tAte->(DbCloseArea())
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³Se achar esse titulo na tabela ZAP                                               ³
+		//³quer dizer que ja envio um SMS para o cliente referente a esse titulo.           ³
+		//³tera que verifica o retorno do envio, se diferente de 100 devera refazer o envio.³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		// o ultimo campo do indice 2 e o retorno do envio do SMS.
+		
+		// mudanca na regra. - caio lima - j2a consultoria - 29/05/2014
+		// o cliente podera receber varios sms por titulo.
+		// agora tem duas fases para envio de sms. 
+		//IF .NOT. ZAP->(dbSeek(xFilial("ZAP")+(_cAlias)->E1_FILIAL+(_cAlias)->E1_PREFIXO+(_cAlias)->E1_NUM+(_cAlias)->E1_PARCELA+(_cAlias)->E1_TIPO+"100"))
+		If _lContinua
+			If _nSchTel <> 1
+				IncProc(_cCliente+" "+_cCelular )
+			Else
+				ConOut(_cCliente+" "+_cCelular )
+			EndIf
+			_cIDSMS := GetSXENum("ZAP","ZAP_ID" )
+			
+			ConfirmSX8()
+			
+			If !Empty((_cAlias)->ZAE_SMSUSE) // usa o usuario da fase
+				_cRetEnv := httpGet(_cURL2 + "&usuario="+AllTrim((_cAlias)->ZAE_SMSUSE)+"&senha="+AllTrim((_cAlias)->ZAE_SMSSEN)+;
+				"&celular="+_cCelular+"&mensagem="+_cTXT +"&codigosms="+_cIDSMS)
+			Else
+				_cRetEnv := httpGet(_cURL + "&celular=" + _cCelular + "&mensagem=" + _cTXT + "&codigosms=" + _cIDSMS)
+			EndIf
+			
+
+			Sleep(1000) //Milissegundos
+			
+			_cRetDesc := "" //Gravar a descricao do erro no retorno - Adicionado 16/03/2016 - Caio Renan
+
+			_cRetDesc := ""
+
+			If UPPER(AllTrim(_cRetEnv)) == "OK"
+				_cRetEnv := "100"// caso o retorno seja = a ok sms foi enviado com sucesso.
+			Else
+				_cRetDesc := _cRetEnv
+				_cRetEnv := "999"// caso o retorno tenha qualquer outra informacao sms nao foi enviado corretamente
+			EndIf
+			
+			RecLock("ZAP",.T.)
+			ZAP->ZAP_FILIAL	:= XFILIAL("ZAP")
+			ZAP->ZAP_ID 	:= _cIDSMS
+			ZAP->ZAP_DATA 	:= dDataBase
+			ZAP->ZAP_FILTIT	:= (_cAlias)->E1_FILIAL
+			ZAP->ZAP_PREFIX	:= (_cAlias)->E1_PREFIXO
+			ZAP->ZAP_NUM 	:= (_cAlias)->E1_NUM
+			ZAP->ZAP_PARCEL	:= (_cAlias)->E1_PARCELA
+			ZAP->ZAP_TIPO 	:= (_cAlias)->E1_TIPO
+			ZAP->ZAP_TXT 	:= _cTXT := StrTran(_cTxt,"%20" ,  " " )
+			ZAP->ZAP_CLIENT	:= (_cAlias)->ZAJ_CLIENT
+			ZAP->ZAP_LOJA 	:= (_cAlias)->E1_LOJA
+			ZAP->ZAP_ENVDES := _cRetDesc
+			ZAP->ZAP_ENV 	:= _cRetEnv
+			
+			ZAP->ZAP_ENVDES 	:= _cRetDesc
+			
+			ZAP->ZAP_FASE 	:= (_cAlias)->ZAJ_CODFAS
+			ZAP->ZAP_VENCTO	:= STOD((_cAlias)->E1_VENCREA)
+			ZAP->ZAP_CELULA	:= _cCelular // 5565XXXXXXXX
+			MsUnlock("ZAP")
+			_nzz++
+		EndIf
+	EndIf
+	While !(_cAlias)->( Eof() ) .AND. _cCliente = (_cAlias)->ZAJ_CLIENT
+		(_cAlias)->( dbSkip() )
+	EndDo
+Enddo
+
+If _nSchTel <> 1
+	MsgAlert(cValToChar(_nzz)+" SMS enviado." )
+Else
+	ConOut(cValToChar(_nzz)+" SMS enviado." )
+	AutoGrLog(cValToChar(_nzz)+" SMS enviado." )
+EndIf
+	
+(_cAlias)->( dbCloseArea() )
+
+Return
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³FUNCAO: SMSRET                                                                          ³
+//³funcao tem o objetivo de verificar se SMS enviado foi entregue com sucesso ao cliente.  ³
+//³e caso tenha sido entregue, ja gera um atendimento para cliente cair ja na proxima fase.³
+//³caso sms nao tenha sido entregue, nao ira gerar atendimento.                            ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+Static Function SMSRET(_nSchTel)
+
+Local _dData 	:= dDataBase
+Local _cSenha 	:= SuperGetMV("MV_SMSSENH",,"1126SET2111" )
+Local _cUser 	:= SuperGetMV("MV_SMSUSER",,"brisot" )
+Local _cURL 	:= SuperGetMV("MV_SMSURLR",,"http://ww2.iagentesms.com.br/webservices/http.php?metodo=consulta" )
+Local _cMotivo	:= SuperGetMV("MV_SMSMOT",,"000001" )
+Local _cOper	:= SuperGetMV("MV_SMSOPER",,"000001" )
+Local _cChkRet	:= SuperGetMV("MV_SMSCHKR",,"1;8;9;10" )
+/*
+retornos diponiveis:
+0 - Aguardando
+9 - Enviado
+3 - Entregue
+7 - Nao suportada
+2 - Nao entregavel
+0 - Recebida
+0 - Resposta
+7 - Recusada
+7 - Falha operadora
+0 - ERRO - descricao do erro
+*/
+Local _cSQL		:= ""
+Local _cAlias	:= GetNextAlias()
+
+Private _cURL := _cURL+"&usuario="+_cUser+"&senha="+_cSenha
+
+If _nSchTel <> 1
+	ProcRegua(0)
+EndIf
+
+dbSelectARea("ZAP")
+dbSetOrder(1)
+
+_cChkRet := "('"+StrTran(AllTrim(_cChkRet),";","','" )+"','')" // criando clausula para select
+
+_cSQL += " SELECT * "
+_cSQL += " FROM "+RetSqlName("ZAP")+" ZAP "
+_cSQL += " WHERE ZAP_ENV = '100' "// apenas sms enviados com sucesso 
+_cSQL += " AND ZAP_RET IN "+_cChkRet
+_cSQL += " AND D_E_L_E_T_ = ' ' "
+_cSql += " AND ZAP_DATA = '"+DToS(_dData)+"' "+CRLF
+
+DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSql)), _cALias, .F., .F.)
+
+(_cALias)->(dbGoTop())
+
+dbSelectArea("ZAJ")
+dbSetOrder(2)
+
+dbSelectArea("ZAK")
+
+dbSelectArea("ZAE")
+
+While !(_cALias)->(Eof())
+	
+	ZAP->(dbGoTo((_cALias)->R_E_C_N_O_))
+	
+	_cIDSMS := ZAP->ZAP_ID
+//	_cRetEnv := MemoRead("C:\TSTENVIO\envio.txt")
+//	_cRetEnv := memoWrite("C:\TSTENVIO\envio.txt", CRLF + _cRetEnv + CRLF + _cURL +"&idsms="+_cIDSMS )
+	_cRetEnv := httpGet(_cURL +"&codigosms="+_cIDSMS)
+/*
+retornos diponiveis:
+8  -  Aguardando
+9  -  Enviado
+3  -  Entregue
+7  -  Nao suportada
+2  -  Nao entregavel
+0  -  Recebida
+0  -  Resposta
+7  -  Recusada
+7  -  Falha operadora
+0  -  ERRO - descricao do erro
+*/
+	Do Case
+	Case UPPER(AllTrim(_cRetEnv)) == "AGUARDANDO"
+		_cRetEnv :="8" 
+		
+	Case UPPER(AllTrim(_cRetEnv)) == "ENVIADO"
+		_cRetEnv :="9" 
+		
+	Case UPPER(AllTrim(_cRetEnv)) == "ENTREGUE"
+		_cRetEnv :="3" 
+		
+	Case UPPER(AllTrim(_cRetEnv)) == "NAO SUPORTADA"
+		_cRetEnv :="7" 
+		
+	Case UPPER(AllTrim(_cRetEnv)) == "NAO ENTREGAVEL"
+		_cRetEnv :="2" 
+		
+	Case UPPER(AllTrim(_cRetEnv)) == "RECEBIDA"
+		_cRetEnv :="0" 
+		
+	Case UPPER(AllTrim(_cRetEnv)) == "RESPOSTA"
+		_cRetEnv :="0" 
+		
+	Case UPPER(AllTrim(_cRetEnv)) == "RECUSADA"
+		_cRetEnv :="7" 
+		
+	Case UPPER(AllTrim(_cRetEnv)) == "FALHA OPERADORA"
+		_cRetEnv :="7" 
+		
+	Case "ERRO" $ UPPER(AllTrim(_cRetEnv))
+		_cRetEnv :="0" 
+		
+	EndCase
+	If _nSchTel <> 1
+		IncProc(ZAP->ZAP_CLIENT + " " + ZAP->ZAP_ID)
+	Else
+		ConOut(ZAP->ZAP_CLIENT + " " + ZAP->ZAP_ID)
+	EndIf
+	
+	// 21/11/2011 - JEO - O retorno "9" sera tratado como "3", pois a operadora nao esta confirmando a entrega de algumas mensagens
+	If _cRetEnv = "9"
+		_cRetEnv := "3"
+	EndIf
+
+	RecLock("ZAP",.F.)
+	ZAP->ZAP_RET := _cRetEnv
+	MsUnlock("ZAP")
+
+	If ZAP->ZAP_RET = "3" // se igual a "3" quer dizer que sms foi entregue com sucesso ira gerar um atendimento na tabela ZAK.
+		
+		ZAE->(dbSetOrder(1))
+		ZAE->(dbSeek(xFilial("ZAE")+ZAP->ZAP_FASE ))
+		_nRec := ZAE->(Recno())
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³foi criado um indice na tablea ZAE por prazo de                                                               ³
+//³quando o sms for enviado com sucesso                                                                          ³
+//³o sistema deve criar um atendimento e agendar para ser atendido apenas quando estiver na proxima fase.        ³
+//³primeiro posiciona na fase que o sms foi enviado, depois ordena por prazo de e pega a proxima fase do prazo de³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		ZAE->(dbSetOrder(4)) // indice por ZAE_PRZDE
+		ZAE->(dbGoTo(_nRec))
+		ZAE->(dbSkip())
+		
+		While !ZAE->(Eof()) .AND. ZAE->ZAE_MSBLQL =  'S'
+			ZAE->(dbSkip())
+		EndDo
+		
+		If !ZAE->(Eof())
+			_cAtd := GetSX8Num("ZAK","ZAK_COD")
+			confirmSX8()	
+			
+			//Alert(_cAtd)
+			
+			_dPxAtd :=  ZAP->ZAP_VENCTO + ZAE->ZAE_PRZDE // agendando o atendimento para quando o cliente cair ja na proxima fase
+			
+			RecLock( "ZAK" , .T. )
+			ZAK->ZAK_FILIAL 	:= xFilial("ZAK")
+			ZAK->ZAK_COD 	:= _cAtd
+			ZAK->ZAK_DATA 	:= dDataBase
+			ZAK->ZAK_HORA 	:= SubStr(TIME(),1,5)
+			ZAK->ZAK_CLIENT	:= ZAP->ZAP_CLIENT
+			ZAK->ZAK_LOJA 	:= ZAP->ZAP_LOJA
+			ZAK->ZAK_OBSERV 	:= "ENVIO DE SMS"	// MEMO
+			ZAK->ZAK_DTPATE	:= _dPxAtd			// DATA
+			ZAK->ZAK_HRPATE	:= "00:00"			// CARACTERE
+			ZAK->ZAK_CODMOT 	:= _cMotivo			// CARACTERE
+			ZAK->ZAK_CODOPE	:= _cOper			// CARACTERE
+			ZAK->(MsUnlock())
+			
+			If ZAJ->( dbSeek(xFilial("ZAJ")+ZAP->ZAP_CLIENT+ZAP->ZAP_LOJA+DTOS(ZAP->ZAP_DATA) ) )
+				RecLock("ZAJ",.F.)
+				ZAJ->ZAJ_ATEND := "S"
+				ZAJ->(MsUnlock())
+			EndIf
+			
+		EndIf
+	EndIf
+
+	(_cALias)->(dbSkip())
+EndDo
+
+If _nSchTel <> 1
+	MsgAlert("Retorno do SMS processado." )
+Else
+	ConOut("Retorno do SMS processado." )
+EndIf
+
+Return
+
+
+USER Function ARRZAJ()
+Local _cSQL		:= ""
+Local _cAlias	:= GetNextAlias()
+
+dbSelectARea("ZAP")
+dbSetOrder(1)
+
+//_cChkRet := "('"+StrTran(AllTrim(_cChkRet),";","','" )+"','')" // criando clausula para select
+
+_cSQL += " SELECT * "
+_cSQL += " FROM "+RetSqlName("ZAP")+" ZAP "
+_cSQL += " WHERE ZAP_ENV = '100' "// apenas sms enviados com sucesso 
+//_cSQL += " AND ZAP_RET IN "+_cChkRet
+_cSQL += " AND D_E_L_E_T_ = ' ' "
+
+DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSql)), _cALias, .F., .F.)
+
+(_cALias)->(dbGoTop())
+
+dbSelectArea("ZAJ")
+dbSetOrder(2)
+
+dbSelectArea("ZAE")
+
+While !(_cALias)->(Eof())
+	
+	ZAP->(dbGoTo((_cALias)->R_E_C_N_O_))
+	
+	If ZAJ->( dbSeek(xFilial("ZAJ")+ZAP->ZAP_CLIENT+ZAP->ZAP_LOJA+DTOS(ZAP->ZAP_DATA) ) )
+		RecLock("ZAJ",.F.)
+		ZAJ->ZAJ_ATEND := "S"
+		ZAJ->(MsUnlock())
+	EndIf
+	(_cALias)->(dbSkip())
+EndDo
+
+Return
+
+
+Static Function Juridico(cCli,cLoj)
+
+Local _cALiE1 := GetNextAlias()
+Local _cSQL := ""
+Local lRet := .F.
+Local aArea := GetArea()
+_cSQL += " SELECT * "
+_cSQL += " FROM "+RetSqlName("SE1")+" E1 "
+_cSQL += " WHERE E1.E1_CLIENTE = '"+cCli+"' "
+_cSQL += " AND E1.E1_LOJA =  '"+cLoj+"' "
+_cSQL += " AND E1.E1_XCOBJ = 'S'
+_cSQL += " AND E1.D_E_L_E_T_ = ' ' "
+
+DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSql)), _cALiE1, .F., .F.)
+
+While !(_cALiE1)->(Eof())
+	lRet := .T.
+	Exit
+End
+dbSelectARea(_cALiE1)
+(_cALiE1)->(dbClosearea())
+RestArea(aArea)
+Return lRet

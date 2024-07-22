@@ -1,0 +1,337 @@
+#include "Rwmake.ch"
+#include "Protheus.ch"
+
+/*/{Protheus.doc} SF06R17X
+Relatorio de titulos em cobrança judicial
+Tablea ZF1
+@author j2a.caiolima
+@since 15/08/2017
+/*/
+User Function SF06R17X()
+
+	Local   oReport
+	Private _oTitulo, _oTotal // variaveis dos objetos de secao
+	Private _cPerg    := "SF06R17X"
+	Private _cALias   := GetNextAlias()	
+	Private _cPicture := TM(999999999.99,14,2) // "@E 999,999,999.99"
+	Private _lTdasFil := .F.
+	Private cParam    := ""
+	
+	AjustaSX1(_cPerg)
+	
+	If Pergunte(_cPerg,.T.)
+	
+		If MV_PAR12 = 1
+		
+			_aSelFil := AdmGetFil(@_lTdasFil,.F.,"SE1")
+		
+			While Len(_aSelFil) = 0
+				_aSelFil := AdmGetFil(@_lTdasFil,.F.,"SE1")
+			EndDo
+			
+			cParam := GetRngFil( _aSelFil, "SE1" )
+		
+			cParam := " AND E1_FILIAL " +	cParam +" "
+		EndIf
+		
+		oReport := ReportDef()
+		oReport:PrintDialog()
+		
+	EndIf
+
+Return
+
+/*/{Protheus.doc} ReportDef
+(long_description)
+@author j2a.caiolima
+@since 16/08/2017
+@version 1.0
+@return Objeto, Objeto Treport
+/*/
+Static Function ReportDef()
+
+	Local oReport
+	Local _cDescri := "Titulos em cobrança judicial "// + cFilAnt + " - " + FwFilName(cEmpAnt, cFilAnt)
+	
+	Pergunte(_cPerg, .F.)
+	
+	oReport := TReport():New(_cPerg,_cDescri,_cPerg,{|oReport| PrintReport(oReport)},_cDescri)
+	oReport:SetLeftMargin(2)
+	oReport:SetLandScape()        // paisagem
+	oReport:oPage:SetPaperSize(9) // papel A4
+	oReport:SetEnvironment(2)     // local 
+	oReport:SetTotalInLine(.F.)
+	
+	_oTitulo := TRSection():New(oReport,"Titulo",{_cALias,"SE1","SA1"})
+	
+	If _lTdasFil
+		TRCell():New(_oTitulo,"E1_FILIAL"  ,"SE1"     )
+	EndIf
+	
+	TRCell():New(_oTitulo,"E1_PREFIXO" ,"SE1"     )
+	TRCell():New(_oTitulo,"E1_NUM"     ,"SE1"     )
+	TRCell():New(_oTitulo,"A1_CGC"     ,"SA1",,"" )
+	TRCell():New(_oTitulo,"A1_NOME"    ,"SA1",,,40)
+	TRCell():New(_oTitulo,"E1_EMISSAO" ,"SE1"     )
+	TRCell():New(_oTitulo,"E1_VENCREA" ,"SE1"     )
+	TRCell():New(_oTitulo,"E1_VALOR"   ,"SE1"     )
+	TRCell():New(_oTitulo,"E1_SALDO"   ,"SE1"     )
+	//Walmir Junior 05/03/2018 - Atendimento de suporte, alteração na posição dos campos.
+	TRCell():New(_oTitulo,"E1_XSPC"    ,"SE1",,,3           ) // CLI SPC SERASA
+	TRCell():New(_oTitulo,"E1_XSPCDT"  ,"SE1"               ) // DT INC SPC SERASA
+	
+	/*
+	J2AConsultoria
+	Luiz Junior
+	Campo valor atualizado removido de acordo com o aditivo  de 08/09/2017
+	Aditivo Especificação_Cobranc_Judicial_02
+	*/
+	//-------------------------------------------------------------------------------------------------------------------//
+	//TRCell():New(_oTitulo,"VAL_ATU"    ,_cALias,"Valor atualizado",_cPicture,14) // Calculado com juros e multa        //
+	//_oTitulo:Cell("VAL_ATU"  ):SetBlock( {|| fGetValAtu() } )                                                          //
+	//TRFunction():New(_oTitulo:Cell("VAL_ATU"),"","SUM",,,_cPicture,,.T.,.F.)                                           //
+	//-------------------------------------------------------------------------------------------------------------------//
+	
+	TRCell():New(_oTitulo,"E1_XCOBJ"   ,"SE1",,,3           ) // COB_JUD
+	TRCell():New(_oTitulo,"ZF1_XJREC"  ,_cALias             ) // PROT_NO_JUD
+	TRCell():New(_oTitulo,"ZF1_DATA"   ,_cALias,"DT Parecer") // DT_PARECER
+	TRCell():New(_oTitulo,"ZF1_DTPROC" ,_cALias             ) // DT PROCESSO
+	/*TRCell():New(_oTitulo,"E1_XSPC"    ,"SE1",,,3           ) // CLI SPC SERASA
+	TRCell():New(_oTitulo,"E1_XSPCDT"  ,"SE1"               ) // DT INC SPC SERASA*/
+	
+	_oTitulo:Cell("A1_CGC"   ):SetBlock( {|| fGetCGC(SA1->A1_CGC)                } )
+	_oTitulo:Cell("ZF1_XJREC"):SetBlock( {|| fGetxjrec((_cALias)->ZF1_XJREC)     } )
+	_oTitulo:Cell("E1_XCOBJ" ):SetBlock( {|| Iif(SE1->E1_XCOBJ ="S","Sim","Nao") } )
+	_oTitulo:Cell("E1_XSPC"  ):SetBlock( {|| Iif(SE1->E1_XSPC  ="S","Sim",""   ) } )
+	
+	oBrCGC  := TRBreak():New(_oTitulo,_oTitulo:Cell("A1_CGC"),Nil,.F.)
+	TRFunction():New(_oTitulo:Cell("E1_VALOR"),"","SUM",oBrCGC,,_cPicture,,.T.,.F.)
+	TRFunction():New(_oTitulo:Cell("E1_SALDO"),"","SUM",oBrCGC,,_cPicture,,.T.,.F.)
+	
+	If _lTdasFil
+		oBrFil  := TRBreak():New(_oTitulo,_oTitulo:Cell("E1_FILIAL"),Nil,.F.)
+		TRFunction():New(_oTitulo:Cell("E1_VALOR"),"","SUM",oBrFil,,_cPicture,,.T.,.F.)
+		TRFunction():New(_oTitulo:Cell("E1_SALDO"),"","SUM",oBrFil,,_cPicture,,.T.,.F.)
+	EndIf
+	
+	//TRFunction():New(_oTitulo:Cell("E1_VALOR"),"","SUM",,,_cPicture,,.T.,.F.)
+	//TRFunction():New(_oTitulo:Cell("E1_SALDO"),"","SUM",,,_cPicture,,.T.,.F.)
+	
+	_oTitulo:SetTotalInLine(.F.)
+	
+	// posicionamento das tabelas auxiliares
+	TRPosition():New( _oTitulo, "SE1", 1, {|| SE1->(dbGoTo((_cAlias)->RECSE1)) }, .F. )
+	TRPosition():New( _oTitulo, "SA1", 1, {|| SA1->(dbGoTo((_cAlias)->RECSA1)) }, .F. )
+
+Return(oReport)
+
+/*/{Protheus.doc} fGetxjrec
+(long_description)
+@author j2a.caiolima
+@since 16/08/2017
+@version 1.0
+@return Caracter, sim ou nao de acordo com o boolean t ou f ou vazio
+/*/
+Static Function fGetxjrec(_cJRec)
+
+	Local _cRet := ""
+	
+	If _cJRec = "T"
+		_cRet := "Sim"
+	Else
+		_cRet := ""
+	EndIf
+	
+Return(_cRet)
+
+/*/{Protheus.doc} fGetValAtu
+Funcao que calcula o valor atualizad somando juros e multa
+@author j2a.caiolima
+@since 16/08/2017
+@version 1.0
+@return Numerico, Valor atualizado
+/*/
+Static Function fGetValAtu()
+
+	Local _nRet := 0
+	Local _nJuros := 0
+	Local _nMulta := 0
+	Local _nValor := 0
+	Local _nPercMul := GetMV("MV_XMULBOL" ,, 2)
+	_nPercMul := _nPercMul / 100
+	
+	_nJur     := SE1->E1_PORCJUR
+	_dVenc    := SE1->E1_VENCREA
+	_nValor   := SE1->E1_SALDO + SE1->E1_SDACRES - SE1->E1_SDDECRE
+	_nPercJur := _nJur / 100 // ao dia - geralmente 0.0333
+	
+	_nDias    := dDataBase - _dVenc
+	
+	If _nDias >= 1
+		_nJuros := (_nDias * _nPercJur) * _nValor
+		_nMulta := _nPercMul * _nValor
+	EndIf
+	
+	_nRet := _nValor + _nMulta + _nJuros
+	
+Return(_nRet)
+
+/*/{Protheus.doc} fGetCGC
+(long_description)
+@author j2a.caiolima
+@since 16/08/2017
+@version 1.0
+@return Caractere, retorna o cpf/cnpj com picture
+/*/
+Static Function fGetCGC(_cCGC)
+
+	Local _cRet := ""
+	
+	If Len(AllTrim(_cCGC)) = 11
+		_cRet := Transform(_cCGC, "@R 999.999.999-99")
+	Else
+		_cRet := Transform(_cCGC, "@R 99.999.999/9999-99")
+	EndIf
+	
+Return(_cRet)
+
+//ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+//³funcao que realiza o filtro e imprimi os dados na tela³
+//ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+Static Function PrintReport(oReport)
+
+	MsgRun( "Selecionando registros...", "Aguarde" ,  {|| GeraQuery() } )
+	
+	_oTitulo:Print()
+	
+	/*
+	//oReport:SetMeter(10)
+		oReport:IncMeter() // incrementa regua
+		if oReport:Cancel() // trata possivel cancelamento do relatorio.
+			oReport:PrintText("CANCELADO PELO USUÁRIO")
+			exit
+		Endif
+	*/
+	
+	(_cALias)->(dbClosearea())
+	
+Return
+
+//ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+// funcao que realiza o sql do relatorio
+//ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+Static Function GeraQuery()
+
+	Local _cSql := ""
+	
+	_cSql += " SELECT SE1.R_E_C_N_O_ AS RECSE1, "
+	_cSql += "        SA1.R_E_C_N_O_ AS RECSA1, "        + CRLF
+	_cSql += "        SE1.E1_FILIAL           , "        + CRLF
+	_cSql += "        COALESCE((SELECT MAX(ZF1_XJREC)  FROM "+RetSQLName("ZF1")+" ZF1 WHERE ZF1.D_E_L_E_T_ <> '*' AND ZF1_PREF = E1_PREFIXO AND ZF1_NUM = E1_NUM AND ZF1_PARC = E1_PARCELA AND ZF1_TIPO = E1_TIPO AND ZF1_FILIAL = E1_FILIAL                                 ),'') AS ZF1_XJREC," + CRLF
+	_cSql += "        COALESCE((SELECT MIN(ZF1_DATA)   FROM "+RetSQLName("ZF1")+" ZF1 WHERE ZF1.D_E_L_E_T_ <> '*' AND ZF1_PREF = E1_PREFIXO AND ZF1_NUM = E1_NUM AND ZF1_PARC = E1_PARCELA AND ZF1_TIPO = E1_TIPO AND ZF1_FILIAL = E1_FILIAL AND ZF1.ZF1_XJPARE = 'T'        ),'') AS ZF1_DATA,"  + CRLF
+	_cSql += "        COALESCE((SELECT MIN(ZF1_DTPROC) FROM "+RetSQLName("ZF1")+" ZF1 WHERE ZF1.D_E_L_E_T_ <> '*' AND ZF1_PREF = E1_PREFIXO AND ZF1_NUM = E1_NUM AND zf1_PARC = E1_PARCELA AND ZF1_TIPO = E1_TIPO AND ZF1_FILIAL = E1_FILIAL AND ZF1.ZF1_DTPROC <> '        '),'') AS ZF1_DTPROC" + CRLF
+	_cSql += " FROM "+RetSQLName("SE1")        + " SE1 " + CRLF
+	_cSql += " INNER  JOIN "+RetSQLName("SA1") + " SA1 "
+	_cSql += " ON     SA1.A1_COD  = SE1.E1_CLIENTE "
+	_cSql += " and    SA1.A1_LOJA = SE1.E1_LOJA "        + CRLF
+	_cSql += " WHERE  SA1.D_E_L_E_T_ <> '*'  "           + CRLF
+	// apenas titulos com saldo e em cobranca judicial
+	_cSql += " AND SE1.E1_SALDO>0 AND SE1.E1_XCOBJ='S' " + CRLF
+	//_cSql += " AND se1.e1_filial='"+xFilial("SE1")+"' " + CRLF
+	
+	If !Empty(MV_PAR01) .And. !Empty(MV_PAR03)
+		_cSql += " AND SE1.E1_CLIENTE BETWEEN '" + MV_PAR01       +"' AND '" + MV_PAR03       +"' " + CRLF
+	EndIf
+	
+	If !Empty(MV_PAR02) .And. !Empty(MV_PAR04)
+		_cSql += " AND SE1.E1_LOJA    BETWEEN '" + MV_PAR02       +"' AND '" + MV_PAR04       +"' " + CRLF
+	EndIf
+	
+	If !Empty(MV_PAR05) .And. !Empty(MV_PAR06)
+		_cSql += " AND SE1.E1_NUM     BETWEEN '" + MV_PAR05       +"' AND '" + MV_PAR06       +"' " + CRLF
+	EndIf
+	
+	If !Empty(MV_PAR07) .And. !Empty(MV_PAR08)
+		_cSql += " AND SE1.E1_EMISSAO BETWEEN '" + DTOS(MV_PAR07) +"' AND '" + DTOS(MV_PAR08) +"' " + CRLF
+	EndIf
+	
+	If !Empty(MV_PAR09) .And. !Empty(MV_PAR10)
+		_cSql += " AND SE1.E1_VENCREA BETWEEN '" + DTOS(MV_PAR09) +"' AND '" + DTOS(MV_PAR10) +"' " + CRLF
+	EndIf
+	
+	If MV_PAR11 == 1 // Apenas titulos que possuem protesto no juridico marcado
+		_cSql += " AND EXISTS (SELECT * FROM "+RetSQLName("ZF1")+" ZF1 WHERE ZF1.D_E_L_E_T_ <>'*' AND ZF1_XJREC = 'T' AND ZF1_PREF = E1_PREFIXO "      + CRLF
+		_cSql += " AND ZF1_NUM = E1_NUM AND ZF1_PARC = E1_PARCELA AND ZF1_TIPO = E1_TIPO AND ZF1_FILIAL = E1_FILIAL) "                                 + CRLF
+	Elseif MV_PAR11 == 2 // Apenas titulos que NÃO possuem protesto no juridico marcado
+		_cSql += " AND NOT EXISTS (SELECT * FROM "+RetSQLName("ZF1")+" ZF1 WHERE ZF1.D_E_L_E_T_ <> '*' AND ZF1_XJREC = 'T' AND ZF1_PREF = E1_PREFIXO " + CRLF
+		_cSql += " AND ZF1_NUM=E1_NUM AND ZF1_PARC=E1_PARCELA AND ZF1_TIPO=E1_TIPO AND ZF1_FILIAL=E1_FILIAL) "                                         + CRLF
+	EndIf
+	
+	_cSql += cParam
+	
+	_cSql += " ORDER BY E1_NOMCLI, SE1.R_E_C_N_O_ " + CRLF
+	
+	MemoWrite("D:\LOGSQL\"+_cPerg+".txt" , _cSql) // escreve em arquivo de texto e se nao encontrar cria o arquivo
+	If Select(_cALias) > 0
+		(_cALias)->(dbClosearea())
+	Endif
+	
+	DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSql)), _cALias, .F., .F.)
+	
+	TCSetField(_cALias,"ZF1_DATA","D")
+	TCSetField(_cALias,"ZF1_DTPROC","D")
+
+Return
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³sx1inv    ºAutor  ³caio renan          º Data ³  05/23/09   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³AJUSTA AS PERGUNTAS                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function AjustaSX1(cPerg)
+
+	Local aHelp01 := {}
+	Local aHelp03 := {}
+	Local aHelp04 := {}
+	Local aHelp05 := {}
+	Local aHelp11 := {}
+	Local _nTa1cod := TamSX3("A1_COD")[1]
+	Local _nTa1loj := TamSX3("A1_LOJA")[1]
+	Local _nTe1num := TamSX3("E1_NUM")[1]
+	
+	// 40 Caracteres por linha do help
+	//                      1         2         3         4 
+	//             1234567890123456789012345678901234567890
+	Aadd(aHelp11, "Trativa para trazer apenas titulos que" )
+	Aadd(aHelp11, "estejam protestado no juridico ou não." )
+	Aadd(aHelp11, "caso esteja igual 1-Sim, traz APENAS" )
+	Aadd(aHelp11, "os que estão protestado" )
+	Aadd(aHelp11, "caso esteja igual a 2-Não, traz APENAS" )
+	Aadd(aHelp11, "os que NÃO estão protestado" )
+	Aadd(aHelp11, "caso esteja igual a 3-Ambos," )
+	Aadd(aHelp11, "traz todos os titulos." )
+	
+	//--------------------------------------------------------------------
+	
+	u_SFPUTSX1(cPerg, "01", "Cliente de"     ,"","","mv_ch1","C",_nTa1cod ,00,00,"G","","SA1","","","mv_par01","","","","","","","","","","","","","","","","",,"","","") 
+	u_SFPUTSX1(cPerg, "02", "Loja de"        ,"","","mv_ch2","C",_nTa1loj ,00,00,"G","",""   ,"","","mv_par02","","","","","","","","","","","","","","","","",,"","","") 
+	u_SFPUTSX1(cPerg, "03", "Cliente ate"    ,"","","mv_ch3","C",_nTa1cod ,00,00,"G","","SA1","","","mv_par03","","","","","","","","","","","","","","","","",,"","","") 
+	u_SFPUTSX1(cPerg, "04", "Loja ate"       ,"","","mv_ch4","C",_nTa1loj ,00,00,"G","",""   ,"","","mv_par04","","","","","","","","","","","","","","","","",,"","","") 
+	u_SFPUTSX1(cPerg, "05", "Titulo de"      ,"","","mv_ch5","C",_nTe1num ,00,00,"G","",""   ,"","","mv_par05","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "06", "Titulo ate"     ,"","","mv_ch6","C",_nTe1num ,00,00,"G","",""   ,"","","mv_par06","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "07", "Emissao de"     ,"","","mv_ch7","D",08       ,00,00,"G","",""   ,"","","mv_par07","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "08", "Emissao ate"    ,"","","mv_ch8","D",08       ,00,00,"G","",""   ,"","","mv_par08","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "09", "Vencimento de"  ,"","","mv_ch9","D",08       ,00,00,"G","",""   ,"","","mv_par09","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "10", "Vencimento ate" ,"","","mv_cha","D",08       ,00,00,"G","",""   ,"","","mv_par10","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "11", "Prot. Jurd"     ,"","","mv_chb","N",01       ,00,00,"C","",""   ,"","","mv_par11","1-Sim","","","","2-Não","","","3-Ambos","","","","","","","","",aHelp11,"","","")
+	u_SFPUTSX1(cPerg, "12", "Seleciona Filial","","","mv_ch12" ,"C",01,00,00,"C","",""     ,"","","mv_par12","Sim"      ,"","","","Nao"      ,"","","","","","","","","","","" ,,, ,"")
+	//u_SFPUTSX1(cPerg, "11", "Prot. Jurd de"  ,"","","mv_chb","D",08       ,00,00,"G","",""   ,"","","mv_par11","","","","","","","","","","","","","","","","",,"","","")
+	//u_SFPUTSX1(cPerg, "12", "Prot. Jurd ate" ,"","","mv_chc","D",08       ,00,00,"G","",""   ,"","","mv_par12","","","","","","","","","","","","","","","","",,"","","")
+
+Return

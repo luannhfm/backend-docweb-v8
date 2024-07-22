@@ -1,0 +1,330 @@
+#Include 'protheus.ch'
+#Include 'fileio.ch'
+
+/*/{Protheus.doc} SF06S01F
+	Função para busca e envio de lembrete, via SMS,  
+	de vencimento de titulos do contas a receber.
+@author Franklin Oliveira
+@since 28/02/2020
+@type function
+@history 21/07/2020, Franklin de Brito de Oliveira, Adicionado filtro para titulos de funcionários.
+@history 15/03/2021, Franklin de Brito de Oliveira, Adicionado filtro para não buscar títulos sem IDCNAB.
+@history 14/04/2021, Franklin de Brito de Oliveira, Atualização da mensagem enviada por SMS.
+/*/
+User Function SF06S01F()
+Local aCelInv	:= {}
+Local aNumCel	:= {}
+Local cAliasSE1	:= GetNextAlias()
+Local cMsg		:= ""
+Local nDiasAnt	:= SuperGetMV("MV_XDVNSMS", .F., 0)
+Local nX		:= 0
+	BeginSql Alias cAliasSE1
+		SELECT 
+			SE1.R_E_C_N_O_ RECNOSE1
+		FROM 
+			%Table:SE1% SE1
+		LEFT JOIN %Table:ZEF% ZEF ON
+			ZEF.%NotDel%
+			AND ZEF.ZEF_FILIAL = SE1.E1_FILIAL
+			AND ZEF.ZEF_PREFIX = SE1.E1_PREFIXO
+			AND ZEF.ZEF_NUM = SE1.E1_NUM
+			AND ZEF.ZEF_PARCEL = SE1.E1_PARCELA
+			AND ZEF.ZEF_TIPO = SE1.E1_TIPO
+		WHERE 
+			SE1.%NotDel%
+			AND SE1.E1_FILIAL = %Exp:xFilial("SE1")%
+			AND SE1.E1_TIPO IN ('BOL', 'CTR', 'EST', 'NF ', 'OR ', 'REN')
+			AND SE1.E1_SALDO > 0
+			AND SE1.E1_XTITFUN <> 'S'
+			AND SE1.E1_STATUS = 'A'
+			AND SE1.E1_XSPC <> "S"
+			AND SE1.E1_XCOBJ <> "S"
+			AND SE1.E1_XIDCNAB !=  ' '
+			AND SE1.E1_VENCTO = %Exp:DtoS( dDataBase + nDiasAnt )%
+			AND (ZEF.ZEF_DTENSM IS NULL OR ZEF.ZEF_DTENSM = ' ' AND ZEF.ZEF_RECORR <> 'S')
+	EndSql
+	If !(cAliasSE1)->( Eof() )
+		DbSelectArea("SE1")
+		DbSelectArea("ZEF")
+		DbSelectArea("SA1")
+		SA1->( DbSetOrder(1) )	//A1_FILIAL+A1_COD+A1_LOJA
+		ZEF->( DbSetOrder(1) )	//ZEF_FILIAL+ZEF_PREFIX+ZEF_NUM+ZEF_PARCEL+ZEF_TIPO
+		While !(cAliasSE1)->( Eof() )
+			SE1->( DbGoTo((cAliasSE1)->RECNOSE1) )
+			If SA1->( MsSeek(xFilial("SA1") + SE1->E1_CLIENTE + SE1->E1_LOJA) )
+				//Verifico se os campos A1_DDD e A1_TEL são de um celular 
+				If fVldNber( AllTrim(SA1->A1_DDD) + AllTrim(SA1->A1_TEL) )
+					aAdd( aNumCel, {;
+					 		fTfmNmbr(AllTrim(SA1->A1_DDD) + AllTrim(SA1->A1_TEL)),;
+					 		(cAliasSE1)->RECNOSE1,;
+					 		AllTrim( SA1->A1_COD ),;
+					 		AllTrim( SA1->A1_LOJA ),;
+					 		AllTrim( SA1->A1_NOME ),;
+					 		"",;
+					 		SE1->E1_VENCTO,;
+							SE1->E1_VALOR;
+					 	} )
+				//Verifico se os campos A1_XDDDTLX e A1_TELEX são de um celular
+				ElseIf fVldNber( AllTrim(A1_XDDDTLX) + AllTrim(A1_TELEX) )
+					aAdd( aNumCel, {;
+					 		fTfmNmbr( AllTrim(A1_XDDDTLX) + AllTrim(A1_TELEX) ),;
+					 		(cAliasSE1)->RECNOSE1,;
+					 		AllTrim( SA1->A1_COD ),;
+					 		AllTrim( SA1->A1_LOJA ),;
+					 		AllTrim( SA1->A1_NOME ),;
+					 		"",;
+							SE1->E1_VENCTO,;
+							SE1->E1_VALOR;					 	
+						} )
+		 		//Em último caso, verifico se o campo A1_XCELCON é de um celular
+				ElseIf fVldNber( AllTrim(A1_XCELCON) )
+					aAdd( aNumCel, {;
+					 		fTfmNmbr( AllTrim(A1_XCELCON) ),;
+					 		(cAliasSE1)->RECNOSE1,;
+					 		AllTrim( SA1->A1_COD ),;
+					 		AllTrim( SA1->A1_LOJA ),;
+					 		AllTrim( SA1->A1_NOME ),;
+					 		"",;
+					 		SE1->E1_VENCTO,;
+							SE1->E1_VALOR;
+					 	} )
+				Else
+					aAdd( aCelInv, { SA1->A1_COD, SA1->A1_LOJA, SA1->A1_NOME } )
+				EndIf
+			EndIf
+			(cAliasSE1)->( DbSkip() )
+		EndDo
+		If Len(aNumCel) > 0
+			For nX := 1 To Len(aNumCel) 
+				aNumCel[nX][6] := AllTrim( fEnvSMS(aNumCel[nX]) )
+			Next nX
+		Else
+			cMsg := "Não foram encontrados numeros de celular válidos para o envio do lembrete de vencimento por SMS."
+			If !FWGetRunSchedule()
+				Help( ,  , 'Help', , cMsg, 1, 0)
+			EndIf
+		EndIf
+		SE1->( DbCloseArea() )
+		ZEF->( DbCloseArea() )
+		SA1->( DbCloseArea() )
+	Else
+		cMsg := 'Não foram encontrados títulos próximos ao vencimento para envio de lembrete por SMS.'
+		If !FWGetRunSchedule()
+			Help( , , 'Help', , cMsg, 1, 0)
+		EndIf
+	EndIf
+	(cAliasSE1)->( DbCloseArea() )
+	
+	If FWGetRunSchedule()
+		fEnvRel(cMsg, aNumCel, aCelInv)
+	EndIf
+Return Nil
+
+/*/{Protheus.doc} fEnvSMS
+	Função para realizar o envio do lembrete de vencimento por SMS via integração.
+@author Franklin Oliveira
+@since 28/02/2020
+@param p_aNumCel, array, array com o(s) numero(s) de telefone celular que receberá(ão) o lembrete de vencimento 
+@type static function
+/*/
+Static Function fEnvSMS(p_aNumCel)
+Local cURL			:= SuperGetMV("MV_SMSURLE",,"http://ww2.iagentesms.com.br/webservices/http.php?metodo=envio" )
+Local cUsuario		:= SuperGetMV("MV_SMSUSER",,"guilherme.castro@sfiemt.ind.br" )
+Local cSenha		:= SuperGetMV("MV_SMSSENH",,"Abcd@1234" )
+Local cCeluar		:= "55" + AllTrim(p_aNumCel[01])
+Local cEntidade		:= ""
+Local cMensagem		:= ""
+Local nIDSMS		:= p_aNumCel[02]
+Local cGetRet		:= ""
+local cVlrTit		:= AllTrim(Transform(p_aNumCel[08], "@E 999,999.99" ) )
+	Do Case
+		Case FWCodEmp() == "01"
+			cEntidade := "FIEMT"
+		Case FWCodEmp() == "02"
+			cEntidade := "SESI-MT"
+		Case FWCodEmp() == "03"
+			cEntidade := "SENAI-MT"
+		Case FWCodEmp() == "04"
+			cEntidade := "IEL-MT"	
+	end Case
+	/*
+	"O seu boleto referente do {entidade - SESI-MT, SENAI-MT ou IEL-MT} ao mês, 
+	que vence dia {data de vencimento do titulo} já foi enviado. 
+	Caso não tenha recebido, procurar o setor financeiro."
+	"Prezado cliente, lembramos que a sua fatura no valor de R$ 123,45 do
+	{entidade - SESI-MT, SENAI-MT ou IEL-MT}
+	vence em breve. Não deixe de efetuar o pagamento!"
+	*/
+	cMensagem := "Prezado cliente, lembramos que a sua fatura no valor de R$ " + cVlrTit + " do " + cEntidade
+	cMensagem += " vence em breve. Não deixe de efetuar o pagamento!"
+	If !Empty(cMensagem)
+		cURL := cURL + "&usuario=" + Escape( AllTrim(cUsuario) ) + "&senha=" + Escape( AllTrim(cSenha) )
+		cURL := cURL + "&celular=" + Escape( AllTrim(cCeluar) ) + "&mensagem=" + Escape( AllTrim(cMensagem) ) + "&codigosms=" + Escape( AllTrim(Str(nIDSMS)) )
+		cGetRet := HTTPGet( EncodeUTF8(cURL) )
+		//cGetRet := "OK"
+		If Upper(AllTrim(cGetRet)) == "OK"
+			//Grava que a mensagem foi gravada na plataforma
+			If !FWGetRunSchedule()
+				Help( , , 'Help', , 'Mensagem gravada na plataforma IAgente: ' + cGetRet, 1, 0)
+			EndIf
+			SE1->( DbGoTo(nIDSMS) )
+			If ZEF->( DbSeek(SE1->E1_FILIAL + SE1->E1_PREFIXO + SE1->E1_NUM + SE1->E1_PARCELA + SE1->E1_TIPO) )
+				Reclock("ZEF", .F.)
+					ZEF->ZEF_DTENSM := dDataBase
+					ZEF->ZEF_IDENSM := nIDSMS
+					ZEF->ZEF_STSSMS := "0" //AGUARDANDO
+					ZEF->ZEF_CELSMS	:= AllTrim(p_aNumCel[01])
+				MsUnlock()
+			Else
+				Reclock("ZEF", .T.)
+					ZEF->ZEF_FILIAL := SE1->E1_FILIAL
+					ZEF->ZEF_PREFIX	:= SE1->E1_PREFIXO
+					ZEF->ZEF_NUM 	:= SE1->E1_NUM
+					ZEF->ZEF_PARCEL := SE1->E1_PARCELA
+					ZEF->ZEF_TIPO 	:= SE1->E1_TIPO
+					ZEF->ZEF_EMISSA	:= SE1->E1_EMISSAO
+					ZEF->ZEF_CLIENT	:= SE1->E1_CLIENTE
+					ZEF->ZEF_LOJA	:= SE1->E1_LOJA
+					ZEF->ZEF_DTENSM	:= dDataBase
+					ZEF->ZEF_IDENSM	:= nIDSMS
+					ZEF->ZEF_STSSMS	:= "0" //AGUARDANDO
+					ZEF->ZEF_CELSMS	:= AllTrim(p_aNumCel[01])
+				MsUnlock()
+			EndIf			
+		Else
+			Help( , , 'Help', , 'Falha na requisição ao serviço para envio de SMS: ' + cGetRet, 1, 0)
+		EndIf
+	EndIf
+Return cGetRet
+
+/*/{Protheus.doc} SchedDef
+	Static function para o novo Schedule 
+@author Franklin Oliveira
+@since 28/02/2020
+@version 1.0
+@return aParam, [1] - Tipo: "P" - para Processo, "R" - para Relatórios [2] - Nome do Pergunte [3] - Alias (para Relatório) [4] - Array de ordem (para Relatório) [5] - Título (para Relatório)
+@type static function
+/*/
+Static Function SchedDef()
+Local aParam	:= {}
+Local aOrd		:= {}
+
+    aParam := {"P", ;
+        "ParamDef", ;
+        ""        , ;
+        aOrd      , ;
+    }
+Return aParam
+
+/*/{Protheus.doc} fEnvRel
+Função para enviar relatório de envio do lembrete de vencimento.
+@author Franklin Oliveira
+@since 20/03/2020
+@param cMsgErro, characters, Mensagem de erro, quando houver.
+@param aNumCel, array, Dados dos celulares que o envio foi realizado para a plataforma IAgente.
+@param aCelInv, array, Dados dos clientes que não possuem numero de celular cadastrado.
+@type function
+/*/
+Static Function fEnvRel(cMsgErro, aNumCel, aCelInv)
+Local cDest		:= SuperGetMV( "MV_XEMRSMS", .F., "franklin.oliveira@sfiemt.ind.br" )
+Local cAssunto	:= "Relatorio de envio do lembrete de vencimento de titulo - " + FWFilialName( cEmpAnt, cFilAnt )
+Local cHtml 	:= ""
+Local nX		:= 1
+	cHtml := "<!DOCTYPE html>"
+	cHtml += "<html>"
+	cHtml += "<style>"
+	cHtml += "table, th, td {"
+	cHtml +=	"border: 1px solid black;"
+	cHtml +=	"border-collapse: collapse;"
+	cHtml += "}"
+	cHtml += "th, td {"
+	cHtml +=	"padding: 5px;"
+	cHtml += "}"
+	cHtml += "</style>"
+	cHtml += "</head>"
+	cHtml += "<body>"
+	If !Empty(cMsgErro)
+		cHtml += "<p>" + AllTrim(cMsgErro) + "</p>"
+	Else
+		cHtml += "<p>Abaixo, uma relação dos lembretes de vencimento enviados para a plataforma IAgente: </p>"
+		cHtml += '<table style="width:100%">'
+		cHtml += "	<tr>"
+		cHtml += "	    <th>Codigo do Cliente</th>"
+		cHtml += "	    <th>Loja do Cliente</th>" 
+		cHtml += "	    <th>Nome do cliente</th>"
+		cHtml += "	    <th>Retorno do IAgente</th>"
+		cHtml += "	</tr>"
+		For nX := 1 To Len(aNumCel)
+			cHtml += "	  <tr>"
+			cHtml += "	    <td>" + aNumCel[nX][3] + "</td>"
+			cHtml += "	    <td>" + aNumCel[nX][4] + "</td>"
+			cHtml += "	    <td>" + aNumCel[nX][5] + "</td>"
+			cHtml += "	    <td>" + aNumCel[nX][6] + "</td>"
+			cHtml += "	  </tr>"
+		Next nX
+		cHtml += "</table>"
+	EndIf
+	If !Empty(aCelInv)
+		cHtml += "<p>Abaixo, uma relação dos clientes que não possuem um numero de telefone cadastrado: </p>"
+		cHtml += '<table style="width:100%">'
+		cHtml += "	<tr>"
+		cHtml += "	    <th>Codigo do Cliente</th>"
+		cHtml += "	    <th>Loja do Cliente</th>" 
+		cHtml += "	    <th>Nome do cliente</th>"
+		cHtml += "	  </tr>"
+		For nX := 1 To Len(aCelInv)
+			cHtml += "	  <tr>"
+			cHtml += "	    <td>" + aCelInv[nX][1] + "</td>"
+			cHtml += "	    <td>" + aCelInv[nX][2] + "</td>"
+			cHtml += "	    <td>" + aCelInv[nX][3] + "</td>"
+			cHtml += "	  </tr>"
+		Next nX
+		cHtml += "</table>"
+	EndIf
+	cHtml += "</body>"
+	cHtml += "</html>"
+	//SFEnvEmail(p_cDe, p_cPara, p_cCC, p_cCCO, p_cAssunto, p_cMsg, p_cAnexo, p_lConLe)
+	U_SFEnvEmail(, cDest, , , cAssunto, cHtml, , )
+Return Nil
+
+/*/{Protheus.doc} fVldNber
+Função para validar o numero de telefone celular.
+@author Franklin Oliveira
+@since 29/04/2020
+@return lRet, Se o numero é valido ou não
+@param p_cNumber, caracter, Número de telefone a ser validado.
+@type static function
+/*/
+Static Function fVldNber(p_cNumber)
+Local lRet := .F.
+Local cNumber := fTfmNmbr(p_cNumber)
+	//a string deve possuir 11 digitos
+	If Len(cNumber) == 11
+		//O 3 digito deve ser 9
+		If SubStr(cNumber, 3, 1)=="9"
+			lRet := .T.
+		EndIf
+	EndIf
+Return lRet
+
+/*/{Protheus.doc} fTfmNmbr
+Função para tratar o numero de telefone celular.
+@author Franklin Oliveira
+@since 29/04/2020
+@return cNumer, Número de telefone celular tratado
+@param p_cNumber, , descricao
+@type function
+/*/
+Static Function fTfmNmbr(p_cNumber)
+Local cNumber := p_cNumber
+	//Remove espaços
+	cNumber := AllTrim( cNumber )
+	//Remove - (traço)
+	cNumber := StrTran( cNumber, "-" )
+	//Remove ( (Parêntese esquerdo)
+	cNumber := StrTran( cNumber, "(" )
+	//Remove ) (Parêntese direito)
+	cNumber := StrTran( cNumber, ")" )
+	//Remove 0 da primeira posição
+	cNumber := IIf( SubStr(cNumber, 1, 1)=="0", StrTran(cNumber, "0"), cNumber )
+Return cNumber

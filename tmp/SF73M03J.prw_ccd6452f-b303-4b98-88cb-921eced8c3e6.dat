@@ -1,0 +1,231 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "rwmake.CH"
+#INCLUDE "Topconn.CH"
+
+/*/{Protheus.doc} SF73M03J
+Função para realizar carga no cadastro de sindicatos
+			     	
+@author 	José Leite de Barros Neto
+@since 		28/03/2014
+@version 	1.0		
+
+@return Nil, Nulo
+
+@example
+
+@see 
+    
+/*/
+User Function SF73M03J( pPATHIMP03 )
+
+	Local 	_lRet	:= .F.
+
+	Private _aEstrut	:= {}
+	Private _cArqTxt	:= Space(50)
+	Private _cMemo  	:= ""
+	
+	Private lMsErroAuto := .F.
+
+	//Verifica chamada se a rotina é automatica
+	If !Empty( pPATHIMP03 )
+		_cArqTxt := pPATHIMP03
+	Else
+		_cArqTxt:= U_SFXX01J('Importacao de Sindicatos','Arquivos csv (*.csv) |*.csv|')
+	EndIf
+	
+	//Abre o Arquivo
+	nHdl    := fOpen(_cArqTxt,68)
+
+	If nHdl == -1
+		MsgAlert("O arquivo de nome "+_cArqTxt+" nao pode ser aberto! Verifique os parametros.","Atencao!")
+		Return
+	Endif
+
+	Processa({ |lEnd| _aEstrut := ZCACSV(_cArqTxt) },"LENDO ARQUIVO CSV DE SINDICATOS")
+	Processa({ |lEnd| _lRet := IMPZCA(_aEstrut) },"GERANDO REGISTROS")
+
+	If Empty( pPATHIMP03 )
+		MemoWrite( "C:\plog\csv\sindicatos_"+cFilAnt+".TXT", _cMemo ) //+CHR(13)+CHR(10)
+		MsgBox("FIM DA IMPORTACAO")
+	EndIf
+
+Return( _lRet )
+
+/** {Protheus.doc} IMPZCA
+Funcao que realiza a importacao do sindicato
+
+@param: 	_aEstrut, Array com a estrutura dos campos
+@author: 	Jose Leite de Barros Neto
+@since: 	28/03/2014
+@Uso: 		SFIEMT
+*/
+Static Function IMPZCA(_aEstrut)
+	
+	Local _lRet := .F.
+	Local _nContador := 0
+	
+	For _i := 1 to Len(_aEstrut)
+	
+		//ZCA_CODIGO
+		_cCodigo := ""
+		
+		//ZCA_SIGLA
+		_cSigla := AllTrim(_aEstrut[_i][1])
+		
+		//ZCA_NOME
+		_cNome := AllTrim(_aEstrut[_i][2])
+		
+		//ZCA_END
+		_cEnd := StrTran(StrTran(AllTrim(_aEstrut[_i][3]),"º",""),".","")
+		
+		//ZCA_CGC
+		_cCGC := StrTran( StrTran( StrTran( _aEstrut[_i][4],".","" ),"/","" ),"-","" )
+		
+		//ZCA_PRESID
+		_cPresid := AllTrim(_aEstrut[_i][5])
+		
+		dbSelectArea("ZCA")
+		ZCA->(dbSetOrder(1))
+		ZCA->(dbGotop())
+		
+		If ZCA->(DbSeek( xFilial("ZCA") + PADR( AllTrim( _cCGC ),TAMSX3("ZCA_CGC")[1],Space(1) ) ))
+			lInc := .F.
+			_cCodigo := ZCA->ZCA_CODIGO
+		Else
+			lInc := .T.
+			_cCodigo := GetSX8Num("ZCA","ZCA_CODIGO")
+		EndIf
+		
+		Begin Transaction
+				
+			If RecLock("ZCA",lInc)
+				
+				ZCA->ZCA_FILIAL	:= xFilial("CC3")				
+				ZCA->ZCA_CODIGO	:= _cCodigo
+				ZCA->ZCA_SIGLA	:= _cSigla
+				ZCA->ZCA_NOME		:= _cNome
+				ZCA->ZCA_END		:= _cEnd
+				ZCA->ZCA_CGC		:= _cCGC
+				ZCA->ZCA_PRESID	:= _cPresid
+																
+				ZCA->(msUnlock())
+			EndIf
+				
+		End Transaction
+		
+		If lInc	
+			ConfirmSx8()
+		EndIf
+		
+		_nContador++
+		
+	Next
+
+	If _nContador > 0
+		_lRet := .T.
+	EndIf
+	
+Return( _lRet )
+
+/** {Protheus.doc} SB1CSV
+Funcao que realiza a Leitura do arquivo CSV
+
+@param: 	cArquivo, Caminho do arquivo que sera lido
+@author: 	Jose Leite de Barros Neto
+@since: 	28/03/2014
+@Uso: 		SFIEMT
+*/
+Static Function ZCACSV(cArquivo)
+	
+	Local cBuffer     := ""
+	Local cAux        := ""
+	Local cString     := ""
+	Local cSeparador  := ""  //Verifica o tipo de separador do arquivo texto
+	Local aTmp        := {}
+	Local aEstrutura  := {}
+	Local nCont       := 0
+	Local cEof        := Chr(10)+ Chr(13)
+	Local nRec        := 0
+	Local lAspa       := .F.
+
+	//Leitura da quantidade de Registros do Arquivo
+	FT_FUSE(cArquivo)
+	FT_FGOTOP()
+	
+	While !FT_FEOF()
+		nRec++
+		FT_FSKIP()
+	End
+
+	ProcRegua(nRec)
+
+	//Leitura do arquivo e verificacao do ultimo caracter da linha lida para  consistencia da pesquisa
+	FT_FGOTOP()
+
+	While !FT_FEOF()
+	
+		cBuffer:= AllTrim(FT_FREADLN())
+	
+		If At(";",cBuffer) > 0
+			cSeparador:= ";" 
+		Else //linha de arquivo incorreta.
+			IncProc()
+			FT_FSKIP()
+			Loop
+		Endif
+	
+		If (SubStr(cBuffer,Len(cBuffer),1)<>cSeparador)
+			cBuffer += cSeparador + cEof + cSeparador
+		Else
+			cBuffer += cEof + cSeparador
+		Endif
+	
+		//Incrementa a regua
+		IncProc()
+	
+		//Carrega o array aEstrutura com o resultado da Importacao
+		cLinha:= fTAcento(cBuffer)
+		lAspa := .F.
+
+		For nCont := 1 To Len(cBuffer)
+		
+			cAux   := SubStr(cLinha,1,1)
+			cLinha := SubStr(cLinha,2)
+			
+			If (cAux == cEof)
+				Exit
+			Endif
+		
+			//Sao verificadas as marcacoes feitas pelo Excel para concatenacao de strings
+			Do Case
+			
+				Case cAux == '"'
+					lAspa := !lAspa
+					
+				Case cAux == cSeparador .And. !lAspa
+					aAdd(aTmp,cString)
+					cString := ""
+					
+				OtherWise
+					cString += cAux
+					
+			EndCase
+		
+		Next nCont
+	
+		For nCont := Len(aTmp)+1 To 11
+			aAdd(aTmp,"")
+		Next nCont
+	
+		//Validacao para nao salvar registros sem entidades
+		If !Empty(aTmp[1]) .OR. !Empty(aTmp[2])
+			aAdd(aEstrutura,aTmp)
+			aTmp := {}
+		Endif
+		
+		FT_FSKIP()
+	End
+
+	FT_FUSE()
+
+Return( aEstrutura )

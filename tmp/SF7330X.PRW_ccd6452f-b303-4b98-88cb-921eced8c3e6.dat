@@ -1,0 +1,655 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "PARMTYPE.CH"     
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH" 
+
+#DEFINE CRLF chr(13)+chr(10)   
+/*
+----------------------------------------------------------------------------
+{Protheus.doc}<SF7330X>   
+  #CONTROLE_DN - EXPORTA [ADZ-PRODUTOS DAS PROPOSTAS DE VENDA]                                               
+   Gera arquivo CSV (txt) com as informacoes das ITENS DAS PROPOSTAS 
+   DE VENDA conforme Layout Proprio para Remessa ao DN.
+                                                                          
+@author<Antonio Dantas> 
+@since<23/02/2016>                                                        
+@version<1.00>
+@receive
+<    _cModo (c) - Modo de Execucao [E=Emissao;R=Re-Emissao]
+   _cHistor (c) - Historico complementar da Remessa 
+>
+@return
+<  _lRemOK (l) - (.t.) Arquivo Gerado com sucesso; 
+                 (.f.) Arquivo não foi Gerado
+>
+@example<Nil>
+@see<Nil>
+----------------------------------------------------------------------------
+*/
+User Function SF7330X(_cModo,_cHistor)
+Local _nAviso			:= 0
+Local _cMensagem		:= ""
+Local _cCasa			:= Space(Len(cFilAnt))
+Private _cNomArqR		:= ""
+Private _cNR_Rem 		:= ZCK->ZCK_CODIGO
+Private _lRemOK			:= .t.
+Private _aRecnos		:= {}
+Private _nQtdREG 		:= 0 						//-- Variavel private a ser usada pelo arquivo de layout
+Private _cPerg			:= Substr(ProcName(),3)		//-- Define o Grupo de Perguntas
+//+------------------------------------------------------------------+
+//| Carrega as perguntas relativas aos parametros de Impressao       |
+//| Mv_par01 - Somente a CASA ATUAL ?                                |
+//+------------------------------------------------------------------+
+xParPerg(_cPerg)      
+//+------------------------------------------------------------------+
+//|  Monta tela de paramentos para usuario, se cancelar sair         |
+//+------------------------------------------------------------------+
+If !Pergunte(_cPerg,.t.)  
+	_lCancel := .T. 
+   Return
+Endif 
+//+------------------------------------------------------------------+
+//|  Identifica a Casa                                               |
+//+------------------------------------------------------------------+
+If Mv_par01 == 1 		//-- Somente a CASA ATUAL ? 
+	_cCasa	:= Substr(cFilAnt,1,4) 
+Endif 
+//+------------------------------------------------------------------+
+//| Monta a mensagem de Confirmacao                                  |
+//+------------------------------------------------------------------+
+_cMensagem	:= "A T E N Ç ã O !"+CRLF
+_cMensagem	+= "Confirma a geração do arquivo de remessa para [PRODUTOS DAS PROPOSTAS DE VENDA]!"+CRLF
+_cMensagem	+= " "+CRLF
+_cMensagem	+= " Considera ["+Dtoc(dDataBase)+"] como Data Base da Remessa dos PRODUTOS DAS PROPOSTAS DE VENDA."
+//+--------------------------------------------------------------------+
+//| Implementa controle de Transacao.                                  |
+//+--------------------------------------------------------------------+
+_nAviso	:= Aviso(FunName()+"/"+ProcName(),_cMensagem,{"Sim","Não"},3)
+If _nAviso == 1 			
+	Begin Transaction
+		//-- Confirmou a geracao do arquivo de remessa para cartoes
+		Processa( {|| fGerArq() }, "Gera Arq. de Remessa [PRODUTOS DAS PROPOSTAS DE VENDA].","Processando...")
+		If !_lRemOK
+			DisarmTransaction()
+		Endif 
+	End Transaction
+Endif
+If _lRemOK						
+	//-- Na confirmação da Geração da Remessa modifica o Status da Remessa 
+	If _lRemOK
+		If Aviso(FunName()+"/"+ProcName(),"O Arquivo de remessa ["+Alltrim(_cNomArqR)+"] foi gerado com sucesso?",{"Sim","Não"}) == 1
+			u_fMarkRem(_cModo,_cHistor,_cCasa)		//-- Rotina descrita no fonte [SF7325X.PRW]
+		Endif 
+	Endif 
+Endif
+Return _lRemOK
+
+
+/*
+----------------------------------------------------------------------------
+{Protheus.doc}<fGerArq>                                                
+   Rotina Responsavel Gerar o Arquivo de Remessa     
+																		   
+@author<Antonio Dantas> 
+@since<23/02/2016>                                                        
+@version<Nil>                                                             
+@Receive<Nil>                                                                  
+@return                                                              
+<   _lRemOK (l) - (.t.) Se a Geracao do Arquivo foi OK                    
+                  (.f.) Por qualquer motivo não gerou arquivo de remesa   
+>                                                                         
+@example<Nil>
+@see<Nil>
+----------------------------------------------------------------------------
+*/
+Static Function fGerArq()
+Local _cArqRem 		:= ""
+Local _cArqCarta	:= ""
+Local _cArLayout	:= Alltrim(ZCJ->ZCJ_LAYOUT)
+Local _cPathRoot	:= Alltrim(ZCJ->ZCJ_PATH)  
+//--
+Local _aArqLyt 		:= {} 
+Local _aHeader 		:= {}
+Local _aDetalhe 	:= {}
+Local _aTrailler	:= {}
+//-- 
+Local _nH_Arq		:= 0
+Local _cTexto		:= ""
+Local _cFileLog		:= ""
+Local _nRegs			:= 0
+Local _bBlock		:= "" 
+Local _cDados 		:= ""
+Local _cMkTp 		:= ""
+Local _cPathRem		:= ""
+//-- Variaveis de Controle dos Registros a Exportar 
+Local _aCodEmp 		:={	{"01MT","3"},{"02MT","6"},{"03MT","5"},{"04MT","4"} } 
+Local _cEmp 			:= ""
+Local _nPos			:= 0 
+Local _ddataRem 	:= CtoD("  /  /  ")
+Local _lTemRep		:= .f. 
+Local _nRegsPF		:= 0
+//-- Variaveis INVOCADAS do Arquivo .INI 
+Private _cdataRem 	:= ""
+Private _cEntidade	:= ""
+Private _nCtaREG	:= 0
+//--
+Private _cCNPJ		:= ""
+Private _cCodProd	:= ""
+Private _cNomProd	:= ""
+Private _cPortF		:= ""
+//Walmir Junior 13/08/2018 - Categoria
+Private _cCatX		:= ""
+//+-----------------------------------------------------------------------+
+//| Modifica o Flag de controle, para gerar remessa                       |
+//+-----------------------------------------------------------------------+
+_lRemOK := .t. 
+//+-----------------------------------------------------------------------+
+//| Validacoes antes da chamada da rotina de geracao do arquivo de Remesa |
+//+-----------------------------------------------------------------------+
+If Alltrim(_cArLayout) == ""
+	Aviso(FunName()+"/"+ProcName(),"Não foi informado neste LAYOUT o nome do Arquivo de Configuração para Gerar o Arquivo de Remessa!",{"OK"},3)
+	_lRemOK := .f.
+Endif
+If _lRemOK
+	_cArqCarta 	:= cGetFile('Arquivo*.*','Salvar Arquivo',1,'C:\TEMP',.F.,GETF_LOCALHARD)
+	_cArqCarta 	:= _cArqCarta
+	If _cArqCarta == ""
+		Aviso(FunName()+"/"+ProcName(),"Nome do Arquivo de Remessa não Foi Informado!",{"OK"})
+		_lRemOK := .f.
+	Endif 
+	//+-----------------------------------------------------------------------+
+	//| Se o operador informat ponto(.) gera nome do Arquivo de Remessa.      |
+	//+-----------------------------------------------------------------------+
+	_cMkTp := Substr(_cArqCarta,Len(Alltrim(_cArqCarta)),1)
+	If _cMkTp == "."
+		_cPathRem	:= Substr(_cArqCarta,1,Len(Alltrim(_cArqCarta))-1)
+		_cNomArqR	:= Alltrim(ZCJ->ZCJ_MASTER)+Alltrim(ZCJ->ZCJ_CODIGO)+"_"+dtos(dDataBase)+StrTran(Time(),":","")+".CSV"
+		_cArqCarta	:= _cPathRem+_cNomArqR 
+		Aviso(FunName()+"/"+ProcName(),"Arquivo de Remessa será gerado com nome ["+_cNomArqR+"].",{"OK"})
+	Endif
+	//+-----------------------------------------------------------------------+
+	//| Cria e Abre o Arquivo de Remessa                                      |
+	//+-----------------------------------------------------------------------+
+	_nH_Arq	:= fCreate(_cArqCarta)
+Endif      
+If _lRemOK
+	If !File(_cPathRoot+Alltrim(_cArLayout))
+		Aviso(FunName()+"/"+ProcName(),"Arquivo de Layout: "+_cPathRoot+Alltrim(_cArLayout)+". não foi encontrado!",{"OK"})
+		_lRemOK := .f.
+	EndIf
+EndIf     
+If _lRemOK
+	//+-----------------------------------------------------------------------+
+	//| Carrega o Layout do Arquivo de Remessa                                |
+	//|  _aArqLyt[N,1] - Identificacao da Sessao                              |
+	//|  _aArqLyt[N,2] - Numero de Repeticoes 	                              |
+	//|  _aArqLyt[N,3] - Condicao de Quebra  	                              |
+	//|  _aArqLyt[N,4] - ARRAY DA ORIGEM DOS CAMPOS 'informacoes' 	          |
+	//|  _aArqLyt[N,5] - LIVRE 	                                              |
+	//|  _aArqLyt[N,6] - Condicao do Loop 	                                  |
+	//|  _aArqLyt[N,7] - Separados de Campos 	                              |
+	//+-----------------------------------------------------------------------+
+	_aArqLyt 	:= u_fCrArqIn(_cPathRoot+Alltrim(_cArLayout))
+	//+-----------------------------------------------------------------------+
+	//| Identifica os Arrays de Header, Detalhe e Trailler                    |
+	//| OBS: Caso venha a existir tipo de arquivos com mais de uma linha por  |
+	//|      tipo; Tratar caso a caso. Deve-se adicionar ao array do tipo e   |
+	//|      tratar na seguencia.                                             |
+	//|      - Inicialmente estamos considerando um de cada tipo.             |
+	//+-----------------------------------------------------------------------+  
+	_nLinH := aScan(_aArqLyt , {|x| x[1] = "[H  ]" }) // Header
+	_nLinD := aScan(_aArqLyt , {|x| x[1] = "[D  ]" }) // Detalhe
+	_nLinT := aScan(_aArqLyt , {|x| x[1] = "[T  ]" }) // Trailler
+	If _nLinH > 0
+		_cSeparH 	:= ";" //_aArqLyt[_nLinH,07]	
+		_aHeader 	:= _aArqLyt[_nLinH,04]
+	Endif
+	If _nLinD > 0
+		_cSeparD 	:= ";" //_aArqLyt[_nLinD,07]	
+		_aDetalhe	:= _aArqLyt[_nLinD,04]
+	Endif
+	If _nLinT > 0
+		_cSeparT 		:= ";" //_aArqLyt[_nLinT,07]	
+		_aTrailler 	:= _aArqLyt[_nLinT,04]
+	Endif
+Endif 	
+//+-----------------------------------------------------------------------+
+//| Trata caso a caso os Layout's da Remessa                              |
+//+-----------------------------------------------------------------------+  
+If _lRemOK .and. Len(_aDetalhe) > 0
+	//+-----------------------------------------------------------------------+
+	//| ----- GERA CABECALHO "Header"                                         |
+	//+-----------------------------------------------------------------------+
+ 	If _lRemOK .and. Len(_aHeader) >= 1
+		_cTexto := ""
+ 		_cDados := ""
+		_nCtaA	:= 0
+ 		For _nCtaA := 2 To Len(_aHeader) 
+			_bBlock	:= {|| &(_aHeader[_nCtaA,2]) }
+ 			_cDados := Eval(_bBlock)
+ 			_cDados := StrTran(_cDados,Chr(13)+Chr(10),Space(2))
+ 			_cTexto += _cDados+Iif(_cSeparH!="",_cSeparH,"")
+		Next _nCtaA
+		_cTexto += Chr(13)+Chr(10) 
+        //-- Grava a Linha de Cabecalho "Header" do Arquivos Remessa 
+		If fWrite(_nH_Arq,_cTexto,Len(_cTexto)) != Len(_cTexto)
+			If !MsgAlert("Ocorreu um erro na gravacao do arquivo.","Atencao!")
+				_lRemOK := .f.
+			Endif
+		Endif
+	Endif 
+	//+-----------------------------------------------------------------------+
+	//| ----- GERA DETALHE "Detalhe"                                          |
+	//+-----------------------------------------------------------------------+
+ 	If _lRemOK .and. Len(_aDetalhe) >= 1
+		//-- Zera as VARIAVEIS de controle de Registro 
+		_nRegs := 0	; _nCtaREG := 0 ; _lRemOK 	:= .F.   
+		//+-----------------------------------------------------------------------+
+		//| Executa a Consulta as Oportunidade Disponivel para remessa e Gera o   | 
+		//| Arquivo Temporario para Gerar a Remessa.                              |
+		//+-----------------------------------------------------------------------+
+		If fCriaTMP() 
+			//-- Conta o Numero de Registros da Tabela 
+			TMP_REM->(DbGoTop())				
+			TMP_REM->(DbEval({|| _nRegs++ }))				
+			TMP_REM->(DbGoTop())				
+			//-- Inicializa o Termometro  
+			ProcRegua(_nRegs)
+			//-- Loop na Tabela Temporaria com os Registro das PRODUTOS DAS PROPOSTAS DE VENDA  
+			Do While TMP_REM->(!eof())
+				
+				//Walmir Junior 13/08/2018 - Variável para categoria do produto, ajuste a mudança no Layout do DN.
+				_cCatX		:= ""
+			
+				//-- Implementa Termometro
+				_nCtaREG++
+				IncProc("Total de Registros:"+Alltrim(Transform(_nRegs,"@E 999,999,999"))+"  Lidos:"+Alltrim(Transform(_nCtaREG,"@E 999,999,999")))   
+				//+-----------------------------------------------------------------------+
+				//| Inicizaliza variaveis que seram INVOCADAS no Arquivo de configuracao  |
+				//| .INI                                                                  |
+				//+-----------------------------------------------------------------------+  
+				//-- Seguencia de Registro 
+				_nSeguenc := _nCtaREG		 
+				//-- Defini o segencial do arquivo de exportacao
+				_ddataRem 	:= StoD(Substr(TMP_REM->DATA_MOV,1,8))
+				_cdataRem 	:= Strzero(Day(_ddataRem),2)+"/"+ Strzero(Month(_ddataRem),2)+"/"+ Strzero(Year(_ddataRem),4)+" "+Substr(Time(),1,5)
+				//-- Idenrifica a ENTIDADE
+				_cEmp 		:= Iif(Empty(TMP_REM->ADZ_FILIAL),Substr(cFilAnt,1,4),Substr(TMP_REM->ADZ_FILIAL,1,4))
+				_cEmp 		:= Substr(TMP_REM->ADZ_FILIAL,1,4)
+				_nPos		:= Ascan(_aCodEmp,{ |x| x[1] == _cEmp }) 
+				_cEntidade	:= _aCodEmp[_nPos,2]
+				
+				//Identifica CNPJ do Cliente
+				DbSelectArea('AD1')
+				AD1->(DbSetOrder(1))//AD1_FILIAL+AD1_NROPOR+AD1_REVISA
+				AD1->(DbGoTop())
+				If AD1->(DbSeek(TMP_REM->ADZ_FILIAL + TMP_REM->ADY_OPORTU + TMP_REM->ADY_REVISA))
+					If .Not. Empty(Alltrim(AD1->AD1_CODCLI))
+						_cCNPJ := Posicione("SA1",1,FwxFilial("SA1")+AD1->AD1_CODCLI+AD1->AD1_LOJCLI,"A1_CGC")
+					Else
+						_cCNPJ := Posicione("SUS",1,FwxFilial("SUS")+AD1->AD1_PROSPE+AD1->AD1_LOJPRO,"US_CGC")
+					EndIf 
+				EndIf
+				AD1->(DbCloseArea())
+				If Len(AllTrim(_cCNPJ)) == 11 .And. Mv_par03 == 2 //-- Considera PF / 1=sim;2=nao ?
+					_nRegsPF++
+					TMP_REM->(dbskip())
+					Loop
+				Else
+					//-- Implementa Termometro
+					_nCtaREG++
+					IncProc("Total de Registros:"+Alltrim(Transform(_nRegs,"@E 999,999,999"))+"  Lidos:"+Alltrim(Transform(_nCtaREG,"@E 999,999,999")))
+					//-- Sequencia de Registro 
+					_nSeguenc := _nCtaREG		
+				EndIf
+				//-- Identifica o Produto Conforme Codigo e Descricao do DN
+				//-- Localiza Produto
+				dbSelectArea("SB1")
+				SB1->(dbSetOrder(1))
+				SB1->(dbSeek( FwxFilial("SB1")+TMP_REM->ADZ_PRODUT))
+				//-- 
+				//Walmir Junior 13/08/2018 - Variável para categoria do produto, ajuste a mudança no Layout do DN.
+				If !Empty(Alltrim(SB1->B1_XPRODDN))
+					//-- Localiza Produto correspondente no DN
+					dbSelectArea("ZCF")
+					ZCF->(dbSetOrder(1))
+					ZCF->(dbSeek( FwxFilial("ZCF")+SB1->B1_XPRODDN))
+					_cCatX		:= AllTrim(ZCF->ZCF_CATEGO)
+				EndIF	
+				/* Walmir Junior 14/08/2018 Remoção de trecho, pois anteriormente não haviam relacionado SB1 e ZCF.
+				
+				If !Empty(Alltrim(SB1->B1_XPRODDN))
+					//-- Localiza Produto correspondente no DN 
+					dbSelectArea("ZCF")
+					ZCF->(dbSetOrder(1))
+					ZCF->(dbSeek( FwxFilial("ZCF")+SB1->B1_XPRODDN))
+					//-- Codigo e Descricao do Produto 
+					_cCodProd	:= AllTrim(ZCF->ZCF_PRODUT)
+					_cNomProd	:= AllTrim(ZCF->ZCF_DESCRI)
+					_cPortF		:= "1"
+				Else*/ 
+					_cCodProd	:= AllTrim(SB1->B1_COD)
+					_cNomProd	:= AllTrim(SB1->B1_DESC)  
+					_cPortF		:= "0" 
+				/*Endif*/
+				//+-----------------------------------------------------------------------+
+				//| ------------ INICIO BLOCO DA MACRO PAARA GERAR REGISTRO  ------------ |
+				//+-----------------------------------------------------------------------+
+				//-- Monta a Linha de detalhe Conforme Layout e GRAVA  
+		 		_cDados := ""
+				_cTexto := ""
+				_nCtaA 	:= 0 
+				For _nCtaA := 2 To Len(_aDetalhe) 
+					_bBlock	:= {|| &(_aDetalhe[_nCtaA,2]) }
+		 			_cDados := Eval(_bBlock)
+		 			_cDados := StrTran(_cDados,Chr(13)+Chr(10),Space(2))
+ 					_cTexto += _cDados+Iif(_cSeparD!="",_cSeparH,"")
+				Next _nCtaA
+				_cTexto += Chr(13)+Chr(10) 
+				//-- Grava as Linhas de Informacoes "Detalhe" no Arquivos Remessa 
+				If fWrite(_nH_Arq,_cTexto,Len(_cTexto)) != Len(_cTexto)
+					If !MsgAlert("Ocorreu um erro na gravacao do arquivo.","Atencao!")
+						_lRemOK := .f.
+					Endif
+				EndIf
+				_lRemOK := .T.
+				//+-----------------------------------------------------------------------+
+				//| -------------- FIM BLOCO DA MACRO PAARA GERAR REGISTRO  ------------- |
+				//+-----------------------------------------------------------------------+
+				TMP_REM->(dbskip())
+			Enddo
+		Endif		//-- If fCriaTMP() 
+	Endif			//-- If _lRemOK .and. Len(_aDetalhe) >= 1 		
+	//+-----------------------------------------------------------------------+
+	//| ----- GERA RODAPE "Trailler"                                          |
+	//+-----------------------------------------------------------------------+
+ 	//-- 
+ 	If _lRemOK .and. Len(_aTrailler) >= 1     
+ 		_cDados := ""
+ 		_cTexto := ""
+		_nCtaA	:= 0
+ 		For _nCtaA := 1 To Len(_aTrailler) 
+			_bBlock	:= {|| &(_aTrailler[_nCtaA,2]) }
+ 			_cDados := Eval(_bBlock)
+ 			_cDados := StrTran(_cDados,Chr(13)+Chr(10),Space(2))
+ 			_cTexto += _cDados+Iif(_cSeparT!="",_cSeparH,"")
+		Next _nCtaA
+		_cTexto += Chr(13)+Chr(10) 
+        //-- Grava a Linha de Rodape "Trailler" do Arquivos Remessa 
+		If fWrite(_nH_Arq,_cTexto,Len(_cTexto)) != Len(_cTexto)
+			If !MsgAlert("Ocorreu um erro na gravacao do arquivo.","Atencao!")
+				_lRemOK := .f.
+			Endif
+		EndIf
+	Endif
+	If !_lRemOK
+			//+-----------------------------------------------------------------------+
+			//|  Se não existir registro para exportacao, finaliza o processo.        | 
+			//+-----------------------------------------------------------------------+
+			If TMP_REM->(Eof()) .And. TMP_REM->(Bof())
+				Aviso(FunName()+"/"+ProcName(),"Não existem PRODUTOS DAS PROPOSTAS DE VENDA para Remessa!",{"OK"})
+				//-- Fecha o Arquivo Temporario Criado na Funcao [fCriaTMP()]
+				TMP_REM->(DbCloseArea())				
+				//-- Fecha o Arquivo TXT criado para exportacao das Informacoes 
+				fClose(_nH_Arq)
+	           If File(_cArqCarta)
+					fErase(_cArqCarta)
+	           Endif 
+			Endif  				
+	Else
+		//-- Fecha o Arquivo Temporario Criado na Funcao [fCriaTMP()]
+		TMP_REM->(DbCloseArea())				
+		//-- Fecha o Arquivo TXT criado para exportacao das Informacoes 
+		fClose(_nH_Arq)
+	Endif 
+	If _nRegsPF > 0
+		Aviso(FunName()+"/"+ProcName(),"De: "+ cValToChar(_nRegs) +" registro(s), existe um total de: "+ cValToChar(_nRegsPF) +" registro(s) que são de PF, estes serão Desconsiderados!",{"OK"})
+	EndIf
+Endif  	
+Return _lRemOK
+
+/*
+----------------------------------------------------------------------------
+{Protheus.doc}<fCriaTMP>                                                   
+   Executa consulta a tabela [ADZ-PRODUTOS DAS PROPOSTAS DE VENDA], apura os Registro
+   recentemente INCLUIDOS os ALTERADOS NO PERIODO e os EXCLUIDOS. Gera
+   Tabela temporaria [TMP_REM] que sera utilizada para criar o arquivo de
+   exportacao ao DN.   
+																		   
+@Author<Antonio Dantas>                                                   
+@since<23/02/2016>                                                        
+@version<Nil>                                                             
+@Receive<Nil>                                                                  
+@return<Nil>                                                                   
+@example<Nil>
+@see<Nil>
+----------------------------------------------------------------------------
+*/
+Static Function fCriaTMP() 
+Local _cQuery		:= "" 
+Local _lReturn 		:= .T. 
+_cQuery := ""
+_cQuery += " Select '3' AS OPER, ADZ.ADZ_FILIAL, ADZ.ADZ_PROPOS, ADZ.ADZ_REVISA, ADZ.ADZ_FOLDER, "+CRLF
+_cQuery += "        ADZ.ADZ_ITEM, ADZ.ADZ_PRODUT, ADZ.ADZ_UM, ADZ.ADZ_CONDPG, ADZ.ADZ_QTDVEN, "+CRLF
+_cQuery += "        ADZ.ADZ_PRCVEN, ADZ.ADZ_TOTAL, ADZ.ADZ_XOPER, ADZ.ADZ_XREM, "+CRLF
+_cQuery += "        Substr(ADZ.ADZ_XOPER,1,15) As DATA_MOV "+CRLF
+_cQuery += "        , ADY.ADY_OPORTU, ADY.ADY_REVISA "+CRLF
+_cQuery += " From "+RetSqlName("ADZ")+" ADZ "+CRLF
+If mv_par02 == 2 	//-- Considera prospect / 1=sim;2=nao ?
+	_cQuery += " INNER JOIN "+RetSqlName("ADY")+" ADY ON ADY_FILIAL = ADZ_FILIAL AND ADY_PROPOS = ADZ_PROPOS AND ADY_PREVIS = ADZ_REVISA AND ADY_ENTIDA = '1' "+CRLF
+Else
+	_cQuery += " INNER JOIN "+RetSqlName("ADY")+" ADY ON ADY_FILIAL = ADZ_FILIAL AND ADY_PROPOS = ADZ_PROPOS AND ADY_PREVIS = ADZ_REVISA AND ADY_ENTIDA <> ' ' "+CRLF
+EndIf
+If .Not. Empty(Mv_par04) .And. .Not. Empty(Mv_par05)
+	_cQuery += "  AND ADY_DATA >= '"+ DtoS(Mv_par04) +"'	"
+	_cQuery += "  AND ADY_DATA <= '"+ DtoS(Mv_par05) +"'	"
+EndIf
+_cQuery += " AND ADY.D_E_L_E_T_ = ' ' "
+If Mv_par03 == 2 	//-- Considera PF / 1=sim;2=nao ?
+	_cQuery += "  INNER JOIN "+ RetSqlName("SA1") +" SA1 ON A1_FILIAL = '"+ FwxFilial("SA1") +"' AND A1_COD = ADY_CODIGO AND A1_LOJA = ADY_LOJA AND A1_PESSOA = 'J' AND  SA1.D_E_L_E_T_ = ' ' "+CRLF
+EndIf
+_cQuery += " Where ADZ.D_E_L_E_T_ = ' ' "+CRLF 
+If Mv_par01 == 1 		//-- Somente a CASA ATUAL ?
+	_cQuery += "  And Substr(ADZ.ADZ_FILIAL,1,4) = '"+Substr(FwxFilial("ADZ"),1,4)+"' "+CRLF 
+Endif 
+_cQuery += " And (Substr(ADZ.ADZ_XOPER,1,15) = '               ' Or (Substr(ADZ.ADZ_XOPER,1,15) > Substr(ADZ.ADZ_XREM,1,15))) "+CRLF
+_cQuery += "Union All "+CRLF
+_cQuery += " Select '4' AS OPER, ADZ.ADZ_FILIAL, ADZ.ADZ_PROPOS, ADZ.ADZ_REVISA, ADZ.ADZ_FOLDER, "+CRLF 
+_cQuery += "        ADZ.ADZ_ITEM, ADZ.ADZ_PRODUT, ADZ.ADZ_UM, ADZ.ADZ_CONDPG, ADZ.ADZ_QTDVEN, "+CRLF
+_cQuery += "        ADZ.ADZ_PRCVEN, ADZ.ADZ_TOTAL, ADZ.ADZ_XOPER, ADZ.ADZ_XREM, "+CRLF
+_cQuery += "        Substr(ADZ.ADZ_XOPER,16,15) As DATA_MOV "+CRLF
+_cQuery += "        , ADY.ADY_OPORTU, ADY.ADY_REVISA "+CRLF
+_cQuery += " From "+RetSqlName("ADZ")+" ADZ "+CRLF
+If mv_par02 == 2 	//-- Considera prospect / 1=sim;2=nao ?
+	_cQuery += " INNER JOIN "+RetSqlName("ADY")+" ADY ON ADY_FILIAL = ADZ_FILIAL AND ADY_PROPOS = ADZ_PROPOS AND ADY_PREVIS = ADZ_REVISA AND ADY_ENTIDA = '1' "+CRLF
+Else
+	_cQuery += " INNER JOIN "+RetSqlName("ADY")+" ADY ON ADY_FILIAL = ADZ_FILIAL AND ADY_PROPOS = ADZ_PROPOS AND ADY_PREVIS = ADZ_REVISA AND ADY_ENTIDA <> ' ' "+CRLF
+EndIf
+If .Not. Empty(Mv_par04) .And. .Not. Empty(Mv_par05)
+	_cQuery += "  AND ADY_DATA >= '"+ DtoS(Mv_par04) +"'	"
+	_cQuery += "  AND ADY_DATA <= '"+ DtoS(Mv_par05) +"'	"
+EndIf
+_cQuery += " AND ADY.D_E_L_E_T_ = ' ' "
+If Mv_par03 == 2 	//-- Considera PF / 1=sim;2=nao ?
+	_cQuery += "  INNER JOIN "+ RetSqlName("SA1") +" SA1 ON A1_FILIAL = '"+ FwxFilial("SA1") +"' AND A1_COD = ADY_CODIGO AND A1_LOJA = ADY_LOJA AND A1_PESSOA = 'J' AND  SA1.D_E_L_E_T_ = ' ' "+CRLF
+EndIf
+_cQuery += " Where ADZ.D_E_L_E_T_ = ' ' "+CRLF 
+If Mv_par01 == 1 		//-- Somente a CASA ATUAL ?
+	_cQuery += "  And Substr(ADZ.ADZ_FILIAL,1,4) = '"+Substr(FwxFilial("ADZ"),1,4)+"' "+CRLF 
+Endif 
+_cQuery += " And Substr(ADZ.ADZ_XOPER,1,15) <> '               ' "+CRLF
+_cQuery += " And Substr(ADZ.ADZ_XOPER,16,15) > Substr(ADZ.ADZ_XREM,16,15) "+CRLF
+_cQuery += "Union All "+CRLF
+_cQuery += " Select '5' AS OPER, ADZ.ADZ_FILIAL, ADZ.ADZ_PROPOS, ADZ.ADZ_REVISA, ADZ.ADZ_FOLDER, "+CRLF 
+_cQuery += "        ADZ.ADZ_ITEM, ADZ.ADZ_PRODUT, ADZ.ADZ_UM, ADZ.ADZ_CONDPG, ADZ.ADZ_QTDVEN, "+CRLF
+_cQuery += "        ADZ.ADZ_PRCVEN, ADZ.ADZ_TOTAL, ADZ.ADZ_XOPER, ADZ.ADZ_XREM, "+CRLF
+_cQuery += "        Substr(ADZ.ADZ_XOPER,31,15) As DATA_MOV "+CRLF
+_cQuery += "        ,ADY.ADY_OPORTU, ADY.ADY_REVISA "+CRLF
+_cQuery += " From "+RetSqlName("ADZ")+" ADZ "+CRLF
+If mv_par02 == 2 	//-- Considera prospect / 1=sim;2=nao ?
+	_cQuery += " INNER JOIN "+RetSqlName("ADY")+" ADY ON ADY_FILIAL = ADZ_FILIAL AND ADY_PROPOS = ADZ_PROPOS AND ADY_PREVIS = ADZ_REVISA AND ADY_ENTIDA = '1' "+CRLF
+Else
+	_cQuery += " INNER JOIN "+RetSqlName("ADY")+" ADY ON ADY_FILIAL = ADZ_FILIAL AND ADY_PROPOS = ADZ_PROPOS AND ADY_PREVIS = ADZ_REVISA AND ADY_ENTIDA <> ' ' "+CRLF
+EndIf
+If .Not. Empty(Mv_par04) .And. .Not. Empty(Mv_par05)
+	_cQuery += "  AND ADY_DATA >= '"+ DtoS(Mv_par04) +"'	"
+	_cQuery += "  AND ADY_DATA <= '"+ DtoS(Mv_par05) +"'	"
+EndIf
+_cQuery += " AND ADY.D_E_L_E_T_ = ' ' "
+If Mv_par03 == 2 	//-- Considera PF / 1=sim;2=nao ?
+	_cQuery += "  INNER JOIN "+ RetSqlName("SA1") +" SA1 ON A1_FILIAL = '"+ FwxFilial("SA1") +"' AND A1_COD = ADY_CODIGO AND A1_LOJA = ADY_LOJA AND A1_PESSOA = 'J' AND  SA1.D_E_L_E_T_ = ' ' "+CRLF
+EndIf
+_cQuery += " Where ADZ.D_E_L_E_T_ = '*' "+CRLF 
+If Mv_par01 == 1 		//-- Somente a CASA ATUAL ?
+	_cQuery += "  And Substr(ADZ.ADZ_FILIAL,1,4) = '"+Substr(FwxFilial("ADZ"),1,4)+"' "+CRLF 
+Endif 
+_cQuery += " And Substr(ADZ.ADZ_XOPER,1,15) <> '               ' "+CRLF
+_cQuery += " And Substr(ADZ.ADZ_XOPER,31,15) > Substr(ADZ.ADZ_XREM,31,15) "+CRLF
+_cQuery += "Order by ADZ_FILIAL, ADZ_PROPOS, ADZ_REVISA, ADZ_FOLDER, ADZ_ITEM "+CRLF
+//+------------------------------------------------------------------+
+//| Grava o Resultado da Query para consulta                         |
+//+------------------------------------------------------------------+
+MemoWrite("C:\temp\"+UPPER(_cPerg)+"_"+ProcName()+".TXT",_cQuery)
+If Select("TMP_REM")>0
+	TMP_REM->(DbCloseArea())
+Endif
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMP_REM",.t.,.t.)
+//+------------------------------------------------------------------+
+//| Converte os campos tipo DATA                                     |
+//+------------------------------------------------------------------+
+TMP_REM->(DbGoTop())				
+If TMP_REM->(Eof()) .And. TMP_REM->(Bof()) 				
+	_lReturn := .f. 
+Endif 
+Return	_lReturn 
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <xParPerg>
+ Cria as perguntas.	  
+
+@author<Antonio Dantas>
+@since<23/02/2016>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function xParPerg()	
+Local _aPerg := {}
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//   //-- MAPEAMENTOS DOS CAMPOS DE SX1
+//   aAdd (_aPerg,{"X1_PERGUNT","X1_PERPA","X1_PERENG","MV_CHL","C",5,0,0,"X1_GSC","X1_VALID",;
+//								"X1_VAR01",("X1_DEF01" e "X1_PYNE"),"X1_DEFSPA1","X1_DEFENG1","X1_CNT01",;
+//								"X1_VAR02","X1_DEF02","X1_DEFSPA2","X1_DEFENG2","X1_CNT02",;
+//								"X1_VAR03","X1_DEF03","X1_DEFSPA3","X1_DEFENG3","X1_CNT03",;
+//								"X1_VAR04","X1_DEF04","X1_DEFSPA4","X1_DEFENG4","X1_CNT04",;
+//								"X1_VAR05","X1_DEF05","X1_DEFSPA5","X1_DEFENG5","X1_CNT05",;
+//								"X1_F3","X1_GRPSXG","","X1_HELP","X1_PICTURE",{"Descricao para Tela PTG"},{"Descricao para Tela EPA"},{"Descricao para Tela USA"}})
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//+------------------------------------------------------------------+
+//| Verifica se o operador esta logado na filail DR que tem acesso   |
+//| a todas as filiais, ou somente na CASA em que esta logada.       |
+//+------------------------------------------------------------------+
+//-- Mv_par01 =     Somente a CASA ATUAL ?
+aAdd(_aPerg, {"Somente a CASA ATUAL ?","Somente a CASA ATUAL ?","Somente a CASA ATUAL ?","MV_CH1","N",1,0,1,"C",,;
+					"MV_PAR01","Sim","Sim","Sim","",;
+					"","Não","Não","Não","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Se [SIM]Considera Somente a CASA ATUAL."},{"Se [SIM]Considera Somente a CASA ATUAL."},{"Se [SIM]Considera Somente a CASA ATUAL."}})
+//-- Mv_par02 =     Considera Prospect ?
+aAdd(_aPerg, {"Considera Prospect ?","Considera Prospect ?","Considera Prospect ?","MV_CH2","N",1,0,1,"C",,;
+					"MV_PAR02","Sim","Sim","Sim","",;
+					"","Não","Não","Não","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Se [SIM]Considera Prospect."},{"Se [SIM]Considera Prospect."},{"Se [SIM]Considera Prospect."}})
+//-- Mv_par03 =     Considera Pessoa Fisica ?
+aAdd(_aPerg, {"Considera Pessoa Fisica?","Considera Pessoa Fisica?","Considera Pessoa Fisica?","MV_CH3","N",1,0,1,"C",,;
+					"MV_PAR03","Sim","Sim","Sim","",;
+					"","Não","Não","Não","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Se [SIM]Considera Pessoa Fisica."},{"Se [SIM]Considera Pessoa Fisica."},{"Se [SIM]Considera Prospect."}})
+//-- Mv_par04 =     Data Inicial ?
+aAdd(_aPerg, {"Data Inicial ?","Data Inicial ?","Data Inicial ?","MV_CH4","D",8,0,1,"C",,;
+					"MV_PAR04","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Data inicial a considerar"},{"Data inicial a considerar"},{"Data inicial a considerar"}})
+//-- Mv_par05 =     Data Final ?
+aAdd(_aPerg, {"Data Final ?","Data Final ?","Data Final ?","MV_CH5","D",8,0,1,"C",,;
+					"MV_PAR05","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Data final a considerar"},{"Data final a considerar"},{"Data final a considerar"}})
+//-- 
+u_SFAJUSX1(_cPerg,_aPerg) 
+Return
+
+
+
+
+/*
+----------------------------------------------------------------------------
+{Protheus.doc}<fCriaTMP>                                                   
+   Devolve o valor total dos produtos para Proposta/Revisao informada
+   como Parametro.
+																		   
+@Author<Antonio Dantas>                                                   
+@since<23/02/2016>                                                        
+@version<Nil>                                                             
+@Receive
+<    _cFilial (c) - Codigo da Filial da Proposta
+     _cPropos (c) - Codigo da Proposta
+     _cRevisa (c) - Numero da Revisao da Proposta 
+>                                                                  
+@return
+<      _nVlrTotal (n) - Valor TOTAL da Proposta 
+>                                                                   
+@example<Nil>
+@see<Nil>
+----------------------------------------------------------------------------
+*/
+Static Function fGTotADZ(_cFilial,_cPropos,_cRevisa)
+Local _cQuery		:= "" 
+Local _nVlrTotal	:= 0.00  
+_cQuery := ""
+_cQuery += "Select Sum(ADZ.ADZ_TOTAL) as ADZTOTAL From ADZ010 ADZ "+CRLF
+_cQuery += "Where ADZ.D_E_L_E_T_ = ' ' "+CRLF
+_cQuery += "And ADZ.ADZ_FILIAL = '"+_cFilial+"' "+CRLF
+_cQuery += "And ADZ.ADZ_PROPOS = '"+_cPropos+"' "+CRLF
+_cQuery += "And ADZ.ADZ_REVISA = '"+_cRevisa+"' "+CRLF
+//+------------------------------------------------------------------+
+//| Grava o Resultado da Query para consulta                         |
+//+------------------------------------------------------------------+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TOTADZ")>0
+	TOTADZ->(DbCloseArea())
+Endif
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TOTADZ",.t.,.t.)
+TOTADZ->(DbGotop())
+If TOTADZ->(!Eof()) .And. TOTADZ->(!Bof())
+	_nVlrTotal :=  TOTADZ->ADZTOTAL
+Endif 
+If Select("TOTADZ")>0
+	TOTADZ->(DbCloseArea())
+Endif
+Return _nVlrTotal

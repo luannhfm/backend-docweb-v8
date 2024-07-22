@@ -1,0 +1,97 @@
+#include "protheus.ch"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³CN120VLESTº Autor ³ Carlos A. Queiroz  º Data ³  20/02/13   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Estorno de medicao e exclusao do pedido de vendas          º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ CNI                                                        º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function CN120VLEST()
+Local nReg      := 0
+Local cChave    := ""
+Local lContinua := .T.
+Local cWhileCNN := ""
+Private _cFilPed   := ""
+Private _cFilContr := ""
+Private __lOkSC := .T.
+Private cUserSC := ""
+
+_cFilPed := CND->CND_FILIAL
+
+/*dbselectarea("SC7")
+dbsetorder(1)
+if ! (dbseek(_cFilPed+CND->CND_PEDIDO))
+	
+	CND->(RECLOCK('CND',.F.))
+	CND->CND_PEDIDO:=SPACE(6)
+	CND->(MSUNLOCK('CND'))
+	
+	CNE->(DBSETORDER(4))
+	IF CNE->(DBSEEK(XFILIAL('CND')+CND->CND_NUMMED))
+	   CNE->(RECLOCK('CNE',.F.))
+	   CNE->CNE_PEDIDO:=SPACE(6)
+	   CNE->(MSUNLOCK('CNE'))
+	ENDIF   
+	
+ENDIF
+
+*/
+
+Begin Transaction
+
+cChave := CND->CND_CONTRA+CND->CND_REVISA+CND->CND_NUMERO+CND->CND_NUMMED
+
+If LockByName("CN120"+xFilial("CND")+cChave,.T.,!Empty(xFilial("CND")),.T.)
+	If lContinua
+		
+		dbselectarea("SC7")
+		dbsetorder(1)
+		if dbseek(_cFilPed+CND->CND_PEDIDO)
+			
+			_cFilContr := iif(!empty(SC7->C7_XFILCOM),SC7->C7_XFILCOM,SC7->C7_FILIAL)
+			dbselectarea("CNN")
+			dbsetorder(2)
+			If dbseek(_cFilContr+space(TamSx3("CNN_GRPCOD")[1])+SC7->C7_CONTRA)
+				
+				cWhileCNN := _cFilContr+space(TamSx3("CNN_GRPCOD")[1])+SC7->C7_CONTRA
+				
+				While CNN->(!EOF()) .and. cWhileCNN == CNN->CNN_FILIAL+CNN->CNN_GRPCOD+CNN->CNN_CONTRA
+					if alltrim(CNN->CNN_USRCOD) == alltrim(__cuserid)
+						__lOkSC := .F.
+					endif
+					CNN->(dbskip())
+				EndDo
+				
+				dbseek(_cFilContr+space(TamSx3("CNN_GRPCOD")[1])+SC7->C7_CONTRA)
+				
+				If __lOkSC
+					cUserSC := CNN->CNN_USRCOD
+					RecLock("CNN",.F.)
+					CNN->CNN_USRCOD := __cuserid
+					CNN->(msunlock())
+				EndIf
+			EndIf
+		endif
+		
+		//Chama rotina de estorno por meio de processo
+		nReg := CND->(Recno())
+		Processa( {|| CN120MedEst(nReg,,,,.T.) } )
+		
+	EndIf
+Else
+	// Nao permite processamento concorrente
+	Aviso("Concorrência",OemtoAnsi("Esta Medição está em uso por outra estação."),{"Ok"},2) // ##"Concorrência"##"Esta Medição está em uso por outra estação."
+EndIf
+UnLockByName("CN120"+xFilial("CND")+cChave,.T.,!Empty(xFilial("CND")),.T.)
+
+End Transaction
+
+Return .F.

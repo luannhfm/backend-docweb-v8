@@ -1,0 +1,361 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} GP070FIM
+Ponto de Entrada para de permitir a gravação de campos criados pelo usuário.
+
+@author    William
+@version   1.0l
+@since     17/07/2015
+/*/
+User Function GP070GRV()
+      
+Local cQuery 		:= ''
+Local nValor		:= SRT->RT_VALOR  
+Local cTipoProv	:= SRT->RT_TIPPROV  
+Local cCategoria	:= SRA->RA_CATFUNC
+Local dDataAux	:= ctod('//')
+Local cPerIni		:= ""
+Local cPerFim		:= ""
+Local nValBX		:= 0
+Local nValAux		:= 0
+Public cCodBx		:= ''
+Public _cFil		:= xFilial("SRT")
+Public _FerPro	:= SRT->RT_DFERPRO
+Public nBaseJ		:= 0
+Public lExiste	:= .F.
+Public nAvos13	:= 0
+Public cMat		:= SRA->RA_MAT
+Public nBseFGTS	:= 0 
+Public nDiasProp	:= 0
+Public aEstValMes	:= {}
+
+
+
+dDataAux		:= MonthSub(dDataref,1)
+cPerIni		:= DTOS(FirstDay(dDataAux))
+cPerFim		:= DTOS(LastDay(dDataAux))
+
+		
+	   	cQuery := "SELECT RT_VERBA,RT_VALOR VALOR FROM "+RetSqlName("SRT")+" "
+	   	cQuery += "Where D_E_L_E_T_ <> '*' AND RT_MAT = '"+cMat+"' AND RT_FILIAL = '"+_cFil+"' AND RT_DATACAL >= '"+cPerIni+"' and RT_DATACAL <= '"+cPerFim+"' AND RT_VERBA = '"+cCodVerba+"' AND RT_TIPPROV = '"+cTipoProv+"' ORDER BY RT_VERBA "
+	   
+	   	cQuery := ChangeQuery( cQuery )
+		dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery), "TRB", .T., .T. )
+		
+		nDiasProp := RetDias()
+		
+		IF SRT->RT_TIPPROV <> '1' 
+		
+			IF cCodVerba = '885'
+				nBseFGTS := RetBseFgts()
+				SRT->RT_XVALMES := (nBseFGTS * 0.08) 
+				nAvos13	:= 0
+				nBseFGTS 	:= 0			
+		    ELSEIF cCodVerba = '883'
+		    
+		    	RetBusca()
+		    	IF lExiste = .F.
+		    		SRT->RT_XVALMES := (nValor * 0.08)	
+		    	EndIf
+		    ELSEIF SRT->RT_TIPPROV = '2' .AND. (SRT->RT_DFERPRO = 2.5 .OR. nDiasProp = 2.5)
+		    
+				SRT->RT_XVALMES := nValor
+
+		    ELSEIF  (cCodVerba = '876' .OR. cCodVerba = '882')
+		    
+				//19/05/16 - Retirado a anulação do valor negativo, para gerar o estorno.
+				//SRT->RT_XVALMES := IIF(nValor - TRB->VALOR < 0,nValor,nValor - TRB->VALOR)
+				SRT->RT_XVALMES := nValor - TRB->VALOR
+				
+			ELSEIF (SRT->RT_DFERPRO = 0 .AND. nDiasProp = 0) // ocorre com funcionário afastado
+		    
+				//SRT->RT_XVALMES := IIF(nValor - TRB->VALOR < 0,nValor,nValor - TRB->VALOR)
+				SRT->RT_XVALMES := nValor - TRB->VALOR 
+				
+			ELSEIF (SRT->RT_TIPPROV = '3' .AND. MONTH(DDATAREF) = 1)
+				
+				SRT->RT_XVALMES := nValor	
+
+			ELSE	
+			    
+				SRT->RT_XVALMES := nValor - TRB->VALOR//(nValor+nValBX) - TRB->VALOR 
+			
+			EndIF
+		
+		EndIf
+		
+		IF SRT->RT_TIPPROV == '1'
+		
+			nDiasProp := RetDiasVenc(cPerIni,cPerFim)  
+		
+			If nDiasProp = 0
+				cTipoProv := "2"
+			Else
+				cTipoProv := "1"
+			EndIf 
+		
+			cQuery := "SELECT RT_VERBA,RT_VALOR VALOR FROM "+RetSqlName("SRT")+" "
+			cQuery += "Where RT_MAT = '"+cMat+"' AND RT_FILIAL = '"+_cFil+"' AND RT_DATACAL >= '"+cPerIni+"' and RT_DATACAL <= '"+cPerFim+"' AND RT_VERBA = '"+cCodVerba+"' AND RT_TIPPROV = '"+cTipoProv+"' ORDER BY RT_VERBA "
+			   
+			cQuery := ChangeQuery( cQuery )
+			dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery), "TRB1", .T., .T. )
+		
+			IF cCodVerba = '885'
+				nBseFGTS := RetBseFgts()
+				SRT->RT_XVALMES := (nBseFGTS * 0.08) 
+				nAvos13	:= 0
+				nBseFGTS 	:= 0			
+		    ELSEIF cCodVerba = '883'
+		    
+		    	RetBusca()
+		    	IF lExiste = .F.
+		    		SRT->RT_XVALMES := (nValor * 0.08)	
+		    	EndIf
+				
+			//ELSEIF nDiasProp = 0 //(SRT->RT_DFERPRO <> 0 .AND. cCodVerba = '875') .OR. 
+			
+			//	SRT->RT_XVALMES := nValor
+
+			ELSE	
+
+				SRT->RT_XVALMES := IIF(nValor - TRB1->VALOR < 0,0,nValor - TRB1->VALOR)
+				
+			EndIF
+			
+			TRB1->(DBCLOSEAREA())
+			
+		EndIf
+		
+	    TRB->(DBCLOSEAREA())
+	    
+	//ELSE //AULSITAS E PROFESSORES
+	/*
+			nBaseJ	:= 0
+	    
+			cQuery := "SELECT RT_VERBA,RT_VALOR VALOR FROM "+RetSqlName("SRT")+" "
+	   		cQuery += "Where RT_MAT = '"+cMat+"' AND RT_DATACAL >= '"+cPerIni+"' and RT_DATACAL <= '"+cPerFim+"' AND RT_VERBA = '"+cCodVerba+"' AND RT_TIPPROV = '"+cTipoProv+"' ORDER BY RT_VERBA "
+	   
+	   		cQuery := ChangeQuery( cQuery )
+			dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery), "TRB", .T., .T. )
+			
+			IF SRT->RT_TIPPROV <> '1'
+			
+				U_SalAula() //Busca salário Horista
+
+				IF cCodVerba = '875' .AND. nBaseJ > 0
+					SRT->RT_VALOR 		:= ((nBaseJ/30)*_FerPro)
+					SRT->RT_SALARIO 	:= nBaseJ
+					nValor 				:= ((nBaseJ/30)*_FerPro)
+					SRT->RT_XVALMES 	:= IIF((nValor - TRB->VALOR) > 0, (nValor - TRB->VALOR), 0) 
+				EndIf	
+				
+				IF cCodVerba = '885'
+					nBseFGTS := nBaseJ
+					SRT->RT_XVALMES := (nBseFGTS * 0.08)
+					nAvos13	:= 0
+					nBseFGTS 	:= 0			
+			    ELSEIF cCodVerba = '883'
+			    
+			    	RetBusca()
+			    	IF lExiste = .F.
+			    		SRT->RT_XVALMES := (nValor * 0.08)	
+			    	EndIf
+		
+				ELSE	    
+					SRT->RT_XVALMES := IIF((nValor - TRB->VALOR) > 0, (nValor - TRB->VALOR), 0) 
+				EndIF
+			
+			EndIf
+			
+		    TRB->(DBCLOSEAREA())
+	    */
+	   // ENDIF      
+    
+return //GP070GRV
+
+
+//------------------------------------------------//
+//                                                //
+// Retorna a base FGTS.                           //
+//                                                //
+//------------------------------------------------//
+    
+Static Function RetBseFgts()  
+
+Local nVal 	:= 0
+                                                                
+	aArea := GetArea()
+
+   	cQuery := "SELECT RT_VERBA VERBA, RT_XVALMES VALOR,RT_AVOS13S AVOS FROM "+RetSqlName("SRT")+" "
+   	cQuery += "Where RT_MAT = '"+cMat+"' AND RT_FILIAL = '"+_cFil+"' AND RT_DATACAL = '"+DTOS(dDataRef)+"' AND RT_VERBA IN ('881','882') AND D_E_L_E_T_ <> '*' ORDER BY RT_VERBA "
+   
+   	cQuery := ChangeQuery( cQuery )
+	dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery), "TRB1", .T., .T. ) 
+	
+	While TRB1->(!EOF())  
+		
+	    nVal 		+= TRB1->VALOR
+	    nAvos13 	:= TRB1->AVOS
+	    
+		TRB1->(DBSkip())
+	EndDo     
+	
+	TRB1->(DBCLOSEAREA())
+	RestArea(aArea)
+
+Return nVal //RetBsrFgts
+
+
+Static Function RetBusca()
+
+	Local nMesAtu := Month(dDataRef)
+	Local cPerIni := DTOS(FirstDay(MonthSub(dDataRef,(nMesAtu-1))))
+	aArea := GetArea()
+
+   	cQuery := "SELECT RT_VERBA VERBA,RT_VALOR VALOR FROM "+RetSqlName("SRT")+" "
+   	cQuery += "Where RT_MAT = '"+cMat+"' AND RT_FILIAL = '"+_cFil+"' AND (RT_DATACAL >= '"+cPerIni+"' AND RT_DATACAL <= '"+DTOS(LastDay(MonthSub(dDataRef,1)))+"') AND RT_VERBA = '883' AND D_E_L_E_T_ <> '*'  "
+   
+   	cQuery := ChangeQuery( cQuery )
+	dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery), "TRB1", .T., .T. ) 
+	
+	While TRB1->(!EOF())  
+		
+	    lExiste := .T.
+	    
+		TRB1->(DBSkip())
+	EndDo     
+	
+	TRB1->(DBCLOSEAREA())
+	RestArea(aArea)
+
+Return //RetBusca
+
+//------------------------------------------------//
+//                                                //
+// Retorna a salário Aulista.                     //
+//                                                //
+//------------------------------------------------//
+User Function SalAula()
+
+			dDAux	:= MonthSub(dDataref,1)
+			cDIni	:= DTOS(MonthSub(dDAux,12))
+			aArea := GetArea()
+
+		    cQuery := "SELECT SUM(RD_VALOR) TOT FROM "+RetSqlName("SRD")+" "
+		   	cQuery += "Where RD_MAT = '"+cMat+"' AND RD_FILIAL = '"+_cFil+"' AND RD_DATARQ >= '"+cDIni+"' AND RD_PD IN ('113','172')"
+		   
+		   	cQuery := ChangeQuery( cQuery )
+			dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery), "TRB1", .T., .T. )
+			
+			
+			While TRB1->(!eof())
+				
+				nBaseJ := TRB1->TOT/12
+				TRB1->(DbSkip())
+				
+			EndDo
+			
+			TRB1->(dbCloseArea())
+			RestArea(aArea)
+Return //
+    
+
+//------------------------------------------------//
+//                                                //
+// Retorna Valor Baixa.                           //
+//                                                //
+//------------------------------------------------//
+    
+Static Function RetBx()  
+
+Local nVal 	:= 0
+	
+	DO CASE
+		CASE SRT->RT_VERBA = '875'
+			cCodBx := '905'
+       CASE SRT->RT_VERBA = '876'
+			cCodBx := '906'
+		CASE SRT->RT_VERBA = '877'
+			cCodBx := '907'
+		CASE SRT->RT_VERBA = '878'
+			cCodBx := '908'
+		CASE SRT->RT_VERBA = '879'
+			cCodBx := '909'
+		CASE SRT->RT_VERBA = '886'
+			cCodBx := '938'
+	ENDCASE
+	                                                         
+	aArea := GetArea()
+
+   	cQuery := "SELECT RT_VALOR FROM "+RetSqlName("SRT")+" "
+   	cQuery += "Where RT_MAT = '"+cMat+"' AND RT_FILIAL = '"+_cFil+"' AND RT_DATACAL = '"+DTOS(dDataRef)+"' AND RT_VERBA = '"+cCodBx+"' AND D_E_L_E_T_ <> '*' ORDER BY RT_VERBA "
+   
+   	cQuery := ChangeQuery( cQuery )
+	dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery), "TRB2", .T., .T. ) 
+	
+	While TRB2->(!EOF())  
+		
+	    nVal 	:= TRB2->RT_VALOR
+	    
+		TRB2->(DBSkip())
+	EndDo     
+	
+	TRB2->(DBCLOSEAREA())
+	RestArea(aArea)
+
+Return nVal //RetBsrFgts
+
+
+
+Static Function RetDias()  
+
+Local nDias 	:= 0
+	
+		                                                         
+	aArea := GetArea()
+
+   	cQuery := "SELECT RT_DFERPRO DIAS FROM "+RetSqlName("SRT")+" "
+   	cQuery += "Where RT_MAT = '"+cMat+"' AND RT_FILIAL = '"+_cFil+"' AND RT_DATACAL = '"+DTOS(dDataRef)+"' AND RT_VERBA = '875' AND RT_TIPPROV = '2' AND D_E_L_E_T_ <> '*' ORDER BY RT_VERBA "
+   
+   	cQuery := ChangeQuery( cQuery )
+	dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery), "TRB3", .T., .T. ) 
+	
+	While TRB3->(!EOF())  
+		
+	    nDias 	:= TRB3->DIAS
+	    
+		TRB3->(DBSkip())
+	EndDo     
+	
+	TRB3->(DBCLOSEAREA())
+	RestArea(aArea)
+
+Return nDias //Retdiasferias
+
+
+//Retorna dias de férias vencidas.
+Static Function RetDiasVenc(cData1,cData2)  
+
+Local nDias 	:= 0
+
+	
+		                                                         
+	aArea := GetArea()
+
+   	cQuery := "SELECT RT_DFERPRO DIAS FROM "+RetSqlName("SRT")+" "
+   	cQuery += "Where RT_MAT = '"+cMat+"' AND RT_FILIAL = '"+_cFil+"' AND (RT_DATACAL >= '"+cData1+"' AND RT_DATACAL <= '"+cData2+"') AND RT_VERBA IN ('875','876') AND RT_TIPPROV = '1' AND D_E_L_E_T_ <> '*' ORDER BY RT_VERBA "
+   
+   	cQuery := ChangeQuery( cQuery )
+	dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery), "TRB4", .T., .T. ) 
+	
+	While TRB4->(!EOF())  
+		
+	    nDias 	:= 1//TRB4->DIAS
+	    
+		TRB4->(DBSkip())
+	EndDo     
+	
+	TRB4->(DBCLOSEAREA())
+	RestArea(aArea)
+
+Return nDias //Retdiasferias

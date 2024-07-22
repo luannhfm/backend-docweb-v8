@@ -1,0 +1,1353 @@
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+<Descricao> :  Função responsável pela chamada para os calculos das verbas por funcionário
+<Autor> : Fábrica DOIT MG
+<Data> : 17/07/2014
+<Parametros> : Nil
+<Retorno> : Nil
+<Processo> : FIEMT – Planejamento Orçamentário - Folha
+<Tipo> Menu
+<Obs> : 
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+*/
+User Function CALCFOL( cMatricula, dDataDe, dDataAte,dDtDemiss,cNomeFun,cFiliAtu,cTipExec,oSelf)
+
+	Local cRoteiro 			:= "FOL"
+	Local aParametros 		:= {}		//temporario vai receber o array como parametro da tela de planejamento	
+	Local lRecalc 				:= .F.
+	Local cPergCal 			:= ""	
+//	Local cFilBkp				:= cFilAnt
+	Local	nOrdem				:= 1				  				//	Calcular por 1-Matricula  2-C.Custo
+	Local cFilDe				:= cFiliAtu						//	Filial De
+	Local cCcDe					:= '  '				  			//	Centro de Custo De
+	Local cCcAte				:=	'ZZZZZZZZZZZZZZZZZ'		//	Centro de Custo Ate
+	Local cSemana 				:=	''								//	Semana a ser Calculada
+	Local dDt_Pgto				:=	LastDate(dDataDe)//	CTOD('10/01/2015')		//	Data de Pagamento
+	Local cComp13 				:=	'N'							//  Calc. Compl. 13o.  Sim/Nao
+	Local cCateg      		:= 'EGHIJMPST'							//  Categorias a serem calculadas
+	//Somente para calculo do Dissidio
+	Local cSituacao			:= ' '							//  Situacoes a serem calculadas
+
+	Local cCadastro 			:= "Simulação de Calculo da Folha de Pagamento"
+	Local cDescricao			:= "Este programa tem o objetivo de simular o calculo da folha de pagamento para: "+ALLTRIM(cNomeFun)+"."
+
+	Local bProcesso 			:= {|oSelf| U_fPrepara(cRoteiro,aParametros,lRecalc,dDataDe,dDataAte,dDt_Pgto,cNomeFun,cTipExec,oSelf)}
+	Private aRecnos			:= {}
+	Private lOk					:= .T.
+	Private aReturn 			:= {}
+	Private cPerg				:= "CALCFOL004"
+	Private nSalFunc
+	Private nSalAnt			:= Posicione("SRA",1,xFilial("SRA")+cMatricula,"RA_SALARIO")
+	Private nPrcDiss			:= (ZD8->ZD8_DISSID/100)
+	Private cCategEspecial 	:= "J"
+	Private cAlias3			:= GetNextAlias()
+	Private cDtSRD				:= ""
+	
+	If cTipExec == '1'    //execução individual do calculo 
+
+		fCriaSx1()
+		
+		// Forca o usuario a preencher as perguntas.
+		If !(Pergunte(cPerg,.T.))
+			Return(aReturn)
+		EndIf
+	
+		dDataDe 		:= MV_PAR01	
+		dDataAte 	:= MV_PAR02
+		nSalFunc		:= MV_PAR03
+		dDtDemiss	:= MV_PAR04
+	
+	    If !Empty(dDtDemiss)
+	    	dDataAte := dDtDemiss
+	    EndIf
+
+		Aadd(aParametros,{nOrdem,cFilDe,cCcDe,cCcAte,cMatricula,cSemana,dDt_Pgto,cComp13,cCateg,cSituacao,dDataDe,dDataAte,"",cCentro,cItem})//temporario vai receber o array como parametro da tela de planejamento
+	
+	Else        // execução em massa do calculo
+	
+		dDataDe 		:= ZD8->ZD8_DTINIC
+		dDataAte 	:= ZD8->ZD8_DTFINA
+		nSalFunc		:= 0
+		dDtDemiss	:= CTOD("  /  /  ")
+
+		BUSCAZDA()
+
+		DBSelectArea(cAlias3)
+		(cAlias3)->(DbGoTop())
+
+		While (cAlias3)->(!EOF()) 
+
+			Aadd(aParametros,{nOrdem,(cAlias3)->ZDA_FILIAL,cCcDe,cCcAte,(cAlias3)->ZDA_FUNCIO,cSemana,dDt_Pgto,cComp13,cCateg,cSituacao,dDataDe,dDataAte,;
+			(cAlias3)->ZDA_FILIAL,(cAlias3)->ZDA_CTCUST, (cAlias3)->ZDA_ITCONT,(cAlias3)->ZDA_DFUNCI, (cAlias3)->ZDA_KEYFUN,;
+			(cAlias3)->ZDA_RATEIO, (cAlias3)->ZDA_PRCRAT})//temporario vai receber o array como parametro da tela de planejamento		
+		
+			(cAlias3)->(dbSkip())
+		EndDo
+	
+	EndIf	
+	dDt_Pgto	:=	LastDate(dDataDe)
+
+/*
+	If nSalFunc > 0
+		fAltSRA(cMatricula,nSalFunc,1)
+	EndIf
+*/	
+	iF Len(aParametros) > 0
+		tNewProcess():New( "CALFOL" , cCadastro , bProcesso , cDescricao , cPerg	, , , , ,.T.,.T.  )  //janela inicial do processo
+	Else
+		MsgBox(OemToAnsi("Não existem funcionários para a Filial, U.O e C.R Informados!!!"),OemtoAnsi("Atenção!!!"),"ALERT")		
+   EndIf
+
+//	fAltSRA(cMatricula,nSalAnt,2)	
+
+
+Return(aReturn)
+
+
+/*/f/
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+<Descricao> :  Função responsável pelo loop entre os meses do periodo informado
+<Autor> : Fábrica DOIT MG
+<Data> : 31/07/2014
+<Parametros> : Nil
+<Retorno> : Nil
+<Processo> : FIEMT – Planejamento Orçamentário Folha 
+<Tipo> Menu
+<Obs> : 
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+*/
+User Function fPrepara(cRoteiro,aParametros,lRecalc,dDataDe,dDataAte,dDt_Pgto,cNomeFun,cTipExec,oSelf)
+
+	Local nSalFunc2
+	Local cCateg 	:= ""
+	Local cParCTG	:= SuperGetMV("FS_CTGDISS",,'E,G')
+	Local nM
+	Local nRegua 	:= (DateDIffMount(dDataDe, dDataAte )+1)*Len(aParametros)
+	Local aInfo := {}
+//	oSelf:SetRegua1(DateDIffMount(dDataDe, dDataAte )+1 )
+
+	oSelf:SetRegua1(nRegua)
+
+	For nM := 1 To Len(aParametros)
+		cCateg 	:= AllTrim(Posicione("SRA",1,aParametros[nM][02]+aParametros[nM][05],"RA_CATFUNC"))
+		
+      aReturn		:= {}
+		aRecnos		:= {}	
+
+		If nSalFunc > 0
+			fAltSRA(aParametros[nM][05],nSalFunc,1)
+		EndIf
+
+		fLimpSRC(aParametros[nM][05],'2')
+	
+		While AnoMes(aParametros[nM][11]) <= AnoMes(aParametros[nM][12]) .And. lOk//dDataDe < dDataAte	
+	
+			oSelf:IncRegua1("Calculando Referência: "+AllTrim ( Mesextenso(Val(SubStr(DtoC(aParametros[nM][11]),4,2))) + " / " + SubStr(DtoC(aParametros[nM][11]),7,4)))
+			iF (val(ZD8->ZD8_MESDIS) == Month(aParametros[nM][11]) .And. nPrcDiss > 0) .AND. !(cCateg $ cParCTG)
+				If nSalFunc > 0
+					nSalFunc2	:= nSalFunc+(nSalFunc*nPrcDiss)
+					fAltSRA(aParametros[nM][5],nSalFunc2,1)
+				Else
+					nSalFunc2 	:= nSalAnt+(nSalAnt*nPrcDiss)
+					fAltSRA(aParametros[nM][5],nSalFunc2,1)
+				EndIf
+			EndIf
+			U_fProcessa(cRoteiro,aParametros,lRecalc,cNomeFun,nM,oSelf)
+			aParametros[nM][07]:= LastDate(MonthSum(aParametros[nM][07],1))		//setar data de pagamento
+			aParametros[nM][11]:= MonthSum(aParametros[nM][11],1)		//somar um mês ao periodo
+	
+		EndDo
+
+		If cTipExec == '2'// execução em massa do calculo
+
+			//					ZDA_FUNCIO  			ZDA_DFUNCI 				ZDA_CTCUST 			ZDA_ITCONT 				ZDA_KEYFUN      			ZDA_FILIAL		ZDA_RATEIO				ZDA_PRCRAT
+			aADD(aInfo,{aParametros[nM][5],aParametros[nM][16],aParametros[nM][14],aParametros[nM][15],aParametros[nM][17],aParametros[nM][13], aParametros[nM][18], aParametros[nM][19]})
+
+			fGrvZDA(aInfo)// grava ZDA a cada funcionário calculado
+			aInfo := {}
+			
+		EndIf
+
+		fAltSRA(aParametros[nM][05],nSalAnt,2)	
+		fLimpSRC(aParametros[nM][05],'1') // limpa tabela SRC após execução dos cálculos
+		RECALDEL()	//Recupera registros originais deletados		
+		
+	Next nM
+
+//	If Len(aParametros) > 1
+//		aReturn := {}		
+//	EndIf
+
+	If lOk
+		MsgInfo("Calculo da Folha de Pagamento - Termino do processamento") 
+	EndIf
+
+Return()
+
+/*/f/
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+<Descricao> :  Função responsável pelo processamento dos cálculos
+<Autor> : Fábrica DOIT MG
+<Data> : 31/07/2014
+<Parametros> : Nil
+<Retorno> : Nil
+<Processo> : FIEMT – Planejamento Orçamentário Folha 
+<Tipo> Menu
+<Obs> : 
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+*/
+User Function fProcessa(cRoteiro,aParametros,lRecalc,cNomeFun, nLinha, oSelf)
+	Local aArea			:= {}
+	Local aAreaSMO		:= {}
+	Local aFilProc		:= {}
+	Local aOrdBagRC 	:= {}
+	Local aOrdBagRI 	:= {}
+	Local aPdOld  		:= {}
+	Local aStruSRC  	:= {}
+	Local aTabInss		:= {}
+	Local aVerbas 		:= {}                                       
+	Local cAliasRC  	:= ""
+	Local cAliasRI		:= ""
+	Local cAliasSRC 	:= "SRC"
+	Local cArqDbf
+	Local cArqNtx
+	Local cEncInss 	:= GetMV( "MV_ENCINSS", Nil , "N" )
+	Local cCodEmp		:= SM0->M0_CODIGO
+	Local cDtHrProc
+	Local cLog			:= ""
+	Local cMesAnoRef
+	Local cMsgLog
+	Local dDataRef		:= cToD("//")                   
+	Local lAvisoBlq 	:= .T.
+	Local lContinua 	:= .T.
+	Local lQuery    	:= .F.
+	Local nCont			:= 0
+	Local nRegProc  	:= 0
+	Local nTotregs,nMult,nPosAnt,nPosAtu,nPosCnt,cSav20,cSav7 //Regua
+	Local nTpContr		:= 0
+	Local nX, nY    	:= 0
+	
+	/*
+	?¦???????????????????????????????????????????????????????????????
+	3 Variaveis de Acesso do Usuario                               3
+	?????????????????????????????????????????????????????????????????¦*/
+	Local cAcessaSRA 	:= ""
+	
+	/*
+	?¦???????????????????????????????????????????????????????????????
+	3 Variaveis para o calculo em GRID                             3
+	?????????????????????????????????????????????????????????????????¦*/
+	Local aCall			:= {}
+	Local nLoteGrid 	:= SuperGetMv("MV_REGGRID",,20)
+	Local nCountReg	:= 0
+	Local nRegGrid  	:= 0
+	
+	Local cAliasSRA	:= "SRA"
+	Local lDemAnt		:= .F.
+	Local nNExec		:= 0
+	#IFDEF TOP
+	Local aIRMV			:= {}
+	Local aCateg		:= {}
+	Local cCatQuery
+	Local cCposQuery  
+	Local cDemitido
+	Local nReg
+	Local cAliasIRMV 
+	Local lFindIRMV 	:= .F.
+	Local nPos
+	Local cQry
+	Local cAliasTMP 	:= "QNRO"
+	Local cCalcAut  
+	Local aPeriodos	:= {}
+	#ENDIF
+	
+	//?¦???????????????????????????????????????????????????????????????
+	//3 Quando vier de outro local diferente do Calculo Folha ou Adi-3
+	//3 antamento nao devera utilizar o GRID.                        3
+	//?????????????????????????????????????????????????????????????????¦
+	If Type("lGrid") == "U"
+		Private lGrid := .F.
+	EndIf
+	If lGrid 
+		Private nTimeIni	:= Seconds()	// Tempo de calculo para o GRID
+	EndIf
+
+	Private lVersao101 := (GetRpoRelease("R1.1"))
+	Private oText		
+	Private aLogM020	:= {}
+	Private aTitleM020	:= {}
+	Private aErrProc	:= Array(2,0)  
+	
+	Private cArqMovRC := "" 
+	Private cArqMovRI := ""
+	Private cPerFeAc  := SuperGetMv("MV_FERPAC",, "N")  // Ferias por ano civil
+	Private lAutMovSRC:= SuperGetMv("MV_AUTOSRC",, .F. ) // Calculo autonomo com movimento
+	Private lItemClVl := SuperGetMv( "MV_ITMCLVL", .F., "2" ) == "1" // Se utiliza Item e Classe de Valores
+
+
+// Variaveis de Acesso do Usuario
+
+	cAcessaSRA	:= &( " { || " + Iif( !Empty( Alias() ) .And. Empty( cAcessaSRA := ChkRH( "GPEM020" , "SRA" , "2" ) ) , ".T." , cAcessaSRA ) + " } " )
+
+	
+//                     [1]		[2]	[3]	[4]		[5]		[6]		[7]		[8]		[9]		[10]	[11]   [12]
+//	Aadd(aParametros,{nOrdem,cFilDe,cCcDe,cCcAte,cMatricula,cSemana,dDt_Pgto,cComp13,cCateg,cSituacao,dDtDe,dDtAte})
+
+// verificar diferença entre dataDe e DataAte para fazer um for e preencher o array aPeriodos pois os dados abaixo deverão ser retirados deste array
+
+	nOrdem		:=	aParametros[nLinha][01]								//	Calcular por 1-Matricula  2-C.Custo
+	cFilDe		:=	aParametros[nLinha][02]								//	Filial De
+	cFilAte 		:=	aParametros[nLinha][02]								//	Filial Ate
+	cCcDe			:=	aParametros[nLinha][03]								//	Centro de Custo De
+	cCcAte		:=	aParametros[nLinha][04]								//	Centro de Custo Ate
+	cMatrDe 		:=	aParametros[nLinha][05]								//	Matricula De
+	cMatrAte		:=	aParametros[nLinha][05]								//	Matricula Ate
+	cSemana 		:=	aParametros[nLinha][06]								//	Semana a ser Calculada
+	dDt_Pgto		:=	aParametros[nLinha][07]								//	Data de Pagamento          	//Variar esta data de acordo com o periodo informado
+	cComp13 		:=	If(aParametros[nLinha][08] = '1','S','N')		//  Calc. Compl. 13o.  Sim/Nao
+	cCateg      := aParametros[nLinha][09]								//  Categorias a serem calculadas
+	//Somente para calculo do Dissidio
+	cSituacao	:= aParametros[nLinha][10]								//  Situacoes a serem calculadas
+
+
+	// Verifica data base com o parametro FOLMES3    
+	cFolMes	 := GetMv( "MV_FOLMES",,Space(08) ) 
+	
+	// Ponto de Entrada para checar os parametros de calculo.       |
+	If ExistBlock("GPCHKPAR")
+		If !ExecBlock("GPCHKPAR",.F.,.F.)
+			lOk := .F.
+			Return
+		EndIf
+	Endif
+	
+
+	// Seta variavel para calculo do Dissidio  
+	lDissidio := lRecalc
+	
+	If ! lRecalc
+/*
+		If  cFolMes  <> Space(8)
+
+			If MesAno( dDataBase ) != cFolMes .And. ! Empty(cFolMEs)
+				Aviso( "Aviso", Subs(cFolMes,5,2)+"/"+Subs(cFolmes,1,4) , {"SIM","NÃO"} ) //### ### ### "Ok"
+				Return .f.
+			Endif                                  
+			//--Data de Pagamento deve ser maior que o mes de processamento 
+			If MesAno( dDt_Pgto ) < cFolMes 
+//				Aviso( STR0017, STR0023 + Subs(cFolMes,5,2)+"/"+Subs(cFolmes,1,4) , { "SIM","NÃO"} ) //### ### ### "Ok"
+				Return .f.
+			Endif
+
+		Endif
+*/
+	ElseIf !lGrid
+
+		//| Verifica se existe o arquivo de fechamento do mes informado  |
+		
+		cMesAnoRef := StrZero(Month(dDataBase),2) + StrZero(Year(dDataBase),4)
+		cFolMes := StrZero(Year(dDataBase),4)+ StrZero(Month(dDataBase),2)
+		If !OpenSrc( cMesAnoRef, @cAliasRC, @aOrdBagRC, @cArqMovRC, dDataBase, .F.,.F.)
+			lOk := .F.
+			Return .f.
+		Endif
+		//-- Abre o SRI
+		If cComp13 == "S"
+			If ! OpenSrc( "13"+Substr(cMesAnoRef,3,4), @cAliasRI, @aOrdBagRI, @cArqMovRI, dDatabase,.F., .F. )
+				lOk := .F.
+				Return .f.
+			EndIf
+	    EndIf
+	EndIf
+	
+
+	//Somente para Brasil - validacao do X14_RECFAT. Se estiver com "S", devera ter  
+	//registros na tabela S033. Validacao esta fora do roteiro para alertar cliente  
+	//antes do inicio do calculo.								  					  
+
+	If cPaisLoc == "BRA" .And. cRoteiro == "FOL" .And. !lDissidio
+		aArea		:= GetArea()
+		aAreaSM0	:= SM0->( GetArea() )
+	
+		//Monta o array das filiais a processar.
+		dbSelectArea("SM0")
+		dbSeek( cCodEmp, .T. )
+		While !EoF() .And. cCodEmp == SM0->M0_CODIGO
+			If fwcodfil() >= cFilDe .And. fwcodfil() <= cFilAte
+				aAdd( aFilProc, { fwcodfil() } )
+			Endif
+			SM0->( dbSkip() )
+		EndDo	
+		
+		//Verifica todas as filiais que foram selecionadas no processamento, 
+		//para validar se possuem registro na tabela auxiliar S033
+		For nCont := 1 To Len( aFilProc )
+			//Busca no parametro 14 se a empresa recolhe contribuicao previdenciaria sobre a receita bruta (X14_RECFAT)
+			If fInssEmp( aFilProc[nCont, 1], @aTabInss, Nil, cFolMes )	
+				//Verifica os dois tipos de contrato
+				For nTpContr := 1 To 2
+					cRecFatEmp 	:= aTabInss[27, nTpContr]//X14_RECFAT
+					//Se a filial recolhe contribuicao sobre faturamento sera obrigatorio 
+					//ter o MV_ENCINSS preenchido com "S" se nao for dissidio
+					If cRecFatEmp $ "S*M" .And. cEncInss != "S"
+//						Aviso( STR0017, STR0070, {"SIM","NÃO"} ) //"Alerta"##'Parametro MV_ENCINSS dever?? estar preenchido com "S" quando o parametro X14_RECFAT est?? preenchido com "S" ou "M"'##"Ok"
+						lOk := .F.
+						Return(.F.)
+					EndIf
+				Next nTpContr
+			EndIf
+		Next nCont
+	
+		RestArea( aArea )
+		RestArea( aAreaSM0 )
+		
+	EndIf
+		
+	dbsetOrder( 1 )
+	
+	If !lGrid
+		//--Criar Arquivo de Medias Temporario
+		Cria_TRP(@cArqDbf,@cArqNtx)
+	EndIf
+	
+	//?¦???????????????????????????????????????????????????????????????
+	//3Arquivo para Controle de LOG - Transacao						 3
+	//?????????????????????????????????????????????????????????????????¦
+	#IFDEF TOP
+		If lGrid
+			Private cNameFile   := "M020"+Alltrim(cEmpAnt)
+			Private cDbfLog 	:= "M020LOG"
+			Private cChaveLog	:= DTOC(MsDate()) + "-" + Time()
+	
+			If !fBldLogGRD(@cDbfLog)
+//				 Aviso( STR0016,STR0050, { "SIM","NÃO"} ) // "Atencion"###"Nao foi possivel abrir arquivo de registro de ocorrencias."##"Ok"
+				lOk := .F.
+				 Return( .f. )
+			EndIf
+	
+			IF Select( cDbfLog ) > 0
+				DbSelectArea( cDbfLog )
+				If !Eof()
+					cDtHrProc := AllTrim(Substr( (cDbfLog)->CHAVE, 1)) + " Hrs"
+//					cMsgLog := OemToAnsi( STR0052 ) + " " + cDtHrProc + " " + OemToAnsi(STR0053) + CRLF // "O processamento realizado em:" ## "n?o foi conclu??do com Sucesso."
+//					cMsgLog += OemToAnsi( STR0054 ) + CRLF + CRLF // "Os ?¦ltimos funcion??rios processados foram: "
+		
+//					cMsgLog += Substr(OemToAnsi( STR0055 )	+ Space(5),1,16) // "Requisicao"
+//					cMsgLog += Substr(OemToAnsi( STR0056 )	+ Space(5),1,12) // "Filial"
+//					cMsgLog += Substr(OemToAnsi( STR0057 )	+ Space(5),1,15) // "Matricula"
+//					cMsgLog += OemToAnsi( STR0058 )	+ CRLF					  // "Nome"
+					cMsgLog += Replicate( "-", 75 ) + CRLF 
+					While (cDbfLog)->(!Eof())
+						If (cDbfLog)->CONTROL = '1'
+							cMsgLog += (cDbfLog)->REQUIS + Space(8)
+							If !Empty((cDbfLog)->MAT)
+								cMsgLog += (cDbfLog)->FILIAL + Space(10)
+								cMsgLog += (cDbfLog)->MAT + Space(9)
+								cMsgLog += Substr((cDbfLog)->NOME,1,36) + CRLF
+							Else
+//								cMsgLog += OemToAnsi( STR0060 ) + CRLF // "Nenhum Funcion??rio Processado nessa Requisi??o"
+							EndIf
+						EndIf
+						(cDbfLog)->( Dbskip() )
+					EndDo
+//					cMsgLog += CRLF + CRLF + OemToAnsi( STR0059 ) // "Deseja Continuar com o Calculo?"
+/*					If MsgYesNo(cMsgLog, OemToAnsi( STR0016 ) ) //"Aten??o"			
+						cQuery := " DELETE FROM "
+						cQuery += " "+ cNameFile
+						TcSqlExec( cQuery )
+					Else
+					 	Return
+					EndIf
+*/				EndIf
+			EndIf
+		EndIf
+	#ENDIF
+	
+	//?¦???????????????????????????????????????????????????????????????
+	//3 Procura primeiro funcionario								 3
+	//?????????????????????????????????????????????????????????????????¦
+	dbSelectArea( "SRA" )
+	If nOrdem = 1
+		dbSetOrder( 1 )
+		dbSeek( cFilDe + cMatrDe , .T. )
+	Elseif nOrdem = 2
+		dbSetOrder( 2 )
+		dbSeek( cFilDe + cCcDe + cMatrDe , .T. )
+	Endif
+	
+	dbSelectArea( "SRA" )
+	cFilAnte := Replicate("!", FWSizeFilial())
+	
+	/*
+	?¦???????????????????????????????????????????????????????????????
+	3 Procura primeiro funcionario								   3
+	?????????????????????????????????????????????????????????????????¦*/
+	cAliasSRA := "SRA"
+	#IFDEF TOP
+		If !ExeInAs400()
+			cAliasSRA 	:= "QSRA"
+			If ( Select( cAliasSRA ) > 0 )
+				( cAliasSRA )->( dbCloseArea() )
+			EndIf 
+			cCposQuery 	:= "%SRA.RA_FILIAL, SRA.RA_MAT, SRA.RA_CC, SRA.RA_CIC%"
+			cCatQuery   := "%"
+			For nReg:=1 to Len(cCateg) 
+				If Subs(cCateg,nReg,1) # "*" .and. Subs(cCateg,nReg,1) # " "
+					aadd(acateg,Subs(cCateg,nReg,1))
+				Endif
+				cCatQuery += "'"+Subs(cCateg,nReg,1)+"'"
+	
+				If ( nReg+1 ) <= Len(cCateg)
+					cCatQuery += "," 
+				Endif
+	
+			Next nReg
+			cCatQuery += "%"
+			
+			cIniDemis := CTOD("01/" + StrZero(Month(dDataBase),2) + "/" + Str(Year(dDataBase),4))
+			cFimDemis := DTOS(CTOD(StrZero(Last_Day(cIniDemis),2)+"/"+StrZero(Month(dDataBase),2) + "/" + Str(Year(dDataBase),4)))
+			cIniDemis := DTOS(cIniDemis)
+			
+			cDemitido := "%(SRA.RA_SITFOLH = 'D' AND (SRA.RA_DEMISSA = '' OR SRA.RA_DEMISSA >= '" + cIniDemis + "' ))%"
+			
+			cFimDemis := "%'" + cFimDemis + "'%"
+			cIniDemis := "%'" + cIniDemis + "'%"
+	
+	
+			cCalcAut  := "INNER JOIN "+ RetSqlName("SRC") + " SRC "
+		    cCalcAut  += "ON  SRA.RA_FILIAL = SRC.RC_FILIAL AND SRA.RA_MAT = SRC.RC_MAT AND SRC.D_E_L_E_T_  = ' ' " 
+	
+			If lAutMovSRC .and. (Len(aCateg) == 1 .and. ( Ascan(acateg,{|X| X=="A"}) > 0 ) )
+			    cCalcAut := "%" + cCalcAut + "%"
+		    else
+			    cCalcAut := "%%"	    
+		    EndIf
+	
+			//Sempre que alterar esta query, a query abaixo (count), tb devera ser alterada.
+			BeginSql alias cAliasSRA
+				SELECT %exp:cCposQuery%
+				FROM %table:SRA% SRA
+				%Exp:cCalcAut%  	
+				WHERE  SRA.RA_FILIAL BETWEEN %exp:cFilDe% AND %exp:cFilAte% 
+					   AND SRA.RA_MAT BETWEEN %exp:cMatrDe% AND %exp:cMatrAte%
+					   AND SRA.RA_CC BETWEEN %exp:cCCDe% AND %exp:cCCAte% 
+					   AND SRA.RA_CATFUNC IN (%exp:Upper(cCatQuery)%) 
+					   AND (SRA.RA_SITFOLH <> 'D' OR %exp:cDemitido%)
+	   				   AND SRA.%notDel%
+				UNION 		 	
+				SELECT %exp:cCposQuery%
+				FROM %table:SRA% SRA, %table:SRG% SRG
+				WHERE  SRA.RA_FILIAL BETWEEN %exp:cFilDe% AND %exp:cFilAte% 
+					   AND SRA.RA_MAT BETWEEN %exp:cMatrDe% AND %exp:cMatrAte%
+					   AND SRA.RA_CC BETWEEN %exp:cCCDe% AND %exp:cCCAte% 
+					   AND SRA.RA_CATFUNC IN (%exp:Upper(cCatQuery)%) 
+	   				   AND SRA.%notDel%
+					   AND SRG.RG_FILIAL = SRA.RA_FILIAL 
+					   AND SRG.RG_MAT = SRA.RA_MAT
+					   AND (SRA.RA_SITFOLH = 'D' AND SRG.RG_DTGERAR BETWEEN %exp:cIniDemis% AND %exp:cFimDemis%)
+					   AND SRG.%notDel%
+				ORDER BY 1,2 
+			EndSql
+	
+			If !lGrid
+				cQry := getlastquery()[2]
+				cQry := "%(" + Substr( cQry, 1, At( "ORDER BY ", cQry )-1 ) + ")" 
+				If ( AllTrim( Upper( TcGetDb() ) ) <> 'ORACLE' )
+					cQry += " AS NROREG%"
+				Else
+				    cQry += "%"
+				EndIf             
+	
+				//Sempre que alterar a query acima, esta query tb devera ser ajustada.			
+				//Query para retornar a quantidade de registros que devem ser calculadas para regua
+				
+				BeginSql alias cAliasTMP
+				SELECT COUNT(*) as NROREG 
+				FROM %table:SRA% SRA
+				%Exp:cCalcAut%  	
+				WHERE  SRA.RA_FILIAL BETWEEN %exp:cFilDe% AND %exp:cFilAte% 
+					   AND SRA.RA_MAT BETWEEN %exp:cMatrDe% AND %exp:cMatrAte%
+					   AND SRA.RA_CC BETWEEN %exp:cCCDe% AND %exp:cCCAte% 
+					   AND SRA.RA_CATFUNC IN (%exp:Upper(cCatQuery)%) 
+					   AND (SRA.RA_SITFOLH <> 'D' OR %exp:cDemitido%)
+	   				   AND SRA.%notDel%
+				UNION 		 	
+				SELECT COUNT(*) as NROREG
+				FROM %table:SRA% SRA, %table:SRG% SRG
+				WHERE  SRA.RA_FILIAL BETWEEN %exp:cFilDe% AND %exp:cFilAte% 
+					   AND SRA.RA_MAT BETWEEN %exp:cMatrDe% AND %exp:cMatrAte%
+					   AND SRA.RA_CC BETWEEN %exp:cCCDe% AND %exp:cCCAte% 
+					   AND SRA.RA_CATFUNC IN (%exp:Upper(cCatQuery)%) 
+	   				   AND SRA.%notDel%
+					   AND SRG.RG_FILIAL = SRA.RA_FILIAL 
+					   AND SRG.RG_MAT = SRA.RA_MAT
+					   AND (SRA.RA_SITFOLH = 'D' AND SRG.RG_DTGERAR BETWEEN %exp:cIniDemis% AND %exp:cFimDemis%)
+					   AND SRG.%notDel%
+				EndSql
+	
+				While (cAliasTMP)->( !Eof() )
+					nRegProc += (cAliasTMP)->(NROREG)
+				dbskip()
+				Enddo        
+				( cAliasTMP )->( dbCloseArea() )
+				
+			EndIf
+	
+			/*
+			?¦???????????????????????????????????????????????????????????????
+			3 Os funcionarios que possuem Dissidio Retroativo devem estar  3
+			3 na mesma Thread para evitar erros nos calculos. Por exemplo  3
+			3 estar calculando as duas matriculas do mesmo CPF ao mesmo te-3
+			3 mpo. 														   3
+			?????????????????????????????????????????????????????????????????¦*/
+		    cQry := "%%"
+			If ( AllTrim( Upper( TcGetDb() ) ) <> 'ORACLE' )
+				cQry := "%AS SRA2%"
+			EndIf
+			
+			cAliasIRMV 	:= "QIRMV"
+			BeginSql alias cAliasIRMV
+				SELECT RA_CIC 
+		 				FROM %table:SRA% SRA
+	 					%Exp:cCalcAut%  	
+						WHERE  SRA.RA_FILIAL BETWEEN %exp:cFilDe% AND %exp:cFilAte% 
+							   AND SRA.RA_MAT BETWEEN %exp:cMatrDe% AND %exp:cMatrAte%
+							   AND SRA.RA_CC BETWEEN %exp:cCCDe% AND %exp:cCCAte% 
+							   AND SRA.RA_CATFUNC IN (%exp:Upper(cCatQuery)%) 
+			   				   AND SRA.%notDel%
+				GROUP BY RA_CIC HAVING COUNT(*) > 1
+				ORDER BY 1
+			EndSql
+			
+			// Gerar array de Multi-IR para utilizar no While //
+			While (cAliasIRMV)->( !Eof() )
+				aAdd( aIRMV, {(cAliasIRMV)->(RA_CIC) } )
+				(cAliasIRMV)->( DbSkip() )
+			EndDo
+			If Len(aIRMV) > 0
+				lFindIRMV := .T.
+			EndIf
+			( cAliasIRMV )->( dbCloseArea() )
+		EndIf
+	#ELSE
+		nRegProc := (cAliasSRA)->(RecCount())
+	#ENDIF 
+	
+
+	If lVersao101
+		If  ! lRecalc     
+//			oSelf:SaveLog( "Simulação do Cálculo da Folha de Pagamento - Inicio do processamento") //"Calculo da Folha de Pagamento"##"Inicio do processamento"
+		EndIf	
+	EndIf
+
+		
+	Begin Sequence
+	
+		While (cAliasSRA)->(!Eof())
+		
+			/*
+			?¦???????????????????????????????????????????????????????????????
+			3 Posiciona na tabela SRA - Fisica                    	 	   3
+			?????????????????????????????????????????????????????????????????¦*/
+		    #IFDEF TOP
+				DbSelectArea( "SRA" )
+				DbSetOrder( RetOrder( "SRA", "RA_FILIAL+RA_MAT" ))
+				DbSeek( (cAliasSRA)->(RA_FILIAL+RA_MAT),.F.)
+			#ENDIF
+	
+			//?¦???????????????????????????????????????????????????????????????
+			//3 Aborta o Calculo                                  	 	     3
+			//?????????????????????????????????????????????????????????????????¦
+			If lVersao101 .and. !lGrid
+				If oSelf:lEnd 
+					Break
+				EndIf
+			Else
+				If lAbortPrint
+					Break
+				Endif
+	        EndIf
+			//?¦???????????????????????????????????????????????????????????????
+			//3 Consiste o De / Ate 										 3
+			//?????????????????????????????????????????????????????????????????¦
+			IF nOrdem = 1		// Matricula
+				If Eof() .Or. ( SRA->RA_FILIAL + SRA->RA_MAT > cFilAte + cMatrAte )
+					Exit
+				Endif
+			ElseIf nOrdem = 2	// Centro de custo
+				If Eof() .Or. ( SRA->RA_FILIAL + SRA->RA_CC + SRA->RA_MAT > cFilAte + cCcAte + cMatrAte)
+					Exit
+				Endif
+			Endif
+	
+			If lRecalc
+				If cSindicato # '99' .and. SRA->RA_SINDICA # cSindicato 
+					dbSelectArea( cAliasSRA )
+					dbSkip()
+					Loop
+	    		EndIf 
+	
+				//?¦???????????????????????????????????????????????????????????????
+				//3 Consiste o De / Ate 										 3
+				//?????????????????????????????????????????????????????????????????¦
+	    		If (SRA->RA_CC < cCcDe .or. SRA->RA_CC > cCCAte ) .or. ; 
+					(SRA->RA_NOME < cNomeDe .or. SRA->RA_NOME > cNomeAte ) .or. ;  
+					!( SRA->RA_SITFOLH $ cSituacao )  
+					dbSelectArea(cAliasSRA)
+					dbSkip()
+					Loop
+				EndIf
+				
+	    	EndIf	
+			
+			IF !lDissidio
+				//?- Verifica se o calculo esta Liberado
+				If !fVldAccess( SRA->RA_FILIAL, Stod(cFolMes+"01"), cSemana, lAvisoBlq, cRoteiro,"2" )
+				   lAvisoBlq := .F.
+					dbSelectArea(cAliasSRA)
+					dbSkip()
+					Loop
+				EndIf
+			EndIf			
+			
+			/*
+			?¦????????????????????????????????????????????????????????????????????????
+			3Consiste Filiais e Acessos                                             3
+			??????????????????????????????????????????????????????????????????????????¦*/
+			IF !( SRA->RA_FILIAL $ fValidFil() ) .or. !Eval( cAcessaSRA )
+				dbSelectArea(cAliasSRA)
+				dbSkip()
+				Loop
+			EndIF
+			
+			//?¦???????????????????????????????????????????????????????????????
+			//3 Verifica se categoria esta selecionada para calculo		 	 3
+			//?????????????????????????????????????????????????????????????????¦
+			If !(SRA->RA_CATFUNC$ cCateg)
+				dbSelectArea(cAliasSRA)
+				dbSkip()
+				Loop
+			Endif
+			
+			dAdmissao:= SRA->RA_ADMISSA
+			cSitFolh := fBuscaSituacao(SRA->RA_FILIAL,SRA->RA_MAT,dDataBase,@dAdmissao)
+	
+			//?¦???????????????????????????????????????????????????????????????
+			//3 Verifica se funcionario e excluido ou Transferido			 3
+			//?????????????????????????????????????????????????????????????????¦
+			If cSitFolh $ "T" .Or. dDatabase  < dAdmissao
+				dbSelectArea(cAliasSRA)
+				dbSkip()
+				Loop
+			Endif
+			
+			//Verifica se funcionario foi Transferido (Brasil)
+			If cPaisLoc == "BRA"
+				If cSitFolh $ "D" .AND. SRA->RA_RESCRAI $ "30/31"
+					dbSelectArea(cAliasSRA)
+					dbSkip()
+					Loop
+				EndIf	
+			EndIf                        
+			
+			//?¦???????????????????????????????????????????????????????????????
+			//3 N?o deve calcular folha para funcion?rios demitidos em meses 3
+			//3 anteriores ?? data base. 									 3
+			//?????????????????????????????????????????????????????????????????¦
+			dbSelectArea( "SRG" )
+			If dbSeek( SRA->RA_FILIAL + SRA->RA_MAT )
+				lDemAnt := .F.
+				nNExec  := 0
+				If cSitFolh == "D"
+					while SRG->( ! Eof() ) .and. SRG->RG_FILIAL == SRA->RA_FILIAL .and. SRG->RG_MAT == SRA->RA_MAT
+	
+						//?¦???????????????????????????????????????????????????????????????????????????
+						//3 A Data da Geracao pode ser diferente da Data Base, mas se o Mes e Ano da 3
+						//3 Data de Demissao do funcionario for IGUAL ao Mes e Ano ABERTO (cFolMes), 3
+						//3 este funcionario DEVE entrar na folha, pois caracteriza uma demissao	 3
+						//3 "programada" para o mes/ano aberto com data de gravacao anterior a mesma.3
+						//?????????????????????????????????????????????????????????????????????????????¦
+						//Recis?o Simples
+						If MesAno(SRG->RG_DTGERAR) # MesAno(dDataBase) .and. MesAno(SRG->RG_DATADEM) < cFolMes
+							lDemAnt := .T.
+						Endif 
+						//Recis?o Complementar
+						If (nNExec >= 1) .And. (MesAno(SRG->RG_DTGERAR) == cFolMes .and. MesAno(SRG->RG_DATADEM) <= cFolMes)
+							lDemAnt := .F.
+						EndIf
+						
+						nNExec++
+						SRG->( dbSkip() )
+					EndDo
+				Endif 
+				if lDemAnt
+					dbSelectArea( cAliasSRA )
+					dbSkip()
+					Loop
+				Endif
+			Endif 
+			
+			dbSelectArea( cAliasSRA )
+
+			//?¦???????????????????????????????????????????????????????????????
+			//3 N?o calcular para funcion?rios que recebem semanalmente caso 3
+			//3 a semana informada for igual a brancos. 					 3
+			//??????????????????	???????????????????????????????????????????????¦
+			If cRoteiro == "FOL" 
+				If  ( Empty(cSemana) .And. SRA->RA_TIPOPGT = "S" ) .Or. ;
+					( ! Empty(cSemana) .And. SRA->RA_TIPOPGT # "S" )
+					(cAliasSRA)->( dbSkip() ) 
+					Loop 
+				Endif	
+			Endif
+	
+			//?¦???????????????????????????????????????????????????????????????
+			//3 Movimenta cursor para movimentacao da barra 				 3
+			//?????????????????????????????????????????????????????????????????¦
+			If !lGrid
+
+//				If cRoteiro == "FOL" 
+//					oSelf:IncRegua1("Calculo do funcionário: "+cNomeFun)
+//				EndIf			
+
+				// Limpar tabela SRC para o funcionário em questão pois pode ocorrer erro de chave duplicada.
+
+				MaxSRD(SRA->RA_MAT) //busca data maxima da SRD				
+
+				fLimpSRC(SRA->RA_MAT,'1')
+				If SRA->RA_CATFUNC $ cCategEspecial
+				//Criar verba de salário que deve ser informada manualmente na SRC para que os demais calculos sejam feitos
+					
+					fCriaSRC(SRA->RA_MAT,nLinha, aParametros)				
+
+				EndIf
+				// Executa o Calculo  								         	
+				nRetCalc := ExecCalc(SRA->RA_FILIAL,cRoteiro,dDataBase,dDt_Pgto) 
+	
+				//--Retorno 3 deve abortar o calculo 
+				If nRetCalc = 3 
+					Exit
+				ElseIf nRetCalc = 2 // Despreza o funcionario
+					If cRoteiro == "ADI" // Se adiantamento, executa gravacao para deletar SRC
+						GravaCalc()
+					EndIf
+				Endif
+			Else
+				// Tratamento para IR Multiplos vinculos //
+				nPos := 0
+				If lFindIRMV
+					nPos := aScan( aIRMV, { |x| x[1] = SRA->RA_CIC } )
+				EndIf
+				
+				If nPos == 0 
+					//?¦???????????????????????????????????????????????????????????????
+					//3 Itens a Processar no GRID							       	 3
+					//?????????????????????????????????????????????????????????????????¦
+					If nCountReg == 0 .Or. nCountReg >= nLoteGrid
+						Aadd(aCall, {} )
+						MsProcTxt( OemToAnsi("Numero de Requisições Geradas: ") + " " + Strzero(Len(aCall),6) ) // "Numero de Requisi??es Geradas: "
+						nRegGrid++
+						nCountReg := 0
+					EndIf
+					nCountReg++
+					Aadd(aCall[nRegGrid], {nRegGrid, SRA->RA_FILIAL, SRA->RA_MAT,dAdmissao,cSitFolh } )
+				Else
+					aAdd( aIRMV[ nPos ], {0, SRA->RA_FILIAL, SRA->RA_MAT,dAdmissao,cSitFolh} )
+				EndIf
+			EndIf
+	
+			dbSelectArea( cAliasSRA )
+			dbSkip()
+		Enddo
+	
+		// Transferir do Array de IRMV para o Array de Calculo do GRID (aCall) //
+		#IFDEF TOP
+			If lGrid .and. lFindIRMV
+				nCountReg := 0
+				For nX := 1 To Len( aIRMV )
+					If Len( aIRMV[nX] ) == 1 	// Nao possui funcionarios de IRMV para calculo
+						Loop
+					EndIf
+	
+					// Tratamento para o Numero de Funcionarios com o mesmo CPF //
+					If nCountReg == 0 .Or. nCountReg >= nLoteGrid .Or. ( (Len(aIRMV[nX])-1) + nCountReg) >= nLoteGrid
+						Aadd(aCall, {} )
+						nRegGrid++
+						nCountReg := 0
+					EndIf
+					For nY := 2 To Len( aIRMV[nX] )
+						nCountReg++
+						aIRMV[nX, nY,1] := nRegGrid
+						Aadd(aCall[nRegGrid], aIRMV[nX, nY] )
+					Next nY
+				Next nX
+			EndIf
+			If !ExeInAs400()
+				If ( Select( cAliasSRA ) > 0 )
+					( cAliasSRA )->( dbCloseArea() )
+				EndIf
+			EndIf
+			
+		#ENDIF	
+	
+	End Sequence
+	
+	//?¦???????????????????????????????????????????????????????????????
+	//3 Ponto de Entrada para apresentar LOG de ocorrencias da folha |
+	//?????????????????????????????????????????????????????????????????¦
+	If ExistBlock("VERLOGFL")
+		ExecBlock("VERLOGFL",.F.,.F.)
+	ElseIf FindFunction("VERLOGFL")
+		VerLogFl()
+	Endif
+	
+	c__Roteiro := "   "
+	
+	If cPaisLoc  <> "BRA"
+		//Limpa as vari??veis STATIC usadas na folha localizada
+		LocSetNil()
+	Endif
+	//--Elimina arquivo temporario
+	If !lGrid
+		TRP->(dbCloseArea())
+		fErase(cArqNtx + OrdBagExt())
+		fErase(cArqDbf + GetDBExtension())
+	Endif
+	
+	//?¦???????????????????????????????????????????????????????????????
+	//3 Seleciona arq. defaut do Siga caso Imp. Mov. Anteriores      3
+	//?????????????????????????????????????????????????????????????????¦
+	If lRecalc .and. !lGrid
+		If !Empty( cAliasRC )
+			fFimArqMov( cAliasRC , aOrdBagRC , cArqMovRC )
+		EndIf
+	EndIf	
+
+	ftranstb(SRA->RA_MAT) //add itens calculados na SRC ao array para retorno
+	BuscaSRD(SRA->RA_MAT, nLinha, aParametros)
+Return
+
+
+/*/f/
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+<Descricao> :  Funçao para transportar os registros da tabela SRC para a tabela customizada
+<Autor> : Fábrica DOIT MG
+<Data> : 31/07/2014
+<Parametros> : Nil
+<Retorno> : Nil
+<Processo> : FIEMT – Planejamento Orçamentário Folha 
+<Tipo> Menu
+<Obs> : 
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+*/
+Static Function ftranstb(cMatricula)
+
+	Local aArea 	:= GetArea()
+   Local aVerbas 	:= {} 
+   Local cTipCod	:= ""
+   Local cCtaDB	:= ""
+   Local cCtaCR	:= "" 
+   Local lBPlj, lPPlj, lDPlj, lCad	//Variaveis para indicar se as verbas são Base, Provento ou Desconto que devem aparecer no Planejamento PCO  
+   Local nPosDt
+   
+	dbSelectArea("SRC")
+	SRC->(dbSetOrder(RetOrder("SRC","RC_FILIAL+RC_MAT")))
+	If SRC->(dbSeek(xFilial("SRC")+cMatricula))
+			While !SRC->(eof()) .And. AllTrim(SRC->RC_MAT) == Alltrim(cMatricula)
+			//add registros no array de retorno para tela de Planejamento         
+/*
+				cTipCod 	:= Posicione("SRV",1,xFilial("SRV")+SRC->RC_PD,"RV_TIPOCOD")
+				cCtaDB	:= SubStr(Posicione("SRV",1,xFilial("SRV")+SRC->RC_PD,"RV_XCTADEB"),1,1)
+				cCtaCR	:= SubStr(Posicione("SRV",1,xFilial("SRV")+SRC->RC_PD,"RV_XCTACRD"),1,1)
+
+				lPPlj 	:= (cTipCod == '1' .AND. cCtaDB >= '3' )
+				lDPlj 	:= (cTipCod == '2' .AND. cCtaCR >= '3' )
+				lBPlj		:= (cTipCod == '3' .AND. (cCtaDB >= '3' .OR. cCtaCR >= '3'))
+				
+				iF  lBPlj .Or. lPPlj .Or. lDPlj
+*/
+				lCad := Posicione("SRV",1,xFilial("SRV")+SRC->RC_PD,"RV_GERAPCO") == 'S'
+				If lCad
+					Aadd(aVerbas,SRC->RC_PD)
+					Aadd(aVerbas,SRC->RC_TIPO1)
+					Aadd(aVerbas,SRC->RC_VALOR)
+					Aadd(aVerbas,SRC->RC_CC)
+					Aadd(aVerbas,SRC->RC_ITEM)    
+					
+	            nPosDt := ascan(aReturn,{|x| substr(dtos(x[3]),1,6) == substr(dtos(SRC->RC_DATA),1,6)})
+	
+					If ( nPosDt > 0) //já existe registro para o mês informado então preencher array com as verbas
+						aadd(aReturn[nPosDt][4],aVerbas)
+					Else
+						aadd(aReturn,{SRC->RC_FILIAL,SRC->RC_MAT,SRC->RC_DATA,{aVerbas}})					
+					EndIf                     
+			      aVerbas:= {}
+			  EndIf
+			SRC->(dbSkip())
+		EndDo
+	EndIf
+
+	RestArea(aArea)
+	
+Return()
+
+/*/f/
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+<Descricao> :  Função para limpar a tabela SRC com as matriculas selecionadas (funcionarios modelos)
+<Autor> : Fábrica DOIT MG
+<Data> : 31/07/2014
+<Parametros> : Nil
+<Retorno> : Nil
+<Processo> : FIEMT – Planejamento Orçamentário Folha 
+<Tipo> Menu
+<Obs> : 
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+*/
+Static Function fLimpSRC(cMatricula,cTipo)
+
+	Local aAreaL 	:= GetArea()
+		
+	if cTipo == "1" //Deleta registros fisicamente após execução dos cálculos
+		cQuery := " DELETE FROM "+RetSqlName("SRC")+" RC"
+		cQuery += "	WHERE RC_MAT = '"+cMatricula+"' "
+		cQuery += "	AND RC.D_E_L_E_T_ <> '*' "	
+		
+		TcSqlExec( cQuery )
+	Else //Deleta registros DELETE = '*' para os registros existentes antes do cálculo
+	
+		iF SRC->(dbSeek(cFilAnt+cMatricula))
+			While !(SRC->(Eof())) .AND. SRC->RC_FILIAL == cFilAnt .AND. AllTrim(SRC->RC_MAT) == AllTrim(cMatricula)
+				Aadd(aRecnos,SRC->(RECNO()))
+				Reclock("SRC",.F.)
+					dbDelete()				
+				MsUnlock()
+				
+				SRC->(dbSkip())
+			EndDo
+		EndIf	
+	EndIf
+
+	RestArea(aAreaL)
+	
+Return()
+
+/*/f/
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+<Descricao> :  Função responsável por alterar o salário do funcionário antes da execução
+<Autor> : Fábrica DOIT MG
+<Data> : 08/08/2014
+<Parametros> : Nil
+<Retorno> : Nil
+<Processo> : FIEMT – Planejamento Orçamentário Folha 
+<Tipo> Menu
+<Obs> : 
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+*/
+Static Function fAltSRA(cMatricula,nSalFunc,nTipo)
+
+	Local aAreaSRA	:= GetArea()
+
+	dbSelectArea("SRA")
+	dbSetOrder(1)
+	iF SRA->(dbSeek(xFilial("SRA")+cMatricula))
+//		If	 nTipo == 1
+//			nSalAnt := SRA->RA_SALARIO
+//		EndIf
+		RecLock("SRA",.F.)
+			SRA->RA_SALARIO := nSalFunc
+		MsUnlock()
+	
+	EndIf
+	RestArea(aAreaSRA)
+Return()
+/*/f/
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+<Descricao> :  Função responsável pela criacao da pergunta
+<Autor> : Fábrica DOIT MG
+<Data> : 31/07/2014
+<Parametros> : Nil
+<Retorno> : Nil
+<Processo> : FIEMT – Planejamento Orçamentário Folha 
+<Tipo> Menu
+<Obs> : 
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+*/
+Static Function fCriaSx1()
+
+	u_SFPUTSX1( cPerg, '01','Data de?'				,'Data de?'				,'Data de?'	 				,'mv_ch1','D',8 ,0,0,'G','NaoVazio() .and. U_fValDat(1)'	,''		,'','','mv_par01','','','','','','','','','','','','','','','','', '', '', '')
+	u_SFPUTSX1( cPerg, '02','Data ate?'				,'Data ate?'			,'Data ate?'				,'mv_ch2','D',8 ,0,0,'G','NaoVazio().and. U_fValDat(2)' 	,''		,'','','mv_par02','','','','','','','','','','','','','','','','', '', '', '')
+	u_SFPUTSX1( cPerg, '03','Salário'					,'Salário'				,'Salário'					,'mv_ch3','N',14,3,0,'G','AllwaysTrue()'						,''		,'','','mv_par03','','','','','','','','','','','','','','','','', '', '', '')
+	u_SFPUTSX1( cPerg, '04','Demiss Prev.?'			,'Demiss Prev.?'		,'Demiss Prev.?'			,'mv_ch4','D',8 ,0,0,'G','U_fValDat(3)'  						,''		,'','','mv_par04','','','','','','','','','','','','','','','','', '', '', '')
+
+	dbSelectArea("SX1")
+	If SX1->(dbSeek(cPerg+'03'))
+		RecLock("SX1",.F.)
+			SX1->X1_PICTURE := "@E 999,999,999.999"
+		MsUnlock()
+	EndIf
+Return
+
+User Function fValDat(nTipo)
+  
+	Local lRet := .F.
+	
+	If nTipo == 1
+		lRet := ((mv_par01 >= ZD8->ZD8_DTINIC) .And. (mv_par01 <= ZD8->ZD8_DTFINA))
+		If !lRet
+			MsgAlert("Data deve estar entre "+DTOC(ZD8->ZD8_DTINIC)+" e "+DTOC(ZD8->ZD8_DTFINA)+" !!!")
+		EndIf
+	Elseif nTipo == 2
+		lRet := ((mv_par02 >= mv_par01) .And. (mv_par02 >= ZD8->ZD8_DTINIC) .And. (mv_par02<=ZD8->ZD8_DTFINA))
+		If !lRet
+			MsgAlert("Data deve estar entre "+DTOC(mv_par01)+" e "+DTOC(ZD8->ZD8_DTFINA)+" !!!")
+		EndIf
+	Else
+		lRet := ((mv_par04 >= mv_par01) .And. (mv_par04 <= mv_par02)) .Or. Empty(mv_par04)
+		If !lRet
+			MsgAlert("Data deve estar entre "+DTOC(mv_par01)+" e "+DTOC(mv_par02)+" !!!")
+		EndIf
+	EndIf
+   
+Return(lRet)
+
+Static Function RECALDEL()
+
+	Local nRecs
+	DbSelectArea("SRC")
+//	SRC->(dbSetOrder(1))
+	SET DELETED OFF          //exibir os registro removidos
+	SRC->(DbgoTop())
+	For nRecs := 1 To Len(aRecnos)
+		SRC->(dbGoTo(aRecnos[nRecs]))
+		If !(SRC->(EOF()))
+		   IF SRC->(DELETED())           //se o registro foi marcado para deleção
+		       RecLock("SRC",.F.)
+			       DBRECALL()                //restaura os registro removidos
+		       MsUnLock()
+		   EndIf
+		EndIf
+	Next nRecs
+
+	SET DELETED ON     //oculta os registro removidos da tabela DA1
+	SRC->(DBGOTOP())
+
+Return()
+
+Static Function fCriaSRC(cMatricula,nLinha,aParametros)
+
+	Local aAreaSRC := GetArea()
+
+	RecLock("SRC",.T.)
+		SRC->RC_FILIAL	:= aParametros[nLinha][02]
+		SRC->RC_MAT		:= SRA->RA_MAT
+		SRC->RC_PD 		:= '113'
+		SRC->RC_TIPO1	:= 'V'
+		SRC->RC_VALOR	:= Iif (nSalFunc > 0,nSalFunc,Posicione("SRD",1,aParametros[nLinha][02]+SRA->RA_MAT+cDtSRD+'113',"RD_VALOR") )
+		SRC->RC_DATA	:= dDt_Pgto
+		SRC->RC_CC		:= aParametros[nLinha][14]
+		SRC->RC_ITEM	:= aParametros[nLinha][15]
+		SRC->RC_TIPO2 	:= 'I'
+	MsUnlock()
+	
+	RestArea(aAreaSRC)
+Return()
+
+Static Function BuscaSRD(cMatricula, nLinha, aParametros)
+
+//	Local cQrySRD
+//	Local cAliasRD	:= GetNextAlias()
+//	Local cDtSRD	:= ""
+	Local cAlias2	:= GetNextAlias()	
+	Local cQryRD 	:= ""
+   Local cVrbSRD 	:= SuperGetMV("FS_VRBSRD", , "'432','439','446','449','450','453','491','492','497','498','757','761','763','764','776'")
+	Local aVrbSRD	:= {}
+	Local nPosDT
+/*
+	cQrySRD := " SELECT MAX(RD_DATARQ) AS RD_DATARQ"
+	cQrySRD += " FROM "+RetSqlName("SRD")+" SRD "
+	cQrySRD += " WHERE SRD.D_E_L_E_T_ <> '*' "
+	cQrySRD += " 	AND RD_MAT = '"+cMatricula+"' "
+
+	dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQrySRD),cAliasRD,.T.,.F.)
+	
+	DBSelectArea(cAliasRD)
+	(cAliasRD)->(DbGoTop())
+
+	If (cAliasRD)->(!EOF()) 
+		cDtSRD := (cAliasRD)->RD_DATARQ
+	EndIf
+	
+	(cAliasRD)->(dbCloseArea())	
+*/
+	
+	cQryRD := " SELECT * "
+	cQryRD += "	FROM "+RetSqlName("SRD")+" SRD "
+	cQryRD += "	WHERE SRD.D_E_L_E_T_ <> '*' "
+	cQryRD += "		AND RD_FILIAL = '"+aParametros[nLinha][02]+"' "	
+	cQryRD += "		AND RD_MAT = '"+cMatricula+"' "
+	cQryRD += "		AND RD_DATARQ = '"+cDtSRD+"' "
+	cQryRD += "		AND RD_PD IN ("+cVrbSRD+") "
+	cQryRD += "	ORDER BY RD_PD "
+
+	dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQryRD),cAlias2,.T.,.F.)
+	
+	DBSelectArea(cAlias2)
+	(cAlias2)->(DbGoTop())
+
+	While (cAlias2)->(!EOF()) 
+
+		If EMPTY(Posicione("SRC",1,aParametros[nLinha][02]+cMatricula+(cAlias2)->RD_PD,"RC_PD")) // Só irá add se não tiver gerado na SRC
+
+			Aadd(aVrbSRD,(cAlias2)->RD_PD)
+			Aadd(aVrbSRD,(cAlias2)->RD_TIPO1)
+			Aadd(aVrbSRD,(cAlias2)->RD_VALOR)
+			Aadd(aVrbSRD,(cAlias2)->RD_CC)
+			Aadd(aVrbSRD,(cAlias2)->RD_ITEM)    
+			
+//			nPosDt := ascan(aReturn,{|x| substr(dtos(x[3]),1,6) == substr(dtos((cAlias2)->RC_DATA),1,6)})
+	
+//			If ( nPosDt > 0) //já existe registro para o mês informado então preencher array com as verbas
+				aadd(aReturn[Len(aReturn)][4],aVrbSRD)
+//				ASort(aReturn[Len(aReturn)][4])
+//			Else
+//				aadd(aReturn,{(cAlias2)->RD_FILIAL,(cAlias2)->RD_MAT,SRC->RC_DATA,{aVrbSRD}})
+//			EndIf                     
+	      aVrbSRD := {}
+
+		EndIf
+			
+		(cAlias2)->(dbSkip())
+	EndDo
+
+	(cAlias2)->(dbCloseArea())	
+	
+Return()
+
+Static Function fGrvZDA(aInfo)
+
+/*
+aInfo [1] = ZDA_FUNCIO
+aInfo [2] = ZDA_DFUNCI
+aInfo [3] = ZDA_CTCUST
+aInfo [4] = ZDA_ITCONT
+aInfo [5] = ZDA_KEYFUN
+aInfo [6] = ZDA_FILIAL
+aInfo [7] = ZDA_RATEIO
+aInfo [8] = ZDA_PRCRAT
+*/
+	Local nIndZDA		:= RetOrder("ZDA","ZDA_FILIAL+ZDA_CODIGO+ZDA_VERSAO+ZDA_TIPO+ZDA_CTCUST+ZDA_ITCONT+ZDA_FUNCIO+ZDA_KEYFUN+ZDA_CVERBA+ZDA_DATA")
+	Local nZ1, nZ2, nCont2
+	Local cQryDel		:= ""
+
+	cQryDel := " DELETE FROM "+RetSqlName("ZDA")
+	cQryDel += " WHERE ZDA_CODIGO='"+ZD8->ZD8_CODIGO+"' AND ZDA_VERSAO ='"+ZD8->ZD8_VERSAO+"' "	
+	cQryDel += " 	AND ZDA_TIPO = '3' "
+	cQryDel += " 	AND ZDA_FILIAL||ZDA_CTCUST||ZDA_ITCONT||ZDA_FUNCIO||ZDA_KEYFUN LIKE '"+AllTrim(aInfo[len(aInfo)][6]+aInfo[len(aInfo)][3]+aInfo[len(aInfo)][4]+aInfo[len(aInfo)][1]+aInfo[len(aInfo)][5])+"%' "
+
+	TCSQLExec(cQryDel)
+
+	For nZ1 := 1 To Len (aReturn)
+	
+		For nZ2 := 1 To Len(aReturn[nZ1][4])
+
+			nCont2 := 0
+			DBSelectArea("ZDA")
+			While aReturn[nZ1][3] > LASTDATE(MonthSum(ZD8->ZD8_DTINIC,nCont2))
+			// Inclui registros caso periodo informado tenha inicio maior que periodo do planejamento
+			// Se periodo de calculo for igual periodo do Planejamento não vai passar por aqui
+				ZDA->(dbSetOrder(nIndZDA))
+				If !ZDA->(dbSeek(aInfo[len(aInfo)][6]+ZD8->ZD8_CODIGO+ZD8->ZD8_VERSAO+'3'+aInfo[len(aInfo)][3]+aInfo[len(aInfo)][4]+aInfo[len(aInfo)][1]+aInfo[len(aInfo)][5]+aReturn[nZ1][4][nZ2][1]+dtos(LASTDATE(MonthSum(ZD8->ZD8_DTINIC,nCont2)))))
+					RecLock("ZDA",.T.)           
+						ZDA->ZDA_FILIAL := aInfo[len(aInfo)][6]
+						ZDA->ZDA_CODIGO := ZD8->ZD8_CODIGO
+						ZDA->ZDA_VERSAO := ZD8->ZD8_VERSAO
+						ZDA->ZDA_TIPO   := '3'
+						ZDA->ZDA_CVERBA := aReturn[nZ1][4][nZ2][1]
+						ZDA->ZDA_DVERBA := Posicione("SRV",1,xFilial("SRV")+aReturn[nZ1][4][nZ2][1],"RV_DESC")
+						ZDA->ZDA_PERIOD := AllTrim ( Mesextenso(Val(SubStr(DtoC(aReturn[nZ1][3]),4,2))) + " / " + SubStr(DtoC(aReturn[nZ1][3]),7,4))
+						ZDA->ZDA_DATA   := LASTDATE(MonthSum(ZD8->ZD8_DTINIC,nCont2))
+						ZDA->ZDA_VALOR  := 0
+						ZDA->ZDA_FUNCIO := aInfo[len(aInfo)][1]
+						ZDA->ZDA_DFUNCI := aInfo[len(aInfo)][2]
+						ZDA->ZDA_CONTA  := Posicione("SRV",1,xFilial("SRV")+aReturn[nZ1][4][nZ2][1],"RV_XCTADEB")
+						ZDA->ZDA_CTCUST := aInfo[len(aInfo)][3]
+						ZDA->ZDA_ITCONT := aInfo[len(aInfo)][4]
+						ZDA->ZDA_KEYFUN := aInfo[len(aInfo)][5]
+						ZDA->ZDA_PRVDEM := dDtDemiss
+						ZDA->ZDA_RATEIO := IIF(EMPTY(ALLTRIM(aInfo[len(aInfo)][7])),"",aInfo[len(aInfo)][7])
+						ZDA->ZDA_PRCRAT := IIF(EMPTY(aInfo[len(aInfo)][8]),0,aInfo[len(aInfo)][8])
+					MsUnLock() 							
+				EndIf
+				nCont2++
+			EndDo		
+			// Inclui registros com data 	do periodo informado
+			RecLock("ZDA",.T.)           
+				ZDA->ZDA_FILIAL := aInfo[len(aInfo)][6]
+				ZDA->ZDA_CODIGO := ZD8->ZD8_CODIGO
+				ZDA->ZDA_VERSAO := ZD8->ZD8_VERSAO
+				ZDA->ZDA_TIPO   := '3'
+				ZDA->ZDA_CVERBA := aReturn[nZ1][4][nZ2][1]
+				ZDA->ZDA_DVERBA := Posicione("SRV",1,xFilial("SRV")+aReturn[nZ1][4][nZ2][1],"RV_DESC")
+				ZDA->ZDA_PERIOD := AllTrim ( Mesextenso(Val(SubStr(DtoC(aReturn[nZ1][3]),4,2))) + " / " + SubStr(DtoC(aReturn[nZ1][3]),7,4))
+				ZDA->ZDA_DATA   := LASTDATE(MonthSum(ZD8->ZD8_DTINIC,nCont2))
+				ZDA->ZDA_VALOR  := IIF(EMPTY(aInfo[len(aInfo)][8]),aReturn[nZ1][4][nZ2][3],aReturn[nZ1][4][nZ2][3]*(aInfo[len(aInfo)][8]/100))
+				ZDA->ZDA_FUNCIO := aInfo[len(aInfo)][1]
+				ZDA->ZDA_DFUNCI := aInfo[len(aInfo)][2]
+				ZDA->ZDA_CONTA  := Posicione("SRV",1,xFilial("SRV")+aReturn[nZ1][4][nZ2][1],"RV_XCTADEB")
+				ZDA->ZDA_CTCUST := aInfo[len(aInfo)][3]
+				ZDA->ZDA_ITCONT := aInfo[len(aInfo)][4]
+				ZDA->ZDA_KEYFUN := aInfo[len(aInfo)][5]
+				ZDA->ZDA_PRVDEM := dDtDemiss
+				ZDA->ZDA_RATEIO := IIF(EMPTY(ALLTRIM(aInfo[len(aInfo)][7])),"",aInfo[len(aInfo)][7])
+				ZDA->ZDA_PRCRAT := IIF(EMPTY(aInfo[len(aInfo)][8]),0,aInfo[len(aInfo)][8])
+			MsUnLock() 	
+		
+		Next nZ2
+	
+	Next nZ1
+
+Return()
+
+Static Function BUSCAZDA()
+
+	Local cQuery := " "
+
+	cQuery += " SELECT ZDA_FILIAL, ZDA_FUNCIO, ZDA_KEYFUN, ZDA_CTCUST, ZDA_ITCONT, ZDA_DFUNCI, ZDA_RATEIO, ZDA_PRCRAT "
+	cQuery += " FROM ZDA010 ZDA "
+	cQuery += " WHERE ZDA.D_E_L_E_T_ <> '*' "
+	cQuery += " 	AND ZDA_CODIGO ='"+ZD8->ZD8_CODIGO+"' "
+	cQuery += " 	AND ZDA_VERSAO ='"+ZD8->ZD8_VERSAO+"' "
+	cQuery += " 	AND ZDA_TIPO = '3' "
+	cQuery += " 	AND ZDA_FILIAL||ZDA_CTCUST||ZDA_ITCONT LIKE '"+AllTrim(cFiliAtu+cCentro+cItem)+"%' "
+	cQuery += " GROUP BY ZDA_FUNCIO , ZDA_KEYFUN, ZDA_CTCUST, ZDA_ITCONT, ZDA_FILIAL, ZDA_DFUNCI, ZDA_RATEIO, ZDA_PRCRAT "
+	cQuery += " ORDER BY  ZDA_FILIAL,ZDA_FUNCIO , ZDA_KEYFUN, ZDA_CTCUST, ZDA_ITCONT, ZDA_DFUNCI"
+
+	dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAlias3,.T.,.F.)
+	
+	DBSelectArea(cAlias3)
+	
+Return()
+
+Static Function MaxSRD(cMatricula)
+
+	Local cQrySRD
+	Local cAliasRD	:= GetNextAlias()
+	
+	cQrySRD := " SELECT MAX(RD_DATARQ) AS RD_DATARQ"
+	cQrySRD += " FROM "+RetSqlName("SRD")+" SRD "
+	cQrySRD += " WHERE SRD.D_E_L_E_T_ <> '*' "
+	cQrySRD += " 	AND RD_MAT = '"+cMatricula+"' "
+
+	dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQrySRD),cAliasRD,.T.,.F.)
+	
+	DBSelectArea(cAliasRD)
+	(cAliasRD)->(DbGoTop())
+
+	If (cAliasRD)->(!EOF()) 
+		cDtSRD := (cAliasRD)->RD_DATARQ
+	EndIf
+	
+	(cAliasRD)->(dbCloseArea())
+
+Return()

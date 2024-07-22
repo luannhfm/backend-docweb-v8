@@ -1,0 +1,101 @@
+#include 'protheus.ch'
+
+/*/{Protheus.doc} SF06S02F
+Função para atualizar status dos SMSs de lembrete de cobrança.
+@author Franklin Oliveira
+@since 20/03/2020
+@type user function
+@history 22/07/2020, Franklin de Brito de Oliveira, Correção na consulta realizada.
+/*/
+User Function SF06S02F()
+Local cTmpZEF	:= GetNextAlias()
+Local cStatus	:= ""
+	BeginSql Alias cTmpZEF
+		SELECT 
+			ZEF.R_E_C_N_O_ ZEFRECNO
+		FROM %Table:ZEF% ZEF
+			WHERE ZEF.%NotDel%
+			AND ZEF.ZEF_FILIAL = %Exp:xFilial("ZEF")%
+			AND ZEF.ZEF_DTENSM <> " "
+			AND ZEF.ZEF_IDENSM <> 0
+			AND ZEF.ZEF_STSSMS NOT IN ('2') //2=ENTREGUE
+	EndSql
+	If !(cTmpZEF)->( EoF() )
+		DbSelectArea("ZEF")
+		While !(cTmpZEF)->( EoF() )
+			ZEF->( DbGoTo((cTmpZEF)->ZEFRECNO) )
+			cStatus := fStsSMS(ZEF->ZEF_IDENSM)
+			Do Case
+				Case Upper(cStatus) == "AGUARDANDO"
+					cStatus := "0"
+				Case Upper(cStatus) == "ENVIADO"
+					cStatus := "1"
+				Case Upper(cStatus) == "ENTREGUE"
+					cStatus := "2"
+				Case Upper(cStatus) == "NAO SUPORTADA"
+					cStatus := "3"
+				Case Upper(cStatus) == "NAO ENTREGAVEL"
+					cStatus := "4"
+				Case Upper(cStatus) == "RECEBIDA"
+					cStatus := "5"
+				Case Upper(cStatus) == "RESPOSTA"
+					cStatus := "6"
+				Case Upper(cStatus) == "RECUSADA"
+					cStatus := "7"
+				Case Upper(cStatus) == "FALHA OPERADORA"
+					cStatus := "8"
+				OtherWise
+					cStatus := ""
+			EndCase
+			If cStatus <> ""
+				RecLock("ZEF", .F.)
+					ZEF->ZEF_STSSMS = cStatus
+				MsUnlock()
+			Else
+			EndIf
+			(cTmpZEF)->( DbSkip() )
+		EndDo
+		ZEF->( DbCloseArea() )
+	Else
+	
+	EndIf
+	(cTmpZEF)->( DbCloseArea() )
+Return Nil
+
+/*/{Protheus.doc} fStsSMS
+//TODO Descrição auto-gerada.
+@author Franklin Oliveira
+@since 07/04/2020
+@version 1.0
+@return cStatus, caracter, status do sms consultado
+@param nIdEnSMS, numeric, ID do SMS enviado - RECNO do titulo na SE1.
+@type function
+/*/
+Static Function fStsSMS(nIdEnSMS)
+Local cURL		:= SuperGetMV("MV_SMSURLR",,"http://ww2.iagentesms.com.br/webservices/http.php?metodo=consulta" )
+Local cUsuario	:= SuperGetMV("MV_SMSUSER",,"guilherme.castro@sfiemt.ind.br" )
+Local cSenha	:= SuperGetMV("MV_SMSSENH",,"Abcd@1234" )
+Local cStatus	:= ""
+	cURL := cURL + "&usuario=" + Escape( AllTrim(cUsuario) ) + "&senha=" + Escape( AllTrim(cSenha) )
+	cURL := cURL + "&codigosms=" + Escape( AllTrim(Str(nIdEnSMS)) )
+	cStatus := HTTPGet( EncodeUTF8(cURL) )
+Return cStatus
+
+/*/{Protheus.doc} SchedDef
+	Static function para o novo Schedule 
+@author Franklin Oliveira
+@since 17/03/2020
+@return aParam, [1] - Tipo: "P" - para Processo, "R" - para Relatórios [2] - Nome do Pergunte [3] - Alias (para Relatório) [4] - Array de ordem (para Relatório) [5] - Título (para Relatório)
+@type static function
+/*/
+Static Function SchedDef()
+Local aParam	:= {}
+Local aOrd		:= {}
+
+    aParam := {"P", ;
+        "ParamDef", ;
+        ""        , ;
+        aOrd      , ;
+    }
+
+Return aParam

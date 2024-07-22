@@ -1,0 +1,1771 @@
+#Include 'Protheus.ch'
+#Include 'TopConn.ch'
+
+/*/{Protheus.doc} GPER01P
+Relatório de Provisão de Férias com encargos de Férias.
+@author Fabio Oliveira
+@since 20/10/2015
+@version 1.0
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+User Function GPER01P()
+Local _oReport
+Local _cPerg := "GPER01P"
+Local _aArea	:= GetArea()
+Local _aAreaSM0	:= SM0->(GetArea())
+Local _cFilBkp	:= cFilAnt
+
+//Informe neste parâmetro o código da conta que será utilizada
+//para seleção das verbas na tabela SRV.
+Private _cCtaBaixa	:= SubStr( GetNewPar("JA_CTABXFR", "21010501001") + Space(TamSX3("RV_XCTADEB")[01]), 01, TamSX3("RV_XCTADEB")[01] )
+
+Private _aFerias	:= {}
+Private _aEncargos	:= {}
+
+Private _cProvDe	:= Space(02)
+Private _cPeriodo	:= Space(07)
+Private CLRF		:= Chr(13)+Chr(10)
+
+fJustSX1("GPER01P")
+
+//-- Interface de impressao
+_oReport := ReportDef()
+_oReport:PrintDialog()
+_oReport:lDynamic	:= .T.
+
+cFilAnt	:= _cFilBkp
+RestArea(_aAreaSM0)
+RestArea(_aArea)
+Return
+
+/*ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÚÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄ¿±±
+±±³Programa  ³ReportDef ³ Autor ³ Marco Bianchi         ³ Data ³ 10/07/06 ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Descri‡…o ³A funcao estatica ReportDef devera ser criada para todos os ³±±
+±±³          ³relatorios que poderao ser agendados pelo usuario.          ³±±
+±±³          ³                                                            ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Retorno   ³ExpO1: Objeto do relatório                                  ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Parametros³Nenhum                                                      ³±±
+±±³          ³                                                            ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³   DATA   ³ Programador   ³Manutencao efetuada                         ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³          ³               ³                                            ³±±
+±±ÀÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+/*/
+Static Function ReportDef()
+Local _oReport
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³Criacao do componente de impressao                                      ³
+//³                                                                        ³
+//³TReport():New                                                           ³
+//³ExpC1 : Nome do relatorio                                               ³
+//³ExpC2 : Titulo                                                          ³
+//³ExpC3 : Pergunte                                                        ³
+//³ExpB4 : Bloco de codigo que sera executado na confirmacao da impressao  ³
+//³ExpC5 : Descricao                                                       ³
+//³                                                                        ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_cTitImp	:= "Relatório de Provisão de Férias por Período"
+_cDescImp	:= "   Este relatório irá emitir a provisão de férias por período de acordo com os parâmetros informados." /*"is deve ser cobrada taxa de Armazenagem, e que não tiveram essa cobrança gerada no Financeiro."+Chr(13)+Chr(10)*/
+
+_oReport := TReport():New("GPER01P", _cTitImp,"GPER01P", {|_oReport| ReportPrint(_oReport)}, _cDescImp, ) 
+_oReport:SetLandscape() 
+_oReport:oPage:SetPaperSize(09)
+//_oReport:HideParamPage()
+//_oReport:HideHeader()	//Define que não será impresso o cabeçalho padrão da página.
+//_oReport:SetTotalInLine(.F.)
+
+Pergunte(_oReport:uParam,.F.)
+
+_oFilial := TRSection():New(_oReport,"FILIAL",{"SM0"}, {"Filial+Período+Férias/Encargos+Nome"},/*Campos do SX3*/,/*Campos do SIX*/)	//
+_oFilial:SetRelation({|| TSRA->RA_FILIAL}, "SRA", 1, .T.)
+_oFilial:SetParentFilter({|_cFilImp| cEmpAnt+SM0->M0_CODFIL == _cFilImp },{|| cEmpAnt+TSRA->RA_FILIAL })
+
+//_oFilial:lHeaderVisible := .T. //(IMPRIMIR - TITULO DA SECAO)
+//_oFilial:lHeaderPage	:= .F.
+//_oFilial:lHeaderSection	:= .T.
+//_oFilial:lHeaderBreak	:= .T.
+_oFilial:bTotalText := {|| "TOTAL - FILIAL: "+AllTRim(SM0->M0_FILIAL)}
+
+TRCell():New(_oFilial, "M0_CODFIL"	, "SM0", "FILIAL"	, "@!", 04, , {|| SubStr(SM0->M0_CODFIL, 01, 04) })
+_oFilial:Cell("M0_CODFIL"):nHeaderAlign := 2
+TRCell():New(_oFilial, "M0_DESC"	, "SM0", "NOME"		, "@!", 10, , {|| fNomeFil() })
+TRCell():New(_oFilial, "_cProvDe"	, "", "PROVISÃO DE"	, "@!", 20, , {|| _cProvDe  })
+_oFilial:Cell("_cProvDe"):nHeaderAlign := 2
+_oFilial:Cell("_cProvDe"):nAlign := 2
+TRCell():New(_oFilial, "_cPeriodo"	, "", "PERÍODO"		, "@!", 07, , {|| _cPeriodo })
+_oFilial:Cell("_cPeriodo"):nHeaderAlign := 2
+_oFilial:Cell("_cPeriodo"):nAlign := 2
+
+//TRCell():New(_oFilial, "cTxt01", " ", {||  })
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Seção das Férias dos Funcionários.                                     ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_oFunFer := TRSection():New(_oReport,"FÉRIAS",{"SRA"}, {""}, /*Campos do SX3*/, /*Campos do SIX*/, /*TEXTO DE TOTAL*/, .F.)	//
+_oFunFer:SetBorder(2)
+_oFunFer:bTotalText := {|| "TOTAL DE "+_cProvDe+" EM "+_cPeriodo}
+
+	TRCell():New(_oFunFer, "RA_NOMECMP", "SRA", "NOME")	//Nome
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunFer:Cell("RA_NOMECMP"):SetBorder(1, , , .T.)
+	_oFunFer:Cell("RA_NOMECMP"):SetBorder(3, , , .T.)
+	_oFunFer:Cell("RA_NOMECMP"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunFer:Cell("RA_NOMECMP"):SetBorder(2, , , .F.)
+	_oFunFer:Cell("RA_NOMECMP"):SetBorder(3, , , .F.)
+	_oFunFer:Cell("RA_NOMECMP"):SetBorder(4, , , .F.)
+	
+		//**************************************************
+	TRCell():New(_oFunFer, "RA_CATFUNC", "SRA", "Cat Func")	//Nome
+	_oFunFer:Cell("RA_CATFUNC"):nHeaderAlign := 2
+	_oFunFer:Cell("RA_CATFUNC"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunFer:Cell("RA_CATFUNC"):SetBorder(1, , , .T.)
+	_oFunFer:Cell("RA_CATFUNC"):SetBorder(3, , , .T.)
+	_oFunFer:Cell("RA_CATFUNC"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunFer:Cell("RA_CATFUNC"):SetBorder(2, , , .F.)
+	_oFunFer:Cell("RA_CATFUNC"):SetBorder(3, , , .F.)
+	_oFunFer:Cell("RA_CATFUNC"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunFer, "RA_ADMISSA", "SRA", "Dt. Admissao")	//Nome
+	_oFunFer:Cell("RA_ADMISSA"):nHeaderAlign := 2
+	_oFunFer:Cell("RA_ADMISSA"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunFer:Cell("RA_ADMISSA"):SetBorder(1, , , .T.)
+	_oFunFer:Cell("RA_ADMISSA"):SetBorder(3, , , .T.)
+	_oFunFer:Cell("RA_ADMISSA"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunFer:Cell("RA_ADMISSA"):SetBorder(2, , , .F.)
+	_oFunFer:Cell("RA_ADMISSA"):SetBorder(3, , , .F.)
+	_oFunFer:Cell("RA_ADMISSA"):SetBorder(4, , , .F.)
+	
+	
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Celulas de Férias.   ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	TRCell():New(_oFunFer, "nBaseFer"	, "", "BASE FÉRIAS"			, "@E 9,999,999.99", , , {|| _aFerias[01, 01] })	//BASE FÉRIAS
+	_oFunFer:Cell("nBaseFer"):nHeaderAlign := 2
+	_oFunFer:Cell("nBaseFer"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunFer:Cell("nBaseFer"):SetBorder(1, , , .T.)
+	_oFunFer:Cell("nBaseFer"):SetBorder(3, , , .T.)
+	_oFunFer:Cell("nBaseFer"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunFer:Cell("nBaseFer"):SetBorder(2, , , .F.)
+	_oFunFer:Cell("nBaseFer"):SetBorder(3, , , .F.)
+	_oFunFer:Cell("nBaseFer"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunFer, "nSldAnt"	, "", "SALDO ANTERIOR"		, "@E 9,999,999.99", , , {|| _aFerias[01, 02] })	//SALDO ANTERIOR
+	_oFunFer:Cell("nSldAnt"):nHeaderAlign := 2
+	_oFunFer:Cell("nSldAnt"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunFer:Cell("nSldAnt"):SetBorder(1, , , .T.)
+	_oFunFer:Cell("nSldAnt"):SetBorder(3, , , .T.)
+	_oFunFer:Cell("nSldAnt"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunFer:Cell("nSldAnt"):SetBorder(2, , , .F.)
+	_oFunFer:Cell("nSldAnt"):SetBorder(3, , , .F.)
+	_oFunFer:Cell("nSldAnt"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunFer, "nFerMes"	, "", "FÉRIAS NO MÊS"		, "@E 9,999,999.99", , , {|| _aFerias[01, 03] })	//FÉRIAS NO MÊS
+	_oFunFer:Cell("nFerMes"):nHeaderAlign := 2
+	_oFunFer:Cell("nFerMes"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunFer:Cell("nFerMes"):SetBorder(1, , , .T.)
+	_oFunFer:Cell("nFerMes"):SetBorder(3, , , .T.)
+	_oFunFer:Cell("nFerMes"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunFer:Cell("nFerMes"):SetBorder(2, , , .F.)
+	_oFunFer:Cell("nFerMes"):SetBorder(3, , , .F.)
+	_oFunFer:Cell("nFerMes"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunFer, "nFerMed"	, "", "FÉRIAS MEDIA"		, "@E 9,999,999.99", , , {|| _aFerias[01, 07] })	//FÉRIAS MEDIA
+	_oFunFer:Cell("nFerMed"):nHeaderAlign := 2
+	_oFunFer:Cell("nFerMed"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunFer:Cell("nFerMed"):SetBorder(1, , , .T.)
+	_oFunFer:Cell("nFerMed"):SetBorder(3, , , .T.)
+	_oFunFer:Cell("nFerMed"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunFer:Cell("nFerMed"):SetBorder(2, , , .F.)
+	_oFunFer:Cell("nFerMed"):SetBorder(3, , , .F.)
+	_oFunFer:Cell("nFerMed"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunFer, "nRever"	, "", "REVERSAO"		, "@E 9,999,999.99", , , {|| _aFerias[01, 08] })	//BAIXA TRANSF.
+	_oFunFer:Cell("nRever"):nHeaderAlign := 2
+	_oFunFer:Cell("nRever"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunFer:Cell("nRever"):SetBorder(1, , , .T.)
+	_oFunFer:Cell("nRever"):SetBorder(3, , , .T.)
+	_oFunFer:Cell("nRever"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunFer:Cell("nRever"):SetBorder(2, , , .F.)
+	_oFunFer:Cell("nRever"):SetBorder(3, , , .F.)
+	_oFunFer:Cell("nRever"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunFer, "nBxFerias"	, "", "BAIXA FÉRIAS"		, "@E 9,999,999.99", , , {|| _aFerias[01, 05] })	//BAIXAS FÉRIAS
+	_oFunFer:Cell("nBxFerias"):nHeaderAlign := 2
+	_oFunFer:Cell("nBxFerias"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunFer:Cell("nBxFerias"):SetBorder(1, , , .T.)
+	_oFunFer:Cell("nBxFerias"):SetBorder(3, , , .T.)
+	_oFunFer:Cell("nBxFerias"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunFer:Cell("nBxFerias"):SetBorder(2, , , .F.)
+	_oFunFer:Cell("nBxFerias"):SetBorder(3, , , .F.)
+	_oFunFer:Cell("nBxFerias"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunFer, "nFerAcum"	, "", "FÉRIAS ACUMULADAS"	, "@E 9,999,999.99", , , {|| _aFerias[01, 06] })	//FERIAS ACUMULADAS
+	_oFunFer:Cell("nFerAcum"):nHeaderAlign := 2
+	_oFunFer:Cell("nFerAcum"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunFer:Cell("nFerAcum"):SetBorder(1, , , .T.)
+	_oFunFer:Cell("nFerAcum"):SetBorder(3, , , .T.)
+	_oFunFer:Cell("nFerAcum"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunFer:Cell("nFerAcum"):SetBorder(2, , , .F.)
+	_oFunFer:Cell("nFerAcum"):SetBorder(3, , , .F.)
+	_oFunFer:Cell("nFerAcum"):SetBorder(4, , , .F.)
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Seta o Tratamento de Totais.                                           ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	TRFunction():New(_oFunFer:Cell("nBaseFer")	/*oCell*/, "nBaseFerX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "BASE FÉRIAS"			/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunFer /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+	TRFunction():New(_oFunFer:Cell("nSldAnt")	/*oCell*/, "nSldAntX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "SALDO ANTERIOR"		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunFer /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+	TRFunction():New(_oFunFer:Cell("nFerMes")	/*oCell*/, "nFerMesX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "FÉRIAS NO MÊS"		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunFer /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+	TRFunction():New(_oFunFer:Cell("nFerMed")	/*oCell*/, "nFerMedX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "FÉRIAS MEDIA"		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunFer /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+	TRFunction():New(_oFunFer:Cell("nRever")	/*oCell*/, "nReverX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "BAIXA TRANSF."		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunFer /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+	TRFunction():New(_oFunFer:Cell("nBxFerias")	/*oCell*/, "nBxFeriasX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "BAIXA FÉRIAS"		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunFer /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+	TRFunction():New(_oFunFer:Cell("nFerAcum")	/*oCell*/, "nFerAcumX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "FÉRIAS ACUMULADAS"	/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunFer /*oParent*/, /*_oFunFerndition*/, /*lDisable*/, /*bCanPrint*/)
+	
+	
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Seção dos Encargos dos Funcionários.                                   ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_oFunEnc := TRSection():New(_oReport,"ENCARGOS DE FÉRIAS", /*{"SRA"}*/, {""}, /*Campos do SX3*/, /*Campos do SIX*/)	//
+_oFunEnc:lBold := .T.
+//_oFunEnc:SetBorder(5)
+	
+	TRCell():New(_oFunEnc, "RA_NOMECMP", "SRA", Space(25), "@!", 25, , {|| Space(25) }, , .T.)	//Nome
+	_oFunEnc:Cell("RA_NOMECMP"):nHeaderAlign := 2
+	_oFunEnc:Cell("RA_NOMECMP"):nAlign := 2
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("RA_NOMECMP"):SetBorder(1, , , .T.)
+	_oFunEnc:Cell("RA_NOMECMP"):SetBorder(3, , , .T.)
+	_oFunEnc:Cell("RA_NOMECMP"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("RA_NOMECMP"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("RA_NOMECMP"):SetBorder(3, , , .F.)
+	_oFunEnc:Cell("RA_NOMECMP"):SetBorder(4, , , .F.)
+	
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Celulas de INSS.   ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	TRCell():New(_oFunEnc, "cInssSldAnt"	, "", SPACE(10)	, "@!", 10, , {|| SPACE(10) }, , .T.)	//SALDO ANTERIOR
+	_oFunEnc:Cell("cInssSldAnt"):nHeaderAlign := 2
+	_oFunEnc:Cell("cInssSldAnt"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cInssSldAnt"):SetBorder(1, , , .T.)
+	_oFunEnc:Cell("cInssSldAnt"):SetBorder(3, , , .T.)
+	//_oFunEnc:Cell("cInssSldAnt"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cInssSldAnt"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cInssSldAnt"):SetBorder(2, , , .F.)
+	_oFunEnc:Cell("cInssSldAnt"):SetBorder(3, , , .F.)
+	//_oFunEnc:Cell("cInssSldAnt"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunEnc, "cInssNoMes"	, "", SPACE(10)	, "@!", 10, , {|| SPACE(10) }, , .T.)	//NO MES
+	_oFunEnc:Cell("cInssNoMes"):nHeaderAlign := 2
+	_oFunEnc:Cell("cInssNoMes"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cInssNoMes"):SetBorder(1, , , .T.)
+	//_oFunEnc:Cell("cInssNoMes"):SetBorder(3, , , .T.)
+	//_oFunEnc:Cell("cInssNoMes"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cInssNoMes"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cInssNoMes"):SetBorder(2, , , .F.)
+	//_oFunEnc:Cell("cInssNoMes"):SetBorder(3, , , .F.)
+	//_oFunEnc:Cell("cInssNoMes"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunEnc, "cInssAcumul"	, "", "INSS" , "@!", 10, , {|| "INSS" }, , .T.)	//ACUMULADO
+	_oFunEnc:Cell("cInssAcumul"):nHeaderAlign := 2
+	_oFunEnc:Cell("cInssAcumul"):nAlign := 2
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cInssAcumul"):SetBorder(1, , , .T.)
+	//_oFunEnc:Cell("cInssAcumul"):SetBorder(3, , , .T.)
+	//_oFunEnc:Cell("cInssAcumul"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cInssAcumul"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cInssAcumul"):SetBorder(2, , , .F.)
+	//_oFunEnc:Cell("cInssAcumul"):SetBorder(3, , , .F.)
+	//_oFunEnc:Cell("cInssAcumul"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunEnc, "cInssBxTransf"	, "", SPACE(10) , "@!", 10, , {|| SPACE(10) }, , .T.)	//BX. TRANSF.
+	_oFunEnc:Cell("cInssBxTransf"):nHeaderAlign := 2
+	_oFunEnc:Cell("cInssBxTransf"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cInssBxTransf"):SetBorder(1, , , .T.)
+	//_oFunEnc:Cell("cInssBxTransf"):SetBorder(3, , , .T.)
+	//_oFunEnc:Cell("cInssBxTransf"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cInssBxTransf"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cInssBxTransf"):SetBorder(2, , , .F.)
+	//_oFunEnc:Cell("cInssBxTransf"):SetBorder(3, , , .F.)
+	//_oFunEnc:Cell("cInssBxTransf"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunEnc, "cInssBaixa"		, "", SPACE(10) , "@!", 10, , {|| SPACE(10) }, , .T.)	//BAIXA
+	_oFunEnc:Cell("cInssBaixa"):nHeaderAlign := 2
+	_oFunEnc:Cell("cInssBaixa"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cInssBaixa"):SetBorder(1, , , .T.)
+	//_oFunEnc:Cell("cInssBaixa"):SetBorder(3, , , .T.)
+	_oFunEnc:Cell("cInssBaixa"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cInssBaixa"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cInssBaixa"):SetBorder(2, , , .F.)
+	//_oFunEnc:Cell("cInssBaixa"):SetBorder(3, , , .F.)
+	_oFunEnc:Cell("cInssBaixa"):SetBorder(4, , , .F.)
+
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Celulas de Fgts.   ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	TRCell():New(_oFunEnc, "cFgtsSldAnt"	, "", SPACE(10)	, "@!", 10, , {|| SPACE(10) }, , .T.)	//SALDO ANTERIOR
+	_oFunEnc:Cell("cFgtsSldAnt"):nHeaderAlign := 2
+	_oFunEnc:Cell("cFgtsSldAnt"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cFgtsSldAnt"):SetBorder(1, , , .T.)
+	_oFunEnc:Cell("cFgtsSldAnt"):SetBorder(3, , , .T.)
+	//_oFunEnc:Cell("cFgtsSldAnt"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cFgtsSldAnt"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cFgtsSldAnt"):SetBorder(2, , , .F.)
+	_oFunEnc:Cell("cFgtsSldAnt"):SetBorder(3, , , .F.)
+	//_oFunEnc:Cell("cFgtsSldAnt"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunEnc, "cFgtsNoMes"	, "", SPACE(10)	, "@!", 10, , {|| SPACE(10) }, , .T.)	//NO MES
+	_oFunEnc:Cell("cFgtsNoMes"):nHeaderAlign := 2
+	_oFunEnc:Cell("cFgtsNoMes"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cFgtsNoMes"):SetBorder(1, , , .T.)
+	//_oFunEnc:Cell("cFgtsNoMes"):SetBorder(3, , , .T.)
+	//_oFunEnc:Cell("cFgtsNoMes"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cFgtsNoMes"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cFgtsNoMes"):SetBorder(2, , , .F.)
+	//_oFunEnc:Cell("cFgtsNoMes"):SetBorder(3, , , .F.)
+	//_oFunEnc:Cell("cFgtsNoMes"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunEnc, "cFgtsAcumul"	, "", "FGTS" , "@!", 10, , {|| "FGTS" }, , .T.)	//ACUMULADO
+	_oFunEnc:Cell("cFgtsAcumul"):nHeaderAlign := 2
+	_oFunEnc:Cell("cFgtsAcumul"):nAlign := 2
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cFgtsAcumul"):SetBorder(1, , , .T.)
+	//_oFunEnc:Cell("cFgtsAcumul"):SetBorder(3, , , .T.)
+	//_oFunEnc:Cell("cFgtsAcumul"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cFgtsAcumul"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cFgtsAcumul"):SetBorder(2, , , .F.)
+	//_oFunEnc:Cell("cFgtsAcumul"):SetBorder(3, , , .F.)
+	//_oFunEnc:Cell("cFgtsAcumul"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunEnc, "cFgtsBxTransf"	, "", SPACE(10) , "@!", 10, , {|| SPACE(10) }, , .T.)	//BX. TRANSF.
+	_oFunEnc:Cell("cFgtsBxTransf"):nHeaderAlign := 2
+	_oFunEnc:Cell("cFgtsBxTransf"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cFgtsBxTransf"):SetBorder(1, , , .T.)
+	//_oFunEnc:Cell("cFgtsBxTransf"):SetBorder(3, , , .T.)
+	//_oFunEnc:Cell("cFgtsBxTransf"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cFgtsBxTransf"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cFgtsBxTransf"):SetBorder(2, , , .F.)
+	//_oFunEnc:Cell("cFgtsBxTransf"):SetBorder(3, , , .F.)
+	//_oFunEnc:Cell("cFgtsBxTransf"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunEnc, "cFgtsBaixa"		, "", SPACE(10) , "@!", 10, , {|| SPACE(10) }, , .T.)	//BAIXA
+	_oFunEnc:Cell("cFgtsBaixa"):nHeaderAlign := 2
+	_oFunEnc:Cell("cFgtsBaixa"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cFgtsBaixa"):SetBorder(1, , , .T.)
+	//_oFunEnc:Cell("cFgtsBaixa"):SetBorder(3, , , .T.)
+	_oFunEnc:Cell("cFgtsBaixa"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cFgtsBaixa"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cFgtsBaixa"):SetBorder(2, , , .F.)
+	//_oFunEnc:Cell("cFgtsBaixa"):SetBorder(3, , , .F.)
+	_oFunEnc:Cell("cFgtsBaixa"):SetBorder(4, , , .F.)
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Celulas de Pis.    ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	TRCell():New(_oFunEnc, "cPisSldAnt"	, "", SPACE(10)	, "@!", 10, , {|| SPACE(10) }, , .T.)	//SALDO ANTERIOR
+	_oFunEnc:Cell("cPisSldAnt"):nHeaderAlign := 2
+	_oFunEnc:Cell("cPisSldAnt"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cPisSldAnt"):SetBorder(1, , , .T.)
+	_oFunEnc:Cell("cPisSldAnt"):SetBorder(3, , , .T.)
+	//_oFunEnc:Cell("cPisSldAnt"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cPisSldAnt"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cPisSldAnt"):SetBorder(2, , , .F.)
+	_oFunEnc:Cell("cPisSldAnt"):SetBorder(3, , , .F.)
+	//_oFunEnc:Cell("cPisSldAnt"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunEnc, "cPisNoMes"	, "", SPACE(10)	, "@!", 10, , {|| SPACE(10) }, , .T.)	//NO MES
+	_oFunEnc:Cell("cPisNoMes"):nHeaderAlign := 2
+	_oFunEnc:Cell("cPisNoMes"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cPisNoMes"):SetBorder(1, , , .T.)
+	//_oFunEnc:Cell("cPisNoMes"):SetBorder(3, , , .T.)
+	//_oFunEnc:Cell("cPisNoMes"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cPisNoMes"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cPisNoMes"):SetBorder(2, , , .F.)
+	//_oFunEnc:Cell("cPisNoMes"):SetBorder(3, , , .F.)
+	//_oFunEnc:Cell("cPisNoMes"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunEnc, "cPisAcumul"	, "", "PIS" , "@!", 10, , {|| "PIS" }, , .T.)	//ACUMULADO
+	_oFunEnc:Cell("cPisAcumul"):nHeaderAlign := 2
+	_oFunEnc:Cell("cPisAcumul"):nAlign := 2
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cPisAcumul"):SetBorder(1, , , .T.)
+	//_oFunEnc:Cell("cPisAcumul"):SetBorder(3, , , .T.)
+	//_oFunEnc:Cell("cPisAcumul"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cPisAcumul"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cPisAcumul"):SetBorder(2, , , .F.)
+	//_oFunEnc:Cell("cPisAcumul"):SetBorder(3, , , .F.)
+	//_oFunEnc:Cell("cPisAcumul"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunEnc, "cPisBxTransf"	, "", SPACE(10) , "@!", 10, , {|| SPACE(10) }, , .T.)	//BX. TRANSF.
+	_oFunEnc:Cell("cPisBxTransf"):nHeaderAlign := 2
+	_oFunEnc:Cell("cPisBxTransf"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cPisBxTransf"):SetBorder(1, , , .T.)
+	//_oFunEnc:Cell("cPisBxTransf"):SetBorder(3, , , .T.)
+	//_oFunEnc:Cell("cPisBxTransf"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cPisBxTransf"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cPisBxTransf"):SetBorder(2, , , .F.)
+	//_oFunEnc:Cell("cPisBxTransf"):SetBorder(3, , , .F.)
+	//_oFunEnc:Cell("cPisBxTransf"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunEnc, "cPisBaixa"		, "", SPACE(10) , "@!", 10, , {|| SPACE(10) }, , .T.)	//BAIXA
+	_oFunEnc:Cell("cPisBaixa"):nHeaderAlign := 2
+	_oFunEnc:Cell("cPisBaixa"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cPisBaixa"):SetBorder(1, , , .T.)
+	//_oFunEnc:Cell("cPisBaixa"):SetBorder(3, , , .T.)
+	_oFunEnc:Cell("cPisBaixa"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cPisBaixa"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cPisBaixa"):SetBorder(2, , , .F.)
+	//_oFunEnc:Cell("cPisBaixa"):SetBorder(3, , , .F.)
+	_oFunEnc:Cell("cPisBaixa"):SetBorder(4, , , .F.)
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Celulas de Tot.    ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	TRCell():New(_oFunEnc, "cTotSldAnt"	, "", SPACE(10)	, "@!", 10, , {|| SPACE(10) }, , .T.)	//SALDO ANTERIOR
+	_oFunEnc:Cell("cTotSldAnt"):nHeaderAlign := 2
+	_oFunEnc:Cell("cTotSldAnt"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cTotSldAnt"):SetBorder(1, , , .T.)
+	_oFunEnc:Cell("cTotSldAnt"):SetBorder(3, , , .T.)
+	//_oFunEnc:Cell("cTotSldAnt"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cTotSldAnt"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cTotSldAnt"):SetBorder(2, , , .F.)
+	_oFunEnc:Cell("cTotSldAnt"):SetBorder(3, , , .F.)
+	//_oFunEnc:Cell("cTotSldAnt"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunEnc, "cTotNoMes"	, "", SPACE(05)	, "@!", 05, , {|| SPACE(05) }, , .T.)	//NO MES
+	_oFunEnc:Cell("cTotNoMes"):nHeaderAlign := 2
+	_oFunEnc:Cell("cTotNoMes"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cTotNoMes"):SetBorder(1, , , .T.)
+	//_oFunEnc:Cell("cTotNoMes"):SetBorder(3, , , .T.)
+	//_oFunEnc:Cell("cTotNoMes"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cTotNoMes"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cTotNoMes"):SetBorder(2, , , .F.)
+	//_oFunEnc:Cell("cTotNoMes"):SetBorder(3, , , .F.)
+	//_oFunEnc:Cell("cTotNoMes"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunEnc, "cTotAcumul"	, "", "TOTAL" , "@!", 20, , {|| "TOTAL" }, , .T.)	//ACUMULADO
+	_oFunEnc:Cell("cTotAcumul"):nHeaderAlign := 2
+	_oFunEnc:Cell("cTotAcumul"):nAlign := 2
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cTotAcumul"):SetBorder(1, , , .T.)
+	//_oFunEnc:Cell("cTotAcumul"):SetBorder(3, , , .T.)
+	//_oFunEnc:Cell("cTotAcumul"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cTotAcumul"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cTotAcumul"):SetBorder(2, , , .F.)
+	//_oFunEnc:Cell("cTotAcumul"):SetBorder(3, , , .F.)
+	//_oFunEnc:Cell("cTotAcumul"):SetBorder(4, , , .F.)
+	
+	TRCell():New(_oFunEnc, "cTotBaixa"		, "", SPACE(05) , "@!", 05, , {|| SPACE(05) }, , .T.)	//BAIXA
+	_oFunEnc:Cell("cTotBaixa"):nHeaderAlign := 2
+	_oFunEnc:Cell("cTotBaixa"):nAlign := 3
+	//BORDAS PARA O CABEÇALHO DA CELULA
+	_oFunEnc:Cell("cTotBaixa"):SetBorder(1, , , .T.)
+	//_oFunEnc:Cell("cTotBaixa"):SetBorder(3, , , .T.)
+	_oFunEnc:Cell("cTotBaixa"):SetBorder(4, , , .T.)
+	//BORDAS PARA AS CELULAS
+	_oFunEnc:Cell("cTotBaixa"):SetBorder(1, , , .F.)
+	_oFunEnc:Cell("cTotBaixa"):SetBorder(2, , , .F.)
+	//_oFunEnc:Cell("cTotBaixa"):SetBorder(3, , , .F.)
+	_oFunEnc:Cell("cTotBaixa"):SetBorder(4, , , .F.)
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Seção de Funcionário.                                                  ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_oFunc := TRSection():New(_oFunEnc,"FUNCIONÁRIOS",{"SRA"}, {""}, /*Campos do SX3*/, /*Campos do SIX*/, /*TEXTO DE TOTAL*/, .F. )	//
+	_oFunc:SetBorder(2)
+	_oFunc:nLinesBefore := 0
+	_oFunc:bTotalText := {|| "TOTAL DE "+_cProvDe+" EM "+_cPeriodo}
+	
+		TRCell():New(_oFunc, "RA_NOMECMP", "SRA", "NOME", "@!", 25, , , , .T.)	//Nome
+		_oFunc:Cell("RA_NOMECMP"):nHeaderAlign := 2
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		//_oFunc:Cell("RA_NOMECMP"):SetBorder(1, , , .T.)
+		_oFunc:Cell("RA_NOMECMP"):SetBorder(3, , , .T.)
+		_oFunc:Cell("RA_NOMECMP"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("RA_NOMECMP"):SetBorder(2, , , .F.)
+		_oFunc:Cell("RA_NOMECMP"):SetBorder(3, , , .F.)
+		_oFunc:Cell("RA_NOMECMP"):SetBorder(4, , , .F.)
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Celulas de INSS.   ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		TRCell():New(_oFunc, "nInssSldAnt"	, "", "  SALDO"+CLRF+"ANTERIOR"	, "@E 999,999.99", 10, , {|| _aEncargos[01,01] }, , .T.)	//SALDO ANTERIOR
+		_oFunc:Cell("nInssSldAnt"):nHeaderAlign := 2
+		_oFunc:Cell("nInssSldAnt"):nAlign := 3
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nInssSldAnt"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nInssSldAnt"):SetBorder(3, , , .T.)
+		//_oFunc:Cell("nInssSldAnt"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nInssSldAnt"):SetBorder(2, , , .F.)
+		_oFunc:Cell("nInssSldAnt"):SetBorder(3, , , .F.)
+		//_oFunc:Cell("nInssSldAnt"):SetBorder(4, , , .F.)
+		
+		TRCell():New(_oFunc, "nInssNoMes"		, "", "NO MES"					, "@E 999,999.99", 10, , {|| _aEncargos[01,02] }, , .T.)	//NO MES
+		_oFunc:Cell("nInssNoMes"):nHeaderAlign := 2
+		_oFunc:Cell("nInssNoMes"):nAlign := 3
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nInssNoMes"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nInssNoMes"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nInssNoMes"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nInssNoMes"):SetBorder(2, , , .F.)
+		//_oFunc:Cell("nInssNoMes"):SetBorder(3, , , .F.)
+		//_oFunc:Cell("nInssNoMes"):SetBorder(4, , , .F.)
+		
+		TRCell():New(_oFunc, "nInssAcumul"	, "", "ACUMULADO"				, "@E 999,999.99", 10, , {|| _aEncargos[01,03] }, , .T.)	//ACUMULADO
+		_oFunc:Cell("nInssAcumul"):nHeaderAlign := 2
+		_oFunc:Cell("nInssAcumul"):nAlign := 3
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nInssAcumul"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nInssAcumul"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nInssAcumul"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nInssAcumul"):SetBorder(2, , , .F.)
+		//_oFunc:Cell("nInssAcumul"):SetBorder(3, , , .F.)
+		//_oFunc:Cell("nInssAcumul"):SetBorder(4, , , .F.)
+		
+		TRCell():New(_oFunc, "nInssBxTransf"	, "", "BX."+CLRF+"TRANSF."		, "@E 999,999.99", 10, , {|| _aEncargos[01,04] }, , .T.)	//BX. TRANSF.
+		_oFunc:Cell("nInssBxTransf"):nHeaderAlign := 2
+		_oFunc:Cell("nInssBxTransf"):nAlign := 3
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nInssBxTransf"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nInssBxTransf"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nInssBxTransf"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nInssBxTransf"):SetBorder(2, , , .F.)
+		//_oFunc:Cell("nInssBxTransf"):SetBorder(3, , , .F.)
+		//_oFunc:Cell("nInssBxTransf"):SetBorder(4, , , .F.)
+		
+		TRCell():New(_oFunc, "nInssBaixa"		, "", "BAIXA"					, "@E 999,999.99", 10, , {|| _aEncargos[01,05] }, , .T.)	//BAIXA
+		_oFunc:Cell("nInssBaixa"):nHeaderAlign := 2
+		_oFunc:Cell("nInssBaixa"):nAlign := 3
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nInssBaixa"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nInssBaixa"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nInssBaixa"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nInssBaixa"):SetBorder(2, , , .F.)
+		//_oFunc:Cell("nInssBaixa"):SetBorder(3, , , .F.)
+		_oFunc:Cell("nInssBaixa"):SetBorder(4, , , .F.)
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Celulas de FGTS.   ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		TRCell():New(_oFunc, "nFgtsSldAnt"	, "", "  SALDO"+CLRF+"ANTERIOR"	, "@E 999,999.99", 10, , {|| _aEncargos[02,01] }, , .T.)	//SALDO ANTERIOR
+		_oFunc:Cell("nFgtsSldAnt"):nHeaderAlign := 2
+		_oFunc:Cell("nFgtsSldAnt"):nAlign := 3
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nFgtsSldAnt"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nFgtsSldAnt"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nFgtsSldAnt"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nFgtsSldAnt"):SetBorder(2, , , .F.)
+		_oFunc:Cell("nFgtsSldAnt"):SetBorder(3, , , .F.)
+		//_oFunc:Cell("nFgtsSldAnt"):SetBorder(4, , , .F.)
+		
+		TRCell():New(_oFunc, "nFgtsNoMes"		, "", "NO MES"					, "@E 999,999.99", 10, , {|| _aEncargos[02,02] }, , .T.)	//NO MES
+		_oFunc:Cell("nFgtsNoMes"):nHeaderAlign := 2
+		_oFunc:Cell("nFgtsNoMes"):nAlign := 3
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nFgtsNoMes"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nFgtsNoMes"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nFgtsNoMes"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nFgtsNoMes"):SetBorder(2, , , .F.)
+		//_oFunc:Cell("nFgtsNoMes"):SetBorder(3, , , .F.)
+		//_oFunc:Cell("nFgtsNoMes"):SetBorder(4, , , .F.)
+		
+		TRCell():New(_oFunc, "nFgtsAcumul"	, "", "ACUMULADO"				, "@E 999,999.99", 10, , {|| _aEncargos[02,03] }, , .T.)	//ACUMULADO
+		_oFunc:Cell("nFgtsAcumul"):nHeaderAlign := 2
+		_oFunc:Cell("nFgtsAcumul"):nAlign := 3
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nFgtsAcumul"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nFgtsAcumul"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nFgtsAcumul"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nFgtsAcumul"):SetBorder(2, , , .F.)
+		//_oFunc:Cell("nFgtsAcumul"):SetBorder(3, , , .F.)
+		//_oFunc:Cell("nFgtsAcumul"):SetBorder(4, , , .F.)
+		
+		TRCell():New(_oFunc, "nFgtsBxTransf"	, "", "BX."+CLRF+"TRANSF."		, "@E 999,999.99", 10, , {|| _aEncargos[02,04] }, , .T.)	//BX. TRANSF.
+		_oFunc:Cell("nFgtsBxTransf"):nHeaderAlign := 2
+		_oFunc:Cell("nFgtsBxTransf"):nAlign := 3
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nFgtsBxTransf"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nFgtsBxTransf"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nFgtsBxTransf"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nFgtsBxTransf"):SetBorder(2, , , .F.)
+		//_oFunc:Cell("nFgtsBxTransf"):SetBorder(3, , , .F.)
+		//_oFunc:Cell("nFgtsBxTransf"):SetBorder(4, , , .F.)
+		
+		TRCell():New(_oFunc, "nFgtsBaixa"		, "", "BAIXA"					, "@E 999,999.99", 10, , {|| _aEncargos[02,05] }, , .T.)	//BAIXA
+		_oFunc:Cell("nFgtsBaixa"):nHeaderAlign := 2
+		_oFunc:Cell("nFgtsBaixa"):nAlign := 3
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nFgtsBaixa"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nFgtsBaixa"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nFgtsBaixa"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nFgtsBaixa"):SetBorder(2, , , .F.)
+		//_oFunc:Cell("nFgtsBaixa"):SetBorder(3, , , .F.)
+		_oFunc:Cell("nFgtsBaixa"):SetBorder(4, , , .F.)
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Celulas de PIS.   ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		TRCell():New(_oFunc, "nPisSldAnt"		, "", "  SALDO"+CLRF+"ANTERIOR"	, "@E 999,999.99", 10, , {|| _aEncargos[03,01] }, , .T.)	//SALDO ANTERIOR
+		_oFunc:Cell("nPisSldAnt"):nHeaderAlign := 2
+		_oFunc:Cell("nPisSldAnt"):nAlign := 3
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nPisSldAnt"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nPisSldAnt"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nPisSldAnt"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nPisSldAnt"):SetBorder(2, , , .F.)
+		_oFunc:Cell("nPisSldAnt"):SetBorder(3, , , .F.)
+		//_oFunc:Cell("nPisSldAnt"):SetBorder(4, , , .F.)
+		
+		TRCell():New(_oFunc, "nPisNoMes"		, "", "NO MES"					, "@E 999,999.99", 10, , {|| _aEncargos[03,02] }, , .T.)	//NO MES
+		_oFunc:Cell("nPisNoMes"):nHeaderAlign := 2
+		_oFunc:Cell("nPisNoMes"):nAlign := 3
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nPisNoMes"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nPisNoMes"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nPisNoMes"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nPisNoMes"):SetBorder(2, , , .F.)
+		//_oFunc:Cell("nPisNoMes"):SetBorder(3, , , .F.)
+		//_oFunc:Cell("nPisNoMes"):SetBorder(4, , , .F.)
+		
+		TRCell():New(_oFunc, "nPisAcumul"		, "", "ACUMULADO"				, "@E 999,999.99", 10, , {|| _aEncargos[03,03] }, , .T.)	//ACUMULADO
+		_oFunc:Cell("nPisAcumul"):nHeaderAlign := 2
+		_oFunc:Cell("nPisAcumul"):nAlign := 3
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nPisAcumul"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nPisAcumul"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nPisAcumul"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nPisAcumul"):SetBorder(2, , , .F.)
+		//_oFunc:Cell("nPisAcumul"):SetBorder(3, , , .F.)
+		//_oFunc:Cell("nPisAcumul"):SetBorder(4, , , .F.)
+		
+		TRCell():New(_oFunc, "nPisBxTransf"	, "", "BX."+CLRF+"TRANSF."		, "@E 999,999.99", 10, , {|| _aEncargos[03,04] }, , .T.)	//BX. TRANSF.
+		_oFunc:Cell("nPisBxTransf"):nHeaderAlign := 2
+		_oFunc:Cell("nPisBxTransf"):nAlign := 3
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nPisBxTransf"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nPisBxTransf"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nPisBxTransf"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nPisBxTransf"):SetBorder(2, , , .F.)
+		//_oFunc:Cell("nPisBxTransf"):SetBorder(3, , , .F.)
+		//_oFunc:Cell("nPisBxTransf"):SetBorder(4, , , .F.)
+		
+		TRCell():New(_oFunc, "nPisBaixa"		, "", "BAIXA"					, "@E 999,999.99", 10, , {|| _aEncargos[03,05] }, , .T.)	//BAIXA
+		_oFunc:Cell("nPisBaixa"):nHeaderAlign := 2
+		_oFunc:Cell("nPisBaixa"):nAlign := 3
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nPisBaixa"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nPisBaixa"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nPisBaixa"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nPisBaixa"):SetBorder(2, , , .F.)
+		//_oFunc:Cell("nPisBaixa"):SetBorder(3, , , .F.)
+		_oFunc:Cell("nPisBaixa"):SetBorder(4, , , .F.)
+		
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Celulas de TOTAL.   ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		TRCell():New(_oFunc, "nTotSldAnt"		, "", "  SALDO"+CLRF+"ANTERIOR"	, "@E 999,999.99", 10, , {|| _aEncargos[04,01] }, , .T.)	//SALDO ANTERIOR
+		_oFunc:Cell("nTotSldAnt"):nHeaderAlign := 2
+		_oFunc:Cell("nTotSldAnt"):nAlign := 3
+		_oFunc:Cell("nTotSldAnt"):lHeaderSize	:= .F.
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nTotSldAnt"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nTotSldAnt"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nTotSldAnt"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nTotSldAnt"):SetBorder(2, , , .F.)
+		_oFunc:Cell("nTotSldAnt"):SetBorder(3, , , .F.)
+		//_oFunc:Cell("nTotSldAnt"):SetBorder(4, , , .F.)
+		
+		TRCell():New(_oFunc, "nTotNoMes"		, "", "NO MES"					, "@E 999,999.99", 10, , {|| _aEncargos[04,02] }, , .T.)	//NO MES
+		_oFunc:Cell("nTotNoMes"):nHeaderAlign := 2
+		_oFunc:Cell("nTotNoMes"):nAlign := 3
+		_oFunc:Cell("nTotNoMes"):lHeaderSize	:= .F.
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nTotNoMes"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nTotNoMes"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nTotNoMes"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nTotNoMes"):SetBorder(2, , , .F.)
+		//_oFunc:Cell("nTotNoMes"):SetBorder(3, , , .F.)
+		//_oFunc:Cell("nTotNoMes"):SetBorder(4, , , .F.)
+		
+		TRCell():New(_oFunc, "nTotAcumul"		, "", "ACUMULADO"				, "@E 999,999.99", 10, , {|| _aEncargos[04,03] }, , .T.)	//ACUMULADO
+		_oFunc:Cell("nTotAcumul"):nHeaderAlign := 2
+		_oFunc:Cell("nTotAcumul"):nAlign := 3
+		_oFunc:Cell("nTotAcumul"):lHeaderSize	:= .F.
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nTotAcumul"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nTotAcumul"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nTotAcumul"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nTotAcumul"):SetBorder(2, , , .F.)
+		//_oFunc:Cell("nTotAcumul"):SetBorder(3, , , .F.)
+		//_oFunc:Cell("nTotAcumul"):SetBorder(4, , , .F.)
+		
+		/*
+		//CONFORME DEFINIÇÃO ESTE COLUNA NÃO SERÁ NECESSÁRIA.
+		TRCell():New(_oFunc, "nTotBxTransf"	, "", "BX."+CLRF+"TRANSF."		, "@E 999,999.99", 10, , {|| _aEncargos[04,04] }, , .T.)	//BX. TRANSF.
+		_oFunc:Cell("nTotBxTransf"):nHeaderAlign := 2
+		_oFunc:Cell("nTotBxTransf"):nAlign := 3
+		_oFunc:Cell("nTotBxTransf"):lHeaderSize	:= .F.
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nTotBxTransf"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nTotBxTransf"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nTotBxTransf"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nTotBxTransf"):SetBorder(2, , , .F.)
+		_oFunc:Cell("nTotBxTransf"):SetBorder(3, , , .F.)
+		_oFunc:Cell("nTotBxTransf"):SetBorder(4, , , .F.)
+		*/
+		
+		TRCell():New(_oFunc, "nTotBaixa"		, "", "BAIXA"					, "@E 999,999.99", 10, , {|| _aEncargos[04,05] }, , .T.)	//BAIXA
+		_oFunc:Cell("nTotBaixa"):nHeaderAlign := 2
+		_oFunc:Cell("nTotBaixa"):nAlign := 3
+		_oFunc:Cell("nTotBaixa"):lHeaderSize	:= .F.
+		//BORDAS PARA O CABEÇALHO DA CELULA
+		_oFunc:Cell("nTotBaixa"):SetBorder(1, , , .T.)
+		_oFunc:Cell("nTotBaixa"):SetBorder(3, , , .T.)
+		_oFunc:Cell("nTotBaixa"):SetBorder(4, , , .T.)
+		//BORDAS PARA AS CELULAS
+		_oFunc:Cell("nTotBaixa"):SetBorder(2, , , .F.)
+		//_oFunc:Cell("nTotBaixa"):SetBorder(3, , , .F.)
+		_oFunc:Cell("nTotBaixa"):SetBorder(4, , , .F.)
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Seta o Tratamento de Totais - INSS.                                    ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		TRFunction():New(_oFunc:Cell("nInssSldAnt")		/*oCell*/, "nInssSldAntX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "BASE FÉRIAS"			/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		TRFunction():New(_oFunc:Cell("nInssNoMes")		/*oCell*/, "nInssNoMesX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "SALDO ANTERIOR"		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		TRFunction():New(_oFunc:Cell("nInssAcumul")		/*oCell*/, "nInssAcumulX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "FÉRIAS NO MÊS"		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		TRFunction():New(_oFunc:Cell("nInssBxTransf")	/*oCell*/, "nInssBxTransfX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "BAIXA TRANSF."		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		TRFunction():New(_oFunc:Cell("nInssBaixa")		/*oCell*/, "nInssBaixaX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "BAIXA FÉRIAS"		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Seta o Tratamento de Totais - FGTS.                                    ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		TRFunction():New(_oFunc:Cell("nFgtsSldAnt")		/*oCell*/, "nFgtsSldAntX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "BASE FÉRIAS"			/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		TRFunction():New(_oFunc:Cell("nFgtsNoMes")		/*oCell*/, "nFgtsNoMesX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "SALDO ANTERIOR"		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		TRFunction():New(_oFunc:Cell("nFgtsAcumul")		/*oCell*/, "nFgtsAcumulX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "FÉRIAS NO MÊS"		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		TRFunction():New(_oFunc:Cell("nFgtsBxTransf")	/*oCell*/, "nFgtsBxTransfX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "BAIXA TRANSF."		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		TRFunction():New(_oFunc:Cell("nFgtsBaixa")		/*oCell*/, "nFgtsBaixaX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "BAIXA FÉRIAS"		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Seta o Tratamento de Totais - PIS.                                     ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		TRFunction():New(_oFunc:Cell("nPisSldAnt")		/*oCell*/, "nPisSldAntX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "BASE FÉRIAS"			/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		TRFunction():New(_oFunc:Cell("nPisNoMes")		/*oCell*/, "nPisNoMesX"		/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "SALDO ANTERIOR"		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		TRFunction():New(_oFunc:Cell("nPisAcumul")		/*oCell*/, "nPisAcumulX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "FÉRIAS NO MÊS"		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		TRFunction():New(_oFunc:Cell("nPisBxTransf")	/*oCell*/, "nPisBxTransfX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "BAIXA TRANSF."		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		TRFunction():New(_oFunc:Cell("nPisBaixa")		/*oCell*/, "nPisBaixaX"		/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "BAIXA FÉRIAS"		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Seta o Tratamento de Totais - TOTAL.                                   ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		TRFunction():New(_oFunc:Cell("nTotSldAnt")		/*oCell*/, "nTotSldAntX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "BASE FÉRIAS"			/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		TRFunction():New(_oFunc:Cell("nTotNoMes")		/*oCell*/, "nTotNoMesX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "SALDO ANTERIOR"		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		TRFunction():New(_oFunc:Cell("nTotAcumul")		/*oCell*/, "nTotAcumulX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "FÉRIAS NO MÊS"		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		TRFunction():New(_oFunc:Cell("nTotBaixa")		/*oCell*/, "nTotBaixaX"	/*cName*/, "SUM" /*cFunction*/, /*_oBrkCtr/*oBreak*/, "BAIXA FÉRIAS"		/*cTitle*/, /*cPicture*/, /*uFormula*/, .T./*lEndSection*/, .F./*lEndReport*/, .F./*lEndPage*/, _oFunc /*oParent*/, /*bCondition*/, /*lDisable*/, /*bCanPrint*/)
+		
+		
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Seta a Quebra do Relatório.                                            ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_oBrkCtr := TRBreak():New(_oFilial, {|| cEmpAnt+SM0->M0_CODFIL}, "PROVISAO", .T., "_oBrkCtr", .T.)
+_oBrkCtr:SetTotalInLine(.T.)
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Seta o Posicionamento das Tabelas Auxiliares do Relatório.             ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+TRPosition():New(_oFilial,"SM0", 1, {|| cEmpAnt+TSRA->RA_FILIAL })
+TRPosition():New(_oFunFer,"SRA", 1, {|| TSRA->(RA_FILIAL+RA_MAT) })
+TRPosition():New(_oFunc,"SRA", 1, {|| TSRA->(RA_FILIAL+RA_MAT) })
+
+Return(_oReport)
+
+/*/
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÚÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄ¿±±
+±±³Programa  ³ReportPrin³ Autor ³ Marco Bianchi         ³ Data ³ 10/07/06 ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Descri‡…o ³A funcao estatica ReportDef devera ser criada para todos os ³±±
+±±³          ³relatorios que poderao ser agendados pelo usuario.          ³±±
+±±³          ³                                                            ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Retorno   ³Nenhum                                                      ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Parametros³ExpO1: Objeto Report do Relatório                           ³±±
+±±³          ³                                                            ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³   DATA   ³ Programador   ³Manutencao efetuada                         ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³          ³               ³                                            ³±±
+±±ÀÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+/*/
+Static Function ReportPrint(_oReport,oPreNota)
+Local _cMV_SRA	:= ""
+Local _cPeri    := Substr(MV_PAR02,4,7) + SubStr(MV_PAR02,1,2) 
+
+Local _oFilial	:= _oReport:Section(01)
+Local _oFunFer	:= _oReport:Section(02)
+Local _oFunEnc	:= _oReport:Section(03)
+Local _oFunc	:= _oReport:Section(03):Section(01)
+
+Private _aPeriodo	:= {}
+Private _cMVPar02	:= AllTrim(MV_PAR02)
+
+//Ajustando a variável padrão para a geração do
+//MakeSQLExp corretamente.
+MV_PAR02 := fAjstMesAno(_cMVPar02)
+
+MakeSQLExp("GPER01P")
+
+_aPeriodo := aClone(fBscPer())
+
+_cMV_SRA := ""
+_cMV_SRA += IIF(EMPTY(MV_PAR01), "", MV_PAR01+" AND")
+_cMV_SRA += IIF(EMPTY(MV_PAR03), "", MV_PAR03+" AND")
+
+If Len(_aPeriodo) > 0
+	_cMV_SRA += " SUBSTR( SRA.RA_ADMISSA, 01, 06 ) <= '"+_aPeriodo[Len(_aPeriodo)]+"' AND"
+EndIf
+
+_cMV_SRA	:= _cMV_SRA
+
+//SELECIONANDO OS FUNCIONÁRIOS A SEREM PROCESSADOS.
+_cQry	:= "SELECT "+Chr(13)+Chr(10)
+_cQry	+= "	COUNT(*) AS QTDREG "+Chr(13)+Chr(10)
+_cQry	+= "FROM "+Chr(13)+Chr(10)
+_cQry	+= "	"+RetSQLName("SRA")+" SRA "+Chr(13)+Chr(10)
+_cQry	+= "WHERE "+Chr(13)+Chr(10)
+_cQry	+= "	 "+_cMV_SRA+" SRA.RA_CATFUNC NOT IN ('A', 'E', 'G') AND "
+_cQry   += "(SUBSTR(SRA.RA_DEMISSA,1,6) >=  '" + _aPeriodo[Len(_aPeriodo)] + "' OR SRA.RA_DEMISSA = ' ') AND "
+_cQry	+= "	 "+"SRA.D_E_L_E_T_ = ' '"
+
+TcQuery _cQry New Alias "TSRA"
+
+DbSelectArea("TSRA")
+TSRA->(DbGoTop())
+_nCont := (TSRA->QTDREG * 2) //Essa tabela será processada duas vezes uma pelas férias e outra pelos encargos.
+TSRA->(DbCloseArea())
+
+//SELECIONANDO OS FUNCIONÁRIOS A SEREM PROCESSADOS.
+_cQry	:= "SELECT "+Chr(13)+Chr(10)
+_cQry	+= "	SRA.RA_FILIAL, SRA.RA_MAT, SRA.RA_NOMECMP, SRA.RA_DEMISSA, SRA.RA_CATFUNC "+Chr(13)+Chr(10)
+_cQry	+= "FROM "+Chr(13)+Chr(10)
+_cQry	+= "	"+RetSQLName("SRA")+" SRA "+Chr(13)+Chr(10)
+_cQry	+= "WHERE "+Chr(13)+Chr(10)
+_cQry	+= "	 "+_cMV_SRA+" SRA.RA_CATFUNC NOT IN ('A', 'E', 'G') AND "
+_cQry   += "(SUBSTR(SRA.RA_DEMISSA,1,6) >=  '" + _aPeriodo[Len(_aPeriodo)] + "' OR SRA.RA_DEMISSA = ' ') AND "
+_cQry	+= "	 "+"SRA.D_E_L_E_T_ = ' '"
+_cQry	+= "ORDER BY "+Chr(13)+Chr(10)
+_cQry	+= "	SUBSTR(SRA.RA_FILIAL, 01, 04), SRA.RA_NOMECMP "
+
+TcQuery _cQry New Alias "TSRA"
+
+DbSelectArea("TSRA")
+TSRA->(DbGoTop())
+
+//Multiplicado pelo Número de Períodos que será impresso no relatório.
+_oReport:SetMeter( _nCont * LEN(_aPeriodo) )
+
+For _nP := 1 To Len(_aPeriodo)
+	
+	//IMPRESSÃO DAS FÉRIAS
+	DbSelectArea("TSRA")
+	TSRA->(DbGoTop())
+	
+	_cProvDe	:= "FÉRIAS"
+	_cPeriodo	:= SubStr(_aPeriodo[_nP], 05, 02)+"/"+SubStr(_aPeriodo[_nP], 01, 04)
+	
+	While TSRA->(!EOF()) .And. !_oReport:Cancel()
+		
+		_cChvSM0	:= cEmpAnt+SubStr(TSRA->RA_FILIAL, 01, 04)
+		
+		_oFilial:Init()
+		_oFilial:PrintLine()
+		
+		_oFunFer:Init()
+		While TSRA->(!EOF()) .And. _cChvSM0 == cEmpAnt+SubStr(TSRA->RA_FILIAL, 01, 04) .And. !_oReport:Cancel()
+			_oReport:IncMeter()
+			
+			_aFerias := fCalcFerias(TSRA->RA_FILIAL, TSRA->RA_MAT, _aPeriodo[_nP])
+			
+			_lPrint	:= .F.
+			
+			//LOOPs para verificar se exite valor diferente de zero
+			//pois valores zeros não apresenta no relatório.
+			For _nF := 1 To Len(_aFerias[01])
+				If _aFerias[01,_nF] != 0
+					_lPrint	:= .T.
+					EXIT
+				EndIf
+			Next _nF
+			
+			If _lPrint
+				
+				_oFunFer:PrintLine()
+				
+			EndIf
+			
+			TSRA->(DbSkip())
+		EndDo
+		_oFunFer:Finish()
+		
+		_oFilial:Finish()
+	EndDo
+	
+	//IMPRESSÃO DOS ENCARGOS DE FÉRIAS
+	DbSelectArea("TSRA")
+	TSRA->(DbGoTop())
+	
+	_cProvDe	:= "ENCARGOS DE FÉRIAS"
+	_cPeriodo	:= SubStr(_aPeriodo[_nP], 05, 02)+"/"+SubStr(_aPeriodo[_nP], 01, 04)
+	
+	While TSRA->(!EOF()) .And. !_oReport:Cancel()
+		_cChvSM0	:= cEmpAnt+SubStr(TSRA->RA_FILIAL, 01, 04)
+		
+		_oFilial:Init()
+		_oFilial:PrintLine()
+		
+		_oFunEnc:lHeaderSection := .F.
+		
+		_oFunEnc:Init()
+		_oFunc:Init()
+		
+		_oFunEnc:PrintLine()
+		
+		_oFunEnc:lHeaderSection := .T.
+		_oFunEnc:SetHeaderPage(.T.)
+		_oReport:aHeaderPage := {_oFunEnc}
+		
+		While TSRA->(!EOF()) .And. _cChvSM0 == cEmpAnt+SubStr(TSRA->RA_FILIAL, 01, 04) .And. !_oReport:Cancel()
+			
+			_oReport:IncMeter()
+			
+			_aEncargos := fCalcEncargos(TSRA->RA_FILIAL, TSRA->RA_MAT, _aPeriodo[_nP])
+			
+			_lPrint	:= .F.
+			
+			//LOOPs para verificar se exite valor diferente de zero
+			//pois valores zeros não apresenta no relatório.
+			For _nA := 1 To Len(_aEncargos)
+				For _nB := 1 To Len(_aEncargos[_nA])
+					If _aEncargos[_nA, _nB] != 0
+						_lPrint	:= .T.
+						EXIT
+					EndIF
+				Next _nB
+				
+				If _lPrint
+					EXIT
+				EndIF
+			Next _nA
+			
+			If _lPrint
+				
+				_oFunc:PrintLine()
+				
+			EndIF
+			
+			TSRA->(DbSkip())
+		EndDo
+		
+		_oFunEnc:SetHeaderPage(.F.)
+		_oReport:aHeaderPage := {}
+		
+		_oFunc:Finish()
+		_oFunEnc:Finish()
+		
+		_oFilial:Finish()
+	EndDo
+	
+Next _nP
+
+TSRA->(DbCloseArea())
+//_oReport:Section(1):Print()
+
+Return
+
+/*BEGINDOC
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³Função responsável por Buscar todos os períodos selecionados no³
+//³parâmetro de Mes/Ano.                                          ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+ENDDOC*/
+Static Function fBscPer()
+Local _aRet := {}
+
+_cMVPar02	:= REPLACE(MV_PAR02, "RT_DATACAL", "SUBSTR(RT_DATACAL, 01, 06)")
+
+_cQry := "SELECT DISTINCT "+Chr(13)+Chr(10)
+_cQry += "	SUBSTR(RT_DATACAL, 01, 06) AS RT_DATACAL "+Chr(13)+Chr(10)
+_cQry += "FROM "+Chr(13)+Chr(10)
+_cQry += "	"+RetSQLName("SRT")+" "+Chr(13)+Chr(10)
+_cQry += "WHERE "+Chr(13)+Chr(10)
+_cQry += IIF(EMPTY(_cMVPar02), "", "	"+_cMVPar02+" AND ")
+_cQry += "	D_E_L_E_T_ = ' ' "+Chr(13)+Chr(10)
+_cQry += "ORDER BY "+Chr(13)+Chr(10)
+_cQry += "	RT_DATACAL" 
+
+TcQuery _cQry New Alias "TSRT"
+
+DbSelectArea("TSRT")
+TSRT->(DbGoTop())
+
+While TSRT->(!EOF())
+	aADD(_aRet, TSRT->RT_DATACAL)
+	TSRT->(DbSkip())
+EndDo
+TSRT->(DbCloseArea())
+
+Return(_aRet)
+
+/*BEGINDOC
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³Função responsável pelo Ajuste do parâmetro de Mes/Ano do rela-³
+//³tótio.                                                         ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+ENDDOC*/
+Static Function fAjstMesAno(_cMesAno)
+Local _cRet := ""
+Local _nMesAux		:= 02
+Local _nBarraAux	:= 03
+Local _nAnoAux		:= 07
+Local _nSepAux		:= 08
+Local _nTotAux		:= 08
+Local _cSepara		:= ""
+
+For _nA := 1 To Len(_cMesAno)
+	If _nA = _nMesAux
+		_cMes := SubStr(_cMesAno, _nA - 1, 02)
+		_nMesAux	+= 8
+	EndIF
+	If _nA = _nBarraAux
+		_cBarra	:= SubStr(_cMesAno, _nA, 01)
+		_nBarraAux	+= 8
+	EndIF
+	If _nA = _nAnoAux
+		_cAno	:= SubStr(_cMesAno, _nA-03, 04)
+		_nAnoAux	+= 8
+	EndIF
+	If _nA = _nSepAux
+		_cSepara := SubStr(_cMesAno, _nA , 01)
+		
+		_cRet += _cAno+_cMes+_cSepara
+		
+		//Limpa as Variáveis
+		_cAno		:= ""
+		_cMes		:= ""
+		_cSepara	:= ""
+		
+		_nSepAux	+= 8
+	EndIF
+Next _nA
+
+If !EMPTY(_cAno) .OR. !EMPTY(_cMes)
+	_cRet += _cAno+_cMes+_cSepara
+EndIF
+
+Return(_cRet)
+
+Static Function fNomeFil()
+Local _cRet := ""
+
+If (SubStr(SM0->M0_CODFIL, 01, 04) = '01MT')
+	_cRet = "FIEMT"
+ElseIf(SubStr(SM0->M0_CODFIL, 01, 04) = '02MT')
+	_cRet = "SESI"
+ElseIf(SubStr(SM0->M0_CODFIL, 01, 04) = '03MT')
+	_cRet = "SENAI"
+ElseIf(SubStr(SM0->M0_CODFIL, 01, 04) = '04MT')
+	_cRet = "IEL"
+ElseIf(SubStr(SM0->M0_CODFIL, 01, 04) = '05MT')
+	_cRet = "CONDOMINIO"
+Else
+	_cRet = "SEM FILIAL"
+EndIf
+
+Return(_cRet)
+
+Static Function fCalcFerias(_cFilMat, _cMat, _cPerAtu)
+Local _aRet := {}
+
+Local _cPerAnt	:= IIF(SubStr(_cPerAtu, 05, 02) != '01', AllTrim( Str(Val(_cPerAtu) -1) ), AllTrim(Str(Val(SubStr(_cPerAtu, 01, 04)) -1)) + '12' )
+
+Local _cRCAtu	:= "RC"+cEmpAnt+SubStr(_cPerAtu, 03, 02)+SubStr(_cPerAtu, 05, 02)
+
+_cQry := ""
+_cQry := "SELECT "+Chr(13)+Chr(10)
+	//---------------------------------
+	//Base Provisao de Ferias Mes Atual
+	//---------------------------------
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(MAX(SRT.RT_SALARIO),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" + _cPerAtu + "%' AND "+Chr(13)+Chr(10)
+//_cQry += "		SRT.RT_VERBA = '875' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS BASE, "+Chr(13)+Chr(10)
+
+	//-------------------------------------
+	//Base Provisao de Ferias Mes Anterios|
+	//-------------------------------------
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(SRT.RT_SALARIO),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" + _cPerAnt + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA = '875' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS BASEANT, "+Chr(13)+Chr(10)
+
+	//-----------------------------------------------------|
+	//VERIFICAR SE EXISTE VERBA 427 - Ferias Pagas Mes Ant |
+	//-----------------------------------------------------|
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL (SUM(RC_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+_cRCAtu+" RC "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = RC.RC_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = RC.RC_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		RC.RC_PD IN ('427') AND "+Chr(13)+Chr(10)
+_cQry += "		RC.D_E_L_E_T_ <> '*') AS FPGMANT, "+Chr(13)+Chr(10)
+
+	//---------------------------------------
+	//Acumulado Provisao Férias Mes Anterior
+	//---------------------------------------	
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(SRT.RT_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" + _cPerAnt + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA IN ('875','876','877') AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS ACUMANT, "+Chr(13)+Chr(10)
+
+	//-------------------------------------------
+	//BAIXA FERIAS RC
+	//-------------------------------------------
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL (SUM(RC_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+ _cRCAtu + " RC "+Chr(13)+Chr(10)
+_cQry += "		INNER JOIN "+RetSQLName("SRV")+" SRV ON SRV.RV_COD = RC.RC_PD AND SRV.RV_XCTADEB = '"+_cCtaBaixa+"' AND SRV.RV_XRATEIO <> 'N' AND SRV.D_E_L_E_T_ <> '*'" 
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = RC.RC_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = RC.RC_MAT AND "+Chr(13)+Chr(10)
+//_cQry += "		RC.RC_PD IN ('209','210','216','233','224','245','247','248','250','252','253','289') AND "+Chr(13)+Chr(10)
+_cQry += "		RC.D_E_L_E_T_ <> '*') AS BAIXA, "+Chr(13)+Chr(10)
+
+	//--------------------------------------------|
+	//BAIXA FERIAS TRANSFERIDOS                   |
+	//--------------------------------------------|
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(SRT.RT_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+ RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT =  SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" + _cPerAtu + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA IN ('910','902','911') AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS BXFERTRAN, "+Chr(13)+Chr(10)
+
+	//-------------------------------------|
+	//Provisão Ferias Mes Atual            |
+	//-------------------------------------|
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(SRT.RT_XVALMES),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" +  _cPerAtu + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA IN ('875','877') AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS MENSAL, "+Chr(13)+Chr(10)
+
+	//-------------------------------------|
+	//Reversão Provisão Ferias             |
+	//-------------------------------------|
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(SRT.RT_XVALMES),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" +  _cPerAtu + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA IN ('951','952') AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS REVERS, "+Chr(13)+Chr(10)
+
+
+	//-------------------------------------------|
+	//Provisão Ferias Mes Atual  Media           |
+	//-------------------------------------------|
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(SRT.RT_XVALMES),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" +  _cPerAtu + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA IN ('876') AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS MEDIA "+Chr(13)+Chr(10)
+
+
+
+_cQry += "FROM "+Chr(13)+Chr(10)
+_cQry += "	"+RetSQLName("SRA")+" SRA "+Chr(13)+Chr(10)
+_cQry += "WHERE "+Chr(13)+Chr(10)
+//_cQry += "	SUBSTR(RA_FILIAL, 01, 04) = '"+SubStr(_cFilMat,01, 04)+"' AND RA_MAT = '"+_cMat+"' AND "+Chr(13)+Chr(10)
+_cQry += "	RA_FILIAL = '"+_cFilMat+"' AND RA_MAT = '"+_cMat+"' AND "+Chr(13)+Chr(10)
+_cQry += "	D_E_L_E_T_ = ' '"
+
+TcQuery _cQry New Alias "TPSRA"
+
+DbSelectArea("TPSRA")
+TPSRA->(DbGoTop())
+
+aADD(_aRet, {0, 0, 0, 0, 0, 0, 0, 0})
+
+_aRet[01, 01]	:= TPSRA->BASE																						//BASE DE FÉRIAS
+//_aRet[01, 02]	:= IIF(TPSRA->FPGMANT != 0, TPSRA->ACUMANT + (TPSRA->BAIXA + TPSRA->BXFERTRAN), TPSRA->ACUMANT )	//SALDO ANTERIOR
+_aRet[01, 02]	:= IIF(TPSRA->FPGMANT != 0, TPSRA->ACUMANT + TPSRA->BAIXA,  TPSRA->ACUMANT )	                    //SALDO ANTERIOR
+_aRet[01, 03]	:= TPSRA->MENSAL																					//FÉRIAS NO MÊS
+_aRet[01, 04]	:= TPSRA->BXFERTRAN																					//BAIXA TRANSFERÊNCIA
+_aRet[01, 05]	:= TPSRA->BAIXA																						//BAIXA FÉRIAS
+//_aRet[01, 06]	:= ((_aRet[01, 02] + TPSRA->MENSAL + TPSRA->MEDIA) - (TPSRA->BAIXA + TPSRA->BXFERTRAN)) 			//FÉRIAS ACUMULADAS
+_aRet[01, 06]	:= ((_aRet[01, 02] + TPSRA->MENSAL + TPSRA->MEDIA) - (TPSRA->BAIXA + TPSRA->REVERS)) 		        //FÉRIAS ACUMULADAS
+
+_aRet[01, 07]   := TPSRA->MEDIA 
+_aRet[01, 08]   := TPSRA->REVERS                                                                                    //REVERSAO
+
+TPSRA->(DbCloseArea())
+
+Return(_aRet)
+
+Static Function fCalcEncargos(_cFilMat, _cMat, _cPerAtu)
+Local _aRet := {}
+
+Local _cPerAnt	:= IIF(SubStr(_cPerAtu, 05, 02) != '01', AllTrim( Str(Val(_cPerAtu) -1) ), AllTrim(Str(Val(SubStr(_cPerAtu, 01, 04)) -1)) + '12' )
+
+Local _cRCAtu	:= "RC"+cEmpAnt+SubStr(_cPerAtu, 03, 02)+SubStr(_cPerAtu, 05, 02)
+
+_cQry := ""
+_cQry := "SELECT "+Chr(13)+Chr(10)
+	//-----------------------------------------------------|
+	//VERIFICAR SE EXISTE VERBA 427 - Ferias Pagas Mes Ant |
+	//-----------------------------------------------------|
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL (SUM(RC_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+_cRCAtu+" RC "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = RC.RC_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = RC.RC_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		RC.RC_PD IN ('427') AND "+Chr(13)+Chr(10)
+_cQry += "		RC.D_E_L_E_T_ <> '*') AS FPGMANT, "+Chr(13)+Chr(10)
+
+	//-------------------------------------------
+	//ACUMULADO INSS Provisão Ferias Mes Anterior
+	//-------------------------------------------
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(SRT.RT_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" + _cPerAnt + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA = ('878') AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS INSSANT, "+Chr(13)+Chr(10)
+
+	//-------------------------------------------
+	//BAIXA INSS FERIAS
+	//-------------------------------------------
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL (SUM(RC_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+_cRCAtu+ " RC "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = RC.RC_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = RC.RC_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		RC.RC_PD IN ('961','972') AND "+Chr(13)+Chr(10)
+_cQry += "		RC.D_E_L_E_T_ <> '*') AS BXINSS, "+Chr(13)+Chr(10)
+
+	//--------------------------------------------|
+	//BAIXA INSS FERIAS TRANSFERIDOS              |
+	//--------------------------------------------|
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL (SUM(SRT.RT_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+ RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" + _cPerAtu + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA IN ('903') AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS BXINSSTRAN, "+Chr(13)+Chr(10)
+
+	//------------------------------------------
+	//INSS Provisão Ferias Mes 
+	//------------------------------------------
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(SRT.RT_XVALMES),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+RetSQLName("SRT")+" SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" +  _cPerAtu + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA = ('878') AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS INSSMES, "+Chr(13)+Chr(10)
+
+	//------------------------------------------
+	//Acumulado INSS Provisão Ferias Mes Atual
+	//------------------------------------------
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(SRT.RT_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+ RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" +  _cPerAtu + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA = ('878') AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS INSSACUM, "+Chr(13)+Chr(10)
+
+	//-------------------------------------------
+	//Acumulado FGTS Provisão Ferias Mes Anterior
+	//-------------------------------------------
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(SRT.RT_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+ RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" + _cPerAnt + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA = ('879') AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS FGTSANT, "+Chr(13)+Chr(10)
+
+	//-------------------------------------------
+	//BAIXA FGTS FERIAS
+	//-------------------------------------------
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(RC_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+ _cRCAtu + " RC "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = RC.RC_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = RC.RC_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		RC.RC_PD IN ('962','973') AND "+Chr(13)+Chr(10)
+_cQry += "		RC.D_E_L_E_T_ <> '*') AS BXFGTS, "+Chr(13)+Chr(10)
+
+	//--------------------------------------------|
+	//BAIXA FGTS FERIAS TRANSFERIDOS              |
+	//--------------------------------------------|
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(SRT.RT_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+ RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" + _cPerAtu + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA IN ('904') AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS BXFGTSTRAN, "+Chr(13)+Chr(10)
+
+	//-------------------------------------------
+	//FGTS Provisão Ferias Mes
+	//-------------------------------------------
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(SRT.RT_XVALMES),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+ RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" + _cPerAtu + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA = ('879') AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS FGTSMES, "+Chr(13)+Chr(10)
+
+	//-----------------------------------------------
+	//Acumulado FGTS Provisão Ferias Mes Atual
+	//-----------------------------------------------
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(SRT.RT_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" + _cPerAtu + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA = ('879') AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS FGTSACUM, "+Chr(13)+Chr(10)
+
+	//-------------------------------------------
+	//-- PIS MES
+	//-------------------------------------------
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(SRT.RT_XVALMES),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" + _cPerAtu + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA = ('886') AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS PISMES, "+Chr(13)+Chr(10)
+
+	//-------------------------------------------
+	//BAIXA PIS FERIAS
+	//-------------------------------------------
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(RC_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+ _cRCAtu + " RC "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = RC.RC_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = RC.RC_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		RC.RC_PD IN ('963','974') AND "+Chr(13)+Chr(10)
+_cQry += "		RC.D_E_L_E_T_ <> '*') AS BXPIS, "+Chr(13)+Chr(10)
+
+	//-------------------------------------------|
+	//BAIXA PIS FERIAS MES                       |
+	//-------------------------------------------|
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM (SRT.RT_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		" + RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" + _cPerAtu + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA IN ('939') AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS BXPISTRAN, "+Chr(13)+Chr(10)
+
+	//-------------------------------------------
+	//Acumulado PIS Provisão Ferias Mes Anterior
+	//-------------------------------------------
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(SRT.RT_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+ RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL LIKE '" + _cPerAnt + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA = ('886') AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS PISANT , "+Chr(13)+Chr(10)
+
+	//-------------------------------------------
+	//Acumulado PIS Provisão Ferias Mes Atual
+	//-------------------------------------------
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(SRT.RT_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+ RetSQLName("SRT") + " SRT "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = SRT.RT_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT IN SRT.RT_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_DATACAL like '" +  _cPerAtu + "%' AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.RT_VERBA = ('886') AND "+Chr(13)+Chr(10)
+_cQry += "		SRT.D_E_L_E_T_ <> '*') AS PISACUM, "+Chr(13)+Chr(10)
+
+	//-----------------------------------------------------|
+	//VERIFICA SE EXISTE VERBA 680 - LIQ. DA RESCISAO      |
+	//-----------------------------------------------------|
+_cQry += "	(SELECT "+Chr(13)+Chr(10)
+_cQry += "		NVL(SUM(RC_VALOR),0) "+Chr(13)+Chr(10)
+_cQry += "	FROM "+Chr(13)+Chr(10)
+_cQry += "		"+ _cRCAtu + " RC "+Chr(13)+Chr(10)
+_cQry += "	WHERE "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_FILIAL = RC.RC_FILIAL AND "+Chr(13)+Chr(10)
+_cQry += "		SRA.RA_MAT = RC.RC_MAT AND "+Chr(13)+Chr(10)
+_cQry += "		RC.RC_PD IN ('680') AND "+Chr(13)+Chr(10)
+_cQry += "		RC.D_E_L_E_T_ <> '*') AS LIQRES "+Chr(13)+Chr(10)
+
+_cQry += "FROM "+Chr(13)+Chr(10)
+_cQry += "	"+RetSQLName("SRA")+" SRA "+Chr(13)+Chr(10)
+_cQry += "WHERE "+Chr(13)+Chr(10)
+//_cQry += "	SUBSTR(RA_FILIAL, 01, 04) = '"+SubStr(_cFilMat,01, 04)+"' AND RA_MAT = '"+_cMat+"' AND "+Chr(13)+Chr(10)
+_cQry += "	RA_FILIAL = '"+_cFilMat+"' AND RA_MAT = '"+_cMat+"' AND "+Chr(13)+Chr(10)
+_cQry += "	D_E_L_E_T_ = ' '"
+
+TcQuery _cQry New Alias "TPSRA"
+
+DbSelectArea("TPSRA")
+TPSRA->(DbGoTop())
+
+aADD(_aRet, {0, 0, 0, 0, 0})	//INSS
+aADD(_aRet, {0, 0, 0, 0, 0})	//FGTS
+aADD(_aRet, {0, 0, 0, 0, 0})	//PIS
+aADD(_aRet, {0, 0, 0, 0, 0})	//TOTAL
+
+//-------------------------------|
+// CALCULOS CONDICIONAIS.        |  
+//-------------------------------|
+If TPSRA->FPGMANT != 0
+	//INSS
+	_aRet[01,01]	:= TPSRA->INSSANT + (TPSRA->BXINSS + TPSRA->BXINSSTRAN)
+	_aRet[01,03]	:= ((_aRet[01,01] + TPSRA->INSSMES) - (TPSRA->BXINSS + TPSRA->BXINSSTRAN))
+	
+	//FGTS
+	_aRet[02,01]	:= TPSRA->FGTSANT + (TPSRA->BXFGTS + TPSRA->BXFGTSTRAN)
+	_aRet[02,03]	:= ((_aRet[02,01] + TPSRA->FGTSMES) - (TPSRA->BXFGTS + TPSRA->BXFGTSTRAN))
+	
+	//PIS
+	_aRet[03,01]	:= TPSRA->PISANT  + (TPSRA->BXPIS  + TPSRA->BXPISTRAN)
+	_aRet[03,03]	:= ((_aRet[03,01]  + TPSRA->PISMES)  - (TPSRA->BXPIS  + TPSRA->BXPISTRAN))
+Else
+	//INSS
+	_aRet[01,01]	:= TPSRA->INSSANT
+	_aRet[01,03]	:= ((_aRet[01,01] + TPSRA->INSSMES) - (TPSRA->BXINSS + TPSRA->BXINSSTRAN))
+	
+	//FGTS
+	_aRet[02,01]	:= TPSRA->FGTSANT
+	_aRet[02,03]	:= ((_aRet[02,01] + TPSRA->FGTSMES) - (TPSRA->BXFGTS + TPSRA->BXFGTSTRAN))
+	
+	//PIS
+	_aRet[03,01]	:= TPSRA->PISANT
+	_aRet[03,03]	:= ((_aRet[03,01]  + TPSRA->PISMES)  - (TPSRA->BXPIS + TPSRA->BXPISTRAN))
+EndIF
+
+If TPSRA->LIQRES != 0
+	//=====================================================================
+	//AUTOR: FOLIVEIRA - 29/10/2015
+	//SOLICITADO POR: JORGE ACENCIO
+	//
+	//NOVOS CALCULOS SOLICITADOS QUANDO O FUNCIONÁRIO POSSUI RECISÃO, SENDO
+	//NECESSÁRIO VERIFICAR A RESCISÃO COMPLEMENTAR CASO TENHA.
+	//=====================================================================
+	
+	_lResc	:= fCalcRes(_cFilMat, _cMat, _cPerAtu)
+	
+	//INSS
+	_aRet[01,01]	:= IIF( _lResc, 0, TPSRA->INSSANT )
+	_aRet[01,03]	:= (_aRet[01,01] + TPSRA->INSSMES) - (TPSRA->BXINSS + TPSRA->BXINSSTRAN)
+	
+	//FGTS
+	_aRet[02,01]	:= IIF( _lResc, 0, TPSRA->FGTSANT )
+	_aRet[02,03]	:= (_aRet[02,01] + TPSRA->FGTSMES) - (TPSRA->BXFGTS + TPSRA->BXFGTSTRAN)
+	
+	//PIS
+	_aRet[03,01]	:= IIF( _lResc, 0, TPSRA->PISANT )
+	_aRet[03,03]	:= (_aRet[03,01]  + TPSRA->PISMES)  - (TPSRA->BXPIS  + TPSRA->BXPISTRAN)
+	
+Else
+	//INSS
+	_aRet[01,03]	:= (TPSRA->INSSANT + TPSRA->INSSMES) - (TPSRA->BXINSS + TPSRA->BXINSSTRAN)
+	
+	//FGTS
+	_aRet[02,03]	:= (TPSRA->FGTSANT + TPSRA->FGTSMES) - (TPSRA->BXFGTS + TPSRA->BXFGTSTRAN)
+	
+	//PIS
+	_aRet[03,03]	:= (TPSRA->PISANT  + TPSRA->PISMES)  - (TPSRA->BXPIS  + TPSRA->BXPISTRAN)
+EndIF
+
+//-------------------------------|
+//             INSS              |  
+//-------------------------------|
+//_aRet[01,01]	:= 0									//SALDO ANTERIOR
+_aRet[01,02]	:= TPSRA->INSSMES						//NO MÊS
+//_aRet[01,03]	:= 0									//ACUMULADO
+_aRet[01,04]	:= TPSRA->BXINSSTRAN					//BAIXA TRANSFERÊNCIA
+_aRet[01,05]	:= TPSRA->BXINSS						//BAIXA
+
+//-------------------------------|
+//             FGTS              |  
+//-------------------------------|
+//_aRet[02,01]	:= 0									//SALDO ANTERIOR
+_aRet[02,02]	:= TPSRA->FGTSMES						//NO MÊS
+//_aRet[02,03]	:= 0									//ACUMULADO
+_aRet[02,04]	:= TPSRA->BXFGTSTRAN					//BAIXA TRANSFERÊNCIA
+_aRet[02,05]	:= TPSRA->BXFGTS						//BAIXA
+
+//-------------------------------|
+//             PIS               |  
+//-------------------------------|
+//_aRet[03,01]	:= 0									//SALDO ANTERIOR
+_aRet[03,02]	:= TPSRA->PISMES						//NO MÊS
+//_aRet[03,03]	:= 0									//ACUMULADO
+_aRet[03,04]	:= TPSRA->BXPISTRAN						//BAIXA TRANSFERÊNCIA
+_aRet[03,05]	:= TPSRA->BXPIS							//BAIXA
+
+//-------------------------------|
+//             TOTAL             |  
+//-------------------------------|
+_aRet[04,01]	:= (_aRet[01,01] + _aRet[02,01] + _aRet[03,01])	//SALDO ANTERIOR
+_aRet[04,02]	:= (_aRet[01,02] + _aRet[02,02] + _aRet[03,02])	//NO MÊS
+_aRet[04,03]	:= (_aRet[01,03] + _aRet[02,03] + _aRet[03,03])	//ACUMULADO
+_aRet[04,04]	:= (_aRet[01,04] + _aRet[02,04] + _aRet[03,04])	//BAIXA TRANSFERÊNCIA
+_aRet[04,05]	:= (_aRet[01,05] + _aRet[02,05] + _aRet[03,05])	//BAIXA
+
+TPSRA->(DbCloseArea())
+
+Return(_aRet)
+
+Static Function fCalcRes(_cFilMat, _cMat, _cPerAtu)
+Local _aArea		:= GetArea()
+Local _lRet			:= .F.
+Local _lDemitido	:= IIF( Posicione("SRA", 01, _cFilMat+_cMat, "RA_SITFOLH") == "D", .T., .F. )
+
+If _lDemitido
+	
+	//VERIFICANDO SE O FUNCIONÁRIO POSSUI RESCISÃO COMPLEMENTAR.
+	_cQry := ""
+	_cQry := "SELECT "
+	_cQry += "	* "
+	_cQry += "FROM "
+	_cQry += "	"+RetSQLName("SRG")+" SRG "
+	_cQry += "WHERE "
+	_cQry += "	RG_FILIAL = '"+_cFilMat+"' AND RG_MAT = '"+_cMat+"' AND RG_RESCDIS = '1' AND "
+	_cQry += "	RG_DATAHOM LIKE '"+_cPerAtu+"%' AND  D_E_L_E_T_ != '*' "
+	
+	TcQuery _cQry New Alias "TRCMP"
+	
+	DbSelectArea("TRCMP")
+	TRCMP->(DbGoTop())
+	
+	_cHmlRComp	:= AllTrim( SubStr(TRCMP->RG_DATAHOM, 01, 06) )
+	
+	TRCMP->(DbCloseArea())
+	
+	//VERIFICANDO SE O FUNCIONÁRIO POSSUI RESCISÃO NORMAL.
+	_cQry := ""
+	_cQry := "SELECT "
+	_cQry += "	* "
+	_cQry += "FROM "
+	_cQry += "	"+RetSQLName("SRG")+" SRG "
+	_cQry += "WHERE "
+	_cQry += "	RG_FILIAL = '"+_cFilMat+"' AND RG_MAT = '"+_cMat+"' AND RG_RESCDIS = '0' AND "
+	_cQry += "	RG_DATAHOM LIKE '"+_cPerAtu+"%' AND  D_E_L_E_T_ != '*' "
+	
+	TcQuery _cQry New Alias "TRNRL"
+	
+	_cHmlRNrl	:= AllTrim( SubStr(TRNRL->RG_DATAHOM, 01, 06) )
+	
+	TRNRL->(DbCloseArea())
+	
+	If !EMPTY(_cHmlRComp) .AND. !EMPTY(_cHmlRNrl)
+		_lRet := .F.
+	Else
+		_lRet := .T.
+	EndIF
+EndIf
+
+RestArea(_aArea)
+Return(_lRet)
+
+/*BEGINDOC
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³Função responsável pelo Ajuste do SX1 (Dicionário de Perguntas)³
+//³do Relatório em questão.                                       ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+ENDDOC*/
+Static Function fJustSX1(_cPerg)
+Local _aHelp := {}
+
+AAdd(_aHelp, {{"Informe neste campo a Filial Inicial e  ","Final."}					, {"Informe neste campo a Filial Inicial e  ","Final."}					, {"Informe neste campo a Filial Inicial e  ","Final."}			})
+AAdd(_aHelp, {{"Informe neste campo o Mes/Ano Inicial e ","Final."}					, {"Informe neste campo o Mes/Ano Inicial e ","Final."}					, {"Informe neste campo o Contrato Inicial e","Final."}			})
+AAdd(_aHelp, {{"Informe neste campo o Funcionario Inici-","al e Final."}			, {"Informe neste campo o Funcionario Inici-","al e Final."}			, {"Informe neste campo o Funcionario Inici-","al e Final."}	})
+
+u_SFPUTSX1(_cPerg,"01","Filial"		,	"Filial"		,	"Filial"		, "mv_ch1","C",02,00,00,"R","","SM0","","","MV_PAR01","","","","RA_FILIAL","","","","","","","","","","","","",_aHelp[01,1],_aHelp[01,2],_aHelp[01,3],"")
+u_SFPUTSX1(_cPerg,"02","Mes/Ano"	,	"Mes/Ano" 	 	,	"Mes/Ano"		, "mv_ch2","C",07,00,00,"R","","ADA","","","MV_PAR02","","","","RT_DATACAL","","","","","","","","","","","","",_aHelp[02,1],_aHelp[02,2],_aHelp[02,3],"")
+u_SFPUTSX1(_cPerg,"03","Funcionário",	"Funcionário"	,	"Funcionário"	, "mv_ch2","C",06,00,00,"R","","SRA","","","MV_PAR03","","","","RA_MAT","","","","","","","","","","","","",_aHelp[03,1],_aHelp[03,2],_aHelp[03,3],"")
+
+Return

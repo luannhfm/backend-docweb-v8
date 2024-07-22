@@ -1,0 +1,103 @@
+#Include "TOTVS.ch"
+#Include "TbiConn.ch"
+
+/*/{Protheus.doc} SF34S02X
+    @Description Realiza a integração e atualização de dados
+                 de centro de custo com o CorporeRM.
+    @Type User Function
+    @Author Pedro Storino
+    @Since 29/05/2020
+    @Version 1.0
+    @history 18/09/2020, Franklin de Brito de Oliveira, correção para recuperar os dado do DBAccess diretamente do appserver.ini
+    /*/
+User Function SF34S02X(_aParam)
+	Local nActConn  := AdvConnection()
+	Local cAliasRM  := GetNextAlias()
+	Local cAliasP12 := GetNextAlias()
+	Local cRMSql    := ""
+	Local nP12Conn  := -1
+	Local nRMConn   := -1
+	Local cDBServ	:= GetSrvProfString("DBServer", "Localhost")
+	Local nDBPort	:= Val(GetSrvProfString("DbPort", "7890"))
+	
+	Local _cEmp     := "01"
+	Local _cFil     := "01"
+	
+	If(ValType(_aParam) == "A")
+		_cEmp := _aParam[01]
+		_cFil := _aParam[02]
+	EndIf
+	
+	PREPARE ENVIRONMENT EMPRESA _cEmp FILIAL _cFil
+	
+	If dbTCLink("MSSQL/RM", cDBServ, nDBPort, @nP12Conn, @nRMConn)
+		TCSetConn(nP12Conn)
+		
+		BeginSql Alias cAliasP12
+	        %NoParser%
+	        SELECT
+                CTT.*,
+                CASE
+                    WHEN CTT_BLOQ = '1' THEN 'F'
+                    WHEN CTT_BLOQ = '2' THEN 'T'
+                    ELSE 'F'
+                END AS CTT_ATIVO
+            FROM %Table:CTT% CTT
+            WHERE CTT.CTT_CLASSE = '2'
+	    EndSql
+	    COUNT To nRecCount
+       (cAliasP12)->(dbGoTop())
+	    
+	    While !(cAliasP12)->(EoF())
+	    	TCSetConn(nRMConn)
+	    	
+	    	cRMSql := "SELECT * FROM PCCUSTO "
+	    	cRMSql += "WHERE CODCOLIGADA = '"+SubStr((cAliasP12)->CTT_FILIAL,2,1)+"' AND "
+	    	cRMSql += "CODCCUSTO = '"+(cAliasP12)->CTT_CUSTO+"'
+	    	
+	    	DBUseArea(.T., "TOPCONN", TCGenQry(NIL,NIL,cRMSql), (cAliasRM), .F., .T.)
+	    	
+	    	If (cAliasRM)->(EoF())
+	    		cRMSql := "INSERT INTO PCCUSTO (CODCOLIGADA, CODCCUSTO, NOME, PERC_ACTRAB, PERC_TERC, NUMERO, ESTADO, CIDADE, COMPLEMENTO, RUA, BAIRRO, CEP, ATIVO, RECCREATEDBY, RECCREATEDON) "
+	    		cRMSql += "VALUES ('" + SubStr((cAliasP12)->CTT_FILIAL,2,1) + "','" + AllTrim((cAliasP12)->CTT_CUSTO) + "','" + AllTrim((cAliasP12)->CTT_DESC01) + "'," + IIF(Empty((cAliasP12)->CTT_PERCAC),'NULL',AllTrim((cAliasP12)->CTT_PERCAC)) + "," + IIF(Empty((cAliasP12)->CTT_PERFPA),'NULL',AllTrim((cAliasP12)->CTT_PERFPA)) + ",'" + AllTrim((cAliasP12)->CTT_LOGRNR) + "'," + IIF(Empty((cAliasP12)->CTT_ESTADO),'NULL',AllTrim((cAliasP12)->CTT_ESTADO)) + ",'" + AllTrim((cAliasP12)->CTT_MUNIC) + "','" + AllTrim((cAliasP12)->CTT_COMPL) + "','" + AllTrim((cAliasP12)->CTT_ENDER) + "','" + AllTrim((cAliasP12)->CTT_BAIRRO) + "','" + AllTrim((cAliasP12)->CTT_CEP) + "','" + (cAliasP12)->CTT_ATIVO + "', 'mestre', CURRENT_TIMESTAMP)"
+	    	Else
+	    		cRMSql := "UPDATE PCCUSTO "
+	    		cRMSql += "SET CODCOLIGADA = '" + SubStr((cAliasP12)->CTT_FILIAL,2,1) + "', CODCCUSTO = '" + AllTrim((cAliasP12)->CTT_CUSTO) + "', NOME = '" + AllTrim((cAliasP12)->CTT_DESC01) + "', PERC_ACTRAB = " + IIF(Empty((cAliasP12)->CTT_PERCAC),'NULL',AllTrim((cAliasP12)->CTT_PERCAC)) + ", PERC_TERC = " + IIF(Empty((cAliasP12)->CTT_PERFPA),'NULL',AllTrim((cAliasP12)->CTT_PERFPA)) + ", NUMERO = '" + AllTrim((cAliasP12)->CTT_LOGRNR) + "', ESTADO = " + IIF(Empty((cAliasP12)->CTT_ESTADO),'NULL',AllTrim((cAliasP12)->CTT_ESTADO)) + ", CIDADE = '" + AllTrim((cAliasP12)->CTT_MUNIC) + "', COMPLEMENTO = '" + AllTrim((cAliasP12)->CTT_COMPL) + "', RUA = '" + AllTrim((cAliasP12)->CTT_ENDER) + "', BAIRRO = '" + AllTrim((cAliasP12)->CTT_BAIRRO) + "', CEP = '" + AllTrim((cAliasP12)->CTT_CEP) + "', ATIVO = '" + (cAliasP12)->CTT_ATIVO + "', RECMODIFIEDBY = 'mestre', RECMODIFIEDON = CURRENT_TIMESTAMP "
+	    		cRMSql += "WHERE CODCOLIGADA = '" + SubStr((cAliasP12)->CTT_FILIAL,2,1) + "' AND "
+	    		cRMSql += "CODCCUSTO = '" + (cAliasP12)->CTT_CUSTO + "'
+	    	EndIf
+	    	
+	    	TCSqlExec(cRMSql)
+	    	
+	    	TCSetConn(nP12Conn)
+	       (cAliasP12)->(dbSkip())
+	        DBCloseArea()
+	    EndDo
+    EndIf
+    
+    RESET ENVIRONMENT
+Return(Nil)
+
+/*/{Protheus.doc} dbTCLink
+    @Description Realiza um Link com o Alias específicado
+                 nos parâmetros.
+    @Type Static Function
+    @Author caiocrol
+    @Since 05/10/2015
+    @Version 1.0
+    /*/
+Static Function dbTCLink(_cDBAlias , _cServer , _nPort, nP12Conn, nRMConn)
+	Local lRet     := .F.
+	Local nP12Conn := AdvConnection()
+	Local nRMConn  := -1;
+
+	nRMConn := TCLink(AllTrim(_cDBAlias), AllTrim(_cServer) ,_nPort)
+
+	If !TCSetConn(nRMConn)
+		qqOut("Sem Conexao com a base de dados, Erro: " + cValToChar(nRMConn))
+		Return(lRet)
+	Else
+		qqOut("Conexão efetuada com sucesso! ID: " + cValToChar(nRMConn))
+		lRet := .T.
+	EndIf
+Return(lRet)

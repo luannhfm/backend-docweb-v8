@@ -6,8 +6,6 @@ export class SourceFunction {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column('varchar')
-  uuid: string;
 
   @Column('varchar')
   type: string;
@@ -18,15 +16,15 @@ export class SourceFunction {
   @Column('text')
   source: string;
 
-  @Column('integer')
+  @Column('int')
   line: number;
 
-  @Column('integer')
+  @Column('int')
   blankLines: number;
 
-  @Column('integer')
+  @Column('int')
   commentedLines: number;
 
-  @ManyToOne(() => Source, source => source.sourceFunctions, { onDelete: 'CASCADE' })
-  sourceTxt: Source;
+  @ManyToOne(() => Source, source => source.Functions, { onDelete: 'CASCADE' })
+  Source: Source;
 }

@@ -1,0 +1,96 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} SFF701A1
+@description Rotina responsável por reimprimir bilhetes para portaria.
+@type  Function
+@author Alan Teles de Oliveira
+@since 14/12/2018
+@version 11.8
+/*/
+User Function SFF701A1()
+
+    Local cCaixa    := xNumCaixa()
+    Local oPrint    := Nil
+
+    If .not. fConAcessos()
+
+        MsgInfo('Não é permitido reimprimir bilhetes já utilizados.', 'Atenção - SFF701A1')
+
+    ElseIf dDataBase == SL1->L1_EMISSAO .and. (cCaixa == SL1->L1_OPERADO .or. Empty(cCaixa)) 
+
+        oPrint := SF0502X():New()	
+
+        If u_SFVUSERA('SF_GRSUPER', '001016', 'Autorização de usuário superior', 'G')
+            MsAguarde({|lEnd| oPrint:PRINT(@lEnd)}, "Imprimindo bilhetes - SFF701A1", "Imprimindo bilhetes aguarde...")
+        EndIf        
+        
+    ElseIf .not. dDataBase == SL1->L1_EMISSAO
+ 
+        MsgInfo('Não é permitido reimprimir bilhetes emitidos em datas anteriores.', 'Atenção - SFF701A1')
+ 
+    Else
+ 
+        MsgInfo('Usuário possui permissão para reimprimir apenas bilhetes emitidos no seu caixa', 'Atenção - SFF701A1')
+ 
+    EndIf
+
+Return 
+
+
+/*/{Protheus.doc} fConAcessos
+@description Verifica se algum bilhete do lote foi recebido na portaria 
+@type  Static Function
+@author Alan Teles de Oliveira
+@since 20/12/2018
+@version 11.8
+
+@return lRet, logico, verdadeiro caso disponível para reimpressão
+
+/*/
+Static Function fConAcessos()
+
+    Local cAliTMP   := GetNextAlias()
+    Local lRet      := .T.
+
+    If Select(cAliTMP) > 0
+		(cAliTMP)->(DbCloseArea())
+	EndIf
+
+	BeginSql Alias cAliTMP
+
+        SELECT 
+            ZH0.ZH0_NUMNOT,
+            COUNT(ZH4.ZH4_ACESSO) AS ACESSO
+
+        FROM ZH0010 ZH0
+
+        INNER JOIN ZH4010 ZH4 ON 
+            ZH4.ZH4_FILIAL  = ZH0.ZH0_FILIAL AND 
+            ZH4.ZH4_COD     = ZH0.ZH0_NUMNOT AND 
+            ZH4.ZH4_ITEM    = ZH0.ZH0_ITEM AND 
+            ZH4.ZH4_TIPO    = '3' AND 
+            ZH4.ZH4_ACESSO  = '1' AND
+            ZH4.%NotDel%
+
+        WHERE 
+            ZH0.ZH0_FILIAL  = %Exp:xFilial('ZH0')% AND
+            ZH0.ZH0_NUMORC  = %Exp:SL1->L1_NUM% AND
+            ZH0.%NotDel%
+
+        GROUP BY 
+	        ZH0.ZH0_NUMNOT
+
+	EndSql
+
+	//MemoWrite('C:\TEMP\SFF701A1.sql', GetLastQuery()[2])
+
+	dbSelectArea(cAliTMP)
+    (cAliTMP)->(DbGoTop())
+
+    lRet := (cAliTMP)->ACESSO = 0
+
+    If Select(cAliTMP) > 0
+		(cAliTMP)->(DbCloseArea())
+	EndIf
+
+Return lRet

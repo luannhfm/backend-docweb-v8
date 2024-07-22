@@ -1,0 +1,156 @@
+#Include 'Protheus.ch'
+
+//Variáveis para retorno da consulta específica.
+Static _cCodCol := Space(1)
+Static _cCodPrf	:= Space(10)
+Static _cDocNom	:= Space(50)
+
+/*/{Protheus.doc} SF69A02W
+	Rotina utilizada em consulta especifica de locais.
+@author Walmir Junior
+@since 27/07/2020
+@return _lRet, Retorno para consulta
+@type user function
+/*/
+User Function SF69A02W()
+
+
+Private _aProfM		:= {{"","","","",""}}
+Private _oBrowPd	
+Private _oDlg
+Private _lRet		:= .F.
+
+fwBrowse()
+
+Return ({_cCodCol,_cCodPrf,_cDocNom})
+
+/*/{Protheus.doc} SF69X02W
+	Rotina utilizada em consulta especifica de locais.
+@author Walmir Junior
+@since 27/07/2020
+@return _lRet, Retorno para consulta
+@type user function
+/*/
+User Function SF69X02W()
+
+Return ({_cCodCol,_cCodPrf,_cDocNom})
+
+Static Function fObtVlr()
+_cCodCol := Iif(AllTrim(_aProfM[_oBrowPd:nAt,1]) == 'SESI', '2','3')
+_cCodPrf := _aProfM[_oBrowPd:nAt,2]
+_cDocNom := _aProfM[_oBrowPd:nAt,4] + '-' + _aProfM[_oBrowPd:nAt,3]
+_lRet	 := .T.
+_oDlg:End()
+Return _lRet
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fTurmaOk>
+  Objetivo;
+   Cria grid na MSDIALOG (fSeekSIGE).
+
+@author<Walmir Junior>
+@since<27/07/2020>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function fwBrowse()
+Local _btConfirm
+Local _btCancel
+Local _oGetFil
+Local _cValFil	:= Space(100)
+Local _oCmbFil
+Local _cVlCmFl
+Local _aFil		:= {"Nome", "CPF"}
+
+Local _oCmbTFl
+Local _cVlTpFl
+Local _aTpFil	:= {"Contém", "Igual a"}
+
+DEFINE MSDIALOG _oDlg TITLE 'Consulta Professores - SGE' FROM 000, 000 TO 365, 800 COLORS 0, 16777215 PIXEL
+	@ 005, 004 MsGet 		_oGetFil Var _cValFil 								SIZE 195, 012 OF _oDlg PIXEL
+	@ 005, 200 MsComboBox	_oCmbTFl Var _cVlTpFl Items _aTpFil					SIZE 055, 012 OF _oDlg PIXEL
+	@ 005, 260 MsComboBox	_oCmbFil Var _cVlCmFl Items _aFil					SIZE 055, 012 OF _oDlg PIXEL
+	@ 005, 320 BUTTON		_btConfirm	PROMPT "Pesquisar" ;	
+	ACTION(FWMsgRun(, {|| fSelPro(SubStr(_cVlTpFl, 1,1), SubStr(_cVlCmFl, 1,1), Alltrim(_cValFil)), _oBrowPd:Refresh() }, "Efetuando Consulta...", "Aguarde..."));	
+																				SIZE 037, 012 OF _oDlg PIXEL
+	
+	/* Cria a GRID */																																																			   //Cod. |Curso|Cod.|Turma|Abertura|Encerramento|Aula Ini|Aula Fim|Vagas Abertas|Vagas Disponiveis|Status Turma|														
+	@ 020, 004 LISTBOX _oBrowPd Fields HEADER "Entidade", "Cod. Professor", "Nome", "CPF", "Dt. Nascimento" SIZE 390, 142 OF _oDlg PIXEL //ColSizes 25,  100						
+	_oBrowPd:SetArray(_aProfM)
+	_oBrowPd:bLDblClick := { || fObtVlr() }
+	_oBrowPd:bLine := {|| {	_aProfM[_oBrowPd:nAt,1],;
+							_aProfM[_oBrowPd:nAt,2],;
+							_aProfM[_oBrowPd:nAt,3],;
+							_aProfM[_oBrowPd:nAt,4],;
+							_aProfM[_oBrowPd:nAt,5]}}
+							
+	@ 168, 005 BUTTON _btConfirm	PROMPT "OK"		 	ACTION(fObtVlr())	SIZE 037, 012 OF _oDlg PIXEL
+	@ 168, 050 BUTTON _btCancel		PROMPT "Cancelar"	ACTION(_oDlg:End())	SIZE 037, 012 OF _oDlg PIXEL
+	//FWMsgRun(,{|| fSelPro() }, "Efetuando Consulta...", "Aguarde...")
+ACTIVATE MSDIALOG _oDlg CENTERED
+
+Return
+
+Static Function fSelPro(_cTpCon,_cTpCam, _cFil)
+Local _cQuery	:= ""
+/* Limpa array para preencher com novo resultado. */
+If Len(_aProfM) > 0
+	aSize(_aProfM,0)
+EndIf
+
+If Len(_aProfM) == 0 .And. Empty(_cTpCon) .And. Empty(_cTpCam) .And. Empty(_cFil)
+		_aProfM		:= {{"","","","",""}}
+
+		Return
+EndIf
+
+_cQuery	:= " SELECT sp.codcoligada, case when sp.codcoligada=2 then 'SESI' else 'SENAI' end as entidade, sp.codprof, pp.nome, pp.cpf, pp.dtnascimento " //"pp.bairro, pp.rua, pp.numero, pp.estado, pp.telefone1
+_cQuery	+= " FROM rm.sprofessor@RMSGE sp INNER JOIN rm.ppessoa@RMSGE pp ON sp.codpessoa = pp.codigo "
+_cQuery	+= " WHERE "
+
+If _cTpCon == 'C'
+	If _cTpCam == 'N'
+		_cQuery	+= " pp.nome like '%" + _cFil + "%' "
+	Else
+		_cQuery	+= " pp.cpf like '%" + _cFil + "%' "
+	EndIf
+Else
+	If _cTpCam == 'N'
+		_cQuery	+= " pp.nome = '" + _cFil + "' "
+	Else
+		_cQuery	+= " pp.cpf = '" + _cFil + "' "
+	EndIf
+Endif
+
+_cQuery	+= " ORDER BY  sp.codcoligada, sp.codprof, pp.nome "
+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+
+If Select("TMPSGE")>0
+	TMPSGE->(DbCloseArea())
+Endif  
+
+//-- ********************************************************************
+//--    Retorna {TMPSGE} Tabela temporaria com o resultado da Query 
+//-- ********************************************************************
+dbUseArea(.t.,"TOPCONN",TCGENQRY(,,_cQuery),"TMPSGE",.t.,.t.)
+dbSelectArea("TMPSGE")
+TMPSGE->(dbGoTop())
+
+/* Limpa array para preencher com novo resultado. */
+aSize(_aProfM,0)
+
+/* Popula Array da GRID */
+While !TMPSGE->(EOF())
+	AADD(_aProfM, {TMPSGE->entidade,TMPSGE->codprof, TMPSGE->nome, TMPSGE->cpf, TMPSGE->dtnascimento})
+	TMPSGE->(dbSkip())
+EndDo
+
+_oBrowPd:Refresh() 
+
+Return

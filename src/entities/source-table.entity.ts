@@ -7,15 +7,13 @@ export class SourceTable {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column('varchar')
-  uuid: string;
 
   @Column('varchar')
   name: string;
 
-  @ManyToOne(() => Source, source => source.sourceTables, { onDelete: 'CASCADE' })
+  @ManyToOne(() => Source, source => source.Tables, { onDelete: 'CASCADE' })
   source: Source;
 
   @OneToMany(() => SourceTableField, sourceTableField => sourceTableField.sourceTable)
-  sourceTableFields: SourceTableField[];
+  fields: SourceTableField[];
 }

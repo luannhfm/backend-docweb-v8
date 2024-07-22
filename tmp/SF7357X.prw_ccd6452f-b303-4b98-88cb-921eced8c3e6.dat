@@ -1,0 +1,317 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "PARMTYPE.CH"
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"
+#INCLUDE "AP5MAIL.CH"
+
+//+==================================================================+
+/*/{Protheus.doc} SF7357X
+Selecao e envio do email referente a pesquisa de satisfação
+apos o prazo para o reenvio conforme definido pelo usuario nos
+parametros :
+
+JA_PZRSPPS	- Prazo de Resposta da Pesquisa a partir do Primeiro envio.
+JA_PZRENV 	- Prazo de Re-envio do E-Mail de Pesquisa de Satisfação até
+			 que o mesmo seja respondido ou encerrado por falta de retorno.
+
+@author    BRENO NOGUEIRA
+@version   1.00
+@since     15/02/2016
+/*/
+//+==================================================================+
+User Function SF7357X()
+	Local 	  aArea		:= GetArea()
+	Local	 _cSql		:= ""
+	Local   _BSqlEmail := ""
+	Local   _NOMECOM	:= ""
+	Private _bSqlADJ	:= ""
+	Private _nContador	:= 0
+	Private _cAccount	:= GetMv("MV_WFMAIL")
+	Private _pcOrigem	:= _cAccount
+	Private _pcDestino	:= "analistaerp.csi@fiemt.com.br" //-- Comentar essas duas linhas quando em produção
+	Private _pcBCC		:= "desenvolvedor.csi@fiemt.com.br" //-- Comentar essas duas linhas quando em produção
+	Private _pcBody	:= ""
+	Private _pcSubject	:= "Pesquisa de Satisfação - SENAI(MT)"
+	Private	 _cIncConta	:= 0
+	Private	 _cContas	:= ""
+	Private _Cliente	:= ""
+	Private _Loja		:= ""
+	Private _Proposta	:= ""
+	Private _Revisao	:= ""
+	Private _cOporPesq := ""
+	Private NomeCom 	:= ""
+	Private EndEnt 	:= ""
+	Private BairEnt 	:= ""
+	Private CepEnt 	:= ""
+	Private CidEnt 	:= ""
+	Private	 _cHTML		:= ""
+	Private _cSqlAD1	:= ""
+	Private _PZRSPPS 	:= GetMv("JA_PZRSPPS")
+	Private _PZRENV	:= GetMv("JA_PZRENV")
+	Private _ndias		:= 0
+	Private _DataHoje  := Date()
+
+//+==================================================================+
+//| Query para selecionar as pesquisa que já foram enviadas mas que
+//| nao foram respondidas dentro do prazo estabelecido.
+//+==================================================================+
+
+	_cSqlAD1 := " SELECT * FROM " + RetSqlName("AD1") + "	"
+	_cSqlAD1 += " WHERE AD1_XPESQ IN('E       ','2R      ')"
+	_cSqlAD1 += " AND D_E_L_E_T_ <> '*' "
+
+
+	If Select("SQLAD1") <> 0
+		dbSelectArea("SQLAD1")
+		dbCloseArea("SQLAD1")
+	EndIf
+
+	TcQuery _cSqlAD1 New Alias "SQLAD1"
+
+	DbSelectArea("SQLAD1")
+
+
+	While SQLAD1->(!EOF())
+
+//+==================================================================+
+//| Verifica se o numero de dias ultima data de envio é maior
+//| que o numero de dias da data de hoje
+//| se for maior o sistema dispara novamente o email
+//+==================================================================+
+		_nDtEnv := STOD(SQLAD1->AD1_XDTENV) //-- Guarda ultima data de envio
+		_ndias  := _nDtEnv - _DataHoje     //-- Calcula os dias entra a ultima data de envio e a data de hoje
+
+		if _PZRSPPS <= _ndias //-- se o parametros for menor que o numero de dias envia o email
+
+		_Cliente	:= SQLAD1->AD1_CODCLI
+		_Loja		:= SQLAD1->AD1_LOJCLI
+		_Proposta	:= SQLAD1->AD1_NROPOR
+		_Revisao	:= SQLAD1->AD1_REVISA
+		NomeCom		:= SM0->M0_NOMECOM
+		EndEnt		:= SM0->M0_ENDENT
+		BairEnt		:= SM0->M0_BAIRENT
+		CepEnt		:= SM0->M0_CEPENT
+		CidEnt		:= SM0->M0_CIDENT
+
+//+==================================================================+
+//| Buscar o codigo da pesquisa nos items da proposta				 |
+//+==================================================================+
+		bSqlADJ := " SELECT DISTINCT ADJ.ADJ_FILIAL, ADJ.ADJ_NROPOR, ADJ.ADJ_REVISA, ADJ.ADJ_PROPOS, ADJ.ADJ_XPESQ, "
+		bSqlADJ += " ADY.ADY_PREVIS, ADY.ADY_CODIGO, ADY.ADY_LOJA "
+		bSqlADJ += " FROM "
+		bSqlADJ += RetSqlName("ADJ")+" ADJ, "
+		bSqlADJ += RetSqlName("ADY")+" ADY  "
+		bSqlADJ += " WHERE ADJ.ADJ_NROPOR = '"+_Proposta+"' "
+		bSqlADJ += " AND ADJ.ADJ_REVISA = '"+_Revisao+"' "
+		bSqlADJ += " AND ADJ.ADJ_FILIAL = ADY.ADY_FILIAL "
+		bSqlADJ += " AND ADJ.ADJ_NROPOR = ADY.ADY_OPORTU "
+		bSqlADJ += " AND ADJ.ADJ_REVISA = ADY.ADY_REVISA "
+		bSqlADJ += " AND ADJ.ADJ_PROPOS = ADY.ADY_PROPOS "
+		bSqlADJ += " AND ADJ.D_E_L_E_T_ <> '*' "
+		bSqlADJ += " AND ADY.D_E_L_E_T_ <> '*' "
+
+		If Select("SQLADJ") <> 0
+			dbSelectArea("SQLADJ")
+			dbCloseArea("SQLADJ")
+		EndIf
+
+		TcQuery bSqlADJ New Alias "SQLADJ"
+
+		DbSelectArea("SQLADJ")
+
+
+
+		While SQLADJ->(!EOF())
+
+//+==================================================================+
+//| Criacao de Query para buscar os email's no cadastro de contatos  |
+//| sera considerado apenas os marcados na oportunidade se recebe ou |
+//| nao email da pesquisa											 |
+//+==================================================================+
+			_BSqlEmail := " SELECT "
+			_BSqlEmail += " AD1.AD1_FILIAL, AD1.AD1_NROPOR, AD1.AD1_REVISA, AD1.AD1_CODCLI, AD1.AD1_LOJCLI, "
+			_BSqlEmail += " AD9.AD9_FILIAL, AD9.AD9_NROPOR, AD9.AD9_CODCON, "
+			_BSqlEmail += " SU5.U5_CODCONT, SU5.U5_CONTAT, SU5.U5_EMAIL "
+			_BSqlEmail += " FROM "
+			_BSqlEmail += RetSqlName("AD1")+" AD1, "
+			_BSqlEmail += RetSqlName("AD9")+" AD9, "
+			_BSqlEmail += RetSqlName("SU5")+" SU5  "
+			_BSqlEmail += " WHERE AD9.AD9_NROPOR = AD1.AD1_NROPOR "
+			_BSqlEmail += " AND SU5.U5_CODCONT = AD9.AD9_CODCON "
+			_BSqlEmail += " AND AD9.AD9_FILIAL = AD1.AD1_FILIAL "
+			_BSqlEmail += " AND AD9.AD9_XREMAI = '1' "
+			_BSqlEmail += " AND AD1.AD1_CODCLI = '"+_Cliente+"' "
+			_BSqlEmail += " AND AD1.AD1_LOJCLI = '"+_Loja+"' "
+			_BSqlEmail += " AND AD1.AD1_NROPOR = '"+_Proposta+"' "
+			_BSqlEmail += " AND AD1.AD1_REVISA = '"+_Revisao+"' "
+			_BSqlEmail += " AND AD1.D_E_L_E_T_ <> '*' "
+			_BSqlEmail += " AND AD9.D_E_L_E_T_ <> '*' "
+			_BSqlEmail += " AND SU5.D_E_L_E_T_ <> '*' "
+
+			If Select("BESQL") <> 0
+				dbSelectArea("BESQL")
+				dbCloseArea("BESQL")
+			EndIf
+
+			TcQuery _BSqlEmail New Alias "BESQL"
+
+			DbSelectArea("BESQL")
+
+//+==================================================================+
+//| Antes da carga do html guarda todos os email para o envio		 |
+//| Pegar todos os emails dos contatos X oportunidade				 |
+//+==================================================================+
+
+			While BESQL->(!eof())
+				_cIncConta++
+				if	_cIncConta = 1
+					_cContas := Alltrim(BESQL->U5_EMAIL)
+				else
+					_cContas += ',' + Alltrim(BESQL->U5_EMAIL)
+				endif
+				BESQL->(DbSkip())
+			EndDo
+
+//+==================================================================+
+//| Faz primeiro a carga do html									 |
+//+==================================================================+
+			U_CHTML()
+//+==================================================================+
+//| Atenção : Muito cuidado ao alterar o HTML						 |
+//| para não alterar bloco "usemap até </map>"						 |
+//| ele é o responsável pelo alinhamento do botão "PESQUISA"		 |
+//+==================================================================+
+
+			_cHTML := _cHTML
+			_cHTML += ' usemap="#Map"/>'
+			_cHTML +='        <map name="Map" id="Map">'
+			If GetEnvServer() == 'SDBPRD'
+				_cHTML +='           <area shape="rect" coords="220,90,520,150" href="http://10.52.28.139:8080/index.aspx?idfilial='+SQLADJ->ADJ_FILIAL+'&idoportu='+SQLADJ->ADJ_NROPOR+'&idrevisa='+SQLADJ->ADJ_REVISA+'&idproposta='+SQLADJ->ADJ_PROPOS+'&idprevis='+SQLADJ->ADY_PREVIS+'&idcliente='+Alltrim(SQLADJ->ADY_CODIGO)+'&idloja='+Alltrim(SQLADJ->ADY_LOJA)+'&idpesquisa='+SQLADJ->ADJ_XPESQ+'" target="_parent" />'			
+			ElseIf SubStr(GetEnvServer(),1,3) == 'HML'
+				_cHTML +='           <area shape="rect" coords="220,90,520,150" href="http://10.52.28.22:8080/index.aspx?idfilial='+SQLADJ->ADJ_FILIAL+'&idoportu='+SQLADJ->ADJ_NROPOR+'&idrevisa='+SQLADJ->ADJ_REVISA+'&idproposta='+SQLADJ->ADJ_PROPOS+'&idprevis='+SQLADJ->ADY_PREVIS+'&idcliente='+Alltrim(SQLADJ->ADY_CODIGO)+'&idloja='+Alltrim(SQLADJ->ADY_LOJA)+'&idpesquisa='+SQLADJ->ADJ_XPESQ+'" target="_parent" />'
+			Else
+				_cHTML +='           <area shape="rect" coords="220,90,520,150" href="http://10.52.28.137/index.aspx?idfilial='+SQLADJ->ADJ_FILIAL+'&idoportu='+SQLADJ->ADJ_NROPOR+'&idrevisa='+SQLADJ->ADJ_REVISA+'&idproposta='+SQLADJ->ADJ_PROPOS+'&idprevis='+SQLADJ->ADY_PREVIS+'&idcliente='+Alltrim(SQLADJ->ADY_CODIGO)+'&idloja='+Alltrim(SQLADJ->ADY_LOJA)+'&idpesquisa='+SQLADJ->ADJ_XPESQ+'" target="_parent" />'
+			EndIf
+			_cHTML +='       </map>'
+			_cHTML +='   </td>'
+			If GetEnvServer() == 'SDBPRD'
+				_cHTML +='   <td><img src="http://10.52.28.139:8080/email/spacer.gif" width="1" height="336" alt="" /></td>'
+			ElseIf SubStr(GetEnvServer(),1,3) == 'HML'
+				_cHTML +='   <td><img src="http://10.52.28.22:8080/email/spacer.gif" width="1" height="336" alt="" /></td>'
+			Else
+				_cHTML +='   <td><img src="http://10.52.28.137/email/spacer.gif" width="1" height="336" alt="" /></td>'
+			EndIf
+			_cHTML +='  </tr>'
+			_cHTML +='  <tr>'
+			_cHTML +='   <td colspan="4" align="center" ><span class="style=text-align: center; font-family: Verdana; font-size: 16px;" style="font-family: Verdana, Geneva, Tahoma, sans-serif; font-size: 22px; font-weight: bold; font-style: normal; color: #6699FF">'+NomeCom+' </span><br />'
+			_cHTML +='       <span class="style=text-align: center; font-family: Verdana; font-size: 16px;" style="font-family: Verdana, Geneva, Tahoma, sans-serif; font-size: 15px; font-weight: normal; font-style: normal; color: #6699FF">'+EndEnt+'</span><br />'
+			_cHTML +='       <span class="style=text-align: center; font-family: Verdana; font-size: 16px;" style="font-family: Verdana, Geneva, Tahoma, sans-serif; font-size: 15px; font-weight: normal; font-style: normal; color: #6699FF">&nbsp;'+BairEnt+'</span><br />'
+			_cHTML +='       <span class="style=text-align: center; font-family: Verdana; font-size: 16px;" style="font-family: Verdana, Geneva, Tahoma, sans-serif; font-size: 15px; font-weight: normal; font-style: normal; color: #6699FF">'+Transform(CepEnt,"@R 99.999-999")+' - '+CidEnt+'</span></td>'
+			If GetEnvServer() == 'SDBPRD'
+				_cHTML +='   <td colspan="3"><img name="PesquisadeSatisfacao04Fatiado_r6_c5" src="http://10.52.28.139:8080/email/Pesquisa_de_Satisfacao-04-Fatiado_r6_c5.jpg" width="376" height="228" id="PesquisadeSatisfacao04Fatiado_r6_c5" alt="" /></td>'
+			ElseIf SubStr(GetEnvServer(),1,3) == 'HML'
+				_cHTML +='   <td colspan="3"><img name="PesquisadeSatisfacao04Fatiado_r6_c5" src="http://10.52.28.22:8080/email/Pesquisa_de_Satisfacao-04-Fatiado_r6_c5.jpg" width="376" height="228" id="PesquisadeSatisfacao04Fatiado_r6_c5" alt="" /></td>'
+			Else
+				_cHTML +='   <td colspan="3"><img name="PesquisadeSatisfacao04Fatiado_r6_c5" src="http://10.52.28.137/email/Pesquisa_de_Satisfacao-04-Fatiado_r6_c5.jpg" width="376" height="228" id="PesquisadeSatisfacao04Fatiado_r6_c5" alt="" /></td>'
+			EndIf
+			If GetEnvServer() == 'SDBPRD'
+				_cHTML +='   <td><img src="http://10.52.28.139:8080/email/spacer.gif" width="1" height="228" alt="" /></td>'
+			ElseIf SubStr(GetEnvServer(),1,3) == 'HML'
+				_cHTML +='   <td><img src="http://10.52.28.22:8080/email/spacer.gif" width="1" height="228" alt="" /></td>'
+			Else
+				_cHTML +='   <td><img src="http://10.52.28.137/email/spacer.gif" width="1" height="228" alt="" /></td>'
+			EndIf
+			_cHTML +='  </tr>'
+			_cHTML +='</table>'
+			_cHTML +='    <table class="auto-style1">'
+			_cHTML +='        <tr>'
+			_cHTML +='            <td align="center" style="font-family: Verdana, Geneva, Tahoma, sans-serif; font-size: 12px; font-style: normal"><a href=""></a></td>'
+			_cHTML +='        </tr>'
+			_cHTML +='    </table>'
+			_cHTML +='</body>'
+			_cHTML +='</html>'
+
+			_pcBody := _cHTML
+
+			//+==================================================================+
+			//| Envio do email													 |
+			//| Em ambiente teste e homologação todos os emails serão enviados	 |
+			//| para o email definido para testes								 |
+			//| após os testes e homologação pode-se trocar						 |
+			//| a variável _PcDestino e no lugar informar a variavél _cContas	 |
+			//+==================================================================+
+			lRet := U_SFEnvEmail( , _cContas, , , _pcSubject, _pcBody)
+			//lRet := ACSendMail(,,,,_pcDestino,_pcSubject,_pcBody)
+			//ACSendMail(,,,,_pcBCC,_pcSubject,_pcBody)
+
+			//+==================================================================+
+			//| Marca a pesquisa como já Renviada para que o sistema			 |
+			//| selecione  ela  no  envio  automatico pelo schedule	    		 |
+			//| Não esquecer de configurar o SC para  esse envio do				 |
+			//| email após o prazo definido pelo usuário						 |
+			//+==================================================================+
+			dbSelectArea("AD1")
+			RecLock("AD1",.F.)
+			if AD1_XPESQ == "E"
+				Replace AD1_XPESQ With "2R"
+			endif
+			if AD1_XPESQ == "2R"
+				Replace AD1_XPESQ With "3R"
+			endif
+			Replace AD1_XDTENV With Date()
+			MsUnLock()
+			dbCloseArea("AD1")
+			SQLADJ->(DbSkip())
+		EndDo
+	Endif
+	SQLAD1->(DbSkip())
+EndDo
+Return
+//+==================================================================+
+/*/
+{Protheus.doc} CHTML
+Funcao que ira ler o arquivo xml na pasta definida e efetuar a carga
+na rotina MONTAXML().
+O Arquivo layout deverá ficar na pasta SYSTEM do Protheus.
+"\System\Layout_Pesq\Pesquisa.html"
+@author Breno Nogueira
+@since 15/02/2016
+@version 1.0
+@param
+@see (links_or_references)
+/*/
+//+==================================================================+
+User Function CHTML()
+	Local cTemp		:= GetTempPath()
+	Local cSystem	:= Upper(GetSrvProfString("STARTPATH",""))
+	Local cOrigem	:= cSystem+"\Layout_Pesq\" //-- Busca o arquivo no diretório do sistema
+	Local cArq		:= "Pesquisa.html"
+	Local cFile		:= cOrigem+cArq
+	Local nHandle  := 0
+	Local nLinTot  := 0
+	Local nLin		:= 1
+	Local aDados   := {}
+	Local cLinha   := ""
+
+//+==================================================================+
+//| Limpa a variavel para nao criar dois corpos no proximo e-mail	 |
+//+==================================================================+
+	_cHTML := ""
+
+	nHandle := Ft_Fuse(cFile)
+	Ft_FGoTop()
+	nLinTot := Ft_FLastRec()-1
+	ProcRegua(nLinTot)
+
+	Do While !Ft_FEof()
+		nLin++
+		cLinha := Ft_FReadLn()
+		_cHTML += cLinha
+		Ft_FSkip()
+	EndDo
+Return

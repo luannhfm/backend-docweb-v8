@@ -1,0 +1,102 @@
+#Include "Protheus.ch"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ AtuSND      ºAutor  ³DOIT        º Data ³  09/04/2014      º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³  Função para atualizar dados de Resposnável do Ativo Fixo  º±±
+±±º             Programa Pontual para atendimento ao chamado 118064       º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP                                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function AtuSND()
+
+Local nCta      := 0 
+Local cQuery    := ""     
+Local cAliasSN4 := GetNextAlias()                       
+Local _cChave   := ""  
+Local _lFound   := .F.
+
+//*/Dados Fixos do chamado
+_cFilial     := "02MT0015"
+_cResp       := "109"
+
+//*/
+
+// Selecionando os dados de Atualização
+cQuery := "SELECT N4_FILIAL, N4_CBASE , N4_ITEM, N4_DATA "
+cQuery += " FROM " + RetSqlName("SN4")
+cQuery += " WHERE D_E_L_E_T_ <> '*' AND "
+cQuery += "   N4_FILIAL = '" + _cFilial + "' AND " // Somente filial do Chamado
+cQuery += "   N4_TIPOCNT = '1' AND "               // Conta do Ativo
+cQuery += "   N4_OCORR = '04' AND "                // Tranferencias
+cQuery += "   N4_DATA <= '20140429' "              // Na data da trasferencia
+// cQuery += "   AND rownum < 3"                   // Somente para uso na validação
+cQuery += " ORDER BY N4_CBASE"
+
+cQuery := ChangeQuery(cQuery)
+
+If Select(cAliasSN4) > 0
+	dbSelectArea(cAliasSN4)
+	cAliasSN4->(dbCloseArea())
+Endif
+
+dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasSN4,.T.,.F.)
+
+dbSelectArea(cAliasSN4)
+
+(cAliasSN4)->(DbGoTop())
+While (cAliasSN4)->(!EOF()) 
+
+	_lFound   := .F.
+
+	//Posiciona na SND  - Responsáveis
+	DBSelectArea("SND")
+	DbSetOrder(3) //ND_FILIAL+ND_CBASE+ND_ITEM+ND_SEQUENC 
+	_cChave := (cAliasSN4)->N4_FILIAL+(cAliasSN4)->N4_CBASE+(cAliasSN4)->N4_ITEM
+	If SND->(Dbseek(_cChave)) 
+	
+		_lFound   := .T.
+	
+		// Atualização do Responsável Atual
+		RecLock("SND",.F.)
+		SND->ND_STATUS    := "2"
+		SND->ND_DTFIM     := StoD((cAliasSN4)->N4_DATA)
+		
+		MsUnLock()   
+		
+		
+	Endif
+		
+	
+		// Criação da nova linha de responsável
+		RecLock("SND",.T.)
+		SND->ND_FILIAL 	  := _cFILIAL
+		SND->ND_CBASE     := (cAliasSN4)->N4_CBASE
+		SND->ND_ITEM      := (cAliasSN4)->N4_ITEM
+		SND->ND_CODRESP   := _cResp
+		SND->ND_STATUS    := "1"
+		SND->ND_DTINI     := StoD((cAliasSN4)->N4_DATA)
+		SND->ND_DTFIM     := CtoD(" / / ")
+		SND->ND_SEQUENC   := Iif(_lFound,Soma1(SND->ND_SEQUENC),"000001")
+		SND->ND_RESPDES   := ""
+	   
+		MsUnLock()
+	
+	nCta++ //Contador de registros
+	
+	(cAliasSN4)->(dbSkip())
+
+EndDo   
+
+	Aviso("Quantidade Atualizados", "A rotina atualizou " + strzero(nCta,4) + " registros", {"Ok"}, 1)
+
+(cAliasSN4)->(dbCloseArea())
+
+Return

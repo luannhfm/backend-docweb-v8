@@ -1,0 +1,833 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "APWIZARD.CH"
+#INCLUDE "TBICONN.CH"
+#INCLUDE "TOPCONN.CH"   
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"    
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fLePg001>                                                  |
+|Rotina de Leitura do Arquivo de Retorno de PAGAMENTOS.                    |
+| BANCO DO BRASIL - 001                                                    |
+|@Author<Walmir Junior>                                                    |
+|@since<08/09/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@return                                                                   |
+|<   _aRotina (a) - Vetor com as opcoes de Menu                            |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fLePg001()
+Local _cArqRet 		:= ""
+Local _cArLayout	:= ZP1->ZP1_XLYPGT
+Local _cPathRoot	:= GetNewPar("MV_XRETPGT","\Pronatec\Layouts\Pagto\Retorno\")   
+Local _aArqLyt 		:= {} 
+Local _aFilds		:= {}
+Local _nH_Arq		:= 0
+Local _cFileLog		:= ""
+Local _nCtaREG		:= 0 
+Local _nPosH		:= 0
+Local _nPosD		:= 0
+Local _nPosT		:= 0
+Local _bBlock		:= "" 
+Local _cTpReg   	:= "" 
+Local _lHeader		:= .f.
+Local _lDetalhe		:= .f.
+Local _lTrailler	:= .f. 
+Local _lE_Header	:= .f.
+Local _lE_Traill	:= .f.
+Local _lE_Detalh	:= .f.
+Local _cString 		:= ""    
+Local _lRetOK 		:= .t. 
+Local _lCtrNoS		:= .t.   
+Local _cString		:= ""
+Local _nTamTx		:= 0
+Local _nCtaA 		:= 0 
+Private _cNomArqR	:= 	""
+Private _aCabecalh 	:= {}
+Private _aDetalhe 	:= {}
+Private _aTrailler	:= {}
+Private _aColsCab	:= {}
+Private _aColsDet	:= {}
+Private _aColsTra	:= {}
+//-- Identifica o Codigo do Convenio que ser processado.
+Private _cConven	:= ZP1->ZP1_XCONV       
+//+-----------------------------------------------------------------------+
+//| Validacoes antes da chamada da rotina de geracao do arquivo de Remesa |
+//+-----------------------------------------------------------------------+
+If Alltrim(_cArLayout) == ""
+	Aviso(FunName()+"/"+ProcName(),"Não foi informado neste Convênio o nome do Arquivo de Configuração do Arquivo de Pagamentos!",{"OK"})
+	_lRetOK := .f.
+Endif
+If _lRetOK
+	_cArqRet := cGetFile('Arquivo |*.*','Ler Arquivo',1,'C:\TEMP',.F.,GETF_LOCALHARD)
+	If _cArqRet == ""
+		Aviso(FunName()+"/"+ProcName(),"Nome do Arquivo de Retorno não Foi Informado!",{"OK"})
+		_lRetOK := .f.
+	Endif  
+	//-- *********************************************************************
+	//--    Captura o NONE do Arquivo de RETORNO DE PAGAMENTO 
+	//-- *********************************************************************
+	_cString	:= Alltrim(_cArqRet)
+	_nTamTx		:= Len(_cString)
+	_nCtaA 		:= 0
+	For _nCtaA := _nTamTx to 1 step -1
+		If Substr(_cString,_nCtaA,1) == "\"
+			Exit			
+		Endif
+	Next _nCtaA
+	_cNomArqR	:= 	Substr(_cString,_nCtaA+1,_nTamTx)
+Endif  
+If _lRetOK
+	If !File(_cPathRoot+Alltrim(_cArLayout))
+		Aviso(FunName()+"/"+ProcName(),"Arquivo de Layout: "+_cPathRoot+Alltrim(_cArLayout)+". não foi encontrado!",{"OK"})
+		_lRetOK := .f.
+	EndIf
+EndIf     
+If _lRetOK
+	//+-----------------------------------------------------------------------+
+	//| Carrega o Layout do Arquivo de Retorno                                |
+	//+-----------------------------------------------------------------------+
+	_aArqLyt := u_fCrArqIn(_cPathRoot+Alltrim(_cArLayout))
+	//+-----------------------------------------------------------------------+
+	//| Identifica os Arrays de Header, Detalhe e Trailler                    |
+	//| OBS: Caso venha a existir tipo de arquivos com mais de uma linha por  |
+	//|      tipo; Tratar caso a caso. Deve-se adicionar ao array do tipo e   |
+	//|      tratar na seguencia.                                             |
+	//|      - Inicialmente estamos considerando um de cada tipo.             |
+	//+-----------------------------------------------------------------------+  
+	_nCtaA	:= 0
+	For _nCtaA := 1 To Len(_aArqLyt) 
+		_cLinTP := Substr(_aArqLyt[_nCtaA,1],2,1)
+		Do Case
+			Case _cLinTP == "H"   	//-- Header
+				_aCabecalh 	:= _aArqLyt[_nCtaA,4] 
+				_aCabecalh 	:= u_fAjustSt(_aCabecalh)
+				_lHeader	:= .t.
+			Case _cLinTP == "D"   	//-- Detalhe
+				_aDetalhe 	:= _aArqLyt[_nCtaA,4]
+				_aDetalhe 	:= u_fAjustSt(_aDetalhe)
+				_lDetalhe	:= .t.
+			Case _cLinTP == "T" 	//-- Trailler
+				_aTrailler	:= _aArqLyt[_nCtaA,4]   
+				_aTrailler	:= u_fAjustSt(_aTrailler)
+				_lTrailler	:= .t.
+		Endcase
+	Next _nCtaA    
+	//+-----------------------------------------------------------------------+
+	//| Abre o arquivo de RETORNO com acesso exclusivo                        |
+	//+-----------------------------------------------------------------------+
+	_nH_Arq	:= fOpen(_cArqRet,68) 
+	If _nH_Arq = -1
+		Aviso(FunName()+"/"+ProcName(),"Não foi Possivel Abrir o Arquivo de Retorno!",{"OK"})
+		_lRetOK := .f.
+	EndIf         
+Endif 	 
+//+-----------------------------------------------------------------------+
+//| Trata caso a caso os Layout's da Remessa                              |
+//+-----------------------------------------------------------------------+  
+If _lRetOK .and. Len(_aDetalhe) >= 1
+	//-- Seleciona tabela de Alunos 	
+	dbSelectArea("ZP0")
+	ZP0->(dbSetOrder(1))			//-- CPF 
+	//-- Seleciona Tabela de Convenios (Posiciona convencio corrente) 
+	dbSelectArea("ZP3")
+	ZP3->(dbSetOrder(2))		//-- Convenio + Situacao 
+ 	ZP3->(dbSeek(FwxFilial("ZP3")+_cConven+"L"))
+	//-- Seleciona o Arquivo TXT       
+	FT_FUse(_cArqRet)
+	//-- Manda o Ponteiro para topo 
+	FT_FGOTOP()
+	//-- Conta o Numero de Linhas 	
+	_nTotLIN := FT_FLASTREC()
+	//-- Inicializa o Termometro 	
+	ProcRegua(_nTotLIN)
+	//-- Loop de Leitura  
+	Do While !FT_FEof()
+        //-- Captura a linha a ser lida 
+		_cTexto := Upper(AllTrim(FT_FReadln()))
+		//-- Implementa Termometro
+		_nCtaREG++
+		IncProc("Total de Registros:"+Alltrim(Transform(_nTotLIN,"@E 999,999,999"))+"|  Lidos:"+Alltrim(Transform(_nCtaREG,"@E 999,999,999")))   
+		//-- Regras para definir se a linha e de Cabecalho, Detalhe ou Rodape	
+		_lE_Header := Iif(_lHeader,Iif(_nCtaREG==1,.t.,.f.),.f.)
+		_lE_Traill := Iif(_lTrailler,Iif(_nCtaREG==_nTotLIN,.t.,.f.),.f.)
+		_lE_Detalh := Iif(_lDetalhe,Iif((!_lE_Header .and. !_lE_Traill),.t.,.f.),.f.)
+		do Case
+			Case _lRetOK .and. _lE_Header
+			  	//+-----------------------------------------------------------------------+
+				//| ***** LER CABECALHO "Header"                                          |
+				//+-----------------------------------------------------------------------+
+			 	//--     
+				_aFilds	:= {} 
+				_nCtaA 	:= 0    
+				For _nCtaA := 1 To Len(_aCabecalh)    
+					aadd(_aFilds, Substr(_cTexto,_aCabecalh[_nCtaA,2,4],_aCabecalh[_nCtaA,2,6]))  
+				Next _nCtaA
+				aadd(_aColsCab,_aFilds)  
+				//-- *********************************************************************
+                //--    Considera a ultima linha, caso Header tenha mais de uma linha 
+				//-- *********************************************************************
+				_nPosH		:= Len(_aColsCab)
+				_nPc 		:= aScan(_aCabecalh, {|x| Upper(x[2,2]) == "CONTRATO" })
+				//-- *********************************************************************
+				//--    Valida o Contrato/Convenio 
+				//-- ********************************************************************* 
+                If _nPc > 0
+					If Val(_aColsCab[_nPosH,_nPc]) != Val(ZP1->ZP1_XCONTR)
+						Aviso(FunName()+"/"+ProcName(),"O Arquivo de retorno não pertence a este Contrato/Convênio!",{"OK"})
+						_lRetOK 	:= .f.
+						_lCtrNoS 	:= .f.
+						Exit
+					Endif  
+				Else
+					Aviso(FunName()+"/"+ProcName(),"O Identificardor do Codigo do Contrato [Contrato] não foi encontrato no [Header] do Arquivo de Retorno de Pagamento! Não é possivel processar o retorno!",{"OK"})
+					_lRetOK 	:= .f.
+					_lCtrNoS 	:= .f.
+					Exit
+				Endif 
+			Case _lRetOK .and. _lE_Detalh
+				//+-----------------------------------------------------------------------+
+				//| ***** LER DETALHE "Detalhe"                                           |
+				//+-----------------------------------------------------------------------+
+			 	//--     
+				_aFilds	:= {} 
+				_nCtaA 	:= 0 
+				//***Alterada a maneira de ler o registro devido a inconsistencia no retorno 
+				//***do banco, visando evitar erro de leitura do arquivo. Wjr.
+				//**************************************************************************
+				//For _nCtaA := 1 To Len(_aDetalhe)    
+				//	aadd(_aFilds, Substr(_cTexto,_aDetalhe[_nCtaA,2,4],_aDetalhe[_nCtaA,2,6]))   
+				//Next _nCtaA
+				_aFilds := StrTokArr(_cTexto , ";")
+				If Len(_aFilds) < 7
+					aAdd(_aFilds, ' ')
+				EndIf
+				aAdd(_aColsDet,_aFilds)   
+				//-- *********************************************************************
+                //--    Considera a ultima linha, para Tratamento Linha a linha lida
+				//-- *********************************************************************
+				_nPosD	:= Len(_aColsDet)   
+			Case _lRetOK .and. _lE_Traill
+				//+-----------------------------------------------------------------------+
+				//| ***** LER RODAPE "Trailler"                                           |
+				//+-----------------------------------------------------------------------+
+			 	//-- 
+				_aFilds	:= {} 
+				_nCtaA 	:= 0 
+				For _nCtaA := 1 To Len(_aTrailler)    
+					aadd(_aFilds, Substr(_cTexto,_aTrailler[_nCtaA,2,4],_aTrailler[_nCtaA,2,6])) 
+				Next _nCtaA
+				aadd(_aColsTra,_aFilds)    
+				//-- *********************************************************************
+                //--    Considera a ultima linha, caso Traller tenha mais de uma linha 
+				//-- *********************************************************************
+				_nPosT	:= Len(_aColsTra)  
+		Endcase
+		//-- Segue para Proxima Linha 
+		FT_FSkip()
+	EndDo
+	If _lRetOK
+		//-- *********************************************************************
+		//--    Fecha o Arquivo de Retorno que esta sendo lido
+		//-- *********************************************************************
+		fClose(_nH_Arq)   
+		//-- Chamada a Funcao de Gravacao 
+		fPreRet()
+	Else
+ 		If _lCtrNoS
+			Aviso(FunName()+"/"+ProcName(),"Não existem registros aptos para retorno!",{"OK"})
+		Endif 
+	Endif 
+Endif 
+Return _lRetOK
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fPreRet>                                                   |
+|Rotina que processa as informacoes do retorno da remessa                  |
+|																		   |
+|@Author<Antonio Dantas>                                                   |
+|@since<29/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@Receive                                                                  |
+|<   _cFilial (c) - Codigo da Filial                                       |
+|    _cConven (c) - Codigo do Convenio (Protheus)                          |
+|   _cPeriodo (c) - Codigo do Periodo                                      |
+|       _cSeg (c) - Codigo da Seguencia (Calendario)                       |
+|    _cSessao (c) - Codigo da Sessao                                       |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _lRetOK (l) - (.t.) Se a Geracao do Arquivo foi OK                    |
+|                  (.f.) Por qualquer motivo não gerou arquivo de remesa   |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fPreRet()
+Local _aArea		:= GetArea()
+//-- 
+Local _PNp 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "NUMPLAST"		})
+Local _PDt 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "DTTRANS"		})
+Local _PSt 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "TXTMOV"		})
+Local _PTp 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "INDCREDEB"	})
+Local _PVl 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "VLRTRANS"		})
+//-- 
+Local _cNumPlast	:= ""  
+Local _cRemessa		:= ""
+Local _aRemessas	:= {}   
+Local _lGerOK		:= .F.
+//--
+Local _nRegs		:= Len(_aColsDet)  
+Local _nRegPG		:= 0
+Local _nRegNOTPG	:= 0   
+Local _cPathRoot	:= GetNewPar("MV_XLOGPRO","\Pronatec\Logs\")   
+Local _cFileLog		:= CriaTrab(Nil,.F.)
+//-- 
+Local _nHdl_log		:= fCreate(_cPathRoot + cFilAnt + "_" + FunName()+"_"+ProcName()   + _cFileLog+"_LOG.txt")  
+Local _cTextLOG		:= ""
+Local _cMsgPagto	:= ""
+Local _aTpPgtos		:={	{"01","Pre-Vale"			},;
+						{"02","Numero Cancelado"	},;
+						{"03","Emitido"				},;
+						{"04","Pago"				},;
+						{"05","Devolvido Remetente"	},;
+						{"06","Pago em Devolucao"	},;
+						{"07","Prescrito"			},;
+						{"08","Perempto"			},;
+						{"09","Pre-emitido"			},;
+						{"10","Bloqueado"			},;
+						{"11","Desbloqueado"		},;
+						{"12","Pre-Pago"			},;
+						{"13","Estornado"			},;
+						{"14","Estornado V/Gestão"	} }
+//-- GERARA O IDENTIFICADOR DO RETORNO - SERA UTILIZADO NA INTEGRACAO FINANCEIRA  --> AAAAAAAArAAAAMMAAHHMMSS
+Local _cRetPg		:= cFilAnt + "_" + FunName()+"/"+ProcName()   + _cFileLog+"r"+DTOS(dDataBase)+StrTran(Time(), ":" , "")   
+Local _cIntegrFN	:= GetNewPar("MV_XPRTFIN","N") 			//-- Parametros de (ON/OFF) para integracao financeira: S=Realiza Integracao Financeira
+Local _lIntFIN 		:= .f.  
+Private _aInfTit	:= {}
+//--
+ProcRegua(_nRegs)  
+If Aviso(FunName()+"/"+ProcName(),"Tem certeza que deseja efetivar o processamento dos Pagamentos?", {"Sim","Não"}) == 1
+	//-- *********************************************************************
+	//-- Implementa controle de Transacao.
+	//-- *********************************************************************
+	Begin Transaction           
+		//-- *********************************************************************
+		//--    Monta cabecalho do Lod de Leitura do Arquivo de Pre Cadastro
+		//-- *********************************************************************
+		_cTextLOG := "#RELATORIO DE LOG - LEITURA DO ARQUIVO DE PAGAMENTOS - "+DTOC(date())+" as "+time()+CHR(13)+CHR(10) 
+		_cTextLOG += "       Convenio: "+_cConven+CHR(13)+CHR(10) 
+		_cTextLOG += " Qtde de Regist: "+Alltrim(Transform(_nRegs,"@E 999,999,999"))+CHR(13)+CHR(10)  
+		//-- *********************************************************************
+		//--    Imprime o Cabecalho do Relatorio de LOG 
+		//-- *********************************************************************
+		_cTextLOG +=	PadR("Tp SIGE" 		,TamSx3("ZP1_XSIGE")[1])+";"+;
+						PadR("Evento" 		,TamSx3("ZP7_XEVENT")[1])+";"+;
+						PadR("Matricula"	,TamSx3("ZP7_XMATRI")[1])+";"+;
+						PadR("Codigo" 		,TamSx3("ZP0_XCOD")[1])+";"+;
+						PadR("Nome"			,TamSx3("ZP0_XNOME")[1])+";"+;
+						PadR("CPF" 			,TamSx3("ZP0_XCPF")[1])+";"+;
+						PadR("Dt Nasc." 	,TamSx3("ZP0_XDTNAS")[1])+";"+;
+						PadR("Tip Pgto" 	,TamSx3("ZP7_XTIPO")[1])+";"+;
+						PadR("Per/Seq/Ses" 	,25)+";"+;
+						PadR("Ocorr,"		,40)+CHR(13)+CHR(10)
+		fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+		//-- 
+		dbSelectArea("ZP7")
+		ZP7->(dbSetOrder(1))		//-- Cod Periodo+Seg Calendar+Cod Sessao+Matricula+Data da Geração
+		_nCtaA := 0
+		For _nCtaA := 1 To Len(_aColsDet)
+			IncProc("Total de Registros:"+Alltrim(Transform(_nRegs,"@E 999,999,999"))+"|  Lidos:"+Alltrim(Transform(_nCtaA,"@E 999,999,999")))   
+			_cNumPlast	:= _aColsDet[_nCtaA,_PNp]
+			_cDataPG	:= _aColsDet[_nCtaA,_PDt]
+			//-- *********************************************************************
+			//--   Idenfifica o STATUS do Pagamento 
+			//-- *********************************************************************
+			_cCodPgto 	:= IIf(Len(_aColsDet[_nCtaA,_PSt])>1,_aColsDet[_nCtaA,_PSt]," ")
+			_cChvRet	:= fReChRet( _cNumPlast, dToS(cToD(_cDataPG)))
+			If ZP7->(dbSeek(_cChvRet))
+			  	//-- *********************************************************************				
+				//--   GRAVA O RETORNO NA TABELA DE MOVIMENTAÃ‡Ã•ES
+				//-- *********************************************************************
+				dbSelectArea("ZP9")
+				ZP9->(dbSetOrder(1))
+				if ZP9->(dbSeek(xFilial("ZP9")+ ZP7->ZP7_XCONVE+ padr(_cNumPlast, TamSX3("ZP9_XPLAST")[1])+ padr(_cNomArqR, TamSX3("ZP9_XARQRE")[1])+dToS(CTOD(_cDataPG))+_aColsDet[_nCtaA,_PTp]+ padr(_cCodPgto, TamSX3("ZP9_XHIST")[1])))
+					ZP9->(RecLock("ZP9",.f.))
+					ZP9->(dbDelete())
+					ZP9->(MsUnLock())
+				EndIf
+					ZP9->(RecLock("ZP9",.t.))
+					Replace ZP9->ZP9_FILIAL		With	xFilial("ZP9")
+					Replace ZP9->ZP9_XDATA		With	DATE()
+					Replace ZP9->ZP9_XHORA		With	Time()	
+					Replace ZP9->ZP9_XCONVE		With	ZP7->ZP7_XCONVE
+					Replace ZP9->ZP9_XNRREF		With	ZP7->ZP7_XNRREF
+					Replace ZP9->ZP9_XPLAST		With	_cNumPlast
+					Replace ZP9->ZP9_XARQRE		With	_cNomArqR
+					Replace ZP9->ZP9_XTIPO		With	_aColsDet[_nCtaA,_PTp]
+					Replace ZP9->ZP9_XDTMOV		With	CTOD(_cDataPG)
+					Replace ZP9->ZP9_XVALOR		With	Val(STUFF(_aColsDet[_nCtaA,_PVl], 12, 0, '.'))
+					Replace ZP9->ZP9_XHIST		With	_cCodPgto	
+					ZP9->(MsUnLock())
+					ZP9->(dbCommit())
+				//-- Posiciona na Tabela de Alunos
+				dbSelectArea("ZP0")
+				ZP0->(DbSetOrder(1))
+				ZP0->(dbSeek(FwxFilial("ZP0")+ZP7->ZP7_XCPF))
+				//+--------------------------------------------------------------------+
+				//| Se ja houve Retorno para esta Matricula em outros Arquivo, nao     |
+				//| Efetiva o processamento para o mesmo.                              |
+				//+--------------------------------------------------------------------+
+				If !Empty(Alltrim(ZP7->ZP7_XRETPG)) 
+					_cTextLOG := 	ZP1->ZP1_XSIGE+";"+;
+									ZP7->ZP7_XEVENT+";"+;
+									ZP7->ZP7_XMATRI+";"+;
+									ZP0->ZP0_XCOD+";"+;
+									ZP0->ZP0_XNOME+";"+;
+									ZP0->ZP0_XCPF+";"+;
+									DTOC(ZP0->ZP0_XDTNAS)+";"+;
+									ZP7->ZP7_XTIPO+";"+;
+									ZP7->ZP7_XPERIO+"/"+ZP7->ZP7_XSEG+"/"+ZP7->ZP7_XSESSA+";"+;	
+									Iif(AllTrim(_cCodPgto) == "CARGA NO CARTAO";
+										,"Já processado no Retorno: "+Alltrim(ZP7->ZP7_XNARPG)+CHR(13)+CHR(10);
+										,"Transações de Cartão Importadas"+" "+CHR(13)+CHR(10))
+					fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+					//-- Vai para o proxima registro - NAO PROCESSA ESTE 
+					Loop	
+				Endif      
+				//	Wjr _cMsgPagto 	:= Iif( _cCodPgto <= Len(_aTpPgtos), _aTpPgtos[_cCodPgto,2], "Codigo ["+Strzero(_cCodPgto,2)+"]. Erro de Pagamento Não Identificado!" ) 
+				//-- *********************************************************************				
+				//--   Atualiza registro se estiver pago.
+				//-- *********************************************************************
+				ZP7->(RecLock("ZP7",.f.))  
+				If  AllTrim(_cCodPgto) == "CARGA NO CARTAO" 
+					_cMsgPagto	:= Iif(ZP7->ZP7_XSTATU == 'P', _cMsgPagto, "Pago")	
+					Replace ZP7->ZP7_XNARPG	With _cNomArqR			//-- Nome do Arquivo de Retorno de Pagamento    
+					Replace ZP7->ZP7_XSTATU	With "P"				//-- Status (Situacao)
+					Replace ZP7->ZP7_XDTPG 	With CTOD(_cDataPG)		//-- Data do Pagamento  
+					Replace ZP7->ZP7_XRETPG With _cRetPg			//-- Identificador do Retorno do Pagamento 
+					_nRegPG++
+				Endif        
+				ZP7->(MsUnLock())
+				ZP7->(dbCommit()) 
+				_lGerOK := .T.
+				//+--------------------------------------------------------------------+
+				//| Se nao for valido, grava no LOG                                    Â³
+				//+--------------------------------------------------------------------+
+				_cTextLOG := 	ZP1->ZP1_XSIGE+";"+;
+								ZP7->ZP7_XEVENT+";"+;
+								ZP7->ZP7_XMATRI+";"+;
+								ZP0->ZP0_XCOD+";"+;
+								ZP0->ZP0_XNOME+";"+;
+								ZP0->ZP0_XCPF+";"+;
+								DTOC(ZP0->ZP0_XDTNAS)+";"+;
+								ZP7->ZP7_XTIPO+";"+;
+								ZP7->ZP7_XPERIO+"/"+ZP7->ZP7_XSEG+"/"+ZP7->ZP7_XSESSA+";"+;	
+								IIf( AllTrim(_cCodPgto) == "CARGA NO CARTAO" ,;
+									"Ocorrência: "+_cMsgPagto+" "+CHR(13)+CHR(10), "Transações de Cartão Importadas"+" "+CHR(13)+CHR(10))
+				fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)		
+			Endif   
+		Next _nCtaA     
+	End Transaction     
+	If _lGerOK
+		//+-----------------------------------------------------------------+
+		//| Gera a Integracao FINANCEIRA.                                   |
+		//| A Integracao financeira so ocorre se o parametro [MV_XPRTFIN]   |
+		//| estiver DECLARADO como S=Sim                                    |
+		//+-----------------------------------------------------------------+
+		If _cIntegrFN == "S"                          
+			FWMsgRun(,{|| _lIntFIN := U_SN0698X("Retorno_Diario",ZP1->ZP1_XCONV,,,,,_cRetPg)}, "Integração Financeira.", "Aguarde..." )
+			If _lIntFIN
+				If Len(_aInfTit) > 0
+					//-- _aInfTit := {_cPrefixo,_cNum,_cTipoTIT,_cCliFor,_cLoja,dDataBase+10,_cPeriodo,_cSeg,_cSessao,_nValTit}
+					_cMensagem := "  * A T E N Ç Ã O:  Integração Financeira finalizada com sucesso! "+Chr(13)+Chr(10)
+					_cMensagem += " Gerado o Titulo: "+Chr(13)+Chr(10)
+					_cMensagem += " [Cliente: "+_aInfTit[4]+"/"+_aInfTit[5]+" - "+Alltrim(Posicione("SA1",1,FwxFilial("SA1")+_aInfTit[4]+_aInfTit[5],"A1_NOME"))+"]"+Chr(13)+Chr(10)
+					_cMensagem += " [Prefixo: "+Alltrim(_aInfTit[1])+"], [Numero: "+Alltrim(_aInfTit[2])+"], [No Valor de R$ "+Alltrim(TransForm(_aInfTit[10],PesqPict("SE1","E1_VALOR")))+"]"+Chr(13)+Chr(10)
+					_cMensagem += " [Vencimento :"+Dtoc(_aInfTit[6])+"]"+Chr(13)+Chr(10)
+					_cMensagem += " [Periodo :"+_aInfTit[7]+"], [Calendario: "+_aInfTit[8]+"], [Sessão: "+_aInfTit[9]+"] "+Chr(13)+Chr(10)
+					Aviso(FunName()+"/"+ProcName(),_cMensagem,{"OK"})
+				Endif
+			Endif
+		Endif
+	Endif 
+	_cTextLOG := "Resumo da Leitura do Retorno: "+CHR(13)+CHR(10) 
+	_cTextLOG += " Total de Registro: "+Alltrim(Transform(_nRegs		,"@E 999,999,999"))+CHR(13)+CHR(10) 
+	_cTextLOG += "       Total Pagos: "+Alltrim(Transform(_nRegPG		,"@E 999,999,999"))+CHR(13)+CHR(10) 
+	_cTextLOG += "   Total Não Pagos: "+Alltrim(Transform(_nRegNOTPG	,"@E 999,999,999"))+CHR(13)+CHR(10)  
+	fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+Endif
+//-- ****************************************************************
+//--    Fecha o Arquivo de Log
+//-- ****************************************************************
+fClose(_nHdl_Log) 
+If Aviso(FunName()+"/"+ProcName(),"Leitura encerrada. Deseja imprimir o arquivo de Log ["+_cFileLog+"_LOG.txt] neste momento?", {"Sim","Não"}) == 1
+	u_SN069BX(_cPathRoot + cFilAnt + "_" + FunName()+"_"+ProcName() + _cFileLog+"_LOG.txt")
+Endif    
+RestArea(_aArea)
+Return Nil
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fReChRet>                                                  |
+| --------------------------------------------------------------------     |
+|  Retorna a chave para ordenação do dbSeek.                               |
+|@Author<Walmir Junior >                                                   |
+|@since<10/09/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_cNumPlas>                                                    |
+|@Receive                   	                                           |
+|@return<.t.>                                                              |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fReChRet(_cNumPlas, _dDtPag)
+Local _cChvRet		:= "" 
+Local _cALias 		:= GetNextAlias()
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+Local _cQuery		:= ""
+//--
+_cQuery := ""
+_cQuery += " Select ZP7_XPERIO, ZP7_XSEG, ZP7_XSESSA, ZP7_XMATRI, ZP7_XDATAG From "+RetSqlName("ZP7")+" " + _ChrBreak 
+//_cQuery += " Inner Join "+RetSqlName("ZPA")+" On "+RetSqlName("ZPA")+".ZPA_XCOD = "+RetSqlName("ZP7")+".ZP7_XREMES " + _ChrBreak 
+//_cQuery += "		And ZPA_XDATA <= '" + _dDtPag +"' " + _ChrBreak
+_cQuery += " INNER JOIN "+RetSqlName("ZPA")+" ON 	ZPA_FILIAL = ZP7_FILIAL " + _ChrBreak
+_cQuery += " 												AND ZPA_XCOD = ZP7_XREMES " + _ChrBreak
+_cQuery += "													AND ZPA_XDATA <= '" + _dDtPag +"' " + _ChrBreak
+_cQuery += " Where ZP7_FILIAL = '" + xFilial("ZP7") +"' " + _ChrBreak
+_cQuery += " And "+RetSqlName("ZP7")+".D_E_L_E_T_ <> '*' " + _ChrBreak
+_cQuery += " And (ZP7_XSTATU = 'O' OR ZP7_XSTATU = 'P')" + _ChrBreak
+_cQuery += " And ZP7_XCARTA = '" + _cNumPlas + "' " + _ChrBreak 
+_cQuery += " Order By ZP7_XPERIO, ZP7_XSESSA " + _ChrBreak 
+//+------------------------------------------------------------------+
+//| Grava o Resultado da Query para consulta                         |
+//+------------------------------------------------------------------+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select(_cALias)>0
+	(_cALias)->(DbCloseArea())
+Endif  
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),_cALias,.t.,.t.)  
+//+------------------------------------------------------------------+
+//| Adiciona resultado da consulta ao retorno da função				 |
+//+------------------------------------------------------------------+
+dbSelectArea(_cALias)
+(_cALias)->(dbGoTop())
+//If (_cALias)->(!Eof()) .and. (_cALias)->(!Bof())
+While .Not. (_cALias)->(Eof())
+	_cChvRet := FwxFilial("ZP7")+(_cAlias)->ZP7_XPERIO+(_cAlias)->ZP7_XSEG+(_cALias)->ZP7_XSESSA+(_cALias)->ZP7_XMATRI+(_cALias)->ZP7_XDATAG
+	(_cALias)->(DbSkip())
+End
+//Endif
+(_cALias)->(dbCloseArea())
+Return _cChvRet
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCloseZP>                                                  |
+| --------------------------------------------------------------------     |
+| MODIFICA O STATUS DAS TABELAS DE CONTROLE, SENDO:                        |
+| --------------------------------------------------------------------     |
+| ZPA - DA REMESSA: E=Encerrada, apos o primeiro retorno de Pagamento;     |
+| ZP6 - DA SESSAO:  E=Encerrada, apos o primeiro retorno de Pagamento;     |
+| ZP5 - CALENDARIO: E=Encerrada, Se ja houver retorno de todas as          |
+|                     matriculas em todas as sessoes;                      |
+| ZP4 - PERIODOS:   E=Encerrada, Se ja houver retorno de todas as          |
+|                     matriculas neste periodo.                            |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<01/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                   	                                               |
+|<    _cRemessa (c) - Codigo da Remessa                                    |
+|>                                                                         |
+|@return<.t.>                                                              |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fCloseZP(_cRemessa)
+Local _lZP6Enc 	:= .f.
+Local _lZP5Enc 	:= .f.
+Local _lZP4Enc	:= .f.
+//-- ****************************************************************  
+//-- *****  ZPA - Remessas
+//--        --------------
+//--    Localiza a REMESSA e Modifica o STATUS para [ENCERRADA]
+//-- ****************************************************************
+dbSelectArea("ZPA")
+ZPA->(dbSetOrder(3))						//-- Codigo do Convenio + Codigo da Remessa 
+ZPA->(DbSeek(FwxFilial("ZPA")+ZP1->ZP1_XCONV+_cRemessa+"PG"))
+//--
+ZPA->(RecLock("ZPA",.f.))
+Replace ZPA->ZPA_XSTATU With "E" 			//-- Status da ENCERRADA - Apos a Leitura do Primeiro retorno da Sessoa Encerra a SESSAO
+ZPA->(MsUnLock())
+ZPA->(dbCommit())
+//-- ****************************************************************
+//-- *****  ZP6 - Sessoes de Pagamento 
+//--        --------------------------
+//--    Localiza a SESSAO desta REMESSA e Modifica o STATUS para 
+//--    [T=RETORNO OK] 
+//--    Verifica: SE nao HOUVER nenhuma MATRICULA nas condicoes 
+//--              abaixo, ENCERRA a Sessao:         
+//--                 B=Bloqueado Para Remessa
+//--                 C=Corrigido 
+//--                 L=Liberado Para Remessa
+//--                 E=Remessa Gerada 
+//--                 O=Ordem de Pagamento Agendada
+//--                 R=Rejeitado
+//-- ****************************************************************
+dbSelectArea("ZP6")
+ZP6->(dbSetOrder(1))						//-- Codigo da Remessa 
+If (ZP6->(DbSeek(FwxFilial("ZP6")+ZPA->ZPA_XSESSA)))
+	//--
+	_lZP6Enc := fVerZP7(ZPA->ZPA_XSESSA)
+	//-- 
+	ZP6->(RecLock("ZP6",.f.))
+	Replace ZP6->ZP6_XSTATU With Iif(_lZP6Enc,"E","T") 	//-- Status: E=Encerrada;  T=Retornos OK
+	ZP6->(MsUnLock())
+	ZP6->(dbCommit())
+Endif
+//-- ****************************************************************  
+//-- *****  ZP5 - Calendarios de Pagamento 
+//--        ------------------------------
+//--    Caso TODAS as SESSOES Vinculadas ao Periodo+Calendario
+//--    estiverem ENCERRADAS, entao, ENCERRA o Calendario.
+//-- ****************************************************************
+dbSelectArea("ZP5")
+ZP5->(dbSetOrder(1))						//-- Codigo da Remessa 
+If (ZP5->(DbSeek(FwxFilial("ZP5")+ZP6->ZP6_XPERIO+ZP6->ZP6_XSEG)))
+	//--                          
+	_lZP5Enc := fVerZP6(ZP6->ZP6_XPERIO,ZP6->ZP6_XSEG)
+	//-- 
+	If _lZP5Enc
+		ZP5->(RecLock("ZP5",.f.))
+		Replace ZP5->ZP5_XSTATU With "E" 	//-- Status: E=Encerrada
+		ZP5->(MsUnLock())
+		ZP5->(dbCommit())
+	Endif 	
+Endif 
+//-- ****************************************************************  
+//-- *****  ZP4 - Periodos de Pagamento 
+//--        ------------------------------
+//--    Caso TODOS os CALENDARIOS Vinculadas ao Periodo estiverem 
+//--    ENCERRADOS, entao, ENCERRA o Periodo 
+//-- ****************************************************************
+dbSelectArea("ZP4")
+ZP4->(dbSetOrder(1))						//-- Codigo da Remessa 
+If (ZP4->(DbSeek(FwxFilial("ZP4")+ZP6->ZP6_XPERIO)))
+	//--                          
+	_lZP4Enc := fVerZP5(ZP6->ZP6_XPERIO)
+	//-- 
+	If _lZP4Enc
+		//-- ****************************************************************  
+		//--   O PERIODO so sera ENCERRADO se a data Final do PERIODO
+		//--   for Menor ou igula a HOJE, caso contrario ainda pode-se 
+		//--   incluir CALENDARIOS de Pagamento Neste PERIODO, entao ele 
+		//--   devera permanecer em ABERTO.
+		//-- ****************************************************************  
+		//+-----------------------------------------------------------------+
+		//| Antonio Dantas                                       24/11/2014 |
+		//| Conforme acordo com Guilherme nesta data o PERIODO jamais sera  |
+		//| Encerrado.                                                      |
+		//+-----------------------------------------------------------------+
+		//&&--  
+		//&&--  If ZP4->ZP4_XDTFIM <= dDataBase
+		//&&--  	ZP4->(RecLock("ZP4",.f.))
+		//&&--  	Replace ZP4->ZP4_XSTATU With "E" 	//-- Status: E=Encerrada
+		//&&--  	ZP4->(MsUnLock())
+		//&&--  	ZP4->(dbCommit())
+		//&&--  Endif 
+		//&&--  
+	Endif 	
+Endif 
+Return 
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fVerZP7>                                                   |
+| Vare a ZP7 - Matriculas a Pagar se todas as Matriculas vinculadas ao     |
+| [Periodo + Calendario + Sessao], estiverem todas RESOLVIDAS, retornar    |
+| (.t.).                                                                   |
+| Verifica: SE nao HOUVER nenhuma MATRICULA nas condicoes abaixo,          |
+| retorna OK a Sessao Podera ser encerrada                                 |
+|           B=Bloqueado Para Remessa                                       |
+|           C=Corrigido                                                    |
+|           L=Liberado Para Remessa                                        |
+|           E=Remessa Gerada                                               |
+|           O=Ordem de Pagamento Agendada                                  |
+|           R=Rejeitado                                                    |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<01/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<    _cSessao (c) - Codigo da Sessao que esta sendo Processada            |
+|>                                                                         |
+|@return                                                                   |
+|<      _lOK (l) - (.t.) Nao Encontrou Nenhuma Matricula Pendente          |
+|       _lOK (l) - (.f.) Encontrou Matriculas Pendentes de Pagamento       |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fVerZP7(_cSessao)
+Local _lOK			:= .t. 
+Local _cALias 		:= GetNextAlias()
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+Local _cQuery		:= ""
+//--
+_cQuery := ""
+_cQuery += " Select * From "+RetSqlName("ZP7")+" "+_ChrBreak
+_cQuery += " where ZP7_FILIAL = '"+FwxFilial("ZP7")+"' "+_ChrBreak
+_cQuery += " and D_E_L_E_T_ <> '*' "+_ChrBreak
+_cQuery += " and ZP7_XSESSA = '"+_cSessao+"'"+_ChrBreak
+_cQuery += " and ZP7_XSTATU in ('B','C','L','E','O','R')"+_ChrBreak
+//+------------------------------------------------------------------+
+//| Grava o Resultado da Query para consulta                         |
+//+------------------------------------------------------------------+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select(_cALias)>0
+	(_cALias)->(DbCloseArea())
+Endif  
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),_cALias,.t.,.t.)  
+//+------------------------------------------------------------------+
+//| Seleciona a Tabela temporaria e Inicia Loop para Tratar os Dados |
+//+------------------------------------------------------------------+
+dbSelectArea(_cALias)
+(_cALias)->(dbGoTop())
+If (_cALias)->(!Eof()) .and. (_cALias)->(!Bof())
+	_lOK := .f.
+Endif
+(_cALias)->(dbCloseArea())
+Return _lOK
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fVerZP6>                                                   |
+| Vare a ZP6 - Sessoes, Verifica se TODAS as Sessoes do Periodo+Calendario |
+| encontran-se ENCERRADAS                                                  |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<02/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<    _cPeriodo (c) - Codigo do Periodo                                    |
+|    _cCalendar (c) - Seguencia do Calendario                              |
+|>                                                                         |
+|@return                                                                   |
+|<      _lOK (l) - (.t.) Todas as Sessoes para Periodo + Calendario estao  |
+|                        ENCERRADAS.                                       |
+|       _lOK (l) - (.f.) Nem todas as Sessoes para Periodo + Calendario    |
+|                        estao encerradas                                  |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fVerZP6(_cPeriodo,_cCalendar)
+Local _lOK			:= .t. 
+Local _cALias 		:= GetNextAlias()
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+Local _cQuery		:= ""
+//--
+_cQuery := ""
+_cQuery += " Select * From "+RetSqlName("ZP6")+" "+_ChrBreak
+_cQuery += " where ZP6_FILIAL = '"+FwxFilial("ZP6")+"' "+_ChrBreak
+_cQuery += " and D_E_L_E_T_ <> '*' "+_ChrBreak
+_cQuery += " and ZP6_XPERIO = '"+_cPeriodo+"'"+_ChrBreak
+_cQuery += " and ZP6_XSEG = '"+_cCalendar+"'"+_ChrBreak 
+_cQuery += " and ZP6_XSTATU not in ('E')"+_ChrBreak
+//+------------------------------------------------------------------+
+//| Grava o Resultado da Query para consulta                         |
+//+------------------------------------------------------------------+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select(_cALias)>0
+	(_cALias)->(DbCloseArea())
+Endif  
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),_cALias,.t.,.t.)  
+//+------------------------------------------------------------------+
+//| Seleciona a Tabela temporaria e Inicia Loop para Tratar os Dados |
+//+------------------------------------------------------------------+
+dbSelectArea(_cALias)
+(_cALias)->(dbGoTop())
+If (_cALias)->(!Eof()) .and. (_cALias)->(!Bof())
+	_lOK := .f. 
+Endif
+(_cALias)->(dbCloseArea())
+Return _lOK     
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fVerZP5>                                                   |
+| Vare a ZP5 - Calendarios ou (Seguencia de Pagamento) e ou ainda          |
+| (Seguimentos de Pagamento) do Periodo encontran-se ENCERRADOS            |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<02/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<    _cPeriodo (c) - Codigo do Periodo                                    |
+|>                                                                         |
+|@return                                                                   |
+|<      _lOK (l) - (.t.) Todos Calendarios do Periodo estao ENCERRADOS.    |
+|       _lOK (l) - (.f.) Nem todos os Calendarios do Periodo estao         |
+|                        ENCERRADOS.                                       |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fVerZP5(_cPeriodo)
+Local _lOK			:= .t. 
+Local _cALias 		:= GetNextAlias()
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+Local _cQuery		:= ""
+//--
+_cQuery := ""
+_cQuery += " Select * From "+RetSqlName("ZP5")+" "+_ChrBreak
+_cQuery += " where ZP5_FILIAL = '"+FwxFilial("ZP5")+"' "+_ChrBreak
+_cQuery += " and D_E_L_E_T_ <> '*' "+_ChrBreak
+_cQuery += " and ZP5_XPERIO = '"+_cPeriodo+"'"+_ChrBreak
+_cQuery += " and ZP5_XSTATU not in ('E')"+_ChrBreak
+//+------------------------------------------------------------------+
+//| Grava o Resultado da Query para consulta                         |
+//+------------------------------------------------------------------+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select(_cALias)>0
+	(_cALias)->(DbCloseArea())
+Endif  
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),_cALias,.t.,.t.)  
+//+------------------------------------------------------------------+
+//| Seleciona a Tabela temporaria e Inicia Loop para Tratar os Dados |
+//+------------------------------------------------------------------+
+dbSelectArea(_cALias)
+(_cALias)->(dbGoTop())
+If (_cALias)->(!Eof()) .and. (_cALias)->(!Bof())
+	_lOK := .f. 
+Endif
+(_cALias)->(dbCloseArea())
+Return _lOK

@@ -1,0 +1,105 @@
+#INCLUDE "PROTHEUS.CH"             
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³MA020TOK   Autor  ³Microsiga           º Data ³  05/16/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.   ³ 1 - Obrigatoriedade do CNPJ                                  º±±
+±±º        ³ 2 - Validação dos campos ref. a conta corrente do fornecedor º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+//Inclusão do fornecedor
+Franklin B. Oliveira 07/08/2017:
+	Ajuste na validação dos dados bancários do cadastro de fornecedor.
+*/         
+User Function MA020TOK()
+Local lOK := SuperGetMv("SI_xCNPJ",.F.,.F.,Substr(cFilant,1,4))     
+
+If lOk
+	If (M->A2_TIPO = "X" .Or. ! Empty(M->A2_CEINSS))
+		lOk := .T.
+	ElseIf Empty(M->A2_CGC)
+		MsgStop("Para este fornecedor deve ser preenchido o campo CGC.")     	
+		lOk := .F.	
+	Else
+		lOk := .T.
+	Endif
+Else 
+	lOk := .T.
+Endif
+                                                             
+//Edmar Tinti - Doit Sistemas 17/03/14
+If lOk            
+	//Validar os campos da conta corrente do fornecedor
+	If ! Empty(M->A2_BANCO)
+		//If M->A2_BANCO != "CXA" .And. M->A2_BANCO != "BOL"
+		If M->A2_BANCO != "999"
+			If (M->A2_BANCO < "001" .Or. M->A2_BANCO > "999" .Or. Len(AllTrim(M->A2_BANCO)) != 3) 
+				//MsgStop("O Codigo do Banco deve ser: BOL, CXA ou 001 a 999")
+				MsgStop("O Codigo do Banco deve ser de 001 a 999")
+				M->A2_BANCO := Space(3)
+				lOk := .F. 
+			ElseIf Empty(M->A2_AGENCIA) .Or. Empty(M->A2_NUMCON) 
+				MsgStop("Informar Agencia e/ou Conta Corrente")
+				lOk := .F.
+			ElseIf M->A2_BANCO == "104" .And. Empty(M->A2_XOPERAC) 
+				MsgStop("Informar o Tipo de Operação da Conta Corrente CEF")
+				lOk := .F.           
+			Endif	
+		Endif	
+	Endif	
+	If lOk    
+		//Altera campos para evitar problemas nos arquivos de envio CNABs
+		If Val(M->A2_BANCO) == 0 .And. ! Empty(AllTrim(M->A2_AGENCIA+M->A2_NUMCON+M->A2_XOPERAC))
+			M->A2_XOPERAC := Space(2)
+			M->A2_AGENCIA := Space(5)
+			M->A2_NUMCON  := Space(10) 
+		ElseIf M->A2_BANCO != "104" .And. ! Empty(M->A2_XOPERAC) //Tratamento do Banco CEF
+			M->A2_XOPERAC := Space(2)
+		Endif	
+		If Empty(M->A2_NUMCON) .And. ! Empty(AllTrim(M->A2_XDVCTA)) //Tratamento DV da Conta
+			M->A2_XDVCTA := " "
+		Endif	
+		If Empty(M->A2_AGENCIA) .And. ! Empty(AllTrim(M->A2_XDVAGE)) //Tratameneto DV Agencia
+			M->A2_XDVAGE := " "			
+		Endif
+	Endif
+Endif
+
+/* Jose Leite - 22-05-15
+	Validacoes complementares
+	Se pessoa fisica OU pessoa juridica(MEI) o codigo da funcao e o nit tem que ser preenchidos
+*/
+If lOk
+	If (M->A2_TIPO == 'F' .OR. (M->A2_TIPO == 'J' .AND. M->A2_TPJ == '3')) .AND. Empty(M->A2_CEINSS)
+		If Empty(M->A2_CODFUNC)
+			lOk := .F.
+			MsgStop("Favor Informar o Código da Função - Campo (A2_CODFUNC)")
+		ElseIf M->A2_CODFUNC <> '99998' .And. Empty(M->A2_NIT)
+			lOk := .F.
+			MsgStop("Favor Informar o Nit - Campo (A2_NIT)")
+		EndIf
+	EndIf
+EndIf
+
+//31/05/2017 Walmir Junior - Validação de Insc. Municipal para "OS" Prestador de Serviço.
+If lOk
+	If	M->A2_TIPO = "J" .AND. Empty(M->A2_TPESSOA)
+		lOk := .F.
+		Aviso("Atenção", "Para pessoa Jurídica é obrigatório preencher o campo 'Tipo Pessoa'."+CRLF+CRLF+;
+						"Tipo Pessoa -> Terceira Pasta", {"Ok"})	
+	ElseIf M->A2_TIPO = "J" .AND. M->A2_TPESSOA = "OS" .AND. Empty(M->A2_INSCRM)
+		lOk := .F.
+		Aviso("Atenção", "Para Prestadores de Serviços é obrigatório preencher o campo 'Inscrição Municipal'."+CRLF+CRLF+;
+						"Inscrição Municipal -> Primeira Pasta", {"Ok"})
+	ElseIf M->A2_TIPO = "J" .AND. !Empty(M->A2_INSCRM) .AND. M->A2_TPESSOA != "OS"
+		lOk := .F.
+		Aviso("Atenção", "Você informou o campo 'Inscrição Municipal', o Tp. Pessoa deve ser 'Prestador de Serviços'."+CRLF+CRLF+;
+						"Tipo Pessoa -> Terceira Pasta", {"Ok"})
+	EndIf
+EndIf     
+
+Return( lOk )

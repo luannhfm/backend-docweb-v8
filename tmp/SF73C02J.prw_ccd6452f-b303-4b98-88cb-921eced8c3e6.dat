@@ -1,0 +1,195 @@
+#INCLUDE "TOTVS.CH"
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "FWMVCDEF.CH"
+
+Static _Retorno
+Static _oDlg
+
+/*/{Protheus.doc} SF73C02J
+Funcao de consulta(F3) especifica(AD1UFD) de Estados.
+Utilizado no campo AD1_XOPRRG
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 		10/07/2017
+@version 	1.0
+@return 	_lRet, True
+/*/
+User Function SF73C02J()
+	
+	Local _aArea	:= GetArea()
+	Local _lRet		:= .T.
+	
+	//Busca os Estados
+	fTelaUf()
+	
+	RestArea(_aArea)
+
+Return(_lRet)
+
+/** {Protheus.doc} SF73C02RT
+Funcao de retorno da consulta especifica
+
+@author: 	Jose Leite de Barros Neto
+@since: 	10/07/2017
+@Uso: 		SFIEMT
+*/
+User Function SF73C02RT()
+				
+Return (_Retorno)
+
+
+/** {Protheus.doc} fTelaUf
+Funcao que monta o MarkBrowse para selecao dos UF.
+
+@author: 	Jose Leite de Barros Neto
+@since: 	10/07/2017
+@Uso: 		SFIEMT
+*/
+Static Function fTelaUf()
+	
+	Local _aStru	:= {}
+	Local _aCpoBro 	:= {}
+	Local _aCores 	:= {}
+	Local _cSX512 	:= Space(8)
+	
+	Private _oDlg		:= Nil
+	Private _lInvert 	:= .F.
+	Private _cMark		:= GetMark()   
+	Private _oMark		
+	Private _cArqTmp
+	
+	//Fecha a Area
+	If Select("TTRB") > 0
+		DbSelectarea("TTRB")
+		TTRB->(DbCloseArea())
+	EndIf
+	
+	//Cria um arquivo de Apoio
+	AADD(_aStru,{"OK"    	,"C"	,02		,0		})
+	AADD(_aStru,{"UF"		,"C"	,02		,0		})
+	AADD(_aStru,{"ESTADO"  	,"C"	,20		,0		})
+	
+	_cArqTmp := Criatrab(_aStru,.T.)
+	DBUSEAREA(.t.,,_cArqTmp,"TTRB")
+	
+	DbSelectArea("SX5")	
+	SX5->(DbSetOrder(1))
+	If SX5->(MsSeek(_cSX512+"12"))
+		While .Not. Eof() .And. SX5->(X5_FILIAL+X5_TABELA) == _cSX512+"12"
+		 	If AllTrim(SX5->X5_CHAVE) <> "EX"
+				DbSelectArea("TTRB")	
+				If RecLock("TTRB",.T.)		
+					TTRB->OK	  :=  "  "		
+					TTRB->UF      :=  AllTrim(SX5->X5_CHAVE)		
+					TTRB->ESTADO  :=  AllTrim(SX5->X5_DESCRI)	
+					TTRB->(MsunLock())
+				EndIf	
+			EndIf
+			SX5->(DbSkip())
+		End
+	EndIf
+	
+	//Define as cores dos itens de legenda.
+	_aCores := {}
+	
+	//Define quais colunas (campos da TTRB) serao exibidas na MsSelect
+	_aCpoBro	:= {{ "OK"			,, " "       	,"@!"},;			
+					{ "UF"			,, "UF"         ,"@!"},;			
+					{ "ESTADO"		,, "ESTADO"     ,"@!"}}
+	
+	DbSelectArea("TTRB")
+	TTRB->(DbGotop())
+		
+	//Cria uma Dialog
+	DEFINE MSDIALOG _oDlg TITLE "Unidade Federativa" FROM 000, 000  TO 400, 500 COLORS 0, 16777215 PIXEL
+		
+		//Cria a MsSelect
+		_oMark := MsSelect():New("TTRB","OK","",_aCpoBro,@_lInvert,@_cMark,{17,1,150,250},,,,,_aCores)
+		_oMark:bMark := {|| fMark()} 
+		
+		 @ 176, 050 BUTTON oButton1 PROMPT "Salvar" Action fBtnOk() 	SIZE 037, 012 OF _oDlg PIXEL
+		 @ 176, 140 BUTTON oButton2 PROMPT "Fechar" Action _oDlg:End() 	SIZE 037, 012 OF _oDlg PIXEL
+		
+	//Exibe a Dialog
+	ACTIVATE MSDIALOG _oDlg CENTERED
+		
+	//Fecha a Area 
+	If Select("TTRB") > 0
+		DbSelectarea("TTRB")
+		TTRB->(DbCloseArea())
+	EndIf
+	
+	//Elimina os arquivos de apoio criados em disco.
+	If File(_cArqTmp + GetDBExtension())
+		FErase(_cArqTmp + GetDBExtension())
+	EndIf
+	
+Return
+
+
+/** {Protheus.doc} fTelaUf
+Funcao executada ao Marcar/Desmarcar um registro.
+
+@author: 	Jose Leite de Barros Neto
+@since: 	10/07/2017
+@Uso: 		SFIEMT
+*/
+Static Function fMark()
+	If RecLock("TTRB",.F.)
+		If Marked("OK")	
+			TTRB->OK := _cMark
+		Else	
+			TTRB->OK := ""
+		Endif
+		TTRB->(MSUNLOCK())
+	EndIf             
+	_oMark:oBrowse:Refresh()
+Return
+
+
+/** {Protheus.doc} fBtnOk
+Funcao executada ao clicar no botao OK da tela, retornando os dados de
+codigo de produto, codigo da turma e codigo do modulo.
+
+@author: 	Jose Leite de Barros Neto
+@since: 	10/07/2017
+@Uso: 		SFIEMT
+*/
+Static Function fBtnOk()
+	
+	Local _cRet	 := ""
+	//Local _nP01  := aScan(aHeader,{|X| UPPER(AllTrim(X[2]))=="AD1_XOPRRG"})
+	Local _nCont := 0
+	
+	DbSelectArea("TTRB")
+    TTRB->( DbGoTop() )
+    While .Not. TTRB->(Eof())
+        If .Not. Empty(TTRB->OK) //Se diferente de vazio, é porque foi marcado
+            _cRet += Alltrim(TTRB->UF)+";"
+            _nCont++
+        EndIf
+        TTRB->( DbSkip() )
+    EndDo
+   	
+    If _nCont == 0
+        Alert("Selecione pelo menos um Estado!")
+        Return
+    EndIf
+	
+	_Retorno := _cRet //Cod do UF
+	
+	//Fecha a Area 
+	If Select("TTRB") > 0
+		DbSelectarea("TTRB")
+		TTRB->(DbCloseArea())
+	EndIf
+	
+	//Elimina os arquivos de apoio criados em disco.
+	If File(_cArqTmp + GetDBExtension())
+		FErase(_cArqTmp + GetDBExtension())
+	EndIf
+	
+	_oDlg:End()
+	
+Return

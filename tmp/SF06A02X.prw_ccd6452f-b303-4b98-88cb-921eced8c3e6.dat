@@ -1,0 +1,135 @@
+#Include 'Protheus.ch'
+
+/*/
+@author: Allan da Silva Faria - J2A
+@data: 26/07/2016
+@descricao: 
+Funcao para posicionamento do titulo.
+/*/
+User Function SF06A02X(_aVals, _cBanco, _cAgenc, _cConta, _cIdCnab, _cNsNum)
+
+	Local _lRet 		:= .F.
+	Local _cAlias 	:= GetNextAlias()
+	Local _aValores	:= _aVals
+	Local _lAchou  	:= .F.
+	Local _cFunName	:= AllTrim(FunName())
+	Local _nTipo 	:= IIF(_cFunName == "FINR650",MV_PAR07,0) // 1 = receber / 2= pagar
+
+	If _cFunName == "FINA200" .OR. _nTipo == 1
+
+		DbSelectArea("SE1")
+		DbSetOrder(19)
+		SE1->(DbGoTop())
+		//Pesquisando pelo ID_CNAB
+		If SE1->(DbSeek(_cIdCnab)) .And. !Empty(_cIdCnab) .And. ( REPLICATE("0", Len(_cIdCnab)) != _cIdCnab )
+			cNumTit	:= SE1->E1_PREFIXO + SE1->E1_NUM + SE1->E1_PARCELA
+			cTipo		:= SE1->E1_TIPO
+			cEspecie	:= SE1->E1_TIPO
+			_lAchou	:= .T.
+			_lRet  	:= .T.
+		EndIf
+	
+	ElseIf _cFunName == "FINA430" .OR. _nTipo == 2
+		
+		DbSelectArea("SE2")
+		DbSetOrder(13)
+		SE2->(DbGoTop())
+		//Pesquisando pelo ID_CNAB
+		If SE2->(DbSeek(_cIdCnab)) .And. !Empty(_cIdCnab) .And. ( REPLICATE("0", Len(_cIdCnab)) != _cIdCnab )
+			cNumTit	:= SE2->E2_PREFIXO + SE2->E2_NUM + SE2->E2_PARCELA
+			cTipo		:= SE2->E2_TIPO
+			cEspecie	:= SE2->E2_TIPO
+			_lAchou	:= .T.
+			_lRet  	:= .T.
+		EndIf
+	
+	EndIf
+	
+	If _lAchou
+		Return _lRet
+	EndIf
+	
+	fGeraQRY(_cAlias, _cNsNum , _cBanco, _cAgenc, _cConta, _nTipo, _cFunName, _cIdCnab)
+	
+	If !(_cAlias)->(Eof())
+		If _cFunName == "FINA200" .OR. _nTipo == 1
+			SE1->(dbGoTo((_cAlias)->RECSE1))
+			cNumTit	:= SE1->E1_PREFIXO + SE1->E1_NUM + SE1->E1_PARCELA
+			cTipo	  	:= SE1->E1_TIPO
+			cEspecie	:= SE1->E1_TIPO
+			cCliFor	:= SE1->E1_CLIENTE +" "+ SE1->E1_LOJA
+			_lAchou 	:= .T.
+			_lRet 		:= .T.
+		ElseIf _cFunName == "FINA430" .OR. _nTipo == 2
+			SE2->(dbGoTo((_cAlias)->RECSE2))
+			cNumTit	:= SE2->E2_PREFIXO + SE2->E2_NUM + SE2->E2_PARCELA
+			cTipo	  	:= SE2->E2_TIPO
+			cEspecie	:= SE2->E2_TIPO
+			cCliFor	:= SE2->E2_FORNECE +" "+ SE2->E2_LOJA
+			_lAchou 	:= .T.
+			_lRet 		:= .T.
+		EndIf
+	EndIf
+
+	(_cAlias)->(dbCloseArea())
+
+	If _lAchou
+		Return _lRet
+	EndIF
+
+	//Se Não Achou
+	If !_lAchou
+		If _cFunName == "FINA200" .OR. _nTipo == 1
+			cNumTit   := REPLICATE(" ", Len(SE1->(E1_PREFIXO+E1_NUM+E1_PARCELA)))
+			cTipo     := REPLICATE(" ", Len(SE1->E1_TIPO))
+			cEspecie  := REPLICATE(" ", Len(SE1->E1_TIPO))
+		ElseIf _cFunName == "FINA430" .OR. _nTipo == 2
+			cNumTit   := REPLICATE(" ", Len(SE2->(E2_PREFIXO+E2_NUM+E2_PARCELA)))
+			cTipo     := REPLICATE(" ", Len(SE2->E2_TIPO))
+			cEspecie  := REPLICATE(" ", Len(SE2->E2_TIPO))
+		EndIf
+	EndIf
+
+Return(_lRet)
+
+
+/*/fGeraQRY
+(long_description)
+@author Allan da Silva Faria - J2A
+@since 26/07/2016
+/*/
+Static Function fGeraQRY( _cAlias , _cNossoNum , _cBanco, _cAgenc, _cConta, _nTipo, _cFunName, _cIdCnab )
+
+	If Select(_cAlias) > 0
+		dbSelectArea(_cAlias)
+		(_cAlias)->(dbCloseArea())
+	EndIf
+	
+	If _cFunName == "FINA200" .OR. _nTipo == 1
+	
+		BeginSQL Alias _cAlias
+			SELECT R_E_C_N_O_ RECSE1 
+			FROM %TABLE:SE1% SE1 
+			WHERE SE1.%NOTDEL% 
+			AND SE1.E1_FILIAL 	= %XFILIAL:SE1%
+			AND SE1.E1_NUMBCO	= %EXP:_cNossoNum% 
+			AND SE1.E1_PORTADO = %EXP:_cBanco%
+			AND SE1.E1_AGEDEP  = %EXP:_cAgenc%
+			AND SE1.E1_CONTA   = %EXP:_cConta%
+		EndSQL
+		
+	ElseIf _cFunName == "FINA430" .OR. _nTipo == 2
+		
+		_cIdCnab := StrZero(Val(_cIdCnab), TamSX3("E2_IDCNAB")[1])
+		
+		BeginSQL Alias _cAlias
+			SELECT R_E_C_N_O_ RECSE2 
+			FROM %TABLE:SE2% SE2 
+			WHERE SE2.%NOTDEL% 
+			AND SE2.E2_FILIAL = %XFILIAL:SE2%
+			AND E2_IDCNAB = %EXP:_cIdCnab% 
+		EndSQL
+		
+	EndIf
+	
+Return

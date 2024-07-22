@@ -1,0 +1,229 @@
+#Include 'Protheus.ch'
+#Include 'TopConn.ch'
+
+/*/{Protheus.doc} SF73WF02
+Workflow CRM - STI x IST - Sinalizar o de acordo da proposta comercial
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 		18/05/2017
+@version 	1.0
+@param 		p_cFilial, Caracter, (Filial da Oportunidade)
+@param		p_cRazSoc, Caracter, (Razao Social do Cliente)
+@param 		p_cOport, Caracter, (Codigo da oportunidade)
+@param 		p_cRevOp, Caracter, (Codigo da revisao da oportunidade)
+@param 		p_cProp, Caracter, (Codigo da proposta comercial)
+@param 		p_cRevPr, Caracter, (Codigo da revisao da proposta)
+@param 		p_cVend, Caracter, (Codigo do vendedor responsavel)
+@return 	Nil, Nulo
+/*/
+User Function SF73WF02( p_cFilial, p_cRazSoc, p_cOport, p_cRevOp, p_cProp, p_cRevPr, p_cVend )
+	
+	Local _aArea		:= GetArea()
+	Local _oProcess		:= Nil                         									//Objeto da classe TWFProcess.
+	Local _cMailId		:= ""                          									//ID do processo gerado.
+	Local _cHostWF		:= GetNewPar("MV_XSRVWF","http://srvp11hml:8083/wf")			//URL configurado no ini para WF Link.
+	Local _cPasta		:= "HTML"														//Pasta 
+	Local _cPara		:= GetNewPar("MV_XCRMGWF","desenvolvedor.csi@fiemt.com.br")		//Destinatário de email.
+	Local _lOk			:= .F.															//Controle
+	Local _aItens		:= {}  	
+	
+	Default p_cFilial 	:= ""
+	Default p_cOport	:= ""
+	Default p_cRevOp	:= ""
+	Default p_cProp		:= ""
+	Default p_cRevPr	:= ""
+	Default p_cVend		:= ""
+	
+	ConOut("")
+	ConOut(Replicate("=",10))
+	ConOut("SF73WF02: Envio de Workflow CRM - STI x IST")
+	
+	//------------------//
+	// "FORMULARIO"     //
+	//------------------//        
+	
+	// Instanciamos a classe TWFProcess informando o código e nome do processo.
+	_oProcess := TWFProcess():New("730002", "Proposta Comercial")
+		
+	// Criamos a tafefa principal que será respondida pelo usuário.
+	_oProcess:NewTask("FORMULARIO", "\Workflow\WFCRM_FORMPR.html")
+		
+	// Atribuímos valor a um dos campos do formulário.
+	_oProcess:oHtml:ValByName("TEXT_TIME"	, Time()   													)	
+	_oProcess:oHtml:ValByName("TEXT_FILIAL"	, p_cFilial + " - " + FWFilialName(cEmpAnt,p_cFilial,2)		)
+	_oProcess:oHtml:ValByName("TEXT_RAZAOS"	, AllTrim(p_cRazSoc)										)
+	_oProcess:oHtml:ValByName("TEXT_OPORT"	, p_cOport 													)
+	_oProcess:oHtml:ValByName("TEXT_REVOP"	, p_cRevOp													)
+	_oProcess:oHtml:ValByName("TEXT_PROPOS"	, p_cProp													)
+	_oProcess:oHtml:ValByName("TEXT_REVPRO"	, p_cRevPr													)
+	
+	DbSelectArea("ADZ")
+	ADZ->(DbSetOrder(3)) //ADZ_FILIAL+ADZ_PROPOS+ADZ_REVISA+ADZ_FOLDER+ADZ_ITEM
+	ADZ->(DbGoTop())
+	If ADZ->(DbSeek(p_cFilial + p_cProp + p_cRevPr))
+		While .Not. ADZ->(Eof()) .And. ADZ->(ADZ_FILIAL+ADZ_PROPOS+ADZ_REVISA) == p_cFilial + p_cProp + p_cRevPr
+			aAdd(_aItens,{ADZ->ADZ_DESCRI, ADZ->ADZ_TOTAL})
+			ADZ->(dbSkip())
+		End
+	EndIf
+	
+	For i := 1 to Len(_aItens)
+		aAdd( (_oProcess:oHtml:ValByName( "it1.produto"		)), AllTrim(_aItens[i][1]))
+		aAdd( (_oProcess:oHtml:ValByName( "it1.valor"		)), Alltrim(Transform(_aItens[i][2],"@E 999,999,999.99")))
+	Next
+		
+	ConOut("Filial: "+ p_cFilial + " - " + FWFilialName(cEmpAnt,p_cFilial,2))
+	ConOut("Oportunidade: "+ p_cOport)
+	ConOut("Revisao: "+ p_cRevOp)
+	ConOut("Proposta: "+ p_cProp)
+	ConOut("Revisao Proposta: "+ p_cRevPr)
+		
+	// Informamos em qual diretório será gerado o formulário.
+	_oProcess:cTo := _cPasta  
+	
+	// Informamos qual função será executada no evento de timeout.
+	_oProcess:bTimeOut := {{"u_SF73WF2TO()", 0, 0, 5 }}
+	
+	// Informamos qual função será executada no evento de retorno.  
+	_oProcess:bReturn := "u_SF73WF2RT()"
+	
+	// Informamos o assunto do email.
+	_oProcess:cSubject := "Workflow CRM"
+		
+	// Iniciamos a tarefa e recuperamos o nome do arquivo gerado.  
+	_cMailId := _oProcess:Start()
+		
+	If .Not. Empty(_cMailId)
+		_lOk := .T.
+	EndIf
+	
+	//------------------//
+	// "LINK"           //
+	//------------------//
+	If _lOk
+		// Criamos o link para o arquivo que foi gerado na tarefa anterior.
+		_oProcess:NewTask("730102", "\Workflow\WFCRM_LINK.htm")
+		 
+		// Atribuímos valor a um dos campos do formulário.
+		If ( WFGetMV( "MV_WFWEBEX", .F. ) )
+			_oProcess:oHtml:ValByName("A_LINK", _cHostWF + "/w_wfhttpret.apw?ProcID=" + _cPasta + "/" + _cMailId + ".htm")
+		Else
+			_oProcess:oHtml:ValByName("A_LINK", _cHostWF + "/messenger/emp" + cEmpAnt + "/" + _cPasta + "/" + _cMailId + ".htm")
+		EndIf
+		        	
+		// Informamos o destinatário do email contendo o link.
+		_oProcess:cTo := _cPara          
+		
+		// Informamos o assunto do email.
+		_oProcess:cSubject := "Workflow CRM - De Acordo Proposta Comercial"
+		
+		// Iniciamos a tarefa e enviamos o email ao destinatário.
+		_oProcess:Start()
+	Else
+		ConOut("Erro: Nao conseguiu montar o processo de workflow, favor verificar!")
+	EndIf
+	
+	If _lOk
+		MsgInfo("WorkFlow IST - Enviado com Sucesso","WorkFlow - IST")
+	EndIf
+	
+	_oProcess:Finish()
+	_oProcess:Free()
+	
+	//Retorna a area posicionada anteriormente
+	RestArea(_aArea)
+	
+	ConOut("SF73WF02: Finalizou o Envio de Workflow CRM - STI x IST")
+	ConOut(Replicate("=",10))
+	ConOut("")
+	 
+Return
+
+
+/** {Protheus.doc} SF73WF02RT
+Funcao para receber e processar o retorno do WorkFlow
+
+@param: 	_oProcess, Objeto
+@author: 	Jose Leite de Barros Neto
+@since: 	24/04/2017
+@Uso: 		FIEMT
+*/	
+User Function SF73WF2RT(_oProcess)
+	
+	Local _cFunc 	:= "SF73WF2RT"
+	Local _cOpcao	:= AllTrim(_oProcess:oHtml:RetByName("OPC")) 	//SALVAR
+	Local _cRespSN	:= AllTrim(_oProcess:oHtml:RetByName("RSP"))	// S/N
+	Local _cFilOpt	:= SubStr(AllTrim(_oProcess:oHtml:RetByName("TEXT_FILIAL")),1,8)
+	Local _cOport	:= AllTrim(_oProcess:oHtml:RetByName("TEXT_OPORT"))
+	Local _cRevOp	:= AllTrim(_oProcess:oHtml:RetByName("TEXT_REVOP"))
+	Local _cProp	:= AllTrim(_oProcess:oHtml:RetByName("TEXT_PROPOS"))
+	Local _cRevPr	:= AllTrim(_oProcess:oHtml:RetByName("TEXT_REVPRO"))
+	Local _cAssunt	:= "WorkFlow CRM - Proposta Comercial"
+	
+	ConOut("")
+	ConOut(Replicate("=",10))
+	ConOut("SF73WF2RT: Retorno de Workflow CRM - STI x IST")
+	ConOut(_cOpcao)
+	ConOut(_cRespSN)
+	
+	If _cOpcao == "SALVAR"
+		
+		ConOut("Filial: "+ _cFilOpt)
+		ConOut("Oportunidade: "+ _cOport)
+		ConOut("Revisao Op: "+ _cRevOp)
+		ConOut("Proposta: "+ _cProp)
+		ConOut("Revisao Pr.: "+ _cRevPr)
+		ConOut("")
+		
+		DbSelectArea("AD1")
+		AD1->( DbSetOrder(1) ) //AD1_FILIAL+AD1_NROPOR+AD1_REVISA
+		AD1->( DbGoTop() )
+		If AD1->( DbSeek( _cFilOpt + _cOport + _cRevOp ) )
+			ConOut("Achou Oportunidade")
+			DbSelectArea("ADY")
+			ADY->(DbSetOrder(2)) //ADY_FILIAL+ADY_OPORTU+ADY_REVISA+ADY_PROPOS
+			ADY->( DbGoTop() )
+			If ADY->(DbSeek(_cFilOpt + _cOport + _cRevOp + _cProp))
+				Begin Transaction
+					If RecLock("ADY",.F.)
+						ADY->ADY_XDIAPG := _cRespSN 
+						ADY->(MsUnlock())
+					EndIf
+				End Transaction
+				ConOut("Gravou dados da proposta")
+			EndIf
+			ADY->(DbCloseArea())	
+		Else
+			ConOut("Nao achou a oportunidade informada, favor verificar!")
+		EndIf
+		
+		AD1->(DbCloseArea())
+	EndIf
+	
+	_oProcess:Finish()
+		
+	ConOut("SF73WF2RT: Retorno de Workflow CRM - STI x IST")
+	ConOut(Replicate("=",10))
+	ConOut("")
+	
+Return
+
+
+/** {Protheus.doc} SF73WF02TO
+Funcao para receber e processar o time out do WorkFlow
+
+@param: 	_oProcess, Objeto
+@author: 	Jose Leite de Barros Neto
+@since: 	24/04/2017
+@Uso: 		FIEMT
+*/	
+User Function SF73WF2TO(_oProcess)
+	ConOut("")
+	ConOut(Replicate("=",10))
+	ConOut("SF73WF2TO: TimeOUT de Workflow CRM - STI x IST")
+	_oProcess:Finish()
+	ConOut("Processo finalizado")
+	ConOut(Replicate("=",10))
+	ConOut("")
+Return

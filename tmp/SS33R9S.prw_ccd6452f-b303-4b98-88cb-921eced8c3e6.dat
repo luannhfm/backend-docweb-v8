@@ -1,0 +1,245 @@
+#Include 'Protheus.ch'
+#Include 'Topconn.ch'
+
+/*/{Protheus.doc} SS33R9S
+Relatorio Fatura Analitica
+
+@author 	Sergio Ricardo Leite Salustiano	
+@since 		03/09/2014
+@version 	1.0
+@return 	Nil, Nulo
+
+/*/
+
+User Function SS33R9S()
+
+	Local 	oReport
+	Private cPerg		:= 'SS33R9S'
+
+	If TRepInUse()
+
+		AjustaSx1(cPerg)
+		Pergunte(cPerg,.F.)
+
+		oReport := ReportDef(cPerg)
+		oReport:PrintDialog()
+		
+	EndIf
+			
+Return( Nil )
+
+/** {Protheus.doc} ReportDef
+Funcao que define as colunas
+
+@author: 	Sergio Ricardo Leite Salustiano	
+@since: 	23/07/2014
+@Uso: 		SFIEMT
+*/
+Static Function ReportDef(cPerg)
+	
+	Local oReport
+	Local oSection
+	
+	oReport := TReport():New(cPerg,"Relatorio para Lançamento SMD",cPerg,{|oReport| PrintReport(oReport)},"Relatorio para Lançamento SMD")
+	oReport:SetLandScape()
+	
+	oSection:= TRSection():New(oReport,OemToAnsi(""),{"TRA"})
+	
+	oCnpj  := TRCell():New(oSection, "CNPJ","TRA", "CNPJ", "@R 99.999.999/9999-99")
+	oCnpj  :SetSize(20)
+	
+	oNomeEmp:= TRCell():New(oSection, "NOMEEMP","TRA", "Empresa")
+	oNomeEmp:SetSize(70)
+	
+	oInd:= TRCell():New(oSection, "IND","TRA", "Tipo Empresa")
+	oInd:SetSize(30)
+			
+	oTPAtend:= TRCell():New(oSection, "TPATEND","TRA", "Tipo de Atendimento")
+	oTPAtend:SetSize(25)
+	
+	oClasse:= TRCell():New(oSection, "CLASSE","TRA", "Classe")
+	oClasse:SetSize(10)
+	
+	oDesClasse:= TRCell():New(oSection, "DESCLASSE","TRA", "Descricao da Classe")
+	oDesClasse:SetSize(40)
+	
+	oQUANT:= TRCell():New(oSection, "QUANT"  ,"TRA", "QUANTIDADE", "@E 9999")
+	oQUANT:SetSize(15)
+	
+	
+Return( oReport )
+	
+/** {Protheus.doc} ReportDef
+Funcao que gera o relatorio
+
+@author: 	Sergio Ricardo Leite Salustiano	
+@since: 	09/09/2014
+@Uso: 		SFIEMT
+*/
+Static Function PrintReport(oReport)
+	
+	Local _cCNPJ       := ""
+	Local _cNomeEmp    := ""
+	Local _cInd        := ""
+	Local _cTpAtend    := ""
+	Local _cClasse     := ""
+	Local _cDClass     := ""
+	Local _nTot        := 0
+	Local oSection 	:= oReport:Section(1)
+	
+	//Private _cCnpj		:= ""
+	//Private _cItem       := ""
+	
+	// -- Seta Titulo do Relatório -- //    
+	oReport:SetCustomText( {||CriaCab(oReport ) })
+	
+	If Select("TRA") > 0
+		DbSelectarea("TRA")
+		DbCloseArea()
+	Endif
+	
+	_cQuery := ""
+	_cQuery += "SELECT ZZM_CNPJ, ZZM_NOME, ZZO_IND, ZZM_TPATEN, ZZF_CLASSE, ZZF_DCLASS, COUNT(ZZM_TPATEN) QUANT"
+	_cQuery += "	FROM "+ RETSQLNAME("ZZM") + " ZZM "
+	_cQuery += "		INNER JOIN "+ RETSQLNAME("ZZN") + " ZZN ON ZZN_FILIAL = ZZM_FILIAL AND ZZN_ATEND = ZZM_ATEND 		"
+	_cQuery += "		INNER JOIN "+ RETSQLNAME("ZZF") + " ZZF ON ZZF_CODIGO = ZZN_PROCED 	"
+	_cQuery += "     LEFT JOIN " + RETSQLNAME("ZZO")+ " ZZO  ON ZZO_FILIAL = ZZM_FILIAL AND ZZO_CLI = ZZM_CODCLI AND ZZM_LOJA = ZZO_LOJA"  
+	_cQuery += "	WHERE ZZM_FILIAL = '"+xFilial("ZZM")+"' "
+	_cQuery += " 		AND ZZM.ZZM_DATA 		BETWEEN '"+DtoS(mv_par01)+"' AND '"+DtoS(mv_par02)+"'			"
+	_cQuery += " 		AND ZZM.D_E_L_E_T_ <> '*' 																	"
+	_cQuery += "		AND ZZN.D_E_L_E_T_ <> '*'                                                           "
+	_cQuery += "		AND ZZF.D_E_L_E_T_ <> '*' 																	"
+	_cQuery += "		AND ZZO.D_E_L_E_T_ <> '*' 																	"
+	_cQuery += "     GROUP BY ZZM_CNPJ, ZZM_NOME, ZZO_IND, ZZM_TPATEN, ZZF_CLASSE, ZZF_DCLASS             "  
+	_cQuery += "	   ORDER BY ZZM_CNPJ, ZZM_TPATEN, ZZF_CLASSE                                        	"
+	
+	
+	
+	
+	
+	TCQUERY _cQuery NEW ALIAS "TRA"
+	
+	DbSelectArea("TRA")
+	
+	DbGoTop()
+	
+	oReport:SetMeter(RecCount())
+	oSection:Init()
+	
+	While .Not. TRA->( EOF() )
+	
+		If oReport:Cancel()
+			Exit
+		EndIf
+		
+		_cCnpj		:= AllTrim(TRA->ZZM_CNPJ)
+		_cNomeEmp	:= AllTrim(TRA->ZZM_NOME)
+       _cInd      := " "
+		_cTpAtend	:= AllTrim(TRA->ZZM_TPATEN)
+		_cClasse	:= AllTrim(TRA->ZZF_CLASSE)
+		_cDClass  := AllTrim(TRA->ZZF_DCLASS)
+		_nTot     := TRA->QUANT
+		   
+		
+		If(TRA->ZZO_IND = '1')
+			_cInd := "1-INDUSTRIA"
+		ElseIf(TRA->ZZO_IND = '2')
+			_cInd := "2-NAO INDUSTRIA"
+		EndIf
+		
+		If(TRA->ZZM_TPATEN = '1')
+			_cTpAtend := "1 - ADMISSIONAL"
+		ElseIf(TRA->ZZM_TPATEN = '2')
+			_cTpAtend := "2 - DEMISSIONAL"
+		ElseIf(TRA->ZZM_TPATEN = '3')
+			_cTpAtend := "3 - MUDANÇA DE FUNCAO" 
+		ElseIf(TRA->ZZM_TPATEN = '4')
+			_cTpAtend := "4 - PERIODICO" 
+		ElseIf(TRA->ZZM_TPATEN = '5')
+			_cTpAtend := "5 - RETORNO AO TRABALHO"
+		ElseIf(TRA->ZZM_TPATEN = '6')
+			_cTpAtend := "6 - AVALIACAO MEDICA"
+		ElseIf(TRA->ZZM_TPATEN = '7')
+			_cTpAtend := "7 - ADMISSIONAL 6 MES"
+		ElseIf(TRA->ZZM_TPATEN = '8')
+			_cTpAtend := "8 - TAP"
+		ElseIf	(TRA->ZZM_TPATEN = '9')
+			_cTpAtend := "9 - OUTROS"
+		END
+		
+	
+		//Dados
+		oSection:Cell("CNPJ"):SetValue(_cCnpj)
+		oSection:Cell("NOMEEMP"):SetValue(_cNomeEmp)
+		oSection:Cell("IND"):SetValue(_cInd)
+		oSection:Cell("TPATEND"):SetValue(_cTpAtend)
+		oSection:Cell("CLASSE"):SetValue(_cClasse)
+		oSection:Cell("DESCLASSE"):SetValue(_cDClass)
+		oSection:Cell("QUANT"):SetValue(_nTot)
+		
+		oSection:PrintLine()
+		oReport:IncMeter()
+		
+		TRA->( DbSkip() )
+		
+	End
+	
+	TRA->(DbCloseArea())
+	oSection:Finish()
+
+Return( Nil )
+
+/*/{Protheus.doc} CriaCab
+Altera o Cabeçalho do Relatorio
+
+@author 	Sergio Ricardo Leite Salustiano
+@since 		09/09/2014
+@version 	1.0
+
+@param oReport, objeto
+
+@return aCabec, Array
+/*/
+
+Static Function CriaCab( oReport )
+
+	Local aArea	:= GetArea()
+	Local aCabec	:= {}
+	Local cChar	:= chr(160)  // caracter dummy para alinhamento do cabeçalho
+	Local cTitulo	:= ""
+
+
+	cTitulo:= "Periodo de: " +DTOC(MV_PAR01)+" Ate "+DTOC(MV_PAR02)
+
+          
+	aCabec := {	"__LOGOEMP__" , cChar + "         " + SM0->M0_NOMECOM + "         " + cChar + RptFolha+ TRANSFORM(oReport:Page(),'999999');
+		,  'SS33R9S' + cChar + "         " + "RELATORIO PARA  LANÇAMENTO SMD" + "         "+ cChar + RptEmiss + " " + Dtoc(dDataBase);
+		, "         " + cChar +  "         " + UPPER(AllTrim(cTitulo)) +  "         "+ cChar + RptHora + " " + Time() }
+		       
+
+	RestArea( aArea )
+	
+Return( aCabec )
+
+/** {Protheus.doc} AjustaSx1
+Pergunta do Relatorio
+
+@author: 	Sergio Ricardo Leite Salustiano	
+@since: 	09/09/2014
+@Uso: 		SFIEMT
+*/
+Static Function AjustaSx1(cPerg)
+	
+	Local aHelp := {}
+
+	AAdd(aHelp, {{"Informe a Data Inicial"		}, {""}, {""}})
+	AAdd(aHelp, {{"Informe a Data Final"		}, {""}, {""}})
+	
+	u_SFPUTSX1(cPerg,"01","Data de......","","","mv_ch1","D",08,00,00,"G","",""			,"","","mv_par01","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")
+	u_SFPUTSX1(cPerg,"02","Data Ate.....","","","mv_ch2","D",08,00,00,"G","",""			,"","","mv_par02","","","","","","","","","","","","","","","","",aHelp[2,1],aHelp[2,2],aHelp[2,3],"")
+	
+	
+Return( Nil )
+
+Return
+

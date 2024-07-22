@@ -1,0 +1,1562 @@
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TBICONN.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "TBICODE.CH"
+#INCLUDE "AP5MAIL.CH"   
+#INCLUDE "TOTVS.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "PARMTYPE.CH"
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"
+/*
+	--------------------------------------------------------------------------------
+	{Protheus.doc} <SS7399X>
+	 CONJUNTO DE ROTINAS E FUNÇÕES DE VALIDAÇÕES UTILIZADAS PELO MODULO DO CRM
+	 PARA ATENDER AS ADEQUAÇÕES DE USO - ESPECIFICOS DA [ FIEMT ]
+	
+	@author<Antonio Dantas>
+	@since<09/03/2015>
+	@version
+	<
+	   ---------------------------------------------------------------------+
+	    Antonio Dantas                                           18/11/2015
+	    Ajuste na Funcao [fVldPdMD()]:
+	    Não permite encerrar a oportunidade GANHA, por qualquer motivo, sem
+	    que os campos [Dt.Ass.Prop.] e [Contato Ass.] na ABA [Aceite da
+	    Proposta] estejam preenchidos. 
+	   ---------------------------------------------------------------------+
+	>
+	@receive
+	<
+	   -------------------------------------------------------------------------
+	      Antonio Dantas                                           06/10/2015
+	      Ajustes na funcao [fIncCNB()]: 
+	      Refaz o valor UNITARIO caso haja DESCONTO, pois o valor UNITARIO no
+	      item da PLANILHA do CONTRATO e GRAVANDO INTEIRO diferente do PEDIDO
+	      e da PROPOSTA. 
+		  Crianda as Variaveis: 
+			_nInter    (n) - Fator do INTEIRO Percentual
+			_nVlrINTER (n) - Valor UNITARIO sem o DESCONTO
+			_nTotINTER (N) - Valor TOTAL do ITEM sem o DESCONTO
+	   -------------------------------------------------------------------------
+	>
+	@return<Nil>
+	@example<Nil>
+	@see<Nil>
+	--------------------------------------------------------------------------------
+*/
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldfil>
+ Função para ser utilizada pelos chamadas dos PARAMETROS dos relatorio CRM
+ customizados; Valida o codigo de FILIAL informada, levando-se em consideração
+ que o operador só pode VER as filiais de mesmo prefixo a qual ele esta logado.
+ EXEMPLO: Operador LOGADO NA FILIAL [ 02MT0002 ], só ve as filiais com 
+          prefixo [02MTxxxx]. 
+
+@since<18/03/2015>
+@version<1.00>
+@receive<>
+@return
+<    _lReturn (L) - (.t.) Codigo valido; (.f.) Codigo Invalido. 
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fVldfil()
+Local _aAreaSM0	:= SM0->(GetArea())
+Local _lReturn	:= .t.
+Local _cCodFil	:= &(ReadVar())  							//-- Captura o valor do GET CORRENTE 
+dbSelectArea("SM0")  										//-- Tabela de Empresas
+SM0->(dbSetOrder(1))
+If (SM0->(dbSeek(cEmpAnt+_cCodFil)))  						//-- posiciona o ponteiro da tabeça EMPRESA (SigaMat.emp) na empesa ATUAL
+	If (Substr(cFilAnt,1,4) != Substr(_cCodFil,1,4))
+		Aviso(FunName()+"/"+ProcName(),"Codigo da Filial informado é Invalido!",{"OK"})
+		_lReturn	:= .f.
+	Endif 
+Else
+	If !(_cCodFil $ "        #ZZZZZZZZ")
+		Aviso(FunName()+"/"+ProcName(),"Codigo da Filial informado é Invalido!",{"OK"})
+		_lReturn	:= .f.
+	Endif
+Endif 
+RestArea(_aAreaSM0)
+Return _lReturn 
+
+/*
+{Protheus.doc} <fPutDesc>
+Função central para calcular desconto de venda.
+@since<09/03/2015>
+@param cFilPesq, character, filial de pesquisa do desconto.
+@param _cCodProd, character, Codigo do Produto.
+@param _cCodCli, character, Codigo do Cliente.
+@param _cLojCli, character, Codigo da loja do Cliente.
+@return numeric, (%)Percentual de desconto calculado.
+*/
+User Function fPutDesc(cFilPesq, _cCodProd, _cCodCli, _cLojCli)
+Local _aArea := GetArea() 
+Local _nPerDesc := 0.00		//-- Percentual de desconto a ser concedido
+
+DEFAULT cFilPesq := cFilAnt
+DEFAULT _cCodProd := ""
+DEFAULT _cCodCli := ""
+DEFAULT _cLojCli := ""
+
+	/*Tratamento para possibilitar regras de desconto por empresa*/
+	Do Case
+	Case "01MT" $ cFilPesq
+
+	Case "02MT" $ cFilPesq
+		_nPerDesc := fGetDescCli(cFilPesq, _cCodProd, _cCodCli, _cLojCli)
+	Case "03MT" $ cFilPesq
+		_nPerDesc := fGetDescCli(cFilPesq, _cCodProd, _cCodCli, _cLojCli)
+	Case "04MT" $ cFilPesq
+		
+	EndCase
+
+	RestArea(_aArea)
+
+Return _nPerDesc
+
+/*/{Protheus.doc} fGetDescCli
+	Calcula o DESCONTO a que o cliente tem direito. 
+	Atende ao documento SPN-DI-005 - Política Comercial do SENAI MT.
+	@type  Function
+	@author Franklin de Brito de Oliveira
+	@since 27/10/2021
+	@param cFilPesq, param_type, param_descr
+	@param _cCodProd, param_type, param_descr
+	@param _cCodCli, param_type, param_descr
+	@param _cLojCli, param_type, param_descr
+	@return numeric, (%)Percentual de Desconto que o cliente tem direito.
+	/*/
+Static Function fGetDescCli(cFilPesq, _cCodProd, _cCodCli, _cLojCli)
+	local cFilProd := ""
+	local nPerDesc := 0.00
+	local nPerDesMax := 0.00
+	local lIsProdVen := .F.
+
+	//Proteção para parâmetros vazios
+	if Empty(cFilPesq) .Or. Empty(_cCodProd) .Or. Empty(_cCodCli) .Or. Empty(_cLojCli)
+		nPerDesc := 0.00
+	else
+		//Busca dados de venda do produto
+		dbSelectArea("SB1")
+		SB1->(dbSetOrder(1))	//B1_FILIAL+B1_COD
+		if SB1->(dbSeek(FwxFilial("SB1")+_cCodProd))
+			nPerDesMax := SB1->B1_XPRCMAX
+			lIsProdVen := Iif(SB1->B1_XPRDVEN=="S", .T., .F.)	//S=SIM;N=NAO;A=AMBOS
+			cFilProd := SB1->B1_XPRDFIL //01=FIEMT;02=SESI;03=SENAI;04=IEL;05=COND;06=TODAS
+			
+			if lIsProdVen
+				if cFilProd $ cFilAnt .Or. cFilProd == "06" 
+					//Aplica regra de desconto institucional
+					dbSelectArea("SA1")
+					SA1->(dbSetOrder(1))
+					If SA1->(dbSeek(FwxFilial("SA1")+_cCodCli+_cLojCli))
+						//Ind. contribuinte Direta/Indireta
+						if "02MT" $ cFilAnt .And. (SA1->A1_XICDSES == "S" .Or.  SA1->A1_XICISES == "S")	//S=SIM;N=NAO;X=SEM INFORMACAO;*=*
+							nPerDesc := 20.00
+						elseif "03MT" $ cFilAnt .And. (SA1->A1_XICDSEN == "S" .Or.  SA1->A1_XICISEN == "S")	//S=SIM;N=NAO;X=SEM INFORMACAO;*=*
+							nPerDesc := 20.00
+						elseif SA1->A1_XCNAEIN == "S"
+							if .Not. Empty(SA1->A1_XCODSIN)
+								nPerDesc := 15.00
+							else
+								nPerDesc := 10.00
+							endif
+						endif
+					endif
+					//Proteção para o percentual máximo de desconto informado no produto
+					if nPerDesc > nPerDesMax
+						nPerDesc := nPerDesMax
+					endif
+				endif
+			endif
+		endif
+	endif
+
+Return nPerDesc
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <FPUTVLDC>
+
+
+	//+------------------------------------------------------------------+
+    //| **************************************************************** |
+	//| Antonio Dantas                                        14/11/2018 | 
+	//| DESCONTINUAR para versao PROTHEUS 12 devera ser utilizada o PE   |
+	//| ==> FT600UTRIGGER                                                |
+    //| **************************************************************** |
+	//+------------------------------------------------------------------+
+	/*
+
+
+
+ Multi funcional; Calcula o VALOR/PERCENTUAL de DESCONTO a que tem direito o 
+ cliente: Atende a portaria [FIEMT Nº 009/2012]. É chamada pelo gatilho dos 
+ campos [Condição de Pagamneto] e [Quantidade do Produto], sendo:
+    ---------------------------
+       campo:	ADZ_PRODUT
+       Regra:	U_fPutVlDc('V')
+       Domin:	ADZ_VALDES
+    ---------------------------
+       campo:	ADZ_CONDPG
+       Regra:	U_fPutVlDc('P')
+       Domin:	ADZ_DESCON
+    -
+       campo:	ADZ_CONDPG
+       Regra:	U_fPutVlDc('V')
+       Domin:	ADZ_VALDES
+    ---------------------------
+       campo:	ADZ_QTDVEN
+       Regra:	U_fPutVlDc('P')
+       Domin:	ADZ_DESCON
+    -
+       campo:	ADZ_QTDVEN
+       Regra:	U_fPutVlDc('V')
+       Domin:	ADZ_VALDES
+    ---------------------------
+@since<09/03/2015>
+@version<1.00>
+@receive
+<   _cTipo (c) - Defini o tipo de Calculo:
+       [V-Valor do Desconto] ou [P-Percentual de Desconto]
+>
+@return
+<   _nXValor (n) - (%)Percentual ou Valor do Desconto conforme o caso
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fPutVlDc(_cTipo)
+Local _nPerDesc		:= 0.00
+Local _nVlrDesc		:= 0.00
+Local _nXValor		:= 0.00
+//+------------------------------------------------------------------+
+//| Antonio Dantas                                        14/11/2018 | 
+//| Sustituicao do bloco de codigo abaixo em decorrencia da mudanca  |
+//| de tecnologia do formulario CRM para MVC na Versao 12.           |
+//+------------------------------------------------------------------+
+/*
+	Local _aColsADZ		:= Aclone(aCols)	    			//-- aCols    da ADZ.
+	Local _aHeaderAD	:= Aclone(aHeader)					//-- aHearder da ADZ. 
+	//-- 
+	Local _nPsPR  		:= aScan(_aHeaderAD,{|x| AllTrim(x[2])=="ADZ_PRODUT"})
+	Local _nPsUNI  		:= aScan(_aHeaderAD,{|x| AllTrim(x[2])=="ADZ_PRCVEN"})
+	Local _nPsQtd  		:= aScan(_aHeaderAD,{|x| AllTrim(x[2])=="ADZ_QTDVEN"})
+	Local _nPsDec  		:= aScan(_aHeaderAD,{|x| AllTrim(x[2])=="ADZ_DESCON"})
+	//-- 
+	Local _nQtde		:= _aColsADZ[N,_nPsQtd] 
+	Local _nPrcUNI		:= _aColsADZ[N,_nPsUNI] 
+	Local _cCodProd		:= _aColsADZ[N,_nPsPR]
+Local _oModel		:= FwModelActive()
+Local _oModelADZ	:= _oModel:GetModel( 'ADZPRODUTO' )
+//--
+Local _nQtde  		:= _oModelADZ:GetValue( "ADZ_QTDVEN")
+Local _nPrcUNI  	:= 336.00  //&&--  _oModelADZ:GetValue( "ADZ_PRCVEN")
+Local _cCodProd  	:= _oModelADZ:GetValue( "ADZ_PRODUT")
+//+------------------------------------------------------------------+
+//|   Calculo do Percentual de Desconto                              | 
+//+------------------------------------------------------------------+
+_nPerDesc	:= u_fPutDesc(_cCodProd,M->ADY_CODIGO,M->ADY_LOJA)
+//+------------------------------------------------------------------+
+//|   Calculo do Valo do Desconto                                    | 
+//+------------------------------------------------------------------+
+_nVlrDesc	:= ((_nQtde * _nPrcUNI) * _nPerDesc) /100 
+//+------------------------------------------------------------------+
+//|   Defini o retorno; Conforme o tipo                              | 
+//+------------------------------------------------------------------+
+_nXValor	:= Iif(_cTipo=="P",_nPerDesc,_nVlrDesc)
+*/
+
+Return _nXValor 
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldDADZ>
+ Função para validação do PERCENTUAL e ou VALOR do desconto informado no 
+ lançamento da Proposta Comercial, da seguinte forma:
+   Função chamada na Validação do Campo [ADZ_DESCON - Percentual de Desconto]   
+   no formato: [u_fVldDADZ(,M->ADZ_DESCON)] 
+ E 
+   Função chamada na Validação do Campo [ADZ_VALDES - Valor do Desc. do Item]   
+   no formato: [u_fVldDADZ(M->ADZ_VALDES)]
+
+ ATENÇÃO: USUÁRIO com codigo INSCRITO no parametros [MV_XUSDESC - Usuário 
+          com privilégios para conceder descontos], NÃO passam pelas regras 
+          de desconto. Podem conceder descontos de qualquer monta. 	
+
+@since<13/03/2015>
+@version<1.00>
+@receive
+<  _nVldDesc (n) - Valor do Desconto (Se vazio: VALIDA o VALOR do Desconto)
+   _nPerDesc (n) - (%)Percentual de Desconto 
+>
+@return
+<   _lReturn (L) - (.T.) Para Valor valido /(.F.) Para Valor Invalido 
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fVldDADZ(_nVldDesc,_nPerDesc)
+Local _lReturn 		:= .t. 
+Local _cTipo 		:= Iif(_nVldDesc == NIL,"P","V")
+Local _nVlrCalc		:= u_fPutVlDc(_cTipo)
+Local _cUsrDSMax	:= SuperGetMv("MV_XUSDESC",,"")			//-- Usuário com previlégios para conceder descontos					
+//+------------------------------------------------------------------+
+//| USUÁRIO INSCRITO no parametro [MV_XUSDESC], NÃO passam pelas     |
+//| regras de desconto. Podem conceder descontos de qualquer monta.  |
+//+------------------------------------------------------------------+
+If !( __cUserID $ _cUsrDSMax )
+	If _cTipo == "V"
+		If _nVldDesc > _nVlrCalc
+			Aviso(FunName()+"/"+ProcName(),"Valor do desconto ["+Alltrim(Transform(_nVldDesc, "@E 999,999,999.99"))+"] ultrapassa o maximo permitido ["+Alltrim(Transform(_nVlrCalc, "@E 999,999,999.99"))+"] !",{"OK"})
+			_lReturn 	:= .f.	
+		Endif 
+	ElseIf _cTipo == "P"
+		If _nPerDesc > _nVlrCalc
+			Aviso(FunName()+"/"+ProcName(),"O (%)Percentual de desconto ["+Alltrim(Transform(_nPerDesc, "@E 999,999,999.99"))+"] ultrapassa o maximo permitido ["+Alltrim(Transform(_nVlrCalc, "@E 999.99"))+"%] !",{"OK"})
+			_lReturn 	:= .f.	
+		Endif 
+	Endif 
+Endif 
+Return _lReturn 
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldDSC6>
+ Função para validação do PERCENTUAL e ou VALOR do desconto informado no 
+ lançamento do PEDIDO DE VENDA, da seguinte forma:
+   Função chamada na Validação do Campo [C6_DESCONT - Percentual de Desconto]   
+   no formato: [u_fVldDSC6("P",M->C6_DESCONT)] 
+ E 
+   Função chamada na Validação do Campo [C6_VALDESC - Valor do Desc. do Item]   
+   no formato: [u_fVldDSC6("V,M->C6_VALDESC)]
+
+ ATENÇÃO: USUÁRIO com codigo INSCRITO no parametros [MV_XUSDESC - Usuário 
+          com privilégios para conceder descontos], NÃO passam pelas regras 
+          de desconto. Podem conceder descontos de qualquer monta. 	
+
+@since<13/03/2015>
+@version<1.00>
+@receive
+<  _nVldDesc (n) - Valor do Desconto (Se vazio: VALIDA o VALOR do Desconto)
+   _nPerDesc (n) - (%)Percentual de Desconto 
+>
+@return
+<   _lReturn (L) - (.T.) Para Valor valido / (.F.) Para Valor Invalido 
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fVldDSC6(_cTipo,_nValor)
+Local _lReturn 		:= .t. 
+Local _cMensagem 	:= "" 
+//--
+Local _nPerDesc		:= 0.00
+Local _nVlrDesc		:= 0.00 
+//--
+Local _aColsNEW		:= Aclone(aCols)	    				//-- aCols    da ADZ.
+Local _aHeadNEW		:= Aclone(aHeader)					//-- aHearder da ADZ. 
+//--- 
+Local _nPp			:= aScan(_aHeadNEW,{|x| AllTrim(x[2])=="C6_PRODUTO"})
+Local _nPq			:= aScan(_aHeadNEW,{|x| AllTrim(x[2])=="C6_QTDVEN"})
+Local _nPv			:= aScan(_aHeadNEW,{|x| AllTrim(x[2])=="C6_PRCVEN"})
+//---
+Local _cCodCli		:= M->C5_CLIENTE
+Local _cLojCli		:= M->C5_LOJACLI
+//-- 
+Local _cCodProd		:= _aColsNEW[N,_nPp]
+Local _nQtde 		:= _aColsNEW[N,_nPq]
+Local _nPrcUNI		:= Posicione("DA1",1,FwxFilial("DA1")+M->C5_TABELA+_cCodProd,"DA1_PRCVEN")
+//-- 
+Local _cUsrDSMax	:= SuperGetMv("MV_XUSDESC",,"")			//-- Usuário com previlégios para conceder descontos					
+//+------------------------------------------------------------------+
+//| Antonio Dantas                                        16/06/2015 |
+//| NÃO SERA EXECUTADO; Quando chamado por ROTINA AUTOMATICA.        |
+//+------------------------------------------------------------------+
+If IsBlind()
+	Return .t.
+Endif 
+//+------------------------------------------------------------------+
+//| USUÁRIO INSCRITO no parametro [MV_XUSDESC], NÃO passam pelas     |
+//| regras de desconto. Podem conceder descontos de qualquer monta.  |
+//+------------------------------------------------------------------+
+If !( __cUserID $ _cUsrDSMax )
+	If _nPrcUNI == 0.00 
+		_nPrcUNI	:= Posicione("SB1",1,FwxFilial("SB1")+_cCodProd,"B1_PRV1")   
+	Endif
+	If _nPrcUNI != 0.00 
+		//+------------------------------------------------------------------+
+		//|   Calculo do Percentual de Desconto                              | 
+		//+------------------------------------------------------------------+
+		_nPerDesc	:= u_fPutDesc(_cCodProd,_cCodCli,_cLojCli)
+		//+------------------------------------------------------------------+
+		//|   Calculo do Valo do Desconto                                    | 
+		//+------------------------------------------------------------------+
+		_nVlrDesc	:= ((_nQtde * _nPrcUNI) * _nPerDesc) /100 
+		If _cTipo == "V"
+			If _nValor > _nVlrDesc
+				Aviso(FunName()+"/"+ProcName(),"Valor do desconto ["+Alltrim(Transform(_nValor, "@E 999,999,999.99"))+"] ultrapassa o maximo permitido ["+Alltrim(Transform(_nVlrDesc, "@E 999,999,999.99"))+"] !",{"OK"})
+				_lReturn 	:= .f.	
+			Endif 
+		ElseIf _cTipo == "P"
+			If _nValor > _nPerDesc
+				Aviso(FunName()+"/"+ProcName(),"O (%)Percentual de desconto ["+Alltrim(Transform(_nValor, "@E 999,999,999.99"))+"] ultrapassa o maximo permitido ["+Alltrim(Transform(_nPerDesc, "@E 999.99"))+"%] !",{"OK"})
+				_lReturn 	:= .f.	
+			Endif 
+		Endif  
+	Else
+		_cMensagem := "ATENÇÃO!"+CRLF
+		_cMensagem += "Você esta tentanto modificar o ["+Iif(_cTipo=="P","Percentual","Valor")+" " 
+		_cMensagem += "de desconto], porem, não existe preços STANDER DE VENDA cadastro no produto. "
+		_cMensagem += "Portanto; MODIFIQUE o VALOR unitário do produto para obter o ["+Iif(_cTipo=="P","Percentual","Valor")+" de desconto] desejado!"+CRLF
+		Aviso(FunName()+"/"+ProcName(),_cMensagem,{"OK"})
+		_lReturn 	:= .f.	
+	Endif 
+Endif 
+Return _lReturn 
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVlfProd>
+ Efetua a validação do codigo do Produto informado conforme regras das
+ uso das casas. 
+
+@since<10/03/2015>
+@version<1.00>
+@receive
+<   _cCodProd (c) - Codigo do Produto 
+>
+@return
+<    _lReturn	(L) - (.T.) Para Codigo valido /(.F.) Para Codigo Invalido 
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fVldProd(_cCodProd)
+Local _lReturn	:= .f.
+Local _aArea		:= GetArea()
+dbSelectArea("SB1")
+SB1->(dbSetorder(1))
+If (SB1->(dbSeek(FwxFilial("SB1")+_cCodProd)))
+	If ((SB1->B1_XPRDVEN $ "S/A") .And. (SB1->B1_XPRDFIL $ SUBSTR(cFilAnt,0,2)+"/06"))
+		_lReturn := .t.
+	Else
+		Aviso(FunName()+"/"+ProcName(),"O Produto informado não é de venda ou não pertence a esta casa!",{"OK"})	
+	Endif  
+Endif 
+//-- Restaura a area
+RestArea(_aArea)
+Return _lReturn
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVAnoMes>
+ Função para valida o perido informado para o relatorio.	  
+
+@author<Antonio Dantas>
+@since<13/02/2015>
+@version<1.00>
+@receive
+<   _cTipo (c) - (A)Sera validado o ANO, (M)Sera validado o MÊS 
+>
+@return
+< _lReturn (L) - (.t.) Periodo valido; (.f.) Periodo Invalido. 
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fVAnoMes(_cTipo)
+Local _lReturn	:= .t.
+Local _cPeriodo	:= &(ReadVar())  							//-- Captura o valor do GET CORRENTE 
+Local _aLimites 	:= Iif(_cTipo == "A",{1900,2100},{1,12})
+//-- 
+If Empty(Alltrim(_cPeriodo))
+	Aviso(FunName()+"/"+ProcName(),Iif(_cTipo == "A","ANO","MÊS")+" é informação obrigatoria, não pode estar em Branco!",{"OK"})
+	_lReturn	:= .f.
+Else
+	If !(Val(_cPeriodo) >= _aLimites[1] .and. Val(_cPeriodo) <= _aLimites[2])  
+		Aviso(FunName()+"/"+ProcName(),Iif(_cTipo == "A","ANO","MÊS")+" informado é invalido!",{"OK"})
+		_lReturn	:= .f.
+	Endif 
+Endif 
+Return _lReturn 
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <MrkAD1>
+ Funcao para conrole de selecao das Opcoes de SITUAÇÃO DA OPORTUNIDADE    
+
+@author<Antonio Dantas>
+@since<22/04/2015>
+@version<1.00>
+@receive
+<  l1Elem (L) - Se houve selecao de algum elemento   
+>
+@return
+< _lReturn (L) - Sempre (.t.)    
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function MrkAD1(l1Elem)
+Local _MvPar		:= &(Alltrim(ReadVar()))				//-- Carrega Nome da Variavel do Get em Questao
+Local _MvParDef		:= "12EF"
+Local _cTitulo		:= "STATUS da Oportunidade."				//-- Alltrim(Left(X5Descri(),20))
+Local _lReturn		:= .T. 
+Local _nTamTip		:= 1
+Local _nCtaA := 0						  			//-- Tamanhao da Chave 
+Private aSit		:= {"1=Aberto","2=Perdido","E=Ganha SEM Pedido","F=Ganha COM Pedido"}
+Private MvNewPar	:= ""
+Private mvRet 		:= Alltrim(ReadVar())			//-- Iguala Nome da Variavel ao Nome variavel de Retorno
+Static nVezAdt 		:= 0  
+//+------------------------------------------------------------------+
+//|  Inicializa as Variaveis                                         | 
+//+------------------------------------------------------------------+
+IF F_Opcoes(@_MvPar,_cTitulo,aSit,_MvParDef,,,.f.,_nTamTip,999)  	//-- Chama funcao f_Opcoes
+	MvNewPar	:= ""
+	_nCtaA 		:= 0
+	For _nCtaA := 1 to len(_MvPar) step _nTamTip
+		mvNewPar += substr(_MvPar,_nCtaA,_nTamTip)+";"
+	Next _nCtaA
+	mvNewPar	:= strtran(mvNewPar,replicate("*",_nTamTip)+";","")
+	&MvRet 		:= mvNewPar
+EndIF
+Return _lReturn
+ 
+  
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <MrkADY>
+ Funcao para conrole de selecao das Opcoes de SITUAÇÃO DA PROPOSTA     
+
+@author<Antonio Dantas>
+@since<22/04/2015>
+@version<1.00>
+@receive
+<  l1Elem (L) - Se houve selecao de algum elemento   
+>
+@return
+< _lReturn (L) - Sempre (.t.)    
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function MrkADY(l1Elem)
+Local _MvPar		:= &(Alltrim(ReadVar()))				//-- Carrega Nome da Variavel do Get em Questao
+Local _MvParDef		:= "ABCDEF"
+Local _cTitulo		:= "STATUS da Proposta."				//-- Alltrim(Left(X5Descri(),20))
+Local _lReturn		:= .T. 
+Local _nTamTip		:= 1
+Local _nCtaA := 0						  			//-- Tamanhao da Chave 
+Private aSit		:=	{	"A=Em aberto"		,;
+							"B=Fechada"			,;
+							"C=Cancelada"		,;
+							"D=Não aprovada"	,;
+							"E=Aprovada"		,;
+							"F=Bloqueada"		 }
+Private MvNewPar	:= ""
+Private mvRet 		:= Alltrim(ReadVar())			//-- Iguala Nome da Variavel ao Nome variavel de Retorno
+Static nVezAdt 		:= 0  
+//+------------------------------------------------------------------+
+//|  Inicializa as Variaveis                                         | 
+//+------------------------------------------------------------------+
+IF F_Opcoes(@_MvPar,_cTitulo,aSit,_MvParDef,,,.f.,_nTamTip,999)  	//-- Chama funcao f_Opcoes
+	MvNewPar	:= ""
+	_nCtaA 		:= 0
+	For _nCtaA := 1 to len(_MvPar) step _nTamTip
+		mvNewPar += substr(_MvPar,_nCtaA,_nTamTip)+";"
+	Next _nCtaA
+	mvNewPar	:= strtran(mvNewPar,replicate("*",_nTamTip)+";","")
+	&MvRet 		:= mvNewPar
+EndIF
+Return _lReturn
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fIncOpor>
+   Verifica a Condição do TIPO DE CONTRATO para continuar a operação.
+   Chamada na Pre-validaçã (Edição) do campo [CN9_XOPORT  - Oportunidade]
+
+@author<Antonio Dantas>
+@since<29/04/2015>
+@version<1.00>
+@receive
+<   _cField (c) - Nome do Campo que esta sendo validado 
+>
+@return
+<	_lReturn (l) - (.t.) - Permite a Edição do Campo; 
+                   (.f.) - Não permite a edição do campo
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fIncOpor(_cField)
+Local _lReturn 			:= .t.
+Local _cTipos			:= GetMV('MV_XTPGCT') 
+Local cTpCto		:= FWFldGet('CN9_TPCTO')
+Local _cTpCTR		:= Iif(INCLUI,cTpCto,CN9->CN9_TPCTO)
+//-- 
+do Case 
+	Case _cField == "CN9_XOPORT"
+		If _cTpCTR $ _cTipos 
+			_lReturn := Iif(INCLUI,.t.,.f.)
+		Else
+			_lReturn := .f.
+		Endif  	
+	Case _cField == "CN9_XREVOP"
+		If _cTpCTR $ _cTipos 
+			_lReturn := Iif(INCLUI,.t.,.f.)
+		Else
+			_lReturn := .f.
+		Endif  	
+	Case _cField == "CN9_CLIENT"
+		If _cTpCTR $ _cTipos 
+			_lReturn := .f.
+		Endif  	
+	Case _cField == "CN9_LOJACL"
+		If _cTpCTR $ _cTipos 
+			_lReturn := .f.
+		Endif  	
+	Case _cField == "CN9_CONDPG"
+		If _cTpCTR $ _cTipos 
+			_lReturn := .f.
+		Endif  	
+	Case _cField == "CN9_XCLASS"
+		If _cTpCTR $ _cTipos 
+			_lReturn := .f.
+		Endif  	
+EndCase
+Return _lReturn 
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fIncCNB>
+  Inclui na Planilha Financeira os Itens da Proposta Comercial Selecionada
+  - Modifca os itens da planilha corrente;
+  - Modifica a forma de edição da Planilha, [ oGetDados:NMAX := _nCtaA ]
+    não permite que novos itens sejam incluidos na planilha. 
+  
+@author<Antonio Dantas>
+@since<04/05/2015>
+@version<1.00>
+@receive
+<
+   -------------------------------------------------------------------------
+      Antonio Dantas                                           06/10/2015 
+      Refaz o valor UNITARIO caso haja DESCONTO, pois o valor UNITARIO no
+      item da PLANILHA do CONTRATO e GRAVANDO INTEIRO diferente do PEDIDO
+      e da PROPOSTA. 
+	  Crianda as Variaveis: 
+		_nInter    (n) - Fator do INTEIRO Percentual
+		_nVlrINTER (n) - Valor UNITARIO sem o DESCONTO
+		_nTotINTER (N) - Valor TOTAL do ITEM sem o DESCONTO
+   -------------------------------------------------------------------------
+>
+@return< .t. >
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fIncCNB()
+Local _aSaveArea	:= GetArea()
+Local _aOrigCols	:= aClone(oGetDados:aCols)
+Local _aOrigHead	:= aClone(oGetDados:aHeader)
+//-- 
+Local _nPosA 		:= aScan( _aOrigHead,{|x| AllTrim(x[2]) == "CNB_ITEM"}		)
+Local _nPosB 		:= aScan( _aOrigHead,{|x| AllTrim(x[2]) == "CNB_PRODUT"}	)
+Local _nPosC 		:= aScan( _aOrigHead,{|x| AllTrim(x[2]) == "CNB_DESCRI"}	)
+Local _nPosD 		:= aScan( _aOrigHead,{|x| AllTrim(x[2]) == "CNB_UM"}		)
+Local _nPosE 		:= aScan( _aOrigHead,{|x| AllTrim(x[2]) == "CNB_QUANT"}		)
+Local _nPosF 		:= aScan( _aOrigHead,{|x| AllTrim(x[2]) == "CNB_VLUNIT"}	)
+Local _nPosG 		:= aScan( _aOrigHead,{|x| AllTrim(x[2]) == "CNB_VLTOT"}		)
+Local _nPosH 		:= aScan( _aOrigHead,{|x| AllTrim(x[2]) == "CNB_DESC"}		)
+Local _nPosI 		:= aScan( _aOrigHead,{|x| AllTrim(x[2]) == "CNB_VLDESC"}	)
+Local _nPosJ 		:= aScan( _aOrigHead,{|x| AllTrim(x[2]) == "CNB_XUNEXE"}	)
+Local _nPosK 		:= aScan( _aOrigHead,{|x| AllTrim(x[2]) == "CNB_TS"}		)
+//-- 
+Local _aMolde		:= _aOrigCols[1]
+Local _aNewItem 	:= {}
+Local _aNewCols		:= {}
+Local _nCtaA		:= 0
+Local _lRet			:= .T.	//Add Jonas em 14/09/2015
+//-- 
+Local _nInter		:= 0.00
+Local _nVlrINTER	:= 0.00
+Local _nTotINTER	:= 0.00
+//+------------------------------------------------------------------+
+//|  Localiza a Proposta e Incluir os Produtos na Planilha           |
+//+------------------------------------------------------------------+
+If !Empty(Alltrim(M->CNA_XPROPO))
+	dbSelectArea("ADZ")
+	ADZ->(dbSetOrder(3))
+	If (ADZ->(dbSeek(FwxFilial("ADZ")+M->CNA_XPROPO+M->CNA_XPREVI)))
+		Do While ADZ->(!Eof()) .And. ADZ->ADZ_PROPOS == M->CNA_XPROPO .And. ADZ->ADZ_REVISA == M->CNA_XPREVI
+			//+---------------------------------------------------------------------+
+			//| Jonas Nascimento J2A                                     14/09/2015 | 
+			//| Implementação da validação por produto na inclusao de itens na pla- |
+			//| nilha.                                                              |
+			//+---------------------------------------------------------------------+
+			If U_fCn1Zg3(ADZ->ADZ_PRODUT)	//Add Jonas em 14/09/2015
+				_aNewItem 			:= Aclone(_aMolde)
+				//+---------------------------------------------------------------------+
+				//| Antonio Dantas                                           06/10/2015 | 
+				//| Refaz o valor UNITARIO caso haja DESCONTO, pois o valor UNITARIO no |
+				//| item da PLANILHA do CONTRATO e GRAVANDO INTEIRO diferente do PEDIDO |
+				//| e da PROPOSTA.                                                      | 
+				//+---------------------------------------------------------------------+
+				If ADZ->ADZ_DESCON > 0.00
+					_nInter		:= 100.00 - ADZ->ADZ_DESCON
+					_nVlrINTER	:= (ADZ->ADZ_PRCVEN * 100) / _nInter
+					_nTotINTER	:= _nVlrINTER * ADZ->ADZ_QTDVEN
+				Else
+					_nVlrINTER	:= ADZ->ADZ_PRCVEN
+					_nTotINTER	:= ADZ->ADZ_TOTAL
+				Endif 				
+				//-- 
+				_aNewItem[_nPosA]	:= Strzero(++_nCtaA, TamSX3("CNB_ITEM")[1]) 
+				_aNewItem[_nPosB]	:= ADZ->ADZ_PRODUT
+				_aNewItem[_nPosC]	:= ADZ->ADZ_DESCRI
+				_aNewItem[_nPosD]	:= ADZ->ADZ_UM
+				_aNewItem[_nPosE]	:= ADZ->ADZ_QTDVEN
+				_aNewItem[_nPosF]	:= _nVlrINTER
+				_aNewItem[_nPosG]	:= _nTotINTER 
+				_aNewItem[_nPosH]	:= ADZ->ADZ_DESCON
+				_aNewItem[_nPosI]	:= ADZ->ADZ_VALDES
+				_aNewItem[_nPosJ]	:= ADZ->ADZ_XUNEXE
+				_aNewItem[_nPosK] 	:= ADZ->ADZ_TES   
+				aAdd(_aNewCols,_aNewItem)					
+			Else
+				_aNewCols := _aOrigCols		//Zera aCols de Produto se pelo menos não for valido (U_fCn1Zg3(cod_prod)).
+				_lRet := .F.
+				Exit
+			EndIf
+
+			ADZ->(dbSkip())
+			
+		Enddo
+	Endif
+	//-- 
+	oGetDados:NMAX 	:= _nCtaA
+	oGetDados:aCols	:= _aNewCols
+	oGetDados:oBrowse:Refresh()
+	oGetDados:Refresh()
+	//-- 
+Endif 
+RestArea(_aSaveArea)
+Return _lRet		//Alterado por Jonas em 14/09/2015
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldADZ>
+  Valida a modificação do Produto; Caso o contrato esteja vinculado a uma
+  PROPOSTA DE VENDA APROVADA não permite que os campos "Produto","Undiade",
+  "Quantidade","Vl. Unitário","Valor Total" e "Desconto %" seja modificado. 
+@author<Antonio Dantas>
+@since<04/05/2015>
+@version<1.00>
+@receive<Nil>
+@return
+<	_lReturn (l) - Retorna (.t.) Se o campo poder ser editado 
+                           (.f.) Se o campo NÃO poder ser editado 
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fVldADZ()
+Local _lReturn 	:= .t.
+//+------------------------------------------------------------------+
+//| Localiza a Proposta e Incluir os Produtos na Planilha.           |
+//| Não sera executada quando chamada da Opção de Revisão.           |
+//+------------------------------------------------------------------+
+If !IsInCallStack("CNTA140")
+	If !Empty(Alltrim(Iif(INCLUI,M->CNA_XPROPO,CNA->CNA_XPROPO)))
+		_lReturn 	:= .f.
+	Endif   
+Endif 
+Return _lReturn
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fGetProp>
+   Seleciona a PROPOSTA APROVADA para Vinculo na Planilha Financeira, Esta 
+   função deve ser utilizada para preencher os campos [CNA_XPROPO - Proposta
+   de Venda] e [CNA_XPREVI - Revisão da Proposta de Venda] na tabela 
+   [CNA - Planilha Financeira], no momento da Inclussão da Planilha Finanreira
+   para Contratos de Venda Vinculados a OPORTUNIDADES DE VENDA; Sera executada 
+   nas chamadas dos Gatilhos do Campo [CNA_REVISA - Revisão do Contrato], quando
+   da inclussão da Planilha Financeira, conforme segue: 
+		------------------------------------
+		Campo 			: CNA_REVISA
+		Sequencia		: 003
+		Cnt Dominio		: CNA_XPROPO
+		Tipo 			: Primario
+		Regra			: u_fGetProp('P')
+
+		------------------------------------
+		Campo 			: CNA_REVISA
+		Sequencia		: 004
+		Cnt Dominio		: CNA_XPROPO
+		Tipo 			: Primario
+		Regra			: u_fGetProp('R')
+		
+		------------------------------------
+		Gatilho (003) do Campo CN9_XREVOP
+		Para Preencher a Condição de pagamento no Contrato 
+		Campo 			: CN9_XREVOP
+		Sequencia		: 003
+		Cnt Dominio		: CN9_CONDPG
+		Tipo 			: Primario
+		Regra			: u_fGetProp('C')
+	
+
+@author<Antonio Dantas>
+@since<04/05/2015>
+@version<1.00>
+@receive<Nil>
+@return<>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fGetProp(_cTipo)
+Local _aSaveArea	:= GetArea()
+Local _lFound 		:= .t.
+Local _cFieldVal	:= ""
+Local _cQuery 		:= ""
+Local _cOportun 	:= ""
+Local _cRevisao		:= ""
+//+------------------------------------------------------------------+
+//| Se o tratamento estiver sendo feita a Partir do CONTRATO         |
+//+------------------------------------------------------------------+
+//If IsInCallStack("CNTA100")
+If IsInCallStack("CNTA300")   
+	_cOportun 	:= M->CN9_XOPORT
+	_cRevisao	:= M->CN9_XREVOP
+Else
+	_cOportun 	:= M->CNA_XOPORT
+	_cRevisao	:= M->CNA_XREVOP
+Endif 
+_cQuery := ""
+_cQuery += "Select ADY_PROPOS, ADY_PREVIS, ADY_CONDPG "+CRLF
+_cQuery += "From "+RetSqlName("ADY")+" "+CRLF
+_cQuery += "where D_E_L_E_T_ = ' ' "+CRLF
+_cQuery += "And ADY_FILIAL = '"+FwxFilial("ADY")+"' "+CRLF
+_cQuery += "And ADY_OPORTU = '"+_cOportun+"' "+CRLF 
+_cQuery += "And ADY_REVISA "+Iif(Empty(Alltrim(_cRevisao)),">","=")+" '"+_cRevisao+"' "+CRLF 
+_cQuery += "And ADY_STATUS = 'E' "+CRLF
+_cQuery += "Order by ADY_PROPOS, ADY_PREVIS "+CRLF
+//+------------------------------------------------------------------+
+//| Grava o Resultado da Query para consulta                         |
+//+------------------------------------------------------------------+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TMPADY")>0
+	TMPADY->(DbCloseArea())
+Endif
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPADY",.t.,.t.)
+TMPADY->(DbGotop())
+If TMPADY->(!Eof()) .And. TMPADY->(!Bof())
+	_lFound 		:= .t.
+	do Case 
+		Case _cTipo == "P"
+			_cFieldVal		:= TMPADY->ADY_PROPOS
+		Case _cTipo == "R"
+			_cFieldVal		:= TMPADY->ADY_PREVIS
+		Case _cTipo == "C"
+			_cFieldVal		:= TMPADY->ADY_CONDPG
+	EndCase
+	M->CNA_XPROPO	:= TMPADY->ADY_PROPOS 
+	M->CNA_XPREVI	:= TMPADY->ADY_PREVIS
+Else	
+	_lFound 	:= .f.
+Endif 
+//+------------------------------------------------------------------+
+//| Se a validação referir-se a Revisão da Proposta, já dispara a    |
+//| Rotina para Incluir os Itens da Planilha do Contrato.            |
+//+------------------------------------------------------------------+
+If _lFound .And. _cTipo == "R"	
+	u_fIncCNB() //-- Inclui os itens da Planilha do Contrato 
+Endif 
+If Select("TMPADY")>0
+	TMPADY->(DbCloseArea())
+Endif
+RestArea(_aSaveArea)
+Return _cFieldVal
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fGetProC>
+   Devolve o [Codigo da Proposta/Revisão da Proposta] ganhadora para a 
+   Oportunidade/Revisão fornecida como Argumento.	
+
+@author<Antonio Dantas>
+@since<26/06/2015>
+@version<1.00>
+@receive
+<    _cOportun (c) - Codigo da Oportunidade 
+     _cRevisao (c) - Revisão da Oportunidade 
+     _cSTATUS	 (c) - Considera na pesquisa qual STATUS da Proposta
+                     DAFAULT = "E - Aprovada"
+>
+@return
+<   _aProposta (a) - Array com o Codigo da Proposta Vencedora 
+     _aProposta[1] (c) - Codigo da Proposta  
+     _aProposta[2] (c) - Revisão da Proposta   
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fGetProC(_cOportun,_cRevisao,_cSTATUS)
+Local _aSaveArea	:= GetArea()
+Local _cQuery 		:= ""
+Local _aProposta	:= {"",""}
+//-- 
+DEFAULT _cSTATUS	:= "E"
+
+_cQuery := ""
+_cQuery += "Select ADY_PROPOS, ADY_PREVIS, ADY_CONDPG "+CRLF
+_cQuery += "From "+RetSqlName("ADY")+" "+CRLF
+_cQuery += "where D_E_L_E_T_ = ' ' "+CRLF
+_cQuery += "And ADY_FILIAL = '"+FwxFilial("ADY")+"' "+CRLF
+_cQuery += "And ADY_OPORTU = '"+_cOportun+"' "+CRLF 
+_cQuery += "And ADY_REVISA = '"+_cRevisao+"' "+CRLF 
+_cQuery += "And ADY_STATUS = '"+_cSTATUS+"' "+CRLF
+_cQuery += "Order by ADY_PROPOS, ADY_PREVIS "+CRLF
+//+------------------------------------------------------------------+
+//| Grava o Resultado da Query para consulta                         |
+//+------------------------------------------------------------------+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TMPADY")>0
+	TMPADY->(DbCloseArea())
+Endif
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPADY",.t.,.t.)
+TMPADY->(DbGotop())
+If TMPADY->(!Eof()) .And. TMPADY->(!Bof())
+	_aProposta	:= {TMPADY->ADY_PROPOS,TMPADY->ADY_PREVIS}
+Endif 
+If Select("TMPADY")>0
+	TMPADY->(DbCloseArea())
+Endif
+RestArea(_aSaveArea)
+Return _aProposta
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fGetOp>
+   Função para atender GATILHOS instalados na tabela de CNA- Planilha do
+   Contrato para Capturar o CODIGO DA OPORTUNIDADE e REVISÃO DA OPORTUNIDADE
+   que sera/foi vinculado ao CONTRATO DE venda.  
+
+	Como a planilha do Contrato pode ser incluida em dois momentos, (Manutenção 
+	do Contrato) e (Planilha), neste ultimo caso apos a inclussão do Contrato, 
+	é tradada nas duas situações 
+		------------------------------------
+		Campo 			: CNA_REVISA
+		Sequencia		: 001
+		Cnt Dominio	: CNA_XOPORT
+		Tipo 			: Primario
+		Regra			: u_fGetOp('O')
+
+		------------------------------------
+		Campo 			: CNA_REVISA
+		Sequencia		: 002
+		Cnt Dominio	: CNA_XREVOP
+		Tipo 			: Primario
+		Regra			: u_fGetOp('R')
+		
+
+@author<Antonio Dantas>
+@since<24/06/2015>
+@version<1.00>
+@receive<Nil>
+@return<>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fGetOp(_cTipo)
+Local _cFieldVal	 := ""
+If IsInCallStack("CNTA100")
+	do Case
+		Case _cTipo == "O"
+			_cFieldVal	 := M->CN9_XOPORT		 
+		Case _cTipo == "R" 
+			_cFieldVal	 := M->CN9_XREVOP
+	EndCase
+Else
+	do Case
+		Case _cTipo == "O" 
+			_cFieldVal := Posicione("CN9",1,FwxFilial("CN9")+M->CNA_CONTRA+M->CNA_REVISA,"CN9_XOPORT")                        
+	
+		Case _cTipo == "R" 
+			_cFieldVal := Posicione("CN9",1,FwxFilial("CN9")+M->CNA_CONTRA+M->CNA_REVISA,"CN9_XREVOP")                        	
+	EndCase
+Endif 
+Return _cFieldVal 
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fClosCRM>
+  Rotina Chamada pelo Ponto-de-Etrada [CTA100MNU], tem a função de gravar no
+  campo [CN9_XSRVEX - Serviço Executado] o valor "S" identificado assim para 
+  o CRM que os serviços relativos ao contrato foram Executados.
+
+@author<Antonio Dantas>
+@since<29/05/2015>
+@version<1.00>
+@receive<Nil>
+@return<>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fClosCRM()
+If CN9->CN9_XSRVEX == "S"
+	Aviso(FunName()+"/"+ProcName(),"Contrato já encontra-se marcado como FECHADO para CRM!",{"OK"})
+Else
+	CN9->(RecLock("CN9",.f.))
+	Replace CN9->CN9_XSRVEX With "S" 
+	CN9->(MsUnLock())
+	CN9->(dbCommit()) 
+	Aviso(FunName()+"/"+ProcName(),"Fechamento para CRM do Contrato ["+Alltrim(CN9->CN9_NUMERO)+"] realizado com sucesso!",{"OK"})
+Endif 
+Return Nil 
+
+
+//&& ***********************************************************************************************************
+//&& Caso seja nessario testar alguma coisa. 
+//&& --  User Function FT300BUT()
+//&& --  aBotao	:= {{"",{|| u_fDantasT()},"TESTE DANTAS"}}
+//&& --  Return aBotao 
+//&& ***********************************************************************************************************
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fEncProV>
+  Rotina que vare as Propostas de Venda com mais de XX dias de emitida e 
+  que ainda não tenham sido assinadas; Encerra tais propostas por decurso 
+  de prazo. Esta rotinas foi costruida inicialmente para ser executada via
+  SCHEDULE.
+
+@author<Antonio Dantas>
+@since<22/06/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fEncProV(_aParans)
+Local _lReturn		:= .t. 
+Local _cGrpEmp		:= "" 
+Local _aMensINI		:= {}
+Local _lSHEDULE		:= .f.
+Local _cGrpEMP		:= ""
+Local _lTemOK		:= .f.
+Local _cMensagem	:= ""
+Local _cDataBASE	:= ""
+Local _nEncerr		:= 0
+Local _nQtdDias		:= 0
+Local _nCtaA := 0
+//+------------------------------------------------------------------+
+//|   Esta sendo executado por rotina automatica                     |
+//+------------------------------------------------------------------+
+If Valtype(_aParans) != "U"
+  PREPARE ENVIRONMENT EMPRESA _aParans[1] FILIAL _aParans[2]
+  _lSHEDULE := .t.
+Endif 
+//+------------------------------------------------------------------+
+//|   Pega o cogigo do GRUPO de Empresas qem que sera aplicado       |
+//+------------------------------------------------------------------+
+_cGrpEMP := Substr(cFilAnt,1,4) 
+//+------------------------------------------------------------------+
+//|  Define o Numero de dias a partir da Casa                        |
+//+------------------------------------------------------------------+
+If _cGrpEMP == '02MT'
+	_nQtdDias := 20
+Else
+	_nQtdDias := 180
+EndIf
+//+------------------------------------------------------------------+
+//| Defini a Data Base a Consderar, a partir da data de Hoje         |
+//+------------------------------------------------------------------+
+_cDataBASE := dtos(dDataBase-_nQtdDias)
+//+------------------------------------------------------------------+
+//|  Monta a mensagem de inicio da Operação                          |
+//+------------------------------------------------------------------+
+aAdd( _aMensINI, "===="																					)
+aAdd( _aMensINI, "Inicio do Processo: [ENCERRA PROPOSTAS NÃO ASSINADAS]"   				)
+aAdd( _aMensINI, "---- SS7399X / fEncProV ----"													)
+aAdd( _aMensINI, "Empresa: "+cEmpAnt																	)
+aAdd( _aMensINI, " Filial: "+cFilAnt																	)
+aAdd( _aMensINI, "   Data: "+dtoc(dDatabase)														)
+aAdd( _aMensINI, "Propostas afetadas: Anteriores á : ["+dtoc(dDatabase-_nQtdDias)+"]"	)
+aAdd( _aMensINI, "----"																					)
+//-- 
+_nCtaA := 0
+For _nCtaA := 1 to Len(_aMensINI)
+  //+------------------------------------------------------------------+
+  //|  Se for executado por SHEDULE ecoa na tela do console            |  
+  //+------------------------------------------------------------------+
+  If _lSHEDULE
+	ConOut(_aMensINI[_nCtaA])
+  Else
+       _cMensagem += _aMensINI[_nCtaA]+CRLF 
+  Endif 
+Next _nCtaA 
+//+------------------------------------------------------------------+
+//|   Se NÃO for executado poe SHEDULE ecoa na tela do operador      |   
+//+------------------------------------------------------------------+
+If !_lSHEDULE
+  Aviso(FunName()+"/"+ProcName(),_cMensagem,{"OK"},3)
+Endif 
+//+------------------------------------------------------------------+
+//| Seleciona a Tabela de Propostas Comerciais                       |
+//+------------------------------------------------------------------+
+dbSelectArea("ADY")
+ADY->(dbSetOrder(2))        //-- Oportunidad + Revision + Propuesta No
+//+------------------------------------------------------------------+
+//| MONTA CONSULTA PARA VERIFICAR AS PROPOSTAS COM DECURSO DE PRAZO  |
+//| SEM ASSINATURA DE ACEITE.                                        |
+//+------------------------------------------------------------------+
+_cQuery := ""
+_cQuery += " Select  "+CRLF
+_cQuery += " ADY.ADY_FILIAL, AD1.AD1_DTASSI, ADY.ADY_DATA, "+CRLF
+_cQuery += " ADY.ADY_PROPOS, ADY.ADY_PREVIS, ADY.ADY_OPORTU, ADY.ADY_REVISA, ADY.ADY_STATUS "+CRLF
+_cQuery += " From "+RetSqlName("ADY")+" ADY "+CRLF
+_cQuery += " Inner Join "+RetSqlName("AD1")+" AD1 on AD1.D_E_L_E_T_ = ' ' "+CRLF
+_cQuery += "                       And AD1.AD1_FILIAL = ADY.ADY_FILIAL "+CRLF
+_cQuery += "                       And AD1.AD1_NROPOR = ADY.ADY_OPORTU "+CRLF
+_cQuery += "                       And AD1.AD1_REVISA = ADY.ADY_REVISA "+CRLF
+_cQuery += "                       And AD1.AD1_DTASSI = '        '  "+CRLF       
+_cQuery += " Where ADY.D_E_L_E_T_ = ' ' "+CRLF
+//-- Para testar em base SQL 
+//&&  _cQuery += " and Substring(ADY.ADY_FILIAL,1,4) = '01' "
+_cQuery += " and Substr(ADY.ADY_FILIAL,1,4) = '"+_cGrpEMP+"' "+CRLF
+_cQuery += " and ADY.ADY_DATA <= '"+_cDataBASE+"' "+CRLF
+_cQuery += " and ADY.ADY_STATUS = 'A' "+CRLF
+//+------------------------------------------------------------------+
+//| Grava o Resultado da Query para consulta                         |
+//+------------------------------------------------------------------+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TMPADY")>0
+  TMPADY->(DbCloseArea())
+Endif
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPADY",.t.,.t.)
+//+------------------------------------------------------------------+
+//| Converte os campos tipo DATA                                     |
+//+------------------------------------------------------------------+
+TCSETFIELD("TMPADY","ADY_DATA"        ,"D",8,0 )
+TCSETFIELD("TMPADY","AD1_DTASSI" ,"D",8,0 )
+TMPADY->(dbGoTop())
+Do While TMPADY->(!Eof())
+  If ADY->(dbseek(TMPADY->ADY_FILIAL+TMPADY->ADY_OPORTU+TMPADY->ADY_REVISA+TMPADY->ADY_PROPOS))
+       ADY->(RecLock("ADY",.f.))
+       Replace ADY->ADY_STATUS With  "C" 
+       Replace ADY->ADY_XMSGEN With  "Encerrada em "+dtoc(dDataBase)+" por decurso de prazo para assinatura." 
+       _nEncerr++
+       ADY->(MsUnLock())
+       ADY->(dbCommit()) 
+  Endif 
+  _lTemOK := .t.
+  TMPADY->(dbSkip())
+Enddo  
+If _lSHEDULE
+  ConOut("---"																					)
+  ConOut(" FIM do Processo: [ENCERRA PROPOSTAS NÃO ASSINADAS]  "      							)
+  ConOut(Alltrim(Str(_nEncerr))+" proposta(s) encerrada(s) por decurso de prazo p/assinatura."	) 
+  ConOut("==> Encerrada as: "+time()															)
+  ConOut("===="																					)
+  RESET ENVIRONMENT
+Else
+  _cMensagem := 	"FIM do Processo: [ENCERRA PROPOSTAS NÃO ASSINADAS]"+CRLF+;
+ 					Alltrim(Str(_nEncerr))+" proposta(s) encerrada(s) por decurso de prazo p/assinatura."+CRLF+; 
+                 	"==> Encerrada as: "+time()+CRLF+"===="
+  Aviso(FunName()+"/"+ProcName(),_cMensagem,{"OK"})
+Endif 
+Return _lReturn
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldPdMD>
+   Ponto de entrada p/ validar permissão de acesso a gravação de Oportunidade 
+   de Venda (CRM).
+
+@author<J2A/Jonas Nascimento>
+@since<06/07/2015>
+@version
+<
+   ---------------------------------------------------------------------+
+    Antonio Dantas                                           18/11/2015
+    Não permite encerrar a oportunidade GANHA, por qualquer motivo, sem
+    que os campos [Dt.Ass.Prop.] e [Contato Ass.] na ABA [Aceite da
+    Proposta] estejam preenchidos. 
+   ---------------------------------------------------------------------+
+>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fVldUrOP()
+Local _lRet			:= .t.
+Local _CodUsr		:= GetMv("MV_XGRVOPO",,"")
+Local _cStatus		:= M->AD1_STATUS
+//+---------------------------------------------------------------------+
+//| Antonio Dantas                                           18/11/2015 |
+//| Não permite encerrar a oportunidade GANHA, por qualquer motivo, sem |
+//| que os campos [Dt.Ass.Prop.] e [Contato Ass.] na ABA [Aceite da     |
+//| Proposta] estejam preenchidos.                                      | 
+//+---------------------------------------------------------------------+
+If _cStatus $ "E#F"
+	If Empty(Alltrim(Dtoc(M->AD1_DTASSI))) .Or. Empty(Alltrim(M->AD1_CNTPRO))
+		Aviso(FunName()+"/"+ProcName(),"No Encerramento da Oportunidade [GANHA], por qualquer motivo, é OBRIGATORIO o preenchimento dos campos [Dt.Ass.Prop.] e [Contato Ass.] na ABA [Aceite da Proposta]!",{"OK"},3)
+		_lRet := .f.	//Permite a gravacao
+	EndIf
+Endif 
+//MV_XGRVOPO
+If _cStatus == "F"
+	If !( __cUserID $ _CodUsr )
+		Aviso(FunName()+"/"+ProcName(),"Usuário sem permissão para gravar oportunidade!",{"OK"})
+		_lRet := .f.	//Permite a gravacao
+	EndIf
+Endif
+Return _lRet
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fInicPRC>
+ Função para ser utilizada em gatilho do campo [ADZ_XTBPRC - Tabela de Preço] 
+ para Imputar o valor do produto no campo [ADZ_PRCVEN] conforme a tabela de 
+ preços selecionada. Montar o Gatilho da Seguinte Forma:  
+		------------------------------------
+		Campo 			: ADZ_XTBPRC
+		Sequencia		: 001
+		Cnt Dominio		: ADZ_PRCVEN
+		Tipo 			: Primario
+		Regra			: u_fInicPRC(M->ADZ_XTBPRC)
+		------------------------------------
+ou
+ Função para ser utilizada em gatilho do campo [ADZ_QTDVEN - Quantidade] para 
+ Imputar o valor do produto no campo [ADZ_PRCVEN] conforme a Tabela de Preços
+ selecionada. Montar o Gatilho da Seguinte Forma:  
+		------------------------------------
+		Campo 			: ADZ_QTDVEN
+		Sequencia		: 001
+		Cnt Dominio		: ADZ_PRCVEN
+		Tipo 			: Primario
+		Regra			: u_fInicPRC()
+		------------------------------------
+@author<Antonio Dantas>
+@since<07/07/2015>
+@version<1.00>
+@receive
+<   _cTabela (C) - Codigo da Tabela 
+                   DEFAULT := GDFieldGet("ADZ_XTBPRC",N)
+>
+@return
+<    _nPreco (N) - Valor do Produto na Tabela de Preço  
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fInicPRC(_cTabela)
+Local _aArea		:= GetArea()
+Local _nPreco		:= 0.00                                              
+Local _nLastPrc		:= 0.00
+Local _cProduto 	:= FWFldGet("ADZ_PRODUT")
+Local _nMoeda		:= Val(FWFldGet("ADZ_MOEDA"))
+Local _cQuery		:= ""
+Local _nQtdEmp		:= Posicione("SA1",1,xFilial("SA1")+M->ADY_CODIGO+M->ADY_LOJA,"A1_XQTDESI")
+Local _nQtdVen		:= FWFldGet("ADZ_QTDVEN")
+DEFAULT _cTabela 	:= FWFldGet("ADZ_XTBPRC")
+
+/* 03-08-15 - Jose Leite - CSI
+	Comentado para utilizar a regra de faixa de acordo com a quantidade de funcionarios
+	informado no cadastro de Cliente.
+	
+	//-- 
+	_nMoeda := Iif(_nMoeda!=0,_nMoeda,1)
+	_nPreco := A600TabPreco(_cTabela,_cProduto,_nMoeda)   
+	If _nPreco == 0.00 
+		_nPreco	:= Posicione("SB1",1,FwxFilial("SB1")+_cProduto,"B1_PRV1")   
+		_nPreco	:= xMoeda(_nPreco,1,_nMoeda) 
+	Endif
+	//-- 
+*/
+
+/* 03-08-15 - Jose Leite - CSI
+	Tratamento para ajustar o preco de acordo com a quantidade de funcionarios
+	informado no cadastro do Cliente
+	
+	30-01-17 - Jose Leite - CSI
+	IEL - Tratamento para ajustar o preco de acordo com a faixa 
+	informada na tabela de preco 
+*/
+//Inicio
+If Select("TMPDA1") > 0
+	TMPDA1->(DbCloseArea())
+Endif
+//+------------------------------------------------------------------+
+//| Monta e executa consulta a preço para pegar a Faixa de preço     |
+//+------------------------------------------------------------------+
+_cQuery := " Select * "+CRLF
+_cQuery += " From "+RetSqlName("DA1")+CRLF
+_cQuery += " Where Substr(DA1_FILIAL,1,4) = '"+Substr(cFilAnt,1,4)+"' "+CRLF
+_cQuery += " And DA1_CODTAB = '"+_cTabela+"' "+CRLF		
+_cQuery += " And DA1_CODPRO = '"+_cProduto+"' "+CRLF
+_cQuery += " And d_e_l_e_t_ = ' ' "+CRLF
+_cQuery += " Order By DA1_QTDLOT "+CRLF
+//+------------------------------------------------------------------+
+//| Grava o Resultado da Query para consulta                         |
+//+------------------------------------------------------------------+
+//MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+//--
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPDA1",.t.,.t.)
+TMPDA1->(DbGotop())
+//+------------------------------------------------------------------+
+//| O campo [DA1_QTDLOT - FAIXA] da tabela de preços e utilizado pelo|
+//| pelo SESI para identificar o PREÇO do produto conforme o numero  |
+//| de FUNCIONARIOS da empresa. 
+//+------------------------------------------------------------------+
+Do While TMPDA1->(!Eof())
+	
+	/*	30-01-2017 - Jose Leite - CSI
+		Tratamento para o 04MT-IEL utilizar faixa de desconto conforme tabela de preco de acordo com a Quantidade (ADZ_QTDVEN)
+		de produtos / servicos vendidos
+		EX.:
+			De - Ate -> prcven x
+			1 - 3 -> 90
+	*/
+	If Substr(cFilAnt,1,4) == '04MT'
+		If _nQtdVen >= TMPDA1->DA1_QTDLOT .And. _nQtdVen <= TMPDA1->DA1_XQTLOT
+			_nPreco := TMPDA1->(DA1_PRCVEN)
+		EndIf
+		If _nPreco > 0.00
+			Exit
+		EndIf
+	Else
+		If TMPDA1->DA1_QTDLOT >= _nQtdEmp
+			_nPreco := TMPDA1->(DA1_PRCVEN)
+			If _nPreco > 0.00
+				Exit
+			EndIf
+		Endif
+	EndIf
+	
+	_nLastPrc := TMPDA1->(DA1_PRCVEN)
+	
+	TMPDA1->(DbSkip())
+	//+------------------------------------------------------------------+
+	//| Caso não exista FAIXA de numero de funcionario que atenda ao nr  |
+	//| de funcionarios do cliente, considera a ULTIMA FAIXA da tabela.  |
+	//+------------------------------------------------------------------+
+	If TMPDA1->(Eof()) .and. _nPreco == 0.00
+		_nPreco := _nLastPrc
+	Endif 
+Enddo
+TMPDA1->(DbCloseArea())
+//Fim
+_nMoeda := Iif(_nMoeda!=0,_nMoeda,1)
+If _nPreco == 0.00 
+	_nPreco	:= Posicione("SB1",1,FwxFilial("SB1")+_cProduto,"B1_PRV1")   
+	_nPreco	:= xMoeda(_nPreco,1,_nMoeda) 
+Endif
+RestArea(_aArea)
+Return _nPreco
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldStAD>
+ Função de validação do STATUS da Opordunidade [AD1_STATUS], validação a opção 
+ do STATUS conforme o AD1_FCS oU AD1_FCI. 
+
+@author<Antonio Dantas>
+@since<07/07/2015>
+@version<1.00>
+@receive
+<
+   _cFcS (c) - Valor do Campo AD1_FCS - Fator Critico de Sucesso    
+   _cFcI (c) - Valor do Campo AD1_FCI - Fator Critico de Insucesso  
+_cSituac (c) - Valor da Siutação:
+               1=Aberto;2=Perdido;3=Ganha SEM Pedido;9=Ganha COM Pedido
+>
+@return
+<   _lReturn (l) - (.t.) - Todo OK; (.f.) - Opção invalida 
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fVldStAD(_cFcS,_cFcI,_cSituac) 
+Local _lReturn	:= .T.
+//+------------------------------------------------------------------+
+//| Foi preenchido o Fator Critico de Sucesso                        |
+//+------------------------------------------------------------------+
+If !Empty(_cFcS)
+	If _cSituac == "2"
+		Aviso(FunName()+"/"+ProcName(),"O FCS - Fator critico de Sucesso foi preenchido. O STATUS não pode ser modificado para [2=PERDIDO]!",{"OK"})
+		_lReturn	:= .f.
+	Endif 
+Endif 
+//+------------------------------------------------------------------+
+//| Foi preenchido o Fator Critico de Insucesso                      |
+//+------------------------------------------------------------------+
+If !Empty(_cFcI)
+	If _cSituac != "2"
+		Aviso(FunName()+"/"+ProcName(),"O FCI - Fator critico de Insucesso foi preenchido. O STATUS SÓ pode ser modificado para [2=PERDIDO]!",{"OK"})
+		_lReturn	:= .f.
+	Endif
+Endif 
+Return _lReturn
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fCancAD1>
+ Rotina que realiza o cancelamento e modifica o STATUS da Proposta/Oportunidade de Venda
+ chamada no fonte SF7303J.prw
+
+@author<Jose Leite de Barros Neto>
+@since<27/08/2015>
+@version<1.00>
+--------------------------------------------------------------------------------
+*/
+User Function fCancAD1()
+	Local _aArea 		:= GetArea()
+	Local _cStatus		:= AllTrim(Posicione("ADY",2,xFilial("ADY") + AD1->AD1_NROPOR + AD1->AD1_REVISA,"ADY_STATUS"))
+	Local _aProposta	:= {}
+	Local _cMsg			:= ''
+	If AD1->AD1_STATUS == 'E'
+		If Empty(AllTrim(AD1->AD1_XCONTR))
+			_cMsg := "Deseja cancelar a oportunidade: "+ AD1->AD1_NROPOR + " - Revisão: "+ AD1->AD1_REVISA + " ?"
+			If Aviso(FunName()+"/"+ProcName(),_cMsg,{"Sim","Não"}) == 1
+				Begin Transaction
+					_aProposta := u_fGetProC(AD1->AD1_NROPOR,AD1->AD1_REVISA,_cStatus)
+					//+-------------------------------------------------------------------------+
+					//| * Modifica o [STATUS] PROPOSTA APROVADA para [G-Cancelada apos aprov.]  |
+					//+-------------------------------------------------------------------------+
+					DbSelectArea("ADY")
+					ADY->(dbSetOrder(1))
+					If ADY->(DbSeek(FwxFilial("ADY")+_aProposta[1]))
+						If ADY->(RecLock("ADY",.f.))
+							Replace ADY->ADY_STATUS With "Y"					//-- Cancelada apos aprovacao  
+							ADY->(MsUnLock())
+							ADY->(dbCommit())
+						EndIf 
+					Endif
+					//Se é uma proposta integrada com o SGT, marco atendimentos do SGT como recusado.
+					If ADY->ADY_XSGTIN
+						DbSelectArea("ADZ")
+						ADZ->( DbSetOrder(1) ) //ADZ_FILIAL+ADZ_PROPOS+ADZ_ITEM
+						If ADZ->( DbSeek( FwxFilial("ADY") + ADY->ADY_PROPOS ) )
+							While !ADZ->( EoF() ) .And. FwxFilial("ADY") == ADZ->ADZ_FILIAL .And. ADY->ADY_PROPOS == ADZ->ADZ_PROPOS
+								//Se o atendimento foi incluido no SGT e não foi recusado ainda.
+								If ADZ->ADZ_XSGTIN .And. !ADZ->ADZ_XSGTRE
+									If ADZ->(RecLock("ADZ",.F.))
+										//Altera atendimento para recusado.
+										Replace ADZ->ADZ_XRESGT With "1" 
+										ADZ->(MsUnLock())
+										ADZ->(dbCommit())
+									EndIf 
+								EndIf
+								ADZ->( DbSkip() )
+							EndDo
+						EndIf
+						ADZ->( DbCloseArea() )
+					EndIf 
+					//+------------------------------------------------------------------------+
+					//| * Modifica o [STATUS] PROPOSTA APROVADA para [5-Cancelada Apos Aceite] |
+					//+------------------------------------------------------------------------+
+					DbSelectArea("AD1")
+					AD1->(dbSetOrder(1))
+					If AD1->(dbSeek(FwxFilial("AD1")+AD1->AD1_NROPOR+AD1->AD1_REVISA))
+						If AD1->(RecLock("AD1",.f.))
+							Replace AD1->AD1_STATUS With 'D'   
+							AD1->(MsUnLock())
+							AD1->(dbCommit())
+						EndIf 
+					Endif 
+				End Transaction
+			EndIf
+		Else
+			_cMsg := "Não é possível cancelar a oportunidade: "+ AD1->AD1_NROPOR + " - Revisão: "+ AD1->AD1_REVISA + ", pois já existe o contrato: "+AD1->AD1_XCONTR+" emitido!" + CRLF
+			Aviso(FunName()+"/"+ProcName(),_cMsg,{"OK"})			
+		EndIf
+	Else
+		_cMsg := "Não é possível cancelar a oportunidade: "+ AD1->AD1_NROPOR + " - Revisão: "+ AD1->AD1_REVISA + ", verifique o status da mesma!"
+		Aviso(FunName()+"/"+ProcName(),_cMsg,{"OK"})
+	EndIf
+	RestArea(_aArea)
+Return
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fPutMADJ>
+  #CONTROLE_DN
+  Preenche o Campo [ADJ_XOPER - OPER DN] com a data da Alteracao no formato 
+  AAAAMMAA:hh:mm, para ser utilizado na INTEGRACAO CRM x DN.        
+  E chamada na Validacao dos campos: 	
+  ----------------------------------
+     ADJ_PROD - Codigo do Produto
+    ADJ_QUANT - Quantida  
+   ADJ_PRUNIT - Valor Unitario 
+    ADJ_VALOR - Valor total do Produto
+    ADJ_CATEG - Categoria de Produto
+   ADJ_XUNEXE - Unidade Executora
+
+@author<Antonio Dantas>
+@since<01/02/2016>
+@version<1.00>
+@receive<>
+@return
+<   _lReturn (l) - (.t.) - Todo OK; (.f.) - Opcao invalida 
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fPutADJ()
+Local _lReturn		:= .t.  
+Local _nPOS_01		:= aScan(oGetDad5:aHeader, {|x| Alltrim(x[2]) == "ADJ_XOPER"} )
+oGetDad5:aCols[N,_nPOS_01]	:= Substr(oGetDad5:aCols[N,_nPOS_01],1,15)+Dtos(dDataBase)+':'+Substr(Time(),1,5) 
+oGetDad5:oBrowse:Refresh(.t.)
+Return _lReturn
+
+
+
+User Function fPutValD(_nPerDesc,_nPrcTa)
+Local _nValDesc 	:= 0
+//-- Iif((_nX := U_fPutVlDc('P'))>0,(_nX/100)*M->ADZ_PRCTAB,0)                                           
+If _nPerDesc > 0
+	_nValDesc	:=  M->ADZ_PRCTAB *  _nPerDesc
+Endif 
+Return _nValDesc

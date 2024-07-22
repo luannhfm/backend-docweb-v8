@@ -1,0 +1,1070 @@
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE 'IDATOOLS.CH'
+
+#DEFINE CR Chr(13) + Chr(10)
+
+/*/{Protheus.doc} INTBOLBB
+@description Classe de Integração de Boletos com o Banco do Brasil
+
+@author  Helitom Silva
+@since   21/07/2020
+@version 12.1.27
+/*/
+Class INTBOLBB
+
+	Data oToken
+	Data oClientId
+	Data oCredent
+
+	Data lAutorizado
+	Data oConfig
+	Data cURLToken
+	Data cURLCobr
+	Data cScope
+    Data lConoutInt
+    Data lExibeMsgOk
+    Data lProducao
+    
+	Method New() Constructor
+	Method PostClientId() // Obtem ClientId
+	Method PostCredential() // Obtem Credencial (Secret_id + Token)
+	Method PostToken() // Obtem Token para realizar Transação
+	Method PostBoleto() // Cria Boleto no Banco
+	Method PutBoleto() // Altera Boleto  
+    Method CancelBoleto() // Cancela o Boleto
+	Method ListBoletos() // Lista Boletos
+	Method GetBoleto() // Detalha Boletos
+	Method NewBoleto() // Obtem objeto para preencher os dados para geração do boleto
+    Method AlterBoleto() // Obtem objeto para preencher os dados para Alteração do boleto
+    Method GetParamList() // Obtem objeto Json para que seja preenchido os parametros para solicitar uma lista de boletos
+
+EndClass
+
+
+/*/{Protheus.doc} New
+@description Construtor da Classe
+
+@author  Helitom Silva
+@since   21/07/2020
+@version 12.1.27
+
+@return Self, Objeto, O proprio objeto
+/*/
+Method New(p_lExibeMsgOk, p_lConoutInt) Class INTBOLBB
+
+    Default p_lExibeMsgOk := .F.
+    Default p_lConoutInt  := .F.
+
+	Self:lAutorizado := .F.
+	Self:cScope      := 'cobrancas.boletos-info cobrancas.boletos-requisicao'
+	Self:oConfig     := IdaTable():New('ZHS', .T., .F., " ZHS_FILIAL = '"+ xFilial("ZHS") +"' ")
+	Self:cURLToken   := AllTrim(Self:oConfig:GetValue('ZHS_URLTOK')) // https://oauth.hm.bb.com.br   - Web Service Autorização Boletos Banco do Brasil
+	Self:cURLCobr    := AllTrim(Self:oConfig:GetValue('ZHS_URLCOB')) // https://api.hm.bb.com.br/cobrancas/v1 - Web Service Cobrança Boletos Banco do Brasil
+    Self:lExibeMsgOk := p_lExibeMsgOk
+    Self:lConoutInt  := p_lConoutInt
+    Self:lProducao   := Self:oConfig:GetValue('ZHS_AMBIEN') = '1'
+    Self:oToken      := JsonObject():New()
+    Self:oClientId   := JsonObject():New()
+    Self:oCredent    := JsonObject():New()
+
+    Self:oToken:FromJson(AllTrim(Self:oConfig:GetValue('ZHS_TOKEN')))
+    Self:oClientId:FromJson(AllTrim(Self:oConfig:GetValue('ZHS_CLIID')))
+    Self:oCredent:FromJson(AllTrim(Self:oConfig:GetValue('ZHS_CLISC')))
+
+Return Self
+
+
+/*/{Protheus.doc} PostClientId
+@description Obten ClientId
+
+@author  Helitom Silva
+@since   21/07/2020
+@version 12.1.27
+
+@return lRet, Logico, Se obter autorização retorna Verdadeiro
+/*/
+Method PostClientId() Class INTBOLBB
+    
+    Local lRet       := .F.
+	Local oRestAuth  := FWRest():New(Self:cURLToken)
+	Local aHeader    := {}
+	//Local cPostParam := 'id=protheus-sesi-mato-grosso'
+
+	aAdd(aHeader, "Authorization: Bearer " + Self:oConfig:GetValue('ZHS_REGTOK') )
+
+	oRestAuth:SetPath('/' + Self:oConfig:GetValue('ZHS_ID') + '/installations/?')
+	//oRestAuth:SetPostParams(cPostParam)
+	oRestAuth:SetChkStatus(.F.)
+
+	If oRestAuth:Post(aHeader)
+
+		cError := ""
+		nStatus := HTTPGetStatus(@cError)
+
+        Self:oClientId:FromJson(oRestAuth:GetResult())
+
+		If (nStatus >= 200 .and. nStatus <= 299)
+			
+			Self:oConfig:SetValue('ZHS_CLIIDA', Self:oConfig:GetValue('ZHS_CLIID'))
+			Self:oConfig:SetValue('ZHS_CLIID', oRestAuth:GetResult())
+			Self:oConfig:SaveData('ZHS', 1, FWxFilial('ZHS'), 4, 'ZHS_CLIIDA/ZHS_CLIID')
+
+            If IsBlind() .and. Self:lConoutInt
+                ConOut( "PostClientId - Integracao Boletos Bancos do Brasil" + CR + oRestAuth:GetResult())
+            ElseIf !IsBlind() .and. Self:lExibeMsgOk
+                IdaMsg(oRestAuth:GetResult(), "PostClientId - Integracao Boletos Bancos do Brasil")
+            EndIf
+            
+		Else
+            
+            ConOut( "PostClientId - Integracao Boletos Bancos do Brasil" + CR + oRestAuth:GetResult())
+            
+            If Self:lExibeMsgOk
+                IdaMsg(oRestAuth:GetResult(), "PostClientId - Integracao Boletos Bancos do Brasil")
+            EndIf
+
+			lRet := .F.
+		EndIf
+
+	Else
+
+        cError := ""
+        nStatus := HTTPGetStatus(@cError)
+
+        Self:oClientId:FromJson('{"Erro": "' + cError + '"}')
+
+        ConOut( "PostToken - ERRO - Integracao Boletos Bancos do Brasil" + CR + oRestBoleto:GetLastError())
+
+        If Self:lExibeMsgOk
+            IdaMsg(oRestBoleto:GetLastError(), "PostToken - ERRO - Integracao Boletos Bancos do Brasil")
+        EndIf
+
+		lRet := .F.
+
+	EndIf
+
+Return {lRet, Self:oClientId}
+
+
+/*/{Protheus.doc} PostCredential
+@description Obtem Credencial (Secret_id + Token)
+
+@author  Helitom Silva
+@since   21/07/2020
+@version 12.1.27
+
+@return lRet, Logico, Se obter autorização retorna Verdadeiro
+/*/
+Method PostCredential() Class INTBOLBB
+
+    Local lRet       := .F.
+	Local oRestAuth  := FWRest():New(Self:cURLToken)
+	Local aHeader    := {}
+	Local cPostParam := ''
+
+    Self:oClientId:FromJson(AllTrim(Self:oConfig:GetValue('ZHS_CLIID')))
+
+	aAdd(aHeader, "Authorization: Bearer " + Self:oClientId['registration_access_token'] )
+
+	oRestAuth:SetPath('/' + Self:oConfig:GetValue('ZHS_ID') + '/installations/' + Self:oClientId['clientId'] + '/credentials?')
+	oRestAuth:SetChkStatus(.F.)
+
+	If oRestAuth:Post(aHeader)
+
+		cError := ""
+		nStatus := HTTPGetStatus(@cError)
+
+        Self:oCredent:FromJson(oRestAuth:GetResult())
+
+		If (nStatus >= 200 .and. nStatus <= 299)
+			
+			Self:oConfig:SetValue('ZHS_CLISCA', Self:oConfig:GetValue('ZHS_CLISC'))
+			Self:oConfig:SetValue('ZHS_CLISC', oRestAuth:GetResult())
+			Self:oConfig:SaveData('ZHS', 1, FWxFilial('ZHS'), 4, 'ZHS_CLISCA/ZHS_CLISC')
+
+            If IsBlind() .and. Self:lConoutInt
+                ConOut( "PostCredential - Integracao Boletos Bancos do Brasil" + CR + oRestAuth:GetResult())
+            ElseIf !IsBlind() .and. Self:lExibeMsgOk
+                IdaMsg(oRestAuth:GetResult(), "PostCredential - Integracao Boletos Bancos do Brasil")
+            EndIf
+            
+		Else
+            
+            ConOut( "PostCredential - ERRO - Integracao Boletos Bancos do Brasil" + CR + oRestAuth:GetResult())
+            
+            If Self:lExibeMsgOk
+                IdaMsg(oRestAuth:GetResult(), "PostCredential - ERRO - Integracao Boletos Bancos do Brasil")
+            EndIf
+
+			lRet := .F.
+		EndIf
+
+	Else
+
+        cError := ""
+        nStatus := HTTPGetStatus(@cError)
+
+        Self:oCredent:FromJson('{"Erro": "' + cError + '"}')
+        
+        ConOut( "PostToken - ERRO - Integracao Boletos Bancos do Brasil" + CR + oRestBoleto:GetLastError())
+
+        If Self:lExibeMsgOk
+            IdaMsg(oRestBoleto:GetLastError(), "PostToken - ERRO - Integracao Boletos Bancos do Brasil")
+        EndIf
+
+		lRet := .F.
+
+	EndIf
+
+Return {lRet, Self:oCredent}
+
+
+/*/{Protheus.doc} PostToken
+@description Obtem Token para realizar Transação
+
+@author  Helitom Silva
+@since   21/07/2020
+@version 12.1.27
+
+@return lRet, Logico, Se obter autorização retorna Verdadeiro
+/*/
+Method PostToken() Class INTBOLBB
+
+    Local lRet       := .T.
+	Local oRestAuth  := FWRest():New(Self:cURLToken)
+	Local aHeader    := {}
+	Local cPostParam := 'grant_type=client_credentials&scope=cobrancas.boletos-info cobrancas.boletos-requisicao'
+	Local cError	 := ""
+	Local nStatus    := 0
+
+	Aadd(aHeader, 'Content-Type: application/x-www-form-urlencoded')
+	
+	If .not. ValType(Self:oCredent:FromJson(AllTrim(Self:oConfig:GetValue('ZHS_CLISC')))) = 'U'
+        
+        If IsBlind()
+            ConOut( "PostToken - Falha ao transformar script json em objeto - ZHS_CLISC." )
+        ElseIf Self:lExibeMsgOk
+            IdaMsg("Falha ao transformar script json em objeto - ZHS_CLISC.", "PostToken - Integracao Boletos Bancos do Brasil")
+        EndIf
+
+        lRet := .F.
+
+	Else
+
+        aAdd(aHeader, "Authorization: Basic {(" + Encode64( Self:oCredent["client_id"] + ":" + Self:oCredent["client_secret"] ) + ")}" )
+
+        oRestAuth:SetPath('/oauth/token') 
+        oRestAuth:SetPostParams(cPostParam)
+        oRestAuth:SetChkStatus(.F.)
+
+        If oRestAuth:Post(aHeader)
+
+            cError := ""
+            nStatus := HTTPGetStatus(@cError)
+
+            Self:oToken:FromJson(oRestAuth:GetResult())
+
+            If (nStatus >= 200 .and. nStatus <= 299)
+                
+                Self:oConfig:SetValue('ZHS_TOKENA', Self:oConfig:GetValue('ZHS_TOKEN'))
+                Self:oConfig:SetValue('ZHS_TOKEN', oRestAuth:GetResult())
+                Self:oConfig:SaveData('ZHS', 1, FWxFilial('ZHS'), 4, 'ZHS_TOKENA/ZHS_TOKEN')
+
+                If IsBlind() .and. Self:lConoutInt
+                    ConOut( "PostToken - Integracao Boletos Bancos do Brasil" + CR + oRestAuth:GetResult())
+                ElseIf !IsBlind() .and. Self:lExibeMsgOk
+                    IdaMsg(oRestAuth:GetResult(), "PostToken - Integracao Boletos Bancos do Brasil")
+                EndIf
+                
+            Else
+
+                ConOut( "PostToken - Integracao Boletos Bancos do Brasil" + CR + oRestAuth:GetResult())
+
+                If !IsBlind() .and. Self:lExibeMsgOk
+                    IdaMsg(oRestAuth:GetResult(), "PostToken - Integracao Boletos Bancos do Brasil")
+                EndIf
+
+                lRet := .F.
+            EndIf
+
+        Else
+
+            cError := ""
+            nStatus := HTTPGetStatus(@cError)
+
+            Self:oToken:FromJson('{"Erro": "' + cError + '"}')
+
+            ConOut( "PostToken - ERRO - Integracao Boletos Bancos do Brasil" + CR + oRestAuth:GetLastError())
+
+            If !IsBlind() .and. Self:lExibeMsgOk
+                IdaMsg(oRestAuth:GetLastError(), "PostToken - ERRO - Integracao Boletos Bancos do Brasil")
+            EndIf
+
+            lRet := .F.
+
+        EndIf
+
+    EndIf
+
+Return {lRet, Self:oToken}
+
+
+/*/{Protheus.doc} PostBoleto
+@description Cria Boleto no Banco
+
+@author  Helitom Silva
+@since   21/07/2020
+@version 12.1.27
+
+@return lRet, Logico, Se obter autorização retorna Verdadeiro
+/*/
+Method PostBoleto(p_oBoleto) Class INTBOLBB
+
+    Local lRet        := .T.
+    Local oRetBoleto  := JsonObject():New()        
+	Local oRestBoleto := FWRest():New(Self:cURLCobr)
+	Local aHeader     := {}
+	Local cPostParam  := ''
+	Local cError	  := ''
+	Local nStatus     := 0
+	Local cJsonBoleto := ''
+
+	Default p_oBoleto := Self:NewBoleto()
+
+	Aadd(aHeader, 'Content-Type: application/json')
+	
+	If .not. ValType(Self:oToken) = 'J'
+
+        If IsBlind()
+            ConOut( "PostBoleto - Falha ao transformar script json em objeto - ZHS_TOKEN." )
+        ElseIf Self:lExibeMsgOk
+            IdaMsg("Falha ao transformar script json em objeto - ZHS_TOKEN.", "PostBoleto - Integracao Boletos Bancos do Brasil")
+        EndIf
+
+        lRet := .F.
+
+	Else
+
+        aAdd(aHeader, "Authorization: Bearer " + Self:oToken["access_token"] + "" )
+
+        oRestBoleto:SetPath('/boletos?' + Iif(Self:lProducao, 'gw-dev-app-key', 'gw-app-key') + '=' + AllTrim(Self:oConfig:GetValue('ZHS_APPKEY')))
+        oRestBoleto:SetChkStatus(.F.)
+        
+        If !Empty(cJsonBoleto := p_oBoleto:ToJson())
+
+            oRestBoleto:SetPostParams(cJsonBoleto)
+
+            If oRestBoleto:Post(aHeader)
+
+                cError := ""
+                nStatus := HTTPGetStatus(@cError)
+
+                oRetBoleto:FromJson(oRestBoleto:GetResult())
+
+                If (nStatus >= 200 .and. nStatus <= 299)
+                    
+                    If IsBlind() .and. Self:lConoutInt
+                        ConOut( "PostBoleto - Integracao Boletos Bancos do Brasil" + CR + oRestBoleto:GetResult())
+                    ElseIf !IsBlind() .and. Self:lExibeMsgOk
+                        IdaMsg(oRestBoleto:GetResult(), "PostBoleto - Integracao Boletos Bancos do Brasil")
+                    EndIf
+
+                Else
+                    
+                    ConOut( "PostBoleto - ERRO - Integracao Boletos Bancos do Brasil" + CR + oRestBoleto:GetResult())
+                    
+                    If !IsBlind() .and. Self:lExibeMsgOk
+                        IdaMsg(oRestBoleto:GetResult(), "PostBoleto - ERRO - Integracao Boletos Bancos do Brasil")
+                    EndIf
+
+                    lRet := .F.
+                EndIf
+
+            Else
+
+                cError := ""
+                nStatus := HTTPGetStatus(@cError)
+
+                oRetBoleto:FromJson('{"Erro": "' + cError + '"}')
+
+                ConOut( "PostBoleto - ERRO - Integracao Boletos Bancos do Brasil" + CR + oRestBoleto:GetLastError())
+                
+                If !IsBlind() .and. Self:lExibeMsgOk
+                    IdaMsg(oRestBoleto:GetLastError(), "PostBoleto - ERRO - Integracao Boletos Bancos do Brasil")
+                EndIf
+
+                lRet := .F.
+
+            EndIf
+
+        EndIf
+
+    EndIf
+
+Return {lRet, oRetBoleto}
+
+
+/*/{Protheus.doc} PutBoleto
+@description Altera dados de UM Boleto
+
+@author  Helitom Silva
+@since   21/07/2020
+@version 12.1.27
+
+@return lRet, Logico, Se obter autorização retorna Verdadeiro
+/*/
+Method PutBoleto(p_cNossoNumTit, p_oAlterBoleto) Class INTBOLBB
+
+    Local lRet         := .T.
+    Local oRetBoleto   := JsonObject():New()    
+	Local aHeader      := {}
+	Local cPostParam   := Iif(Self:lProducao, 'gw-dev-app-key', 'gw-app-key') + '=' + AllTrim(Self:oConfig:GetValue('ZHS_APPKEY'))
+	Local cError	   := ""
+	Local nStatus      := 0
+	Local cJsonBoleto  := ''
+	Local cHeaderRet   := ''
+    Local cRetAltBol   := ''
+
+	Default p_cNossoNumTit := ''
+	Default p_oAlterBoleto := Self:AlterBoleto()
+
+	Aadd(aHeader, 'Content-Type: application/json')
+	
+	If .not. ValType(Self:oToken) = 'J'
+
+        If IsBlind()
+            ConOut( "PutBoleto - Falha ao transformar script json em objeto - ZHS_TOKEN." )
+        ElseIf Self:lExibeMsgOk
+            IdaMsg("Falha ao transformar script json em objeto - ZHS_TOKEN.", "PutBoleto - Integracao Boletos Bancos do Brasil")
+        EndIf
+
+        lRet := .F.
+
+	Else
+
+        aAdd(aHeader, "Authorization: Bearer " + Self:oToken["access_token"] + "" )
+
+        If !Empty(cJsonBoleto := p_oAlterBoleto:ToJson())
+            
+            //HTTPQuote( < cUrl>, < cMethod>, [ cGETParms], [ cPOSTParms], [ nTimeOut], [ aHeadStr], [ @cHeaderRet] ) 
+            //cResponse := HTTPQuote ( "http://localhost:8080/api/test", "PATCH", "a=1&b=2", '{"id":1}', 120, {"Content-Type: application/json"}, @cHeaderRet )
+
+            cRetAltBol := HTTPQuote( Self:cURLCobr + '/boletos/' + AllTrim(p_cNossoNumTit) + '?' + cPostParam , "PATCH", "" , cJsonBoleto, 120, aHeader, @cHeaderRet )
+
+            If !Empty(cRetAltBol)
+
+                cError := ""
+                nStatus := HTTPGetStatus(@cError)
+
+                oRetBoleto:FromJson(cRetAltBol)
+
+                If (nStatus >= 200 .and. nStatus <= 299)
+                    
+                     If IsBlind() .and. Self:lConoutInt
+                        ConOut( "PutBoleto - Integracao Boletos Bancos do Brasil" + CR + cRetAltBol)
+                    ElseIf !IsBlind() .and. Self:lExibeMsgOk
+                        IdaMsg(cRetAltBol, "PutBoleto - Integracao Boletos Bancos do Brasil")
+                    EndIf
+
+                Else
+                    
+                    ConOut( "PutBoleto - ERRO - Integracao Boletos Bancos do Brasil" + CR + cRetAltBol)
+                    
+                    If !IsBlind() .and. Self:lExibeMsgOk
+                        IdaMsg(cRetAltBol, "PutBoleto - ERRO - Integracao Boletos Bancos do Brasil")
+                    EndIf
+
+                    lRet := .F.
+                EndIf
+
+            Else
+
+                cError := ""
+                nStatus := HTTPGetStatus(@cError)
+
+                oRetBoleto:FromJson('{"Erro": "' + cError + '"}')
+
+                ConOut( "PutBoleto - ERRO - Integracao Boletos Bancos do Brasil" + CR + cError)
+
+                If !IsBlind() .and. Self:lExibeMsgOk
+                    IdaMsg(cError, "PutBoleto - ERRO - Integracao Boletos Bancos do Brasil")
+                EndIf
+
+                lRet := .F.
+
+            EndIf
+
+        EndIf
+
+    EndIf
+
+Return  {lRet, oRetBoleto}
+
+
+/*/{Protheus.doc} CancelBoleto
+@description Altera dados de UM Boleto
+
+@author  Helitom Silva
+@since   10/08/2020
+@version 12.1.27
+
+@return lRet, Logico, Se obter autorização retorna Verdadeiro
+/*/
+Method CancelBoleto(p_cNossoNumTit, p_nNumConvenio) Class INTBOLBB
+
+    Local lRet        := .T.
+    Local oRetBoleto  := JsonObject():New()
+	Local oRestBoleto := FWRest():New(Self:cURLCobr)
+	Local aHeader     := {}
+	Local cPostParam  := ''
+	Local cError	  := ''
+	Local nStatus     := 0
+	Local cJsonBoleto  := ''
+
+	Default p_cNossoNumTit := ''
+	Default p_nNumConvenio := 0
+
+	Aadd(aHeader, 'Content-Type: application/json')
+	
+	If .not. ValType(Self:oToken) = 'J'
+
+        If IsBlind()
+            ConOut( "CancelBoleto - Falha ao transformar script json em objeto - ZHS_TOKEN." )
+        ElseIf Self:lExibeMsgOk
+            IdaMsg("Falha ao transformar script json em objeto - ZHS_TOKEN.", "CancelBoleto - Integracao Boletos Bancos do Brasil")
+        EndIf
+
+        lRet := .F.
+
+    Else
+
+        aAdd(aHeader, "Authorization: Bearer " + Self:oToken["access_token"] + "" )
+
+        oRestBoleto:SetPath('/boletos/' + p_cNossoNumTit + '/baixar?' + Iif(Self:lProducao, 'gw-dev-app-key', 'gw-app-key') + '=' + AllTrim(Self:oConfig:GetValue('ZHS_APPKEY')))
+        oRestBoleto:SetChkStatus(.F.)
+
+        If !Empty(p_nNumConvenio)
+
+            oRestBoleto:SetPostParams('{"numeroConvenio": "' + cValToChar(p_nNumConvenio) + '"}')
+
+            If oRestBoleto:Post(aHeader)
+
+                cError := ""
+                nStatus := HTTPGetStatus(@cError)
+
+                oRetBoleto:FromJson(oRestBoleto:GetResult())
+
+                If (nStatus >= 200 .and. nStatus <= 299)
+                    
+                    If IsBlind() .and. Self:lConoutInt
+                        ConOut( "CancelBoleto -Integracao Boletos Bancos do Brasil" + CR + oRestBoleto:GetResult())
+                    ElseIf !IsBlind() .and. Self:lExibeMsgOk
+                        IdaMsg(oRestBoleto:GetResult(), "CancelBoleto -Integracao Boletos Bancos do Brasil")
+                    EndIf
+
+                Else
+                    
+                    ConOut( "CancelBoleto -ERRO - Integracao Boletos Bancos do Brasil" + CR + oRestBoleto:GetResult())
+
+                    If !IsBlind() .and. Self:lExibeMsgOk
+                        IdaMsg(oRestBoleto:GetResult(), "CancelBoleto -ERRO - Integracao Boletos Bancos do Brasil")
+                    EndIf
+
+                    lRet := .F.
+                EndIf
+
+            Else
+
+                cError := ""
+                nStatus := HTTPGetStatus(@cError)
+
+                oRetBoleto:FromJson('{"Erro": "' + cError + '"}')
+
+                ConOut( "CancelBoleto - ERRO - Integracao Boletos Bancos do Brasil" + CR + oRestBoleto:GetLastError())
+
+                If !IsBlind() .and. Self:lExibeMsgOk
+                    IdaMsg(oRestBoleto:GetLastError(), "CancelBoleto - ERRO - Integracao Boletos Bancos do Brasil")
+                EndIf
+
+                lRet := .F.
+
+            EndIf
+
+        EndIf
+
+    EndIf
+
+Return {lRet, oRetBoleto}
+
+
+/*/{Protheus.doc} ListBoletos
+@description Obtem lista de Boletos
+
+@author  Helitom Silva
+@since   21/07/2020
+@version 12.1.27
+
+@return lRet, Logico, Se obter autorização retorna Verdadeiro
+/*/
+Method ListBoletos(p_oListParam) Class INTBOLBB
+
+    Local lRet         := .T.
+    Local oListBoletos := JsonObject():New()
+	Local oRestList    := FWRest():New(Self:cURLCobr)
+	Local aHeader      := {}
+	Local cPostParam   := ''
+	Local cError	   := ""
+	Local nStatus      := 0
+	Local uParserJson  := ''
+
+	Default p_oListParam := Self:GetParamList()
+
+	If .not. ValType(Self:oToken) = 'J'
+
+        If IsBlind()
+            ConOut( "Falha ao transformar script json em objeto - ZHS_TOKEN." )
+        ElseIf Self:lExibeMsgOk
+            IdaMsg("Falha ao transformar script json em objeto - ZHS_TOKEN.", "ListBoletos - Integracao Boletos Bancos do Brasil")
+        EndIf
+
+        lRet := .F.
+
+	Else
+
+        If p_oListParam["indicadorSituacao"] <> ''
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'indicadorSituacao=' + cValToChar(p_oListParam["indicadorSituacao"])
+        EndIf
+
+        If p_oListParam["agenciaBeneficiario"] <> 0
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'agenciaBeneficiario=' + cValToChar(p_oListParam["agenciaBeneficiario"])
+        EndIf
+
+        If p_oListParam["contaBeneficiario"] <> 0
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'contaBeneficiario=' + cValToChar(p_oListParam["contaBeneficiario"])
+        EndIf
+
+        If p_oListParam["carteiraConvenio"] <> 0
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'carteiraConvenio=' + cValToChar(p_oListParam["carteiraConvenio"])
+        EndIf
+
+        If p_oListParam["variacaoCarteiraConvenio"] <> 0
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'variacaoCarteiraConvenio=' + cValToChar(p_oListParam["variacaoCarteiraConvenio"])
+        EndIf
+
+        If p_oListParam["modalidadeCobranca"] <> 0
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'modalidadeCobranca=' + cValToChar(p_oListParam["modalidadeCobranca"]) 
+        EndIf
+
+        If p_oListParam["cnpjPagador"] <> 0
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'cnpjPagador=' + cValToChar(p_oListParam["cnpjPagador"])
+        EndIf
+
+        If p_oListParam["digitoCNPJPagador"] <> 0
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'digitoCNPJPagador=' + cValToChar(p_oListParam["digitoCNPJPagador"])
+        EndIf
+
+        If p_oListParam["cpfPagador"] <> 0
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'cpfPagador=' + cValToChar(p_oListParam["cpfPagador"])
+        EndIf
+
+        If p_oListParam["digitoCPFPagador"] <> 0
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'digitoCPFPagador=' + cValToChar(p_oListParam["digitoCPFPagador"])
+        EndIf
+
+        If p_oListParam["dataInicioVencimento"] <> ''
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'dataInicioVencimento=' + p_oListParam["dataInicioVencimento"]
+        EndIf
+
+        If p_oListParam["dataFimVencimento"] <> ''
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'dataFimVencimento=' + p_oListParam["dataFimVencimento"]
+        EndIf
+
+        If p_oListParam["dataInicioRegistro"] <> ''
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'dataInicioRegistro=' + p_oListParam["dataInicioRegistro"]
+        EndIf
+
+        If p_oListParam["dataFimRegistro"] <> ''
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'dataFimRegistro=' + p_oListParam["dataFimRegistro"]
+        EndIf
+
+        If p_oListParam["dataInicioMovimento"] <> ''
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'dataInicioMovimento=' + p_oListParam["dataInicioMovimento"]
+        EndIf
+
+        If p_oListParam["dataFimMovimento"] <> ''
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'dataFimMovimento=' + p_oListParam["dataFimMovimento"]
+        EndIf
+
+        If p_oListParam["codigoEstadoTituloCobranca"] <> 0
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'codigoEstadoTituloCobranca=' + cValToChar(p_oListParam["codigoEstadoTituloCobranca"])
+        EndIf
+
+        If p_oListParam["boletoVencido"] <> ''
+            cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'boletoVencido=' + p_oListParam["boletoVencido"]
+        EndIf
+
+        cPostParam  += Iif(!Empty(cPostParam), '&', '') + 'indice=' + cValToChar(p_oListParam["indice"])
+
+        aAdd(aHeader, "Authorization: Bearer " + Self:oToken["access_token"] + "" )
+
+        oRestList:SetPath('/boletos?' + Iif(Self:lProducao, 'gw-dev-app-key', 'gw-app-key') + '=' + AllTrim(Self:oConfig:GetValue('ZHS_APPKEY')) + '&' + cPostParam)
+        oRestList:SetChkStatus(.F.)
+
+        If oRestList:Get(aHeader)
+
+            cError := ""
+            nStatus := HTTPGetStatus(@cError)
+
+            oListBoletos:FromJson(oRestList:GetResult())
+
+            If (nStatus >= 200 .and. nStatus <= 299)
+                
+                If IsBlind() .and. Self:lConoutInt
+                    ConOut( "ListBoletos - Integracao Boletos Bancos do Brasil" + CR + oRestList:GetResult())
+                ElseIf !IsBlind() .and. Self:lExibeMsgOk
+                    IdaMsg(oRestList:GetResult(), "ListBoletos - Integracao Boletos Bancos do Brasil")
+                EndIf
+
+            Else
+                
+                ConOut( "ListBoletos - ERRO - Integracao Boletos Bancos do Brasil" + CR + oRestList:GetResult())
+                
+                If !IsBlind() .and. Self:lExibeMsgOk
+                    IdaMsg(oRestList:GetResult(), "ListBoletos - ERRO - Integracao Boletos Bancos do Brasil")
+                EndIf
+                
+                lRet := .F.
+            EndIf
+
+        Else
+
+            cError := ""
+            nStatus := HTTPGetStatus(@cError)
+
+            oListBoletos:FromJson('{"Erro": "' + cError + '"}')
+
+            ConOut( "ListBoletos - ERRO - Integracao Boletos Bancos do Brasil" + CR + oRestList:GetLastError())
+            
+            If !IsBlind() .and. Self:lExibeMsgOk
+                IdaMsg(oRestList:GetLastError(), "ListBoletos - ERRO - Integracao Boletos Bancos do Brasil")
+            EndIf
+
+            lRet := .F.
+
+        EndIf
+
+	EndIf
+
+Return {lRet, oListBoletos}
+
+
+/*/{Protheus.doc} GetBoleto
+@description Obtem dados de UM Boleto
+
+@author  Helitom Silva
+@since   21/07/2020
+@version 12.1.27
+
+@return lRet, Logico, Se obter autorização retorna Verdadeiro
+/*/
+Method GetBoleto(p_cNossoNumTit, p_nNumConvenio) Class INTBOLBB
+
+    Local lRet         := .T.
+    Local oDetBoleto   := JsonObject():New()
+	Local oRestDetBol  := FWRest():New(Self:cURLCobr)
+	Local aHeader      := {}
+	Local cPostParam   := ''
+	Local cError	   := ''
+	Local nStatus      := 0
+	Local uParserJson  := ''
+
+	Default p_cNossoNumTit := ''
+	Default p_nNumConvenio := 0
+
+	If .not. ValType(Self:oToken) = 'J'
+
+        If IsBlind()
+            ConOut( "Falha ao transformar script json em objeto - ZHS_TOKEN." )
+        ElseIf Self:lExibeMsgOk
+            IdaMsg("Falha ao transformar script json em objeto - ZHS_TOKEN.", "ListBoletos - Integracao Boletos Bancos do Brasil")
+        EndIf
+
+        lRet := .F.
+    
+    Else
+
+        aAdd(aHeader, "Authorization: Bearer " + Self:oToken["access_token"] + "" )
+
+        oRestDetBol:SetPath('/boletos/' + AllTrim(p_cNossoNumTit) + '?' + Iif(Self:lProducao, 'gw-dev-app-key', 'gw-app-key') + '=' + AllTrim(Self:oConfig:GetValue('ZHS_APPKEY')) + '&numeroConvenio=' + cValToChar(p_nNumConvenio))
+        oRestDetBol:SetChkStatus(.F.)
+
+        If oRestDetBol:Get(aHeader)
+
+            cError := ""
+            nStatus := HTTPGetStatus(@cError)
+
+            oDetBoleto:FromJson(oRestDetBol:GetResult())
+
+            If (nStatus >= 200 .and. nStatus <= 299)
+                
+                If IsBlind() .and. Self:lConoutInt
+                    ConOut( "GetBoleto - Integracao Boletos Bancos do Brasil" + CR + oRestDetBol:GetResult())
+                ElseIf !IsBlind() .and. Self:lExibeMsgOk
+                    IdaMsg(oRestDetBol:GetResult(), "Integracao Boletos Bancos do Brasil")
+                EndIf
+
+            Else
+                
+                ConOut( "GetBoleto - ERRO - Integracao Boletos Bancos do Brasil" + CR + oRestDetBol:GetResult())
+                
+                If !IsBlind() .and. Self:lExibeMsgOk
+                    IdaMsg(oRestDetBol:GetResult(), "GetBoleto - ERRO - Integracao Boletos Bancos do Brasil")
+                EndIf
+                
+                lRet := .F.
+            EndIf
+
+        Else
+
+            cError := ""
+            nStatus := HTTPGetStatus(@cError)
+
+            oDetBoleto:FromJson('{"Erro": "' + cError + '"}')
+
+            ConOut( "GetBoleto - ERRO - Integracao Boletos Bancos do Brasil" + CR + oRestDetBol:GetLastError())
+            
+            If !IsBlind() .and. Self:lExibeMsgOk
+                IdaMsg(oRestDetBol:GetLastError(), "GetBoleto - ERRO - Integracao Boletos Bancos do Brasil")
+            EndIf
+            
+            lRet := .F.
+
+        EndIf
+    
+    EndIf
+
+Return {lRet, oDetBoleto}
+
+
+/*/{Protheus.doc} NewBoleto
+@description Método que obtem objeto para preencher os dados para geração do boleto
+
+@author  Helitom Silva
+@since   05/07/2020
+@version 12.1.27
+
+@return oRet, Objeto, Retorna um objeto da classe BolStruct
+/*/
+Method NewBoleto() Class INTBOLBB
+
+    Local oRet  := JsonObject():New()
+
+    oRet["numeroConvenio"] := 0 // "<float>"
+    oRet["numeroCarteira"] := 0 // "<float>"
+    oRet["numeroVariacaoCarteira"] := 0 // "<float>"
+    oRet["codigoModalidade"] := 0 // "<float>"
+    oRet["dataEmissao"] := '' // "<string>"
+    oRet["dataVencimento"] := '' // "<string>"
+    oRet["valorOriginal"] := 0 // "<float>"
+    oRet["valorAbatimento"] := 0 // "<float>"
+    oRet["quantidadeDiasProtesto"] := 0 // "<float>"
+    oRet["indicadorNumeroDiasLimiteRecebimento"] := '' // "<string>"
+    oRet["numeroDiasLimiteRecebimento"] := 0 // "<float>"
+    oRet["codigoAceite"] := '' // "<string>"
+    oRet["codigoTipoTitulo"] := 0 // "<float>"
+    oRet["descricaoTipoTitulo"] := '' // "<string>"
+    oRet["indicadorPermissaoRecebimentoParcial"] := '' // "<string>"
+    oRet["numeroTituloBeneficiario"] := '' // "<string>"
+    oRet["textoCampoUtilizacaoBeneficiario"] := '' // "<string>"
+    oRet["numeroTituloCliente"] := '' // "<string>"
+    oRet["textoMensagemBloquetoOcorrencia"] := '' // "<string>"
+
+	oRet["desconto"] := JsonObject():New()
+	oRet["desconto"]["tipo"] := 0 // "<float>"
+	oRet["desconto"]["dataExpiracao"] := '' // "<string>"
+	oRet["desconto"]["porcentagem"] := 0 // "<float>"
+	oRet["desconto"]["valor"] := 0 // "<float>"
+
+	oRet["segundoDesconto"] := JsonObject():New()
+	oRet["segundoDesconto"]["dataExpiracao"] := '' // "<string>"
+	oRet["segundoDesconto"]["porcentagem"] := 0 // "<float>"
+	oRet["segundoDesconto"]["valor"] := 0 // "<float>"
+
+	oRet["terceiroDesconto"] := JsonObject():New()
+	oRet["terceiroDesconto"]["dataExpiracao"] := '' // "<string>"
+	oRet["terceiroDesconto"]["porcentagem"] := 0 // "<float>"
+	oRet["terceiroDesconto"]["valor"] := 0 // "<float>"
+
+	oRet["jurosMora"] := JsonObject():New()
+	oRet["jurosMora"]["tipo"] := 0 // "<float>"
+	oRet["jurosMora"]["porcentagem"] := 0 // "<float>"
+	oRet["jurosMora"]["valor"] := 0 // "<float>"
+
+    oRet["multa"] := JsonObject():New()
+    oRet["multa"]["tipo"] := 0 // "<float>"
+    oRet["multa"]["data"] := '' // "<string>"
+    oRet["multa"]["porcentagem"] := 0 // "<float>"
+    oRet["multa"]["valor"] := 0 // "<float>"
+
+    oRet["pagador"] := JsonObject():New()
+    oRet["pagador"]["bairro"] := '' // "<string>"
+    oRet["pagador"]["cep"] := 0 // "<number>"
+    oRet["pagador"]["cidade"] := '' // "<string>"
+    oRet["pagador"]["endereco"] := '' // "<string>"
+    oRet["pagador"]["nome"] := '' // "<string>"
+    oRet["pagador"]["tipoRegistro"] := 0 // "<float>"
+    oRet["pagador"]["numeroRegistro"] := 0 // "<float>"
+    oRet["pagador"]["uf"] := '' // "<string>"
+    oRet["pagador"]["telefone"] := '' // "<string>"
+
+    oRet["avalista"] := JsonObject():New()
+    oRet["avalista"]["tipoRegistro"] := 0 // "<float>"
+    oRet["avalista"]["numeroRegistro"] := 0 // "<float>"
+    oRet["avalista"]["nomeRegistro"] := '' // "<string>"
+
+    oRet["email"] := '' // "<string>"
+    oRet["quantidadeDiasNegativacao"] := 0 // "<float>"
+
+Return oRet
+
+
+/*/{Protheus.doc} AlterBoleto
+@description Metodo que obtem objeto para preencher os dados para Alteração do boleto
+
+@author  Helitom Silva
+@since   08/08/2020
+@version 12.1.17
+/*/
+Method AlterBoleto() Class INTBOLBB
+
+    Local oRet  := JsonObject():New()
+
+    oRet["numeroConvenio"] := 0 //"<integer>"
+	oRet["indicadorAlterarAbatimento"] := '' //"<string>"
+    oRet["indicadorAlterarDataDesconto"] := '' //"<string>"
+    oRet["indicadorAlterarDesconto"] := '' //"<string>"
+    oRet["indicadorAlterarEnderecoPagador"] := '' //"<string>"
+    oRet["indicadorAlterarPrazoBoletoVencido"] := '' //"<string>"
+    oRet["indicadorAlterarSeuNumero"] := '' //"<string>"
+    oRet["indicadorAtribuirDesconto"] := '' //"<string>"
+    oRet["indicadorCancelarProtesto"] := '' //"<string>"
+    oRet["indicadorCobrarJuros"] := '' //"<string>"
+    oRet["indicadorCobrarMulta"] := '' //"<string>"
+    oRet["indicadorDispensarJuros"] := '' //"<string>"
+    oRet["indicadorDispensarMulta"] := '' //"<string>"
+    oRet["indicadorIncluirAbatimento"] := '' //"<string>"
+    oRet["indicadorNegativar"] := '' //"<string>"
+    oRet["indicadorNovaDataVencimento"] := '' //"<string>"
+    oRet["indicadorProtestar"] := '' //"<string>"
+    oRet["indicadorSustacaoProtesto"] := '' //"<string>"
+    
+    oRet["alteracaoData"] := JsonObject():New()  
+    oRet["alteracaoData"]["novaDataVencimento"] := '' //"<string>"
+    
+    oRet["desconto"] := JsonObject():New()
+    oRet["desconto"]["tipoPrimeiroDesconto"] := 0 //"<integer>"
+    oRet["desconto"]["valorPrimeiroDesconto"] := 0.00 //"<double>"
+    oRet["desconto"]["percentualPrimeiroDesconto"] := 0.00 //"<double>"
+    oRet["desconto"]["dataPrimeiroDesconto"] := '' //"<string>"
+    oRet["desconto"]["tipoSegundoDesconto"] := 0 //"<integer>"
+    oRet["desconto"]["valorSegundoDesconto"] := 0.00 //"<double>"
+    oRet["desconto"]["percentualSegundoDesconto"] := 0.00 //"<double>"
+    oRet["desconto"]["dataSegundoDesconto"] := '' //"<string>"
+    oRet["desconto"]["tipoTerceiroDesconto"] := 0 //"<integer>"
+    oRet["desconto"]["valorTerceiroDesconto"] := 0.00 //"<double>"
+    oRet["desconto"]["percentualTerceiroDesconto"] := 0.00 //"<double>"
+    oRet["desconto"]["dataTerceiroDesconto"] := '' //"<string>"
+    
+    oRet["alteracaoDesconto"] := JsonObject():New()
+    oRet["alteracaoDesconto"]["tipoPrimeiroDesconto"] := 0 //"<integer>"
+    oRet["alteracaoDesconto"]["novoValorPrimeiroDesconto"] := 0.00 //"<double>"
+    oRet["alteracaoDesconto"]["novoPercentualPrimeiroDesconto"] := 0.00 //"<double>"
+    oRet["alteracaoDesconto"]["novaDataLimitePrimeiroDesconto"] := '' //"<string>"
+    oRet["alteracaoDesconto"]["tipoSegundoDesconto"] := 0 //"<integer>"
+    oRet["alteracaoDesconto"]["novoValorSegundoDesconto"] := 0.00 //"<double>"
+    oRet["alteracaoDesconto"]["novoPercentualSegundoDesconto"] := 0.00 //"<double>"
+    oRet["alteracaoDesconto"]["novaDataLimiteSegundoDesconto"] := '' //"<string>"
+    oRet["alteracaoDesconto"]["tipoTerceiroDesconto"] := 0 //"<integer>"
+    oRet["alteracaoDesconto"]["novoValorTerceiroDesconto"] := 0.00 //"<double>"
+    oRet["alteracaoDesconto"]["novoPercentualTerceiroDesconto"] := 0.00 //"<double>"
+    oRet["alteracaoDesconto"]["novaDataLimiteTerceiroDesconto"] := '' //"<string>"
+    
+    oRet["alteracaoDataDesconto"] := JsonObject():New()
+    oRet["alteracaoDataDesconto"]["novaDataLimitePrimeiroDesconto"] := '' //"<string>"
+    oRet["alteracaoDataDesconto"]["novaDataLimiteSegundoDesconto"] := '' //"<string>"
+    oRet["alteracaoDataDesconto"]["novaDataLimiteTerceiroDesconto"] := '' //"<string>"
+
+    oRet["protesto"] := JsonObject():New()
+    oRet["protesto"]["quantidadeDiasProtesto"] := 0 //"<integer>"
+
+    oRet["abatimento"] := JsonObject():New()
+    oRet["abatimento"]["valorAbatimento"] := 0.00 //"<double>"
+
+    oRet["alteracaoAbatimento"] := JsonObject():New()
+    oRet["alteracaoAbatimento"]["novoValorAbatimento"] := 0.00 //"<double>"
+
+    oRet["juros"] := JsonObject():New()
+    oRet["juros"]["tipoJuros"]:= 0 //"<integer>"
+    oRet["juros"]["valorJuros"] := 0.00 //"<double>"
+    oRet["juros"]["taxaJuros"] := 0.00 //"<double>"
+
+    oRet["multa"] := JsonObject():New()
+    oRet["multa"]["tipoMulta"] := 0 //"<integer>"
+    oRet["multa"]["valorMulta"] := 0.00 //"<float>"
+    oRet["multa"]["dataInicioMulta"] := '' //"<string>"
+    oRet["multa"]["taxaMulta"] := 0.00 //"<float>"
+
+    oRet["negativacao"] := JsonObject():New()
+    oRet["negativacao"]["quantidadeDiasNegativacao"] := 0 //"<integer>"
+    oRet["negativacao"]["tipoNegativacao"] := 0 //"<integer>"
+    
+    oRet["alteracaoSeuNumero"] := JsonObject():New()
+    oRet["alteracaoSeuNumero"]["codigoSeuNumero"] := '' //"<string>"
+    
+    oRet["alteracaoEndereco"] := JsonObject():New()
+    oRet["alteracaoEndereco"]["enderecoPagador"] := '' //"<string>"
+    oRet["alteracaoEndereco"]["bairroPagador"] := '' //"<string>"
+    oRet["alteracaoEndereco"]["cidadePagador"] := '' //"<string>"
+    oRet["alteracaoEndereco"]["UFPagador"] := '' //"<string>"
+    oRet["alteracaoEndereco"]["CEPPagador"] := 0 //"<integer>"
+
+    oRet["alteracaoPrazo"] := JsonObject():New()
+    oRet["alteracaoPrazo"]["quantidadeDiasAceite"] := 0 //"<integer>"
+	
+Return oRet
+
+
+/*/{Protheus.doc} GetParamList
+@description Obtem lista de parametros para solicitar lista de boletos
+
+@author  Helitom Silva
+@since   09/08/2020
+@version 12.1.27
+
+@return lRet, Logico, Se obter autorização retorna Verdadeiro
+/*/
+Method GetParamList() Class INTBOLBB
+
+    Local oRet  := JsonObject():New()
+
+    oRet["indicadorSituacao"] := '' //'<string>'
+    oRet["agenciaBeneficiario"] := 0 //'<integer>'
+    oRet["contaBeneficiario"] := 0 //'<long>'
+    oRet["carteiraConvenio"] := 0 //'<integer>'
+    oRet["variacaoCarteiraConvenio"] := 0 //'<integer>'
+    oRet["modalidadeCobranca"] := 0 //'<integer>'
+    oRet["cnpjPagador"] := 0 //'<long>'
+    oRet["digitoCNPJPagador"] := 0 //'<integer>'
+    oRet["cpfPagador"] := 0 //'<long>'
+    oRet["digitoCPFPagador"] := 0 //'<integer>'
+    oRet["dataInicioVencimento"] := '' //'<string>'
+    oRet["dataFimVencimento"] := '' //'<string>'
+    oRet["dataInicioRegistro"] := '' //'<string>'
+    oRet["dataFimRegistro"] := '' //'<string>'
+    oRet["dataInicioMovimento"] := '' //'<string>'
+    oRet["dataFimMovimento"] := '' //'<string>'
+    oRet["codigoEstadoTituloCobranca"] := 0 //'<integer>'
+    oRet["boletoVencido"] := '' //'<string>'
+    oRet["indice"] := 0 //'<long>'
+
+Return oRet

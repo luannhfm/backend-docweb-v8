@@ -1,0 +1,181 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} SF0221X
+@author Newton Silva - J2A Consultoria
+@since 07/12/2016
+@version 1.0
+@description Necessidade de Estornar uma rotina mesmo que tenha sido Aprovada
+/*/
+User Function SF0221X(_pNSC)
+	Local aAreaSC1		:= {}
+	Local lRet 		:= .T.
+	Local cUser 	:= cUserName
+	Local _aItem 	:= {}
+	Local _nW 		:= 0
+	Local aAreaSAJ	:= {}
+	Local cSolic	:= GetMv("MV_XGPOTR")
+	Local lPertGrp 	:= .F. //Pertence ao mesmo grupo do criador da SC
+	Local _aItemUs 	:= {}
+	Local _nY 		:= 0
+	
+	If SC1->C1_XSTTR != "A"
+		MsgStop("O Estorno da Analise do TR somente poder ser feito para TR já Aprovada!")
+		lRet := .F.
+	ElseIf ! Empty(SC1->C1_COTACAO)
+		MsgStop("Já foi gerado cotação para essa solicitação de compra. Para estornar a Analise do TR, será necessario excluir a cotação gerada.")
+		lRet := .F.
+	ElseIf SC1->C1_XSTTR == "A" .And. Empty(SC1->C1_COTACAO)
+	
+		//Valida Permisao de Usuario no Grupo de compradores 
+		If ! Empty(cSolic)
+			DbSelectArea("SAJ")                       
+			DbSetOrder(1)
+			If (MsSeek(xFilial("SAJ")+cSolic))
+				aAreaSAJ	:= SAJ->(GetArea())
+				While !SAJ->(EOF()) .AND. SAJ->AJ_GRCOM == cSolic
+					Aadd(_aItemUs,{SAJ->AJ_ITEM})
+					SAJ->(dbSkip())
+				EndDo
+				
+				RestArea(aAreaSAJ)
+				For _nY:= 1 to Len(_aItemUs)
+					If __cUserID == SAJ->AJ_USER
+						lPertGrp := .T.
+						Exit
+					Endif
+					SAJ->(dbSkip())
+				Next _nY
+				
+				IF !lPertGrp 
+					Alert('Usuario não tem permissão de Estorno!')
+					lRet := .f.
+					Return .f.
+				Endif
+				
+			Else
+				Alert('Não encontrado')
+				lRet := .f.
+				Return .f.
+			EndIf
+		Else
+			Alert('Parâmetro vazio ou filial diferente da parametrizada.')
+			lRet := .f.
+			Return .f.
+		EndIf
+
+		//Necessidade futura: Caso haja alterações na SC, a mesma deve mudar o Status para ser analisada, quando for Bloqueada, ou Analisada novamente.
+		if lRet 
+			If MsgYesNo("Confirma o Estorno da Analise do TR","Confirma Estorno")
+				//Tela para que seja informado a justificativa de Estorno
+				JustEst(SC1->C1_NUM)
+			Endif
+		Endif
+	Endif
+Return lRet
+/*/{Protheus.doc} AprvTR
+@author Newton Silva - J2A Consultoria
+@since 22/11/2016
+@version 1.0
+@description Aprova Anexo TR
+/*/
+Static Function JustEst(_pNSC)
+	Local _lRet := .T.
+	Local _oDlg
+	Local _oGet
+	Local _cCont := ''
+	Local _cTREst := ''
+	Local _cJust   := ''
+	
+	dbSelectarea('SC1')
+	SC1->(dbSetOrder(1))
+	If SC1->(dbSeek(xFilial('SC1')+_pNSC))
+		dbSelectarea('ZF6')
+		ZF6->(dbSetOrder(2))//Num+Sttr]
+		If ZF6->(dbSeek(xfilial('ZF6')+_pNSC+"E"))
+			While !ZF6->(eof()) .and. xfilial('ZF6') == ZF6->ZF6_FILIAL .AND. ZF6->ZF6_NUMSC == _pNSC .AND. ZF6->ZF6_STTR == "E"
+				_cJust := ZF6->ZF6_JUST
+				ZF6->(dbSkip())
+			Enddo 
+			_cTREst := _cJust
+		Endif
+		//+-------------+
+		//|	Monta Tela	|
+		//+-------------+
+		DEFINE DIALOG _oDlg FROM 0,0 TO 250,400 TITLE "Justificativa de Estorno" OF oMainWnd PIXEL
+		
+		@ 002,002 GROUP TO 022,200 LABEL "" OF _oDlg PIXEL
+		
+		@ 004,004 Say "Número da SC : "+ SubsTR(_pNSC,1,80) SIZE 197,008 OF _oDlg PIXEL //COLOR CLR_HBLUE
+		
+		@ 014,004 Say "Descreva a Justificativa de Estorno " SIZE 197,008 OF _oDlg PIXEL //COLOR CLR_HBLUE
+		
+		@ 024,004 Get _oGet Var _cTREst SIZE 198,062 MEMO OF _oDlg PIXEL
+		
+		@ 108,103 BUTTON "Confirmar" SIZE 030,013 PIXEL OF _oDlg ACTION ( iif(VldcEst(_pNSC,_cTREst),_oDlg:End(),_lRet := .f.) )
+		@ 108,136 BUTTON "Sair" SIZE 030,013 PIXEL OF _oDlg ACTION ( _oDlg:End(),_lRet := .f. )
+		
+		//_oGet:lReadOnly := .T. //Habilita apenas Visualizacao
+		
+		ACTIVATE MSDIALOG _oDlg 
+	
+	Else
+		Alert('Registro nao encontrado')
+	Endif
+
+Return _lRet
+
+Static Function VldcEst(_pNSC,_cTREst)
+	Local lRet := .f.
+	If !empty(_cTREst)
+		VldEstTR(_pNSC,_cTREst)
+		lRet := .t.
+	Else
+		Alert('Conteúdo da Justificativa não pode ser vazio! Favor preencher')
+	Endif
+Return lRet
+
+Static Function VldEstTR(_pNSC,_pTREst)
+	Local lRet := .t.
+	Local _nW := 0
+	Local aAreaSC1 := {}
+	Local _aItem := {}
+	Local cUser := cUserName
+	
+	SC1->(dbgotop())
+	SC1->(dbSetOrder(1))
+	SC1->(dbSeek(xFilial('SC1')+_pNSC))	
+	aAreaSC1	:= SC1->(GetArea())
+	//TR em Analise
+	While !SC1->(EOF()) .and. xFilial('SC1') == SC1->C1_FILIAL .and. SC1->C1_NUM == _pNSC
+		Aadd(_aItem,{SC1->C1_ITEM})
+		SC1->(dbSkip())
+	Enddo
+	
+	RestArea(aAreaSC1)
+	For _nW:= 1 to Len(_aItem)
+		If Reclock("SC1",.f.)
+			SC1->C1_XSTTR := 'N'
+			SC1->(MsUnLock())
+		EndIf
+		SC1->(dbSkip())
+	Next _nW
+	Msginfo("A Analise do TR foi Estornada! Disponivel para Analise!")
+	//Registra Estorno do TR
+	DbSelectArea("ZF6")
+	ZF6->(dbSetorder(1))
+	If RecLock("ZF6",.T.)
+		ZF6->ZF6_FILIAL := xFilial('ZF6')
+		ZF6->ZF6_NUMSC 	:= _pNSC
+		ZF6->ZF6_CODIGO := _pNSC
+		ZF6->ZF6_PROCES := Padr("Estorno TR",25)//06/12/2016 10:52 - (19)//SubStr(_cTst,19,10)
+		ZF6->ZF6_DATA 	:= Date()
+		ZF6->ZF6_HORA 	:= Time()
+		ZF6->ZF6_USUARI := cUser
+		ZF6->ZF6_STTR 	:= 'E'
+		ZF6->ZF6_JUST	:= _pTREst
+		ZF6->(MsUnLock())
+	Endif
+	//Estorno
+	U_SF0219X(_pNSC,"E",_pTREst,cUser)
+Return
+

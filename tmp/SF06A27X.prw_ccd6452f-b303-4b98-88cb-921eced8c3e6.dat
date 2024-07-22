@@ -1,0 +1,239 @@
+#Include 'Protheus.ch'
+#Include 'Topconn.ch'
+#Include 'Tbiconn.ch'
+
+/*/{Protheus.doc} SF06A27X
+Funcao responsavel por realizar manutenção de Item Contábil 2018 para 2019.
+
+@type 		User Function
+@author 	Walmir Junior
+@since 		19/03/2019
+@version 	1.0
+@return 	Nil, Nulo
+/*/
+User Function SF06A27X()
+	
+Local _aArea	:= GetArea()
+
+Private _aEstrut	:= {}
+Private _cArqTxt	:= Space(50)
+
+_cArqTxt := U_SFXX01J('Alteracao CNW_ITEMCT - Item de Cronograma Contábil (CNW)','Arquivos csv (*.csv) |*.csv|')
+
+//Abre o Arquivo
+nHdl    := fOpen(_cArqTxt,68)
+
+If nHdl == -1
+	MsgAlert("O arquivo de nome "+_cArqTxt+" nao pode ser aberto! Verifique os parametros.","Atencao!")
+	Return
+Endif
+
+Processa({ |lEnd| _aEstrut := CNWCSV(_cArqTxt) },"LENDO ARQUIVO CSV DE ITENS DE CRONOGRAMA")
+Processa({ |lEnd| _lRet := IMPCNW(_aEstrut) }	,"ATUALIZANDO REGISTROS")
+
+RestArea( _aArea )
+	
+Return
+
+/** {Protheus.doc} IMPCNW
+Funcao que realiza a atualização do Item Contábil
+
+@author: 	Walmir Junior
+@since: 	19/03/2019
+@Uso: 		SFIEMT
+*/
+Static Function IMPCNW()
+	
+Local _lRet := .F.
+Local _nContador := 0
+
+Local _cFilCNW	
+Local _cCtrCNW		
+Local _cRevCNW
+Local _cNumCNW
+Local _cParCNW	
+
+Local _cQuery
+
+Private _lNFnd	:= .T.
+
+For i := 2 To Len(_aEstrut)
+	
+	//CNW_FILIAL
+	_cFilCNW := PADR(AllTrim(_aEstrut[i][2]),TAMSX3("CNW_FILIAL")[1])
+	
+	//CNW_CONTRA
+	_cCtrCNW := PADR(AllTrim(_aEstrut[i][1]),TAMSX3("CNW_CONTRA")[1])
+	
+	//CNW_REVISA
+	_cRevCNW := PADR(AllTrim(_aEstrut[i][3]),TAMSX3("CNW_REVISA")[1])
+	
+	//CNW_NUMERO
+	_cNumCNW := PADR(AllTrim(_aEstrut[i][4]),TAMSX3("CNW_NUMERO")[1])
+	
+	//CNW_PARCEL
+	_cParCNW := PADR(AllTrim(_aEstrut[i][5]),TAMSX3("CNW_PARCEL")[1])
+	
+	//CNW_ITEMCT
+	_cItmCNW := PADR(AllTrim(_aEstrut[i][12]),TAMSX3("CNW_ITEMCT")[1])
+	
+	//Msg de Alerta - Teste de Desenvolvimento
+	//_cMsg := _cFilCNW + ' / ' + _cCtrCNW + ' / ' + _cRevCNW +  ' / ' + _cNumCNW + ' / ' + _cParCNW + ' --->>> ' + _cItmCNW
+
+	//Monta select de validação.
+	_cQuery := " SELECT CNW.* FROM " 
+	_cQuery += " " + RetSqlName("CN9") + " CN9 INNER JOIN " 
+	_cQuery += " " + RetSqlName("CNW") + " CNW ON CNW.D_E_L_E_T_ = ' ' AND CN9_FILIAL = CNW_FILIAL AND CN9_NUMERO = CNW_CONTRA AND CN9_REVISA = CNW_REVISA "
+	_cQuery += " WHERE "
+	_cQuery += " 	CNW_FILIAL LIKE '03MT%' AND " 
+	_cQuery += " CNW_ITEMCT LIKE '18%' AND "
+	_cQuery += " CNW_CLVL LIKE 'CF%' AND "
+	_cQuery += " CNW_FLGAPR = '2' AND "
+	_cQuery += " CNW_HIST LIKE '%2019%' AND "
+	_cQuery += " CN9.D_E_L_E_T_ = ' ' AND "
+	_cQuery += " (CN9_SITUAC != '01' OR (CN9_SITUAC = '01' AND CN9_DTULST >= '20190301')) AND "
+	_cQuery += " CN9_FILIAL = '"+_cFilCNW+"' AND CN9_NUMERO = '"+_cCtrCNW+"' AND "
+	_cQuery += " CN9_REVISA = '"+_cRevCNW+"' AND CNW_NUMERO = '"+_cNumCNW+"' AND CNW_PARCEL = '"+_cParCNW+"' "
+	_cQuery += " ORDER BY CNW_COMPET "
+	
+	//Executa query
+	_cQuery := ChangeQuery(_cQuery)
+	MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+	dbUseArea( .T., 'TOPCONN', TcGenQry( ,, _cQuery ), "TRBXNW", .F., .T. )
+	
+	//Se o registro é válido para alteração.
+	If 	TRBXNW->(!Eof()) .And. !Empty(_cFilCNW) /*.And. SubStr(AllTrim(_aEstrut[i][4]),1,1) == 'N'*/
+		DbSelectArea("CNW")
+		CNW->(DbSetOrder(1))
+		CNW->(DbGoTop())
+		
+		If CNW->( DbSeek( _cFilCNW + _cCtrCNW + _cRevCNW + _cNumCNW + _cParCNW) )
+			If RecLock('CNW',.F.)
+				CNW->CNW_ITEMCT := _cItmCNW
+			EndIf
+			CNW->( MsUnLock() )
+			_nContador++			
+		ElseIf _lNFnd
+			
+			If Aviso("ATENÇÃO!", "",{"Ok", "Ignora Não Encontrado"}) == 2
+				_lNFnd := .F.
+			EndIf
+		EndIf		
+		CNW->( DbCloseArea() )
+	EndIf
+	 
+	If Select("TRBXNW") > 0
+		TRBXNW->(dbCloseArea())
+	EndIf
+Next
+
+If _nContador > 0
+	MsgAlert(cValToChar(_nContador) + ' registros foram atualizados.')
+Else
+	MsgAlert('Nenhum registro foi atualizado.')
+EndIf
+
+Return
+
+/** {Protheus.doc} CNWCSV
+Funcao que realiza a Leitura do arquivo CSV
+
+@param: 	cArquivo, Caminho do arquivo que sera lido
+@author: 	Walmir Junior
+@since: 	19/03/2019
+@Uso: 		SFIEMT
+*/
+Static Function CNWCSV(cArquivo)
+	
+	Local cBuffer     := ""
+	Local cAux        := ""
+	Local cString     := ""
+	Local cSeparador  := ""  //Verifica o tipo de separador do arquivo texto
+	Local aTmp        := {}
+	Local aEstrutura  := {}
+	Local nCont       := 0
+	Local cEof        := Chr(10)+ Chr(13)
+	Local nRec        := 0
+	Local lAspa       := .F.
+
+	//Leitura da quantidade de Registros do Arquivo
+	FT_FUSE(cArquivo)
+	FT_FGOTOP()
+	
+	While !FT_FEOF()
+		nRec++
+		FT_FSKIP()
+	End
+
+	ProcRegua(nRec)
+
+	//Leitura do arquivo e verificacao do ultimo caracter da linha lida para consistencia da pesquisa
+	FT_FGOTOP()
+
+	While !FT_FEOF()
+	
+		cBuffer:= AllTrim(FT_FREADLN())
+	
+		If At(";",cBuffer) > 0
+			cSeparador:= ";" 
+		Else //linha de arquivo incorreta.
+			IncProc()
+			FT_FSKIP()
+			Loop
+		Endif
+	
+		If (SubStr(cBuffer,Len(cBuffer),1)<>cSeparador)
+			cBuffer += cSeparador + cEof + cSeparador
+		Else
+			cBuffer += cEof + cSeparador
+		Endif
+	
+		//Incrementa a regua
+		IncProc()
+	
+		//Carrega o array aEstrutura com o resultado da Importacao
+		cLinha:= fTAcento(cBuffer)
+		lAspa := .F.
+
+		For nCont := 1 To Len(cBuffer)
+		
+			cAux   := SubStr(cLinha,1,1)
+			cLinha := SubStr(cLinha,2)
+			
+			If (cAux == cEof)
+				Exit
+			Endif
+		
+			//Sao verificadas as marcacoes feitas pelo Excel para concatenacao de strings
+			Do Case
+			
+				Case cAux == '"'
+					lAspa := !lAspa
+					
+				Case cAux == cSeparador .And. !lAspa
+					aAdd(aTmp,cString)
+					cString := ""
+					
+				OtherWise
+					cString += cAux
+					
+			EndCase
+		
+		Next nCont
+	
+		For nCont := Len(aTmp)+1 To 9
+			aAdd(aTmp,"")
+		Next nCont
+	
+		//Validacao para nao salvar registros sem entidades
+		If !Empty(aTmp[1]) .OR. !Empty(aTmp[2])
+			aAdd(aEstrutura,aTmp)
+			aTmp := {}
+		Endif
+		
+		FT_FSKIP()
+	End
+
+	FT_FUSE()
+
+Return( aEstrutura )

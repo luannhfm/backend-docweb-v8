@@ -1,0 +1,208 @@
+#INCLUDE 'TOTVS.CH'
+#INCLUDE 'RestFul.ch'
+
+/*/{Protheus.doc} SF06W01X
+    @description
+    @type User Function
+    @author Rafael Karczevski
+    @since 22/08/2019
+    @version 51.0
+    /*/
+User Function SF06W01X()	
+Return
+
+WSRESTFUL CONTPAGAR DESCRIPTION "Serviço REST operações do contas a pagar"
+
+    WSDATA RECEIVE As String //Json Recebido no corpo da requição
+    WSDATA PREFIXO As String
+    WSDATA FILIAL  As String
+    WSDATA NUM     As String
+    WSDATA TIPO    As String
+    WSDATA PARCELA As String
+    WSDATA FORNECE As String
+    WSDATA LOJA    As String
+    
+    WSMETHOD POST 	DESCRIPTION "Inclui novo titulo no contas a pagar" 	WSSYNTAX ""
+    WSMETHOD GET  	DESCRIPTION "Retorna informações sobre um titulo" 	WSSYNTAX "CONTPAGAR/{PREFIXO}{NUM}{PARCELA}{FORNECE}{LOJA}"
+
+END WSRESTFUL
+
+/*/{Protheus.doc} GET
+    @description Retorna informações de um titulo.
+    @type WebService Method
+    @author Rafael Karczevski
+    @since 05/12/2019
+    @version 1.0
+/*/
+WSMETHOD GET WSSERVICE CONTPAGAR
+
+    Local cPrefix    := Self:PREFIXO
+    Local cNum       := Self:NUM
+    Local cParcel    := Self:PARCELA
+    Local cFornec    := Self:FORNECE
+    Local cLoja      := Self:LOJA
+    Local aArea 	 := GetArea()
+    Local cNextAlias := GetNextAlias()
+    Local cJSON		 := ""
+    Local oTitulo    := JsonObject():New()
+    Local lRet		 := .T.
+    Local nStart     := Seconds()
+    Local cMsg
+    Local aSE2Stru
+    Local cSql := ""
+    Local cCompJSON  := ""
+
+    dbSelectArea("SE2")
+    aSE2Stru := SE2->(DBStruct())
+    SE2->(DbCloseArea())
+
+    For nX:= 1 to Len(aSE2Stru)
+        If nX == 1
+            cSql += aSE2Stru[nX][1] + CRLF
+        Else
+            cSql += "," + aSE2Stru[nX][1] + CRLF
+        EndIf
+    Next
+    cSql := "%" + cSql + "%"
+    
+    cMsg := "[WS CONTPAGAR] Soliticou dados do titulo " + cFilAnt + "/" + cPrefix + "/" + cNum
+    FwLogMsg("INFO", /*cTransactionId*/, "REST", FunName(), "", "01", cMsg, 0, (nStart - Seconds()), {})
+    ::SetContentType("application/json")
+    BeginSQL Alias cNextAlias
+        SELECT 
+            %Exp:cSql%
+        FROM %Table:SE2% SE2
+        WHERE SE2.%notdel%
+            AND SE2.E2_FILIAL   = %Exp:xFilial("SE2")%
+            AND SE2.E2_NUM      = %Exp:cNum%
+            AND SE2.E2_PREFIXO  = %Exp:cPrefix%
+            AND SE2.E2_PARCELA  = %Exp:cParcel%
+            AND SE2.E2_FORNECE  = %Exp:cFornec%
+            AND SE2.E2_LOJA     = %Exp:cLoja%
+    EndSQL
+    (cNextAlias)->( DbGoTop() )
+    If (cNextAlias)->( !Eof() )
+
+      /*For nX:= 1 to Len(aSE2Stru)
+            If !Empty((cNextAlias)->(&(aSE2Stru[nX][1])))
+                oTitulo[aSE2Stru[nX][1]] := (cNextAlias)->(&(aSE2Stru[nX][1]))
+            EndIf
+        Next*/
+        
+        cJSON := '{' + CRLF + ;
+                 '    "errorCode": 204,' + CRLF;
+               + '    "errorMessage": "' + "O título foi encontrado." + '"' + CRLF;
+               + '}'
+
+      //cJSON := FWJsonSerialize(oTitulo, .T., .T.,,.F.)
+        Self:SetResponse(cJSON)
+            
+    Else
+        SetRestFault(400, "Erro ao encontrar o título")
+        lRet := .F.
+    EndIf
+
+    (cNextAlias)->(DbCloseArea())
+    RestArea(aArea)
+
+Return(lRet)
+
+/*/{Protheus.doc} POST
+    @description Efetua a inclusão de um novo titulo a receber.
+    @type WebService Method
+    @author Rafael Karczevski
+    @since 05/12/2019
+    @version 1.0
+/*/
+WSMETHOD POST WSRECEIVE RECEIVE WSSERVICE CONTPAGAR
+
+    Local cJSON 	 := ::GetContent() // Pega a string do JSON 
+    Local oParseJSON := Nil 
+    Local aDadosTit	 := {} //--> Array para ExecAuto do MATA030
+    Local cJsonRet   := ""
+    Local cArqLog	 := ""
+    Local cErro		 := ""
+    Local lRet		 := .T.
+    Local aArea		 := GetArea()
+    Local aSE2Stru   := {}
+    Local _cValue    := ""
+    Private lMsErroAuto := .F.
+
+    ::SetContentType("application/json")
+    // --> Deserializa a string JSON
+    FWJsonDeserialize(cJson, @oParseJSON)
+    QQOUT( "[CONTPAGAR/POST]" + dToC(Date()) + " - " + Time() + " Iniciou a inclusão de titulos." )
+    SE2->( DbSetOrder(1) )
+    aSE2Stru := SE2->(DBStruct())
+
+    Do Case
+        Case !(AttIsMemberOf(oParseJSON, "E2_PREFIXO"   ))
+            lCont := .F.
+        Case !(AttIsMemberOf(oParseJSON, "E2_NUM"       ))
+            lCont := .F.
+        Case !(AttIsMemberOf(oParseJSON, "E2_PARCELA"   ))
+            lCont := .F.
+        Case !(AttIsMemberOf(oParseJSON, "E2_TIPO"      ))
+            lCont := .F.
+        Case !(AttIsMemberOf(oParseJSON, "E2_FORNECE"   ))
+            lCont := .F.
+        Case !(AttIsMemberOf(oParseJSON, "E2_LOJA"      ))
+            lCont := .F.
+        OtherWise
+            lCont := .T.
+    EndCase
+    
+    If lCont
+        If !(SE2->( DbSeek( xFilial("SE2") + oParseJSON:E2_PREFIXO + oParseJSON:E2_NUM + oParseJSON:E2_PARCELA + oParseJSON:E2_TIPO + oParseJSON:E2_FORNECE + oParseJSON:E2_LOJA ) ))
+
+            aAdd(aDadosTit, {"E2_FILIAL"    , xFilial("SE2")        , Nil})
+            For nX:= 1 to Len(aSE2Stru)
+                If AttIsMemberOf(oParseJSON, aSE2Stru[nX][1] ) .and. aSE2Stru[nX][1] <> "E2_FILIAL"
+                    If ValType( "oParseJSON:" + aSE2Stru[nX][1]) <> "U"
+                    	If aSE2Stru[nX][2] == 'D'
+                    		_cValue := &("oParseJSON:" + aSE2Stru[nX][1])
+                    		_cValue := STOD(_cValue)
+                    	ElseIf aSE2Stru[nX][2] == 'N'
+                    		_cValue := &("oParseJSON:" + aSE2Stru[nX][1])
+                    		_cValue := Val(StrTran(_cValue, ',', '.'))
+                    	Else
+                    		_cValue := &("oParseJSON:" + aSE2Stru[nX][1])
+                    		_cValue := PadR(_cValue, aSE2Stru[nX][3])
+                        EndIf
+                        aAdd(aDadosTit, {aSE2Stru[nX][1], _cValue, Nil})
+                    EndIf
+                EndIf
+            Next
+            
+            QQOUT( "[CONTPAGAR/POST]" + dToC(Date()) + " - " + Time() + " Inicio ExecAuto." )
+            MSExecAuto({|x,y| FINA050(x,y)}, aDadosTit, 3)
+            QQOUT( "[CONTPAGAR/POST]" + dToC(Date()) + " - " + Time() + " Fim ExecAuto." )
+            If lMsErroAuto
+                If Empty(cErro)
+                    cErro := MostraErro("z", "z")
+                Else
+                    cErro := TrataErro(cErro) // --> Trata o erro para devolver para o client.
+                EndIf
+                SetRestFault(400, cErro)
+                lRet := .F. 
+                QQOUT( "[CONTPAGAR/POST]" + dToC(Date()) + " - " + Time() + " Erro na Inclusão." )				
+            Else
+                cJSONRet := '{' + CRLF + '    "errorCode": 204,' + CRLF;
+                            + '    "errorMessage": "' + "Titulo incluido com sucesso" + '"' + CRLF;
+                            +'}'
+                
+                QQOUT( "[CONTPAGAR/POST]" + dToC(Date()) + " - " + Time() + " Incluido com sucesso." + oParseJSON:E2_PREFIXO + " / " + oParseJSON:E2_NUM )	
+                ::SetResponse( cJSONRet )				
+            EndIf		 
+        Else
+            SetRestFault(400, "Titulo ja existente: " + SE2->E2_NUM + " - " + SE2->E2_PREFIXO)
+            lRet := .F. 	 
+        EndIf
+    Else         
+        SetRestFault(400, "Informe a Chave primaria no conteudo da requisição: E2_FILIAL, E2_PREFIXO, E2_NUM, E2_PARCELA, E2_TIPO, E2_FORNECE, E2_LOJA")
+        lRet := .F. 
+    EndIf
+
+    RestArea(aArea)
+
+Return(lRet)

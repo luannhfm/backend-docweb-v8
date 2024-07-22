@@ -1,0 +1,503 @@
+#Include "Protheus.ch"
+
+#define OPERATION_INSERT 3
+#define OPERATION_UPDATE 4
+
+/*/{Protheus.doc} SF73S01F
+Processo para integrar com o sócio indústria
+@type function
+@author Franklin de Brito de Oliveira
+@since 05/04/2021
+/*/
+User function SF73S01F()
+	
+    Local lSaveLog := .F.
+    Local lEnd  := .F.
+
+    oGrid := FWGridProcess():New( ;
+        "SF73A03F",;                            //Nome da rotina de menu de processamento
+        "Integração Sócio Indústria",;          //Titulo da rotina de menu
+        "Rotina para enviar ou receber dados de clientes do Programa Sócio Indústria",;		//Descrição completa da rotina
+        { |oGrid, lEnd| DoTask(oGrid, @lEnd)},; //Bloco de código de processamento. O bloco recebe a variavel que informa que a rotina foi cancelada
+        "SF73A03F",;							//Nome do grupo de perguntas do dicionário de dados
+        Nil,;									//Nome da função que será executada caso o processamento permita processamento em grid
+        lSaveLog;								//Indica se permite a gravação de Log sempre que chamar o método SaveLog()
+    )
+    
+	oGrid:SetMeters(1)
+	oGrid:Activate()
+	
+Return Nil
+
+/*/{Protheus.doc} DoTask
+bloco de código do processamento
+@type function
+@author Franklin de Brito de Oliveira
+@since 05/04/2021
+@param oGrid, object, objeto de processamento
+/*/
+Static Function DoTask(oGrid, lEnd)
+
+	//MV_PAR01 == 1: Envia clientes para o Sócio Indústria
+	If MV_PAR01 == 1
+		fEnvCliSoIn()
+	Else
+	//MV_PAR01 == 2: Recebe clientes do Sócio Indústria
+		fRecCliSoIn()
+	EndIf
+
+Return Nil
+
+/*/{Protheus.doc} fRecCliSoIn
+Envia clientes para o  sócio indústria.
+@type  Function
+@author Franklin de Brito de Oliveira
+@since 29/03/2021
+/*/
+Static Function fEnvCliSoIn()
+
+	local cAliasTmp	:= GetNextAlias()
+	local nTotal	:= 0
+	local nRecAtu	:= 0
+
+	//Seleciono registros pendentes de envio para a plataforma do Sócio Indústria
+	BeginSql Alias cAliasTmp
+		SELECT
+			ZDM.R_E_C_N_O_ RECZDM
+		FROM %Table:ZDM% ZDM
+    	INNER JOIN %Table:ZDN%   ZDN ON ZDN.%notDel%
+        	AND ZDN.ZDN_FILIAL = ZDM.ZDM_FILIAL
+            AND ZDN.ZDN_CODIGO = ZDM.ZDM_DEPARA
+    	INNER JOIN ZDK010 ZDK ON ZDK.%notDel%
+            AND ZDK.ZDK_FILIAL = ZDM.ZDM_FILIAL
+            AND ZDK.ZDK_CODIGO = ZDM.ZDM_CODINT
+		WHERE
+    		ZDM.%notDel%
+			AND ZDK.ZDK_INTEGR = 'SOCIOINDUSTRIA'
+			AND ( 
+				ZDM_STATUS = '0'		//"Aguardando execução"
+				OR (
+					ZDM_STATUS = '3'		//Falhou
+					AND ZDM_TENTAT <= 3
+				)
+			)
+	EndSql
+	MemoWrite("C:\temp\" + FunName() + "_" + ProcName() + ".txt", GetLastQuery()[2])
+	If !(cAliasTmp)->( EoF() )
+		DbSelectArea("ZDM")
+		Count To nTotal
+    	(cAliasTmp)->( DbGoTop() )
+		oGrid:SetMaxMeter(nTotal, 1, "Identificando registros que serão integrados")
+		While !(cAliasTmp)->( EoF() )
+			nRecAtu++
+			ZDM->( DbGoTo( (cAliasTmp)->RECZDM ) )
+			U_SF73A04F()
+			oGrid:SetIncMeter(1, "Processando registro " + StrZero( nRecAtu, 4) + " de " + StrZero( nTotal, 4) +  ".")
+			(cAliasTmp)->( DbSkip() )
+		End
+		ZDM->( DbCloseArea() )
+	EndIf
+	(cAliasTmp)->( DbCloseArea() )
+
+Return Nil
+
+/*/{Protheus.doc} fRecCliSoIn
+Recebe clientes do sócio indústria.
+@type  Function
+@author Franklin de Brito de Oliveira
+@since 29/03/2021
+/*/
+Static Function fRecCliSoIn()
+	local aItens	:= {}
+	local aItem		:= {}
+	local aNames	:= {}
+	local nItens	:= 0
+	local nName 	:= 0
+	Local oIntSoIn, oJsonRet
+	oIntSoIn := SF73A03F():New()
+	If oIntSoIn:Autentica()
+		if oIntSoIn:GetCliente(Nil, MV_PAR02, MV_PAR03)
+			oJsonRet := JsonObject():New()
+			cRet := oJsonRet:fromJson(oIntSoIn:cResult)
+			If cRet == Nil
+				if aScan(oJsonRet:GetNames(), "error") > 0 //a API do sócio indústria retornou um erro
+					Help( NIL, ;	//Mantido por compatibilidade, não utilizar
+						NIL, ;	//Mantido por compatibilidade, não utilizar
+						"Erro", ;	//Código do Help no sigahlp, caso não for informado, deve-se informar o cMensagem
+						NIL, ;	//Caso informado, substitui o cCampo(Usado para o cMensagem)
+						"Erro: " + oJsonRet["error"]["name"] + ", Mensagem: " + oJsonRet["error"]["message"], ;	//Mensagem apresentada pelo help quando o código não é informado
+						1, ;	//Linha inicial para apresentar a mensagem
+						0, ;	//Coluna inicial para apresentar a mensagem
+						NIL, ;	//Mantido por compatibilidade, não utilizar
+						NIL, ;	//Mantido por compatibilidade, não utilizar
+						NIL, ;	//Mantido por compatibilidade, não utilizar
+						NIL, ;	//Mantido por compatibilidade, não utilizar
+						NIL, ;	//Indica se deve gravar log da mensagem de Help
+						{"Verifique os parâmetros de execução da rotina."};	//Array simples com mensagem de solução para o Help
+					)
+				else	//a API do sócio indústria retornou dados
+					aItens := oJsonRet["data"]["resultado"]
+					for nItens := 1 To Len(aItens)
+						aItem := {}
+						aNames	:= aItens[nItens]:GetNames()
+						for nName := 1 To Len(aNames)
+							aAdd(aItem, { aNames[nName], aItens[nItens][aNames[nName]] })
+						next nName
+						fVldCNPJ(aItem)
+					next nItens
+				endif
+			else
+				Help( NIL, ;	//Mantido por compatibilidade, não utilizar
+						NIL, ;	//Mantido por compatibilidade, não utilizar
+						"Erro na conversão", ;	//Código do Help no sigahlp, caso não for informado, deve-se informar o cMensagem
+						NIL, ;	//Caso informado, substitui o cCampo(Usado para o cMensagem)
+						"Erro ao transformar o retorno da API em um objeto JSON: " + cRet, ;	//Mensagem apresentada pelo help quando o código não é informado
+						1, ;	//Linha inicial para apresentar a mensagem
+						0, ;	//Coluna inicial para apresentar a mensagem
+						NIL, ;	//Mantido por compatibilidade, não utilizar
+						NIL, ;	//Mantido por compatibilidade, não utilizar
+						NIL, ;	//Mantido por compatibilidade, não utilizar
+						NIL, ;	//Mantido por compatibilidade, não utilizar
+						NIL, ;	//Indica se deve gravar log da mensagem de Help
+						{"Entre em contato com o administrador do sistema."};	//Array simples com mensagem de solução para o Help
+					)
+			EndIf
+		Else
+			Conout("Retorno Negativo GetCliente")
+		endif
+	Else
+		Conout("Retorno Negativo Autentica")
+	EndIf
+Return Nil
+
+/*/{Protheus.doc} fVldCNPJ
+Função para validar o CNPJ
+@type function
+@author Franklin de Brito de Oliveira
+@since 05/04/2021
+@param aItem, array, dados resgatados do sócio indústria
+/*/
+static function fVldCNPJ(aItem)
+	local aArea		:= GetArea()
+	local cCNPJ		:= ""
+	local nPosCNPJ	:= aScan( aItem, {|x| AllTrim(x[1]) == "cnpj"} )
+	cCNPJ := aItem[nPosCNPJ][2]
+	DbSelectArea("SA1")
+	DbSetOrder(3)	//A1_FILIAL+A1_CGC
+	//Verifico se existe o CNPJ no cadastro de cliente
+	if SA1->( DbSeek( xFilial("SA1") + cCNPJ ) )
+		//Chave unica da tabela SA1: A1_FILIAL+A1_COD+A1_LOJA
+		fAtuSA1(aItem, {SA1->A1_FILIAL, SA1->A1_COD, SA1->A1_LOJA, SA1->A1_CGC})
+	else
+		DbSelectArea("SUS")
+		DbSetOrder(4)	//US_FILIAL+US_CGC
+		//Verifico se existe o CNPJ no cadastro de prospect
+		if SUS->( DbSeek( xFilial("SUS") + cCNPJ ) )
+			//Chave unica da tabela SUS: US_FILIAL+US_COD+US_LOJA
+			fAtuSUS(aItem, {SUS->US_FILIAL, SUS->US_COD, SUS->US_LOJA, SUS->US_CGC})
+		else
+			DbSelectArea("ACH")
+			DbSetOrder(2)	//ACH_FILIAL+ACH_CGC
+			//Verifico se existe o CNPJ no cadastro de suspect
+			if ACH->( DbSeek( xFilial("ACH") + cCNPJ ) )
+				//Chave unica da tabela ACH: ACH_FILIAL+ACH_CODIGO+ACH_LOJA
+				fAtuACH(aItem, {ACH->ACH_FILIAL, ACH->ACH_CODIGO,  ACH->ACH_LOJA, ACH->ACH_CGC})
+			Else	//Incluo um suspect
+				fIncACH(aItem)
+			endif
+		endif
+	endif
+	RestArea(aArea)
+return Nil
+
+/*/{Protheus.doc} fAtuSA1
+	função para atualizar o cadastro de cliente
+	@type  Function
+	@author Franklin de Brito de Oliveira
+	@since 29/03/2021
+	@param aDados, Array, dados passados pela API do sócio indústria
+	@param aChave, array, chave do registro na SA1
+	@return logical, indica se foi possível atualizar o cliente
+/*/
+Static Function fAtuSA1(aDados, aChave)
+	local aSA1Auto	:= {}
+	local cCodSin	:= ""
+	local cCodEnq	:= ""
+	local cAssSin	:= ""
+	local lRet		:= .T.
+	local nPosCoSi	:= aScan( aDados, {|x| AllTrim(x[1]) == "codigoLegadoSindicato"} )
+	local nPosFaMe	:= aScan( aDados, {|x| AllTrim(x[1]) == "faturamentoMedio"} )
+	local nPosAsSi	:= aScan( aDados, {|x| AllTrim(x[1]) == "associadoAoSindicato"} )
+
+	private lMsErroAuto := .F.
+	private lAutoErrNoFile := .T.
+
+	cCodSin := Posicione( "ZCA", 4, xFilial("CC2") +  Upper( aDados[nPosCoSi][2] ), "ZCA_CODIGO" ) //ZCA_FILIAL+ZCA_CODSIG
+
+	cCodEnq := fGetEnquadr( Val(aDados[nPosFaMe][2])/100 )
+
+	cAssSin := IIF(Empty(aDados[nPosAsSi][2]), "N", "S")	//ACH_XASSSI - S=Sim;N=Nao
+
+	aAdd( aSA1Auto, {"A1_FILIAL"	, aChave[1]	, Nil} )
+	aAdd( aSA1Auto, {"A1_COD"		, aChave[2]	, Nil} )
+	aAdd( aSA1Auto, {"A1_LOJA"		, aChave[3]	, Nil} )
+    aAdd( aSA1Auto,	{"A1_XFATEST"	, cCodEnq   , Nil} )
+    aAdd( aSA1Auto,	{"A1_XCODSIN"	, cCodSin   , Nil} )
+	aAdd( aSA1Auto, {"A1_XASSSIN"	, cAssSin	, Nil} )
+
+    MSExecAuto({|a,b| CRMA980(a,b)}, aSA1Auto, OPERATION_UPDATE)
+      
+    If lMsErroAuto
+		fRecordErro(GetAutoGRLog(), aChave[4])
+        lRet := lMsErroAuto
+    Else
+        Conout("Cliente alterado com sucesso!")
+    EndIf
+Return lRet
+/*/{Protheus.doc} fAtuSUS
+função para atualizar o cadastro de prospect
+@type function
+@author Franklin de Brito de Oliveira
+@since 05/04/2021
+@param aDados, array, dados passados pela API do sócio indústria
+@param aChave, array, chave do registro na SUS
+@return logical, indica se foi possível atualizar o prospect
+/*/
+Static Function fAtuSUS(aDados, aChave)
+	local aSUSAuto	:= {}
+	local cCodSin	:= ""
+	local cCodEnq	:= ""
+	local cAssSin	:= ""
+	local lRet		:= .T.
+	local nPosCoSi	:= aScan( aDados, {|x| AllTrim(x[1]) == "codigoLegadoSindicato"} )
+	local nPosFaMe	:= aScan( aDados, {|x| AllTrim(x[1]) == "faturamentoMedio"} )
+	local nPosAsSi	:= aScan( aDados, {|x| AllTrim(x[1]) == "associadoAoSindicato"} )
+
+	private lMsErroAuto := .F.
+	private lAutoErrNoFile := .T.
+
+	cCodSin := Posicione( "ZCA", 4, xFilial("CC2") +  Upper( aDados[nPosCoSi][2] ), "ZCA_CODIGO" ) //ZCA_FILIAL+ZCA_CODSIG
+
+	cCodEnq := fGetEnquadr( Val(aDados[nPosFaMe][2])/100 )
+
+	cAssSin := IIF(Empty(aDados[nPosAsSi][2]), "N", "S")	//ACH_XASSSI - S=Sim;N=Nao
+
+	aAdd( aSUSAuto, {"US_FILIAL"	, aChave[1]	, Nil} )
+	aAdd( aSUSAuto, {"US_COD"		, aChave[2]	, Nil} )
+	aAdd( aSUSAuto, {"US_LOJA"		, aChave[3]	, Nil} )
+	aAdd( aSUSAuto, {"US_XFATEST"	, cCodEnq	, Nil} )
+    aAdd( aSUSAuto, {"US_XCODSIN"	, cCodSin	, Nil} )
+	aAdd( aSUSAuto, {"US_XASSSIN"	, cAssSin	, Nil} )
+     
+    MSExecAuto({|a,b| TMKA260(a,b)}, aSUSAuto, OPERATION_UPDATE)
+      
+    If lMsErroAuto
+		fRecordErro(GetAutoGRLog(), aChave[4])
+        lRet := lMsErroAuto
+    Else
+        Conout("Prospect alterado com sucesso!")
+    EndIf
+Return lRet
+
+/*/{Protheus.doc} fAtuACH
+Função para atualizar o suspect 
+@type function
+@author Franklin de Brito de Oliveira
+@since 05/04/2021
+@param aDados, array, dados passados pela API do sócio indústria
+@param aChave, array, chave do registro na ACH
+@return logical, indica se foi possível atualizar o suspect
+/*/
+Static Function fAtuACH(aDados, aChave)
+	local aACHAuto	:= {}
+	local cCodSin	:= ""
+	local cCodEnq	:= ""
+	local cAssSin	:= ""
+	local lRet		:= .T.
+	local nPosCoSi	:= aScan( aDados, {|x| AllTrim(x[1]) == "codigoLegadoSindicato"} )
+	local nPosFaMe	:= aScan( aDados, {|x| AllTrim(x[1]) == "faturamentoMedio"} )
+	local nPosAsSi	:= aScan( aDados, {|x| AllTrim(x[1]) == "associadoAoSindicato"} )
+
+	private lMsErroAuto := .F.
+	private lAutoErrNoFile := .T.
+
+	cCodSin := Posicione( "ZCA", 4, xFilial("CC2") +  Upper( aDados[nPosCoSi][2] ), "ZCA_CODIGO" ) //ZCA_FILIAL+ZCA_CODSIG
+
+	cCodEnq := fGetEnquadr( Val(aDados[nPosFaMe][2])/100 )
+
+	cAssSin := IIF(Empty(aDados[nPosAsSi][2]), "N", "S")	//ACH_XASSSI - S=Sim;N=Nao
+	
+	aAdd( aACHAuto, {"ACH_FILIAL"	, aChave[1]	, Nil} )
+	aAdd( aACHAuto, {"ACH_CODIGO"	, aChave[2]	, Nil} )
+	aAdd( aACHAuto, {"ACH_LOJA"		, aChave[3]	, Nil} )
+    aAdd( aACHAuto, {"ACH_XFATES"	, cCodEnq	, Nil} )
+    aAdd( aACHAuto, {"ACH_XCODSI"	, cCodSin	, Nil} )
+	aAdd( aACHAuto, {"ACH_XASSSI"	, cAssSin	, Nil} )
+
+    MSExecAuto({|a,b| TMKA341(a,b)}, aACHAuto, OPERATION_UPDATE)
+      
+    If lMsErroAuto  
+        fRecordErro(GetAutoGRLog(), aChave[4])
+		lRet := lMsErroAuto
+    Else
+        Conout("Suspect alterado com sucesso!")
+    EndIf
+Return lRet
+
+/*/{Protheus.doc} fIncACH
+função para incluir um novo suspect no Protheus com dados do Sócio Indústria.
+@type function
+@author Franklin de Brito de Oliveira
+@since 05/04/2021
+@param aDados, array, dados do Sócio Indústria
+@return logical, indica se foi possível incluir novo Suspect
+/*/
+static function fIncACH(aDados)
+	local aACHAuto	:= {}
+	local cTpPessoa	:= ""
+	local cCodMun	:= ""
+	local cCodSin	:= ""
+	local cCodEnq	:= ""
+	local cAssSin	:= ""
+	local lRet		:= .T.
+	local nPosCNPJ	:= aScan( aDados, {|x| AllTrim(x[1]) == "cnpj"} )
+	local nPosRaSo	:= aScan( aDados, {|x| AllTrim(x[1]) == "razaoSocial"} )
+	local nPosNoCo	:= aScan( aDados, {|x| AllTrim(x[1]) == "nomeComercial"} )
+	local nPosFaMe	:= aScan( aDados, {|x| AllTrim(x[1]) == "faturamentoMedio"} )
+	local nPosMuni	:= aScan( aDados, {|x| AllTrim(x[1]) == "municipio"} )
+	local nPosUF	:= aScan( aDados, {|x| AllTrim(x[1]) == "uf"} )
+	local nPosCEP	:= aScan( aDados, {|x| AllTrim(x[1]) == "cep"} )
+	local nPosCoSi	:= aScan( aDados, {|x| AllTrim(x[1]) == "codigoLegadoSindicato"} )
+	local nPosAsSi	:= aScan( aDados, {|x| AllTrim(x[1]) == "associadoAoSindicato"} )
+
+	private lMsErroAuto := .F.
+	private lAutoErrNoFile := .T.
+	
+	if Left(aDados[nPosCNPJ][2], 2) == ' '
+		cTpPessoa := ' '
+	elseif Len( Trim( aDados[nPosCNPJ][2] )) < 14
+		cTpPessoa := 'F'
+	else
+		cTpPessoa := 'J'
+	endif
+
+	//Utilizo o DbSelectArea para restaurar a ordem 1
+	DbSelectArea("CC2")
+	CC2->(DbSetOrder(2) )		//CC2_FILIAL+CC2_MUN
+	CC2->(DbSeek(xFilial("CC2") + Upper( NoAcento(aDados[nPosMuni][2]) )) )
+	cCodMun := CC2->CC2_CODMUN
+	CC2->(DbSetOrder(1) )
+	
+	cCodSin := Posicione( "ZCA", 4, xFilial("CC2") +  Upper( aDados[nPosCoSi][2] ), "ZCA_CODIGO" ) //ZCA_FILIAL+ZCA_CODSIG
+
+	cCodEnq := fGetEnquadr( Val(aDados[nPosFaMe][2])/100 )
+
+	cAssSin := IIF(Empty(aDados[nPosAsSi][2]), "N", "S")	//ACH_XASSSI - S=Sim;N=Nao
+
+	aAdd( aACHAuto, {"ACH_FILIAL"	, xFilial("ACH")				, Nil} )
+	aAdd( aACHAuto, {"ACH_PESSOA"	, cTpPessoa						, Nil} )
+	aAdd( aACHAuto, {"ACH_RAZAO"	, AllTrim(aDados[nPosRaSo][2])	, Nil} )
+	aAdd( aACHAuto, {"ACH_NFANT"	, AllTrim(aDados[nPosNoCo][2])	, Nil} )
+	aAdd( aACHAuto, {"ACH_CGC"		, AllTrim(aDados[nPosCNPJ][2])	, Nil} )
+	aAdd( aACHAuto, {"ACH_EST"		, AllTrim(aDados[nPosUF][2])	, Nil} )
+	aAdd( aACHAuto, {"ACH_CEP"		, AllTrim(aDados[nPosCEP][2])	, Nil} )
+	aAdd( aACHAuto, {"ACH_CODMUN"	, cCodMun						, Nil} )
+	aAdd( aACHAuto, {"ACH_XFATES"	, cCodEnq						, Nil} )
+    aAdd( aACHAuto, {"ACH_XCODSI"	, cCodSin						, Nil} )
+    aAdd( aACHAuto, {"ACH_XASSSI"	, cAssSin						, Nil} )
+
+    MSExecAuto( {|a,b| TMKA341(a,b)}, aACHAuto, OPERATION_INSERT )
+      
+    If lMsErroAuto  
+        fRecordErro(GetAutoGRLog(), AllTrim(aDados[nPosCNPJ][2]))
+		lRet := lMsErroAuto
+	else
+		Conout("Cliente alterado com sucesso!")
+    EndIf
+return lRet
+
+/*/{Protheus.doc} fGetEnquadr
+	Função para buscar a faixa de enquadramento na tabela genérica Z2 de acordo com o faturamento médio informado.
+	@type Function
+	@author Franklin de Brito de Oliveira
+	@since 12/04/2021
+	@param nFatMed, numeric, valor do faturamento médio.
+	@return character, valor da faixa na tabela genérica Z2 de acordo com o faturamento médio informado.
+	/*/
+Static Function fGetEnquadr(nFatMed)
+	do case
+		case nFatMed <= 81000
+			cVlrZ2 := "01"
+		case nFatMed <= 81000.01 .Or. nFatMed <= 360000.00
+			cVlrZ2 := "02"
+		case nFatMed <= 360000.01 .Or. nFatMed <= 1500000.00
+			cVlrZ2 := "03"
+		case nFatMed <= 1500000.01 .Or. nFatMed <= 4800000.00
+			cVlrZ2 := "04"
+		case nFatMed <= 4800000.01 .Or. nFatMed <= 10000000.00
+			cVlrZ2 := "05"
+		case nFatMed <= 10000000.01 .Or. nFatMed <= 30000000.00
+			cVlrZ2 := "06"
+		case nFatMed <= 30000000.01 .Or. nFatMed <= 100000000.00
+			cVlrZ2 := "07"
+		case nFatMed <= 100000000.01 .Or. nFatMed <= 300000000.00
+			cVlrZ2 := "08"
+		case nFatMed <= 300000000.01 .Or. nFatMed <= 500000000.00
+			cVlrZ2 := "09"
+		case nFatMed <= 500000000.01 .Or. nFatMed <= 1000000000.00
+			cVlrZ2 := "10"
+		otherwise
+			cVlrZ2 := "11"
+	endcase
+Return cVlrZ2
+
+/*/{Protheus.doc} fRecordErro
+Grava o erro gerado durante a execução da rotina automática na variável cErrorsMessage
+@type  Function
+@author Franklin de Brito de Oliveira
+@since 20/05/2021
+@param aAutoError, array, array com os erros que foram gerados durante a execução da rotina automática
+@param cCGC, character, CGC que ocorreu erro na integração
+/*/
+Static Function fRecordErro(aAutoError, cCGC)
+local cPatch := "\log\sf73s01f\"
+local cFile := ""
+local cCurrentTextError := ""
+local nCurrLineLog := 0
+
+default cCGC := "em_branco_" + DtoS(date()) + "_" + StrTran(Time(), ":", "_")
+
+	for nCurrLineLog := 1 To Len(aAutoError)
+		cCurrentTextError += aAutoError[nCurrLineLog] + CRLF
+	next nCurrLineLog
+	cFile := cCGC + ".log"
+	MemoWrite(cPatch+cFile, cCurrentTextError)
+
+Return nil
+
+
+/*/{Protheus.doc} Scheddef
+Responsável por adequar a rotina corretamente ao schedule.
+@type function
+@author Franklin de Brito de Oliveira
+@since 05/04/2021
+@return array, aReturn[1] - Tipo: "P" - para Processo, "R" -  para Relatórios
+	aReturn[2] - Nome do Pergunte  
+	aReturn[3] - Alias  (para Relatório)
+	aReturn[4] - Array de ordem  (para Relatório)
+	aReturn[5] - Título (para Relatório)
+/*/
+Static Function Scheddef()
+
+	Local aParam
+	Local aOrd     := {}
+
+	aParam := {;
+        "P",;           //Tipo R para relatorio P para processo
+        "SF73A03F",;    // Pergunte do relatorio, caso nao use passar ParamDef
+        "SA1",;         // Alias
+        aOrd,;          //Array de ordens
+        "Integração Socio Industria";
+	}
+
+Return aParam

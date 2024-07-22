@@ -1,0 +1,299 @@
+#Include "Totvs.ch"
+
+
+User Function SF06C01X()
+
+Local cEstat := U_SFGN001A(ProcName(0), "SIGAFAT")
+Local oButtonFe
+Local oButtonOk
+Local oCli
+Local oLj     
+Local oGetCli 
+Local oGetLj  
+Local nX       := 0
+Local aFields  := {"E1_FILIAL","E1_PREFIXO","E1_NUM","E1_PARCELA","E1_CLIENTE","E1_LOJA", "E1_EMISSAO", "E1_VENCREA", "E1_VALOR","E1_SALDO","E1_XSPC","E1_XSPCDT","E1_XCOBJ","XCOBJDT"}
+
+Local _aAreaAmb := GetArea()
+
+Private oTels
+Private oMsg
+Private oMsg2
+Private _aHeader  := {}
+Private aCols     := {}
+Private _aTelsTmp := {}  
+Private cCliente  := Space(9)  
+Private cLoja     := Space(4) 
+Private cNomeClie := Space(100)  
+Private cMsg      := Space(50)  
+Private cMsgSPC   := Space(60)
+Private _lMsgSPC  := .F.
+
+Private cMsgCbJ   := Space(50) // Mensagem Cobrança Judicial
+Private _lMsgCbj  := .F. 
+
+Private _cFiliais := ""   
+
+//Set Key VK_F2 To // Desativa a tecla F2 - acionamento duplo
+
+DbSelectArea("SX3")
+SX3->(DbSetOrder(2))
+For nX := 1 to Len(aFields)
+ If SX3->(DbSeek(aFields[nX]))
+  Aadd(_aHeader, { AllTrim(X3Titulo()),SX3->X3_CAMPO,SX3->X3_PICTURE,SX3->X3_TAMANHO,SX3->X3_DECIMAL,SX3->X3_VALID,;
+      SX3->X3_USADO,SX3->X3_TIPO,SX3->X3_ARQUIVO,SX3->X3_CONTEXT,SX3->X3_RELACAO})
+ Endif
+Next nX
+
+GeraAcols()
+ 
+DEFINE MSDIALOG oDlgParc TITLE "Títulos em Aberto" FROM 000, 000  TO 390, 755 COLORS 0, 16777215 PIXEL
+ 
+ @ 015, 011 SAY oCli PROMPT "Cliente:" SIZE 035, 007 OF oDlgParc COLORS 0, 16777215 PIXEL
+ @ 013, 046 MSGET oGetCli VAR cCliente  SIZE 020, 010 OF oDlgParc PICTURE "@!" VALID IIf( Empty(cCliente) , .T. ,ExistCpo("SA1",cCliente)) COLORS 0, 16777215 F3 "SA1" PIXEL
+ @ 015, 095 SAY oLj PROMPT "Loja:" SIZE 035, 007 OF oDlgParc COLORS 0, 16777215 PIXEL
+ @ 013, 110 MSGET oGetLj  VAR cLoja     SIZE 020, 010 OF oDlgParc PICTURE "@!" VALID IIf( !Empty(cCliente) .and. !Empty(cLoja) , GetCliente() , .T. ) COLORS 0, 16777215 PIXEL
+ @ 015, 150 SAY oNome PROMPT cNomeClie SIZE 150, 018 OF oDlgParc PICTURE "@!" COLORS 0, 16777215 PIXEL
+ 
+ @ 015, 280 SAY oMsg2 PROMPT cMsgSPC SIZE 250, 020 OF oDlgParc PICTURE "@!" COLORS CLR_RED PIXEL
+ 
+ oMSNewGe1 := MsNewGetDados():New( 029, 007, 144, 369, 0, "AllwaysTrue", "AllwaysTrue", "", "",, 999, "AllwaysTrue", "", "AllwaysTrue", oDlgParc, _aHeader, aCols)
+
+ @ 150, 200 SAY oMsg PROMPT cMsg SIZE 150, 020 OF oDlgParc PICTURE "@!" COLORS CLR_BLUE PIXEL
+ 
+ FGetList()
+ 
+ @ 175, 247 BUTTON oButtonOk PROMPT "Consultar" SIZE 037, 012 OF oDlgParc ACTION (LoadTit(), nOpc := 1) PIXEL
+ //@ 175, 289 BUTTON oButtonFe PROMPT "Fechar"  SIZE 037, 012 OF oDlgParc ACTION (oDlgParc:End(), SetKey(VK_F2,{|| U_GetTit(),.f.,.f.}) , nOpc := 2) PIXEL
+ @ 175, 289 BUTTON oButtonFe PROMPT "Fechar"  SIZE 037, 012 OF oDlgParc ACTION (oDlgParc:End(), SetKey(VK_F2,{|| U_SF06C01X(),.f.,.f.}) , nOpc := 2) PIXEL
+
+ 
+ACTIVATE MSDIALOG oDlgParc CENTERED
+ 
+///////////////////////////////////////////////////////////////////////////////// 
+
+Static Function LoadTit() 
+
+Local cEstat := U_SFGN001A(ProcName(0), "SIGAFAT")
+Local cAliasTMP := GetNextAlias()                      
+
+_lMsgSPC := .F.
+_lMsgCbj := .F.
+
+//Valida Informações da Consulta
+If Alltrim(cCliente) == "" .OR. Alltrim(cLoja) == ""
+	MsgAlert("Informações do Cliente/Loja precisam estar preenchidas!")	
+	Return
+Endif                                        
+
+//Carrega os títulos em aberto do cliente selecionado
+// Query dos Titulos em Aberto
+cQuery :=  "SELECT * "
+cQuery +=  "FROM "+RetSqlName("SE1")
+cQuery +=  " WHERE "
+cQuery +=  "E1_VENCREA        <  '" + DtoS(ddatabase)+"' AND "  
+cQuery +=  "E1_CLIENTE        >= '"+cCliente        +"' AND E1_CLIENTE <= '"+cCliente+"' AND "
+cQuery +=  "E1_LOJA           >= '"+cLoja           +"' AND E1_LOJA    <= '"+cLoja+"' AND "
+cQuery +=  "E1_SALDO > 0 AND "
+cQuery +=  "D_E_L_E_T_ = '' "
+cQuery := ChangeQuery(cQuery)
+
+If Select(cAliasTMP) > 0
+	dbSelectArea(cAliasTMP)
+	dbCloseArea()
+Endif
+
+dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTMP,.T.,.F.)
+
+DbSelectArea(cAliasTMP)
+dbGotop()
+
+If !Eof(cAliasTMP)
+
+	aCols := {}  
+	_cFiliais := ""
+
+	While !Eof(cAliasTMP) 
+	
+		If !(cAliasTMP)->E1_FILIAL $ _cFiliais
+			_cFiliais += (cAliasTMP)->E1_FILIAL + " | "
+		Endif
+		
+		Aadd(aCols, {	(cAliasTMP)->E1_FILIAL,;
+						(cAliasTMP)->E1_PREFIXO,;
+						(cAliasTMP)->E1_NUM,;
+						(cAliasTMP)->E1_PARCELA,;
+						(cAliasTMP)->E1_CLIENTE,;	
+						(cAliasTMP)->E1_LOJA,;
+						STOD((cAliasTMP)->E1_EMISSAO),;
+						STOD((cAliasTMP)->E1_VENCREA),; 
+						(cAliasTMP)->E1_VALOR,;
+						(cAliasTMP)->E1_SALDO,;
+						IIF(AllTrim((cAliasTMP)->E1_XSPC)=='S','SIM',' '),;
+						STOD(((cAliasTMP)->E1_XSPCDT),.F.),;
+						IIF(AllTrim((cAliasTMP)->E1_XCOBJ)== 'S','SIM',' '),;
+						STOD((cAliasTMP)->E1_XCOBJDT),.F.})
+		
+		If !_lMsgSPC
+			_lMsgSPC := IIF(AllTrim((cAliasTMP)->E1_XSPC)=='S',.T.,.F.)
+		EndIf
+		
+		If !_lMsgCbj
+			_lMsgCbj := IIF(AllTrim((cAliasTMP)->E1_XCOBJ)== 'S',.T.,.F.)
+		EndIf
+				
+		(cAliasTMP)->(DbSkip())
+	EndDo
+	
+	(cAliasTMP)->(dbCloseArea())  
+	
+	If _lMsgSPC .AND. _lMsgCbj
+		cMsgSPC := "Pendentes Cob. Judicial e SPC/SERASA"
+	   
+	ElseIf _lMsgSPC
+		cMsgSPC := "Cliente SPC/SERASA"
+	
+	ElseIf _lMsgCbj
+		cMsgSPC := "Pendente Cobrança Judicial"
+	
+	EndIf
+	
+	LoadTela()  
+
+Else
+	
+	GeraAcols()
+	LimpaDados()
+	MsgAlert("Não existem Títulos em aberto para o cliente selecionado!")	
+Endif
+ 
+oMSNewGe1:aCols := aClone(aCols)
+oMSNewGe1:oBrowse:Refresh(.T.)
+ 
+Return(.T.)
+
+/////////////////////////////////////////////////////////////////////////////////         
+
+Static Function GetCliente() 
+
+Local cEstat := U_SFGN001A(ProcName(0), "SIGAFAT")
+Local _lret := .T.
+
+If !ExistCpo("SA1",cCliente+cLoja)
+	_lret := .F.
+Else
+	DBSelectArea("SA1")
+	DbsetOrder(1) //
+	Dbseek(xFilial("SA1")+cCliente+cLoja)
+	cNomeClie := SA1->A1_NOME
+Endif
+                          
+oNome:Refresh()
+
+Return
+
+/////////////////////////////////////////////////////////////////////////////////    
+
+Static Function LoadTela() 
+
+Local cEstat := U_SFGN001A(ProcName(0), "SIGAFAT")
+Local _lret := .T.
+
+Local _nRegSM0  := SM0->(Recno())
+Local _cEmpAnt  := SM0->M0_CODIGO
+Local _cFilAnt  := SM0->M0_CODFIL
+Local _nTamTels := 0
+Local _i        := 0
+
+_aTelsTmp := {}
+
+SM0->(dbGoTop())
+While SM0->(!Eof())
+	If Alltrim(SM0->M0_CODFIL) $ _cFiliais 
+		AADD(_aTelsTmp,{SM0->M0_CODFIL, SM0->M0_FILIAL, SM0->M0_TEL})
+	Endif
+	SM0->(dbSkip(1))
+Enddo
+SM0->(dbGoTo(_nRegSM0))
+
+_nTamTels := Len(_aTelsTmp)
+
+If _nTamTels == 1 
+	cMsg := "Entrar em contato com a Filial ao lado para acerto de Pendências!" + CHR(13) + CHR(10)
+Else
+	cMsg := "Entrar em contato com as " + Strzero(_nTamTels,2) + " Filiais ao lado para acerto de Pendências!" + CHR(13) + CHR(10)
+Endif  
+
+oTels:SetArray(_aTelsTmp)
+oTels:bLine := {|| {;
+       _aTelsTmp[oTels:nAt][1],;
+       _aTelsTmp[oTels:nAt][2],; 
+       _aTelsTmp[oTels:nAt][3];
+     }}
+                          
+oTels:Refresh()
+oMsg:Refresh()
+oMsg2:Refresh()
+
+Return
+
+/////////////////////////////////////////////////////////////////////////////////        
+
+Static Function FGetList()
+
+Local cEstat := U_SFGN001A(ProcName(0), "SIGAFAT")
+
+aAdd(_aTelsTmp,{"", "", "", ""})
+
+@ 145, 007 LISTBOX oTels Fields,;
+     HEADER          "Filial",;
+     						"Nome Filial",; 
+     						"Telefone"; 
+     SIZE 190, 050 OF oDlgParc PIXEL ColSizes 50,50    
+     /*Largura*//*Altura*/
+     oTels:SetArray(_aTelsTmp)
+     oTels:bLine := {|| {;
+       _aTelsTmp[oTels:nAt][1],;
+       _aTelsTmp[oTels:nAt][2],;
+       _aTelsTmp[oTels:nAt][3];
+     }}
+
+Return Nil 
+/////////////////////////////////////////////////////////////////////////////////      
+Static Function GeraAcols()
+
+Local cEstat := U_SFGN001A(ProcName(0), "SIGAFAT")
+Local nX     := 0
+
+aCols := Array(1,Len(_aHeader) + 1)
+aCols[1,Len(_aHeader) + 1] := .F.
+
+For nX := 1 to Len(_aHeader)
+  aCols[1,nX] :=  CriaVar(_aHeader[nX,2],.T.)
+Next nX
+
+Return                                                                                 
+/////////////////////////////////////////////////////////////////////////////////                        
+Static Function LimpaDados()
+
+Local cEstat := U_SFGN001A(ProcName(0), "SIGAFAT")
+
+_aTelsTmp := {}                                                                    
+cMsg      := Space(50) 
+cMsgSPC   := Space(50)
+cMsgCbj   := Space(50)
+
+aAdd(_aTelsTmp,{"", "", "", ""})
+
+oTels:SetArray(_aTelsTmp)
+oTels:bLine := {|| {;
+       _aTelsTmp[oTels:nAt][1],;
+       _aTelsTmp[oTels:nAt][2],;
+       _aTelsTmp[oTels:nAt][3];
+     }}
+                          
+oTels:Refresh()
+oMsg:Refresh()
+oMsg2:Refresh()
+
+Return       
+/////////////////////////////////////////////////////////////////////////////////  

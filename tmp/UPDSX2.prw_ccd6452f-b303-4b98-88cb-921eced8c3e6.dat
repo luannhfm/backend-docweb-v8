@@ -1,0 +1,295 @@
+#INCLUDE 'PROTHEUS.CH'
+
+/*/{Protheus.doc} UPDSX2
+@description Abstração do dicionario SX2
+
+@author Fernando Alencar
+@since  11/10/2011
+
+@obs
+	method	{create} 	cria um novo objeto
+	method 	{add} 	 	adiciona um indice
+	method 	{s}		 	seta os atributos do indice
+	method 	{remove} 	remove um indice se existir
+	method 	{confirm}	comita os indices adicionados
+	method 	{setlog}	seta o objeto responsavel pelo log
+
+/*/
+CLASS UPDSX2
+
+	DATA STRUCT
+	DATA MODEL
+	DATA MODELS //ACUMULA OS MODELOS ATÉ O CONFIRMAÇÃO
+	DATA OLOG
+	DATA EMPRESA
+
+	METHOD CREATE() CONSTRUCTOR
+	METHOD ADD()
+	METHOD CLONE()
+	METHOD S()
+	METHOD REMOVE()
+	METHOD CONFIRM()
+	METHOD SETLOG()
+    METHOD SETCOMPARTILHADO()
+    METHOD SETEXCLUSIVO()
+
+ENDCLASS
+
+
+/*/{Protheus.doc} CREATE
+@description Metodo contrutor da classe UPDSX2
+
+@author	Fernando Alencar
+@since	11/10/2011
+
+/*/
+METHOD CREATE(CEMPRESA) CLASS UPDSX2
+
+	DEFAULT CEMPRESA := "99"
+
+	IF TYPE("OLOG") != "U"
+		::OLOG 	 := OLOG
+	ELSE
+		::OLOG 	 := UPDLOG():CREATE()
+	ENDIF
+
+	::EMPRESA 	:= CEMPRESA
+
+	::STRUCT := { 'CHAVE' ,'PATH' , 'ARQUIVO' , 'NOME','NOMESPA','NOMEENG',;
+				  'ROTINA', 'MODO', 'MODOUN','MODOEMP', 'DELET','TTS',;
+				  'UNICO','PYME','MODULO', 'DISPLAY','SYSOBJ','USROBJ' }
+	
+	::MODELS := {}
+
+RETURN .T.
+
+
+/*/{Protheus.doc} ADD
+@description Adiciona nova Tabela
+
+@author	Fernando Alencar
+@since	11/10/2011
+
+/*/
+METHOD ADD(CCHAVE, CNOME, CUNICO) CLASS UPDSX2
+
+	::MODEL := 	{ ''  		,;//CHAVE
+				  ''		,;//PATH
+				  ''		,;//ARQUIVO
+				  ''		,;//NOME
+			 	  ''		,;//NOMESPA
+				  ''		,;//NOMEENG
+				  ''		,;//ROTINA
+				  'E'		,;//MODO
+				  'E'  		,;//MODOUN
+				  'E'		,;//MODOEMP
+				  0			,;//DELET
+				  ''  		,;//TTS
+				  '' 		,;//UNICO
+				  'N'		,;//PYME
+				  0			,;//MODULO
+				  ''		,;//DISPLAY
+				  ''		,;//SYSOBJ
+				  ''		} //USROBJ
+
+	AADD(::MODELS, ::MODEL)
+
+	SELF:S('CHAVE', CCHAVE)
+	SELF:S('NOME' , CNOME)
+	SELF:S('UNICO', CUNICO)
+
+RETURN .T.
+
+
+/*/{Protheus.doc} CLONE
+@description Clona uma tabela e adiciona ao modelo
+
+@author	Helitom Silva
+@since	17/02/2014
+
+@param cTableOri, caracter, tabela do dicionário que será usado para criar a tabela cTableDes
+@param cTableDes, caracter, nome da nova tabela
+
+/*/
+METHOD CLONE(CTABLEORI, CTABLEDES) CLASS UPDSX2
+	
+	Default CTABLEDES := CTABLEORI
+	
+	IF Empty(AllTrim(CTABLEORI))
+		RETURN
+	ENDIF
+	
+	DbSelectArea("SX2")
+	SX2->(DbSetOrder(1))
+	IF SX2->(DbSeek(CTABLEORI))
+
+		::MODEL 	:= { CTABLEDES	 ,;
+			             SX2->X2_PATH    ,;
+			             CTABLEDES + cEmpAnt + "0"  ,; 
+			             SX2->X2_NOME    ,;
+			             SX2->X2_NOMESPA ,;
+			             SX2->X2_NOMEENG ,;
+			             SX2->X2_ROTINA  ,;
+			             SX2->X2_MODO    ,;
+			             SX2->X2_MODOUN  ,;
+			             SX2->X2_MODOEMP ,;
+			             SX2->X2_DELET   ,;
+			             SX2->X2_TTS     ,;
+			             SX2->X2_UNICO   ,;
+			             SX2->X2_PYME    ,;
+			             SX2->X2_MODULO  ,;
+			             SX2->X2_DISPLAY ,;
+			             SX2->X2_SYSOBJ  ,;
+			             SX2->X2_USROBJ  }
+
+		AADD(::MODELS, ::MODEL)	 //REGISTRA O MODELO NA LISTA DE MODELOS
+	ELSE
+		CONOUT("ATENCAO: Não pois possível criar a tabela: " + CTABLEDES + ", pois a tabela: " + CTABLEORI + " não existe no dicionário SX2!")
+		::OLOG:LOG("ATENCAO: Não pois possível criar a tabela: " + CTABLEDES + ", pois a tabela: " + CTABLEORI + " não existe no dicionário SX2!")
+	ENDIF
+
+RETURN SELF
+
+
+/*/{Protheus.doc} S
+@description Define valor para atributo de Tabela
+
+@author	Fernando Alencar
+@since	11/10/2011
+
+/*/
+METHOD S(ATTR, VALOR) CLASS UPDSX2
+
+	LOCAL nI := ASCAN(::STRUCT, ATTR)
+
+	IF nI = 0
+		::OLOG:LOG("ATENCAO: Não foi possível configurar o atributo: "+ATTR+"!")
+	ELSE
+		::MODEL[nI] := VALOR
+	ENDIF
+
+RETURN SELF
+
+
+/*/{Protheus.doc} CONFIRM
+@description Grava o tabelas adicionados via add na tabela SX2
+
+@author	Fernando Alencar
+@since	11/10/2011
+
+/*/
+METHOD CONFIRM() CLASS UPDSX2
+
+	LOCAL nI
+
+	DBSELECTAREA('SX2')
+	SX2->(DBSETORDER(1))
+
+	::OLOG:LOG("As seguintes tabelas foram criados no dicionário SX2")
+
+	//PARA CADA TABELA ADICIONADO A LISTA
+	FOR nI := 1 TO LEN(::MODELS)
+
+		::OLOG:LOG("TABELA ["+::MODELS[nI][1]+"]")
+
+		::REMOVE(::MODELS[nI][1])
+
+		SX2->(DBAPPEND())
+		
+		SX2->X2_CHAVE   	:= ::MODELS[nI][01]
+		SX2->X2_PATH   		:= ::MODELS[nI][02]
+		SX2->X2_ARQUIVO 	:= Iif(Empty(::MODELS[nI][03]), ::MODELS[nI][01] + Iif(cEmpAnt<>"99",cEmpAnt,::EMPRESA) + "0", ::MODELS[nI][03]) //cAlias+cCodEmp+"0"
+		SX2->X2_NOME    	:= ::MODELS[nI][04]
+		SX2->X2_NOMESPA   	:= ::MODELS[nI][05]
+		SX2->X2_NOMEENG    	:= ::MODELS[nI][06]
+		SX2->X2_ROTINA   	:= ::MODELS[nI][07]
+		SX2->X2_MODO   		:= ::MODELS[nI][08]
+		SX2->X2_MODOUN   	:= ::MODELS[nI][09]
+		SX2->X2_MODOEMP   	:= ::MODELS[nI][10]
+		SX2->X2_DELET   	:= ::MODELS[nI][11]
+		SX2->X2_TTS   		:= ::MODELS[nI][12]
+		SX2->X2_UNICO   	:= ::MODELS[nI][13]
+		SX2->X2_PYME   		:= ::MODELS[nI][14]
+		SX2->X2_MODULO   	:= ::MODELS[nI][15]
+		SX2->X2_DISPLAY  	:= ::MODELS[nI][16]
+		SX2->X2_SYSOBJ  	:= ::MODELS[nI][17]
+		SX2->X2_USROBJ   	:= ::MODELS[nI][18]
+		
+		SX2->(DBUNLOCK())
+
+	NEXT
+
+	::OLOG:LINE()
+
+	::MODELS := {}
+
+	SX2->(DBCLOSEAREA())
+
+RETURN SELF
+
+
+/*/{Protheus.doc} REMOVE
+@description Remove tabela
+
+@author	Fernando Alencar
+@since	11/10/2011
+
+/*/
+METHOD REMOVE(CALIAS) CLASS UPDSX2
+
+	DBSELECTAREA("SX2")
+	SX2->(DBSETORDER(1))
+	SX2->(DBGOTOP())
+
+	IF SX2->(DBSEEK( CALIAS ))
+		IF SX2->(RLOCK())
+			SX2->(DBDELETE())
+			SX2->(DBUNLOCK())
+		ENDIF
+	ENDIF
+
+RETURN .T.
+
+
+/*/{Protheus.doc} SETCOMPARTILHADO
+@description Define compatilhamento da tabela como Compartilhada por todo o grupo
+
+@author	Fernando Alencar
+@since	11/10/2011
+
+/*/
+METHOD SETCOMPARTILHADO() CLASS UPDSX2
+
+	SELF:S('MODO'	, 'C')
+	SELF:S('MODOUN'	, 'C')
+	SELF:S('MODOEMP', 'C')
+
+RETURN
+
+
+/*/{Protheus.doc} SETEXCLUSIVO
+@description Define compatilhamento da tabela como excluvivas por filial
+
+@author	Fernando Alencar
+@since	11/10/2011
+
+/*/
+METHOD SETEXCLUSIVO() CLASS UPDSX2
+
+	SELF:S('MODO'	, 'E')
+	SELF:S('MODOUN'	, 'E')
+	SELF:S('MODOEMP', 'E')
+
+RETURN
+
+
+/*/{Protheus.doc} SETLOG
+@description Define log
+
+@author	Fernando Alencar
+@since	11/10/2011
+
+/*/
+METHOD SETLOG(OLOG) CLASS UPDSX2
+	::OLOG := OLOG
+RETURN SELF

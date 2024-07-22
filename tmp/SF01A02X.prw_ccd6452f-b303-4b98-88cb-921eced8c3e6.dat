@@ -1,0 +1,122 @@
+#Include 'Protheus.ch'
+#Include "atfa125.ch"
+
+/*ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SF01A02X  ºAutor  ³Walmir Junior       º Data ³  03/04/17   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Fonte da customização na rotina de Solicitação de Baixa.   º±±
+±±º          ³ Browse de solicitações de baixa.                           º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ J2A                                                        º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß*/
+
+User Function SF01A02X()
+
+Local aCores := {}
+
+//Variáveis tratativa erro exclusão.
+Local _aExc	:= {}
+Local _aLeg	:= {}
+
+Private cCadastro := STR0009 	//"Solicitações de baixa e transferência de Ativo"
+Private aRotina	  := MenuDef()
+Private aEmailSol := {}
+
+//Verifica se controle de solicitações está ativado
+If SuperGetMv( "MV_ATFSOLD", .F., "2" ) == "2"
+	Help(" ",1,"AF125SOLD",,STR0020,1,0) //"Controle de solicitações desativado, verifique parâmetro 'MV_ATFSOLD'."
+	Return Nil
+EndIf
+
+//Verifica se tabelas SNM( Documentos de Solicitação) e SNL(Cadastro de Locais) foram criadas.
+If !AliasInDic( "SNM" ) 
+	Help(" ",1,"AF125SNM",,"(SNM) " + STR0069 ,1,0) //"Tabela não encontrada, atualize o sistema." 
+	Return Nil
+EndIf
+
+If !AliasInDic( "SNL" )
+	Help(" ",1,"AF125SNL",,"(SNL) " + STR0069 ,1,0) //"Tabela não encontrada, atualize o sistema." 
+	Return Nil
+EndIf
+
+If Alltrim(xFilial("SN1")) != Alltrim(xFilial("SNM"))
+	Help(" ",1,"AF125FIL",,"(SNL) " + "(SNM) " + STR0150 ,1,0) //"A tabela SNM deve ter o mesmo modo de compartilhamento da tabela SN1, por favor verifique a configuração"
+	Return Nil
+EndIf
+
+If FindFunction("CTBINTRAN")
+	lCtbInTran := CtbInTran( 1, .F. )
+Else   
+	Help(" ",1,"AF125TRAN",,STR0148,1,0) //"Função CTBINTRAN não está presente no ambiente. Por favor atualizar."
+	lCtbInTran := .F.
+EndIf
+
+If !lCtbInTran
+	Return()
+EndIf
+
+aAdd( aCores, { "NM_SITSOL == '2'", "BR_VERDE"    } ) //Aprovada
+aAdd( aCores, { "NM_SITSOL == '3'", "BR_VERMELHO" } ) //Rejeitada
+aAdd( aCores, { "NM_SITSOl == '1'", "BR_AMARELO"  } ) //Pendente
+
+dbSelectArea( "SNM" )
+dbSetOrder(1)
+
+// Walmir Junior - INÍCIO das Customizações da J2A.
+
+//Remove os menus das operações de solicitação de baixa e solicitação de transferência individual.
+_nAx := AScan(aRotina, { |x| UPPER(AllTrim(x[2])) == UPPER(AllTrim("AF125SolBx"))})
+ADel(aRotina, _nAx)	//Remove - "Solic. Baixa"
+_nAx := AScan(aRotina, { |x| UPPER(AllTrim(x[2])) == UPPER(AllTrim("AF125SolTr"))})
+ADel(aRotina, _nAx)	//Remove - "Solic. Transf."
+ASize(aRotina,Len(aRotina)-2)
+
+//Substitui função de [solicitação de baixa por lote] padrão, pela função customizada.
+_nAx := AScan(aRotina, { |x| UPPER(AllTrim(x[2])) == UPPER(AllTrim("AF125BxLt"))})
+ADel(aRotina, _nAx)	//Remove - "Solic. Baixa Lote"
+AIns(aRotina, _nAx)
+aRotina[_nAx]	:= { "Solic. Baixa Lote", "U_SF01A03X()" , 0, 3         } //"Solic. Baixa Lote"
+
+//Substitui função de [solicitação de transferência por lote] padrão, pela função customizada.
+_nAx := AScan(aRotina, { |x| UPPER(AllTrim(x[2])) == UPPER(AllTrim("SolTransLt"))})
+ADel(aRotina, _nAx)	//Remove - "Solic. Transf. Lote"
+AIns(aRotina, _nAx)
+aRotina[_nAx]	:= { "Solic. Transf. Lote", "U_SF01A06X()" , 0, 3         } //"Solic. Transf. Lote"
+
+	//Tratativa erro Exclusão
+_nAx	:= AScan(aRotina, { |x| UPPER(AllTrim(x[2])) == UPPER(AllTrim("AF125Excl"))})
+_aExc	:= aRotina[_nAx]
+ADel(aRotina, _nAx)	//Remove - "Exclusão"
+_nAx := AScan(aRotina, { |x| UPPER(AllTrim(x[2])) == UPPER(AllTrim("ATFA125Leg"))})
+_aLeg	:= aRotina[_nAx]
+ADel(aRotina, _nAx)	//Remove - "Legenda"
+ASize(aRotina,Len(aRotina)-2)
+
+Aadd(aRotina, { "Relatório de baixa", "U_SF01R01X({{xFilial('SNM'), SNM->NM_XSOLIC}})" , 0, 8} )
+Aadd(aRotina, { "Relatório de transferência", "U_SF01R02X({{xFilial('SNM'), SNM->NM_XSOLIC}})" , 0, 8} )
+
+Aadd(aRotina, _aExc)
+Aadd(aRotina, _aLeg)
+	//Fim erro Exclusão
+// Walmir Junior - FIM das Customizações da J2A.
+
+mBrowse( 6, 1, 22, 75, "SNM", , /*cCpo*/, /*nPar08*/, /*cFun*/, /*nClickDef*/, aCores)
+
+Return
+
+Static Function MenuDef()
+
+Local aRotina := { { STR0001, "AxPesqui"  , 0, 1 , , .F. },; //"Pesquisar"
+{ STR0002, "AF125SolVi", 0, 2		  },; //"Visualizar"
+{ STR0003, "AF125SolBx", 0, 3		  },; //"Solic. Baixa"
+{ STR0005, "AF125BxLt" , 0, 3         },; //"Solic. Baixa Lote"
+{ STR0004, "AF125SolTr", 0, 3		  },; //"Solic. Transf."
+{ STR0006, "SolTransLt", 0, 3	      },; //"Solic. Transf. Lote"
+{ STR0007, "AF125Excl" , 0, 5	   	  },; //"Excluir"
+{ STR0008, "ATFA125Leg", 0, 10, , .F. } } //"Legenda"
+
+Return( aRotina )  

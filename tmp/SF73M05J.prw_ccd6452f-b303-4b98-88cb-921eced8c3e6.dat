@@ -1,0 +1,255 @@
+#Include 'Protheus.ch'
+#Include 'TopConn.ch'
+
+/*/{Protheus.doc} SF73M05J
+Funcao para realizar uma atualizacao de dados na tabela SB1010, 
+de acordo com dados atualizados/validados em outra base (SB1990).
+
+@author 	Jose Leite de Barros neto
+@since 	11/03/2015
+@version 	1.0
+@return 	Nil, Nulo
+/*/
+User Function SF73M05J()
+	
+	Private cPerg		:= "SF73M05J"
+	Private nTotal		:= 0
+	Private cAlias990 	:= ""	
+	Private cCadastro	:= "Atualização de Produtos"
+	Private aSays		:= {}
+	Private aButtons	:= {}
+	Private nOpca 		:= 0
+	Private lMsErroAuto := .F.
+	
+	// Funcao para criacao das perguntas.
+	fCriaSx1()
+
+	// Forca o usuario a preencher as perguntas.
+	If .Not. Pergunte(cPerg,.T.)
+		Return
+	EndIf
+	
+	AADD(aSays,"Este programa irá realizar a atualização de Produtos - SESI")
+
+	AADD(aButtons, { 1,.T.,{|o| nOpca := 1,FechaBatch()}})
+	AADD(aButtons, { 2,.T.,{|o| FechaBatch() }} )
+
+	FormBatch( cCadastro, aSays, aButtons )
+
+	If nOpca == 1
+		If MsgYesNo("Confirma a atualização de Produtos?","Confirmar")
+			nTotal := mv_par01
+			GetSB1990()
+			Processa({|| AtuSB1()()})
+		EndIf
+	EndIf
+	
+Return( Nil )
+
+/** {Protheus.doc} GetSB1990
+Funcao para filtrar os dados
+
+@param: 	cAlias990
+@author: 	Jose Leite de Barros Neto
+@since: 	11/03/2015
+@Uso: 		SFIEMT
+*/	
+Static Function GetSB1990()
+
+	cAlias990 := GetNextAlias()
+	
+	BeginSql Alias cAlias990
+		
+		SELECT * 
+		FROM SB1990 SB1
+		WHERE 
+			SB1.%NotDel%
+			AND ROWNUM <= %EXP:nTotal%
+		
+	EndSql
+	
+	MemoWrite("c:/pLog/SB1990_SB1010.sql",  GetLastQuery()[2])
+	
+Return( cAlias990 )
+
+/** {Protheus.doc} AtuSB1
+Funcao para atualiza os dados na SB1010
+
+@param: 	AtuSB1
+@author: 	Jose Leite de Barros Neto
+@since: 	11/03/2015
+@Uso: 		SFIEMT
+*/	
+Static Function AtuSB1()
+	
+	Local _nContador 	:= 0
+	Local _cCodigo 		:= ""
+	Local _cDesc			:= ""
+	Local _cTipo			:= ""
+	Local _cUndM			:= ""
+	Local _cContaC		:= ""
+	Local _cGrupo		:= ""
+	Local _cLocPad		:= ""
+	Local _cGarant		:= "2"
+	Local _cXPrdVen 	:= "S" 
+	Local _cXPrdFil 	:= SubStr(cFilAnt,0,2)
+	Local lDeleta 		:= .F.
+		
+	ProcRegua(nTotal)
+	
+	(cAlias990)->( DbGoTop() )
+			
+	If (cAlias990)->( EOF() )
+		MsgAlert("Já foram atualizados todos os produtos.")
+		(cAlias990)->( DbCloseArea() )
+		Return
+	EndIf
+	
+	While .Not. (cAlias990)->( EOF() )
+		
+		//Produto a deletar
+		_cCodOld := (cAlias990)->( B1_COD )
+		
+		//B1_COD
+		_cCodigo := ""
+		
+		//B1_DESC
+		_cDesc := AllTrim( (cAlias990)->(B1_DESC) )
+				
+		//B1_TIPO
+		_cTipo := AllTrim( (cAlias990)->(B1_TIPO) )
+		
+		//B1_UM
+		_cUndM := AllTrim( (cAlias990)->(B1_UM) )
+		
+		//B1_CONTA
+		_cContaC := AllTrim( (cAlias990)->(B1_CONTA) )
+		
+		//B1_GRUPO
+		_cGrupo := 'V001' //AllTrim( (cAlias990)->(B1_GRUPO) )
+		
+		//B1_LOCPAD
+		_cLocPad := "01"
+		
+		//B1_COD
+		If Select("TMP") > 0
+			DbSelectarea("TMP")
+			DbCloseArea()
+		EndIf
+	
+		cQuery := ""
+		cQuery += " SELECT MAX(B1_COD)+1 B1_COD "
+		cQuery += " FROM "+RetSQLName('SB1') 
+		cQuery += " WHERE D_E_L_E_T_ <> '*' "
+		
+		TCQUERY cQuery NEW ALIAS "TMP"
+		
+		_cCodigo	:= StrZero(TMP->B1_COD,TAMSX3("B1_COD")[1])
+
+		_nOpc	:= 3		
+		_cXOrigem	:= "CARGA INICIAL - "+DtoC(dDataBase)+" - "+AllTrim(Time())+" - por: "+AllTrim(cUserName)
+		
+		_aProduto := {}
+		
+		aAdd( _aProduto ,{"B1_COD"		,_cCodigo	,Nil}) // Codigo
+		aAdd( _aProduto ,{"B1_DESC"  	,_cDesc	,Nil}) // Descricao
+		aAdd( _aProduto ,{"B1_TIPO"  	,_cTipo	,Nil}) // Tipo
+		aAdd( _aProduto ,{"B1_UM"  		,_cUndM	,Nil}) // Unidade de Medida
+		aAdd( _aProduto ,{"B1_CONTA" 	,_cContaC	,Nil}) // Conta Contabil
+		aAdd( _aProduto ,{"B1_GRUPO" 	,_cGrupo	,Nil}) // Grupo de Produtos
+		aAdd( _aProduto ,{"B1_LOCPAD" 	,_cLocPad	,Nil}) // Local Padrao
+		aAdd( _aProduto ,{"B1_GARANT" 	,_cGarant	,Nil}) // Garantia
+		aAdd( _aProduto ,{"B1_MSBLQL" 	,"1"		,Nil}) // Bloqueio de Tela
+		aAdd( _aProduto ,{"B1_XPRDVEN" 	,_cXPrdVen,Nil}) // Produto de Venda?
+		aAdd( _aProduto ,{"B1_XPRDFIL" 	,_cXPrdFil,Nil}) // Produto vinculado a empresa
+		aAdd( _aProduto ,{"B1_XORIGEM" 	,_cXOrigem,Nil}) // Origem da Informacao
+		
+		lMsErroAuto := .F.
+		
+		DbSelectArea("SB1")
+		SB1->( DbSetOrder(1) )
+		
+		Begin Transaction
+
+			MSExecAuto({|x,y| Mata010(x,y)},_aProduto,_nOpc) //3- Inclusão, 4- Alteração, 5- Exclusão
+			
+			If lMsErroAuto
+				lDeleta := .F.
+				MostraErro()
+				//MostraErro("C:\plog\log\", "Produto_"+_cCodigo+".LOG")
+				RollBackSx8()
+				DisarmTransaction()
+			Else
+				ConfirmSx8()
+				lDeleta := .T.
+			EndIf
+		
+		End Transaction
+		
+		If lDeleta
+			
+			_nContador++
+			
+			//MarcDel(_cCodOld) //Deleta registro na SB1990
+			
+			IncProc("Processando: " + cValtoChar(_nContador) + " de " + cValtoChar(nTotal))
+			
+			DbSelectArea("SB5")
+			SB5->( DbSetOrder(1) )//B5_FILIAL+B5_COD
+			If .Not. SB5->( DbSeek( xFilial("SB5") + _cCodigo) )
+				If RecLock("SB5", .T.)
+					SB5->B5_COD 	:= _cCodigo
+					SB5->B5_CEME	:= _cDesc
+				EndIf
+			EndIf
+			
+			SB5->( DbCloseArea() )
+		EndIf
+	
+		SB1->( DbCloseArea() )
+	
+		(cAlias990)->( DbSkip() )
+	End
+	
+	(cAlias990)->( DbCloseArea() )
+	
+	MsgAlert("Foram atualizados: "+ cValToChar(_nContador) +" registros.")
+	
+Return( Nil )
+
+/** {Protheus.doc} MarcDel
+Funcao para deletar os itens ja atualizados
+
+@param: 	pCod
+@author: 	Jose Leite de Barros Neto
+@since: 	11/03/2015
+@Uso: 	SFIEMT
+*/	
+Static Function MarcDel(pCod)
+	
+	Local _cQuery := ""
+	
+	_cQuery := "UPDATE SB1990 SET D_E_L_E_T_ = '*' WHERE B1_COD = '"+ pCod +"' "
+	
+	TcSqlExec(_cQuery)
+   	TcSqlExec("COMMIT")
+
+Return( Nil )
+
+/** {Protheus.doc} fCriaSx1
+Funcao para gerar a pergunta
+
+@param: 	<Nil>
+@author: 	Jose Leite de Barros Neto
+@since: 	11/03/2015
+@Uso: 	SFIEMT
+*/	
+Static Function fCriaSx1()
+
+	Local aHelp := {}
+
+	AAdd(aHelp, {{"Quantidade de Registros a atualizar"}, {""}, {""}})
+
+	u_SFPUTSX1( cPerg, "01","Quantidade "		,"","","mv_ch1","N",4	,0,0,"G","",""			,"","","mv_par01","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3])
+	
+Return( Nil )

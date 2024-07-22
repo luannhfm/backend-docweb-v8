@@ -1,0 +1,111 @@
+#include 'protheus.ch'
+
+
+/*/{Protheus.doc} FA070TIT
+O ponto de entrada FA070TIT sera executado apos a confirmacao da baixa do contas a receber.
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	24/01/2017
+@version 	1.0
+@return 	lRet, Logico, Se retornar .F. a baixa não será efetuada.
+
+@see 
+http://tdn.totvs.com/display/public/mp/FA070TIT+-+Confirma+baixa+a+receber+--+11884
+/*/
+
+User Function FA070TIT()
+
+	Local _aArea 	:= GetArea()
+	Local _lReturn 	:= .T.
+	Local _cQuery	:= ""
+	Local _cAliasRM	:= AllTrim(GetNewPar("MV_XSGEABD", ""))
+	Local _nIdLan	:= 0
+	Local _cUsuPerm	:= AllTrim(GetNewPar("MV_XBXSGE", "001019"))
+	Local _cMsgSD	:= "Título SGE | Sem dados bancários (Boleto) | Deseja REALMENTE efetuar a operação (Baixa por CANCELAMENTO)?"
+	Local _dDtCanc	:= SToD("  /  /    ")
+
+	If !IsBlind()
+
+		If SE1->E1_PREFIXO $ "SGE#RMC"
+
+			If Select('TMPSE1') > 0
+				DbSelectArea('TMPSE1')
+				TMPSE1->( DbCloseArea() )
+			EndIf
+
+			_cQuery := " SELECT CASE 	"
+			_cQuery += " 	WHEN IDLAN IS NULL THEN 99999999 "
+			_cQuery += " 	ELSE IDLAN 	"
+			_cQuery += " END IDLANSGE, DTCANCELAMENTO 	"
+			_cQuery += " FROM RM.PROT_SE1"+ _cAliasRM
+			_cQuery += " WHERE E1_XIDESB = '"+ AllTrim(SE1->E1_XIDESB) +"' "
+			_cQuery += " 	AND CODCONTRATO = '" + AllTrim(SE1->E1_NUM) + "' "
+
+			DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPSE1',.T.,.F.)
+
+		EndIf
+
+		//ExecAuto
+		If Type("lF070Auto") == "L"  .And. lF070Auto
+
+			If "03MT" $ SE1->E1_FILIAL .And. .Not. TMPSE1->( EOF() ) .And. Type("cMotBx") == "C"  .And. AllTrim(cMotBx) != "CANCELADO"
+				While .Not. TMPSE1->( EOF() )
+					_nIdLan 	:= TMPSE1->IDLANSGE
+					TMPSE1->( DbSkip() )
+				End
+
+				If _nIdLan == 99999999 .And. _dDtCanc == SToD("  /  /    ")
+					ApMsgStop("Operação inválida! Um ou mais títulos integrados não tem lançamento financeiro no SGE!","FA070TIT")
+					_lReturn := .F.
+				EndIf
+
+			EndIf
+
+		ElseIf Type("cMotBx") == "C"
+
+			If AllTrim(cMotBx) == "NORMAL"
+				ApMsgStop("Motivo de baixa NORMAL não permitido","FA070TIT")
+				_lReturn := .F.
+				Return _lReturn
+			EndIf
+
+		/* 	24/01/2017 - Jose Leite - CSI
+			Tratamento para titulos oriundos do SGE
+			Nao baixar se nao existir IDLAN (lancamentos financeiros - dados bancarios)
+		*/
+			If _lReturn .And. "03MT" $ SE1->E1_FILIAL .And. SE1->E1_PREFIXO == "SGE"
+
+				If .Not. TMPSE1->( EOF() )
+					While .Not. TMPSE1->( EOF() )
+						_nIdLan 	:= TMPSE1->IDLANSGE
+						_dDtCanc	:= TMPSE1->DTCANCELAMENTO
+						TMPSE1->( DbSkip() )
+					End
+
+					If _nIdLan == 99999999 .And. AllTrim(cMotBx) == "CANCELADO" .And. (RetCodUsr() $ _cUsuPerm) .And. _dDtCanc != SToD("  /  /    ")
+						If !ApMsgYesNo(_cMsgSD,"FA070TIT")
+							ApMsgStop("Operação de baixa CANCELADA pelo usuário ["+UsrRetName(RetCodUsr())+"]!","FA070TIT")
+							_lReturn := .F.
+						EndIf
+					ElseIf _nIdLan == 99999999 .And. AllTrim(cMotBx) == "CANCELADO" .And. (RetCodUsr() $ _cUsuPerm) .And. _dDtCanc == SToD("  /  /    ")
+						ApMsgStop("ATENÇÃO - Você está tentando baixar com mot. bx. CANCELADO, um título que não está cancelado no SGE | Favor Verificar!","FA070TIT")
+						_lReturn := .F.
+					ElseIf _nIdLan == 99999999
+						ApMsgStop("Título SGE | Sem dados bancários (Boleto) | Favor Verificar!","FA070TIT")
+						_lReturn := .F.
+					EndIf
+				Else
+					ApMsgStop("Título SGE | Chave não encontrada no SGE | Favor Verificar!","FA070TIT")
+					_lReturn := .F.
+				EndIf
+
+			EndIf
+
+		EndIf
+
+	EndIf		
+
+	RestArea(_aArea)
+
+Return(_lReturn)

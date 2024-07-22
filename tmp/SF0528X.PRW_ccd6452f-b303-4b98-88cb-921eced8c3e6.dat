@@ -1,0 +1,232 @@
+#INCLUDE "PROTHEUS.CH" 
+
+/*/{Protheus.doc} SF0528X
+(long_description)
+@author j2a.luizjunior
+@since 19/09/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+User Function SF0528X
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0528X")
+	Local   oReport
+	Private cPerg   := "SF0528X"
+	
+	CriaSX1(cPerg)
+	If !Pergunte(cPerg,.T.)
+		Return(Nil)
+	EndIf
+
+	oReport := ReportDef()
+	oReport:PrintDialog()
+
+Return
+
+/*/{Protheus.doc} ReportDef
+(long_description)
+@author j2a.luizjunior
+@since 19/09/2017
+@version 1.0
+@param cPerg, character, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ReportDef(cPerg)
+	
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0528X")
+	Local oReport
+	Local cIDCelula	:= ""	
+	Local cNomeRel	:= "SF0528X"
+	
+	Local cTitRel	:= "Relatorio de Auxilio a Medição de Conatratos"
+	Local cDescRel	:= "Relatorio de Auxilio a Medição de Conatratos"
+
+	oReport := TReport():New( cNomeRel, cTitRel, cPerg, { |oReport| ReportPrint(oReport) }, cDescRel )
+	
+	oReport:SetPortrait() 
+	oReport:SetTotalInLine(.F.) 
+	oReport:Page()
+	
+	//-> Ingressos
+	oContrato := TRSection():New(oReport, "Contratos" , {"ZH1"} )		
+	oNumero   := TRCell():New(oContrato,"ZH1_NUMERO"  , "ZH1"   )	
+	oRevisa   := TRCell():New(oContrato,"ZH1_REVISA"  , "ZH1"   )
+	oTitular  := TRCell():New(oContrato,"ZH1_NOME"    , "ZH1"   )
+	oValor    := TRCell():New(oContrato,"ZH1_VALOR"   , "SE1"   )
+	
+	TRFunction():New(oContrato:Cell("ZH1_VALOR"),,"SUM",/*oBrFor*/,,,,.F.,.T.,.F.)
+
+	oDesCont  := TRSection():New(oReport, "Detalhes"  , {"ZH1"} )		
+	oNumCont  := TRCell():New(oDesCont  ,"CN9_NUMERO" , "ZH1"   )
+	oRevCont  := TRCell():New(oDesCont  ,"CN9_REVISA" , "ZH1"   )
+	oValCont  := TRCell():New(oDesCont  ,"CN9_VLINI"  , "SE1"   )
+
+Return(oReport)	
+
+/*/{Protheus.doc} ReportPrint
+(long_description)
+@author j2a.luizjunior
+@since 19/09/2017
+@version 1.0
+@param oReport, objeto, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ReportPrint(oReport)
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0528X")		 
+	Local cSql       := ""
+	Local oSec1      := oReport:Section(1)
+	Local oSec2      := oReport:Section(2)		
+	Local cAlCon     := GetNextAlias()
+	Local cAux       := ""
+	Local cContr     := ""
+	Local cAux       := ""
+	Local cRevisa    := ""
+	Local nQuant     := 0
+	Local nTotTitDep := 0
+			 
+	If !Empty(MV_PAR01) .And. !Empty(MV_PAR02) 
+		cSql += " AND ZH1_NUMERO BETWEEN '"  + MV_PAR01 + "' AND '" + MV_PAR02 + "'"
+	EndIf
+
+	cSql := "%"+cSql+"%"
+	
+	BeginSql Alias cAlCon
+
+		SELECT ZH1_NUMERO, 
+		       ZH1_REVISA, 
+		       ZH1_NOME, 
+		       (SELECT COUNT(*) + 1 FROM %Table:ZH2% WHERE ZH2_COD = ZH1_COD AND %NotDel%)QUANT
+		FROM   %Table:ZH1%
+		WHERE  %NotDel%		
+	    %Exp:cSql%    
+	           
+	EndSql
+
+	While !(cAlCon)->(Eof())
+		
+		oReport:IncMeter()
+
+		oSec1:Init()
+		
+		If !((cAlCon)->ZH1_NUMERO $ cContr)
+			 
+			If nTotTitDep > 0
+				oSec2:Init()	
+				oSec2:Cell("CN9_NUMERO"):SetValue(cContr       )
+				oSec2:Cell("CN9_REVISA"):SetValue(cRevisa      )
+				oSec2:Cell("CN9_VLINI") :SetValue(nTotTitDep   )
+				oSec2:Printline()
+			EndIf
+			
+			cAux    += (cAlCon)->ZH1_NUMERO + "|"
+			
+			cContr  := (cAlCon)->ZH1_NUMERO
+			cRevisa := (cAlCon)->ZH1_REVISA
+			
+		EndIf
+		
+		nValTitDep := CALCVALGER((cAlCon)->QUANT,(cAlCon)->ZH1_NUMERO,(cAlCon)->ZH1_REVISA)
+		
+		nTotTitDep += nValTitDep
+		
+		oSec1:Cell("ZH1_NUMERO"):SetValue((cAlCon)->ZH1_NUMERO )
+		oSec1:Cell("ZH1_REVISA"):SetValue((cAlCon)->ZH1_REVISA )
+		oSec1:Cell("ZH1_NOME")  :SetValue((cAlCon)->ZH1_NOME   )
+		oSec1:Cell("ZH1_VALOR") :SetValue(nValTitDep           )
+		
+		oSec1:Printline()
+
+		If oReport:Cancel()
+			Return(Nil)
+		EndIf		
+	
+		(cAlCon)->(DbSkip())
+		
+		If (cAlCon)->(Eof()) .And. nTotTitDep > 0
+			oSec2:Init()	
+			oSec2:Cell("CN9_NUMERO"):SetValue(cContr           )
+			oSec2:Cell("CN9_REVISA"):SetValue(cRevisa          )
+			oSec2:Cell("CN9_VLINI") :SetValue(nTotTitDep       )
+			oSec2:Printline()
+		EndIf
+		
+	EndDo
+
+	(cAlCon)->(DbCloseArea())
+
+	oSec1:Finish()
+	oSec2:Finish()
+		
+Return
+
+/*/{Protheus.doc} CALCVALGER
+(long_description)
+@author j2a.luizjunior
+@since 19/09/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function CALCVALGER(pQuant,pNumero,pRevisa)
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0528X")
+	Local nQuant    := pQuant
+	Local cNumero   := pNumero 
+	Local cRevisa   := pRevisa
+	Local nVlTitDep := 0
+	Local nRet      := 0
+	Local cOport    := Posicione("CN9",1,xFilial("CN9") + cNumero + cRevisa,"CN9_XOPORT")
+	Local cProposta := ""	
+	
+	DbSelectArea("ADY")
+	cProposta := Posicione("ADY",2,xFilial("ADY") + cOport,"ADY_PROPOS")
+	cRevisa   := Posicione("ADY",2,xFilial("ADY") + cOport,"ADY_REVISA")
+	
+	DbSelectArea("ADZ")
+	nVlTitDep := Posicione("ADZ",1,xFilial("ADZ") + cProposta + cRevisa,"ADZ->ADZ_TOTAL")		
+	
+	nRet := nVlTitDep * nQuant
+	
+Return nRet
+
+/*/{Protheus.doc} CriaSX1
+(long_description)
+@author j2a.luizjunior
+@since 19/09/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function CriaSX1
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0528X")
+	Local aHelp := {}
+	
+	//-> Texto do help em português,inglês, espanhol
+	AAdd(aHelp, {{"Contrato De"                           }  ,{""},{""}})
+	AAdd(aHelp, {{"Revisao  De"                           }  ,{""},{""}})
+	AAdd(aHelp, {{"Contrato Ate"                          }  ,{""},{""}})
+	AAdd(aHelp, {{"Revisao Ate"                           }  ,{""},{""}})
+
+	u_SFPUTSX1(cPerg,"01","Contrato De"  ,"","","mv_ch01" ,"C",15,00,00,"G","","CN9VEN","","","mv_par01","","","","","","","","","","","","","","","","" ,aHelp[1,1] ,aHelp[1,2] ,aHelp[1,3] ,"")
+	u_SFPUTSX1(cPerg,"02","Revisao  De"  ,"","","mv_ch02" ,"C",03,00,00,"G","",""      ,"","","mv_par02","","","","","","","","","","","","","","","","" ,aHelp[2,1] ,aHelp[2,2] ,aHelp[2,3] ,"")
+	u_SFPUTSX1(cPerg,"03","Contrato Ate" ,"","","mv_ch03" ,"C",15,00,00,"G","","CN9VEN","","","mv_par03","","","","","","","","","","","","","","","","" ,aHelp[3,1] ,aHelp[3,2] ,aHelp[3,3] ,"")
+	u_SFPUTSX1(cPerg,"04","Revisao Ate"  ,"","","mv_ch04" ,"C",03,00,00,"G","",""      ,"","","mv_par04","","","","","","","","","","","","","","","","" ,aHelp[4,1] ,aHelp[4,2] ,aHelp[4,3] ,"")
+		
+Return

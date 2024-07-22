@@ -1,0 +1,171 @@
+#INCLUDE 'TOTVS.CH'
+#INCLUDE 'FWMVCDEF.CH'
+
+/*/{Protheus.doc} SF73A05X
+@deion MVC Pesquisa de satisfação.
+
+@author  Rafael Karczevski
+@since   09/07/2019
+@version 1.0   
+@history 25/05/2020, Franklin B. Oliveira, Correção nas legendas.
+/*/
+User Function SF73A05X()
+
+	Local _cTpExc := GetMv("MV_XTPEFIL" ,, "013,012,010,004")
+	Local _nx := 0
+	Local oBrowse
+	Local _aLeg := {}
+	Private aRotina 	:= MenuDef()
+	Private _aLegBrw := {}
+	
+	oBrowse := FWMBrowse():New()
+    oBrowse:SetAlias('ZJA')
+	oBrowse:SetDescription('Pesquisa de satisfação')
+	
+	Aadd( _aLeg, {" !Empty(ZJA_DTAVAL) ", "BR_AZUL", "Realizada"} )
+	Aadd( _aLeg, {" Empty(ZJA_DTAVAL) .And. ZJA_TTCONT >= 1 .And. ZJA_TTCONT <= 3", "BR_VERMELHO"	, "Não Realizada"} )
+	Aadd( _aLeg, {" Empty(ZJA_DTAVAL) .And. ZJA_TTCONT >= 0 .And. ZJA_DTLIBE > DDATABASE ", "BR_CINZA", "Não disponivel para avaliação"} )
+	Aadd( _aLeg, {" Empty(ZJA_DTAVAL) .And. ZJA_TTCONT >= 0 .And. ZJA_DTLIBE <= DDATABASE .AND. ZJA_DTFIM2 <= DDATABASE", "BR_VERDE", "Disponivel para avaliação"} )
+	Aadd( _aLeg, {" Empty(ZJA_DTAVAL) .And. ZJA_TTCONT >= 0 .And. ZJA_DTLIBE <= DDATABASE .AND.  ZJA_DTFIM2 > DDATABASE ", "BR_LARANJA", "Aguardando data de execução"} )
+	
+	For _nx:= 1 to Len(_aLeg)
+		oBrowse:AddLegend(_aLeg[_nx,1],_aLeg[_nx,2],_aLeg[_nx,3])
+		Aadd(_aLegBrw, { _aLeg[_nx,2], _aLeg[_nx,3] } )
+	Next
+	
+	oBrowse:AddFilter("Não mostrar tipos: " + _cTpExc, "!ZJA_TIPO$'"+_cTpExc+"'")
+	
+	// não mostra contratos na situação de cancelado
+	oBrowse:SetFilterDefault( 'Posicione("CN9", 1, xFilial("CN9",ZJA->ZJA_FILIAL)+ZJA->ZJA_CONTRA ,"CN9_SITUAC<>'+"'"+'01'+"'"+'")' )
+	
+    oBrowse:Activate()
+    
+Return Nil
+
+/*/{Protheus.doc} MenuDef   
+@deion Montagem do Menu
+
+@author  Rafael Karczevski
+@since   09/07/2019
+@version 1.0 
+/*/
+Static Function MenuDef()
+
+	Local aRotina := {}
+	
+	aAdd( aRotina, { 'Visualizar'   		, 'u_SF735XA(2)', 0, 2, 0, NIL } )
+	aAdd( aRotina, { 'Realizar Avaliação'   , 'u_SF735XA(3)', 0, 4, 0, NIL } )
+	aAdd( aRotina, { 'Tentativa de Contato' , 'u_SF735XA(4)', 0, 4, 0, NIL } )
+	aAdd( aRotina, { 'Legenda' , 'u_fShowLeg()', 0, 2, 0, NIL } )
+	/*
+	aAdd( aRotina, { 'Visualizar'   , 'VIEWDEF.MVCPesq', 0, 2, 0, NIL } )
+    aAdd( aRotina, { 'Incluir'      , 'VIEWDEF.MVCPesq', 0, 3, 0, NIL } )
+    aAdd( aRotina, { 'Alterar'      , 'VIEWDEF.MVCPesq', 0, 4, 0, NIL } )
+    aAdd( aRotina, { 'Excluir'      , 'VIEWDEF.MVCPesq', 0, 5, 0, NIL } )
+	aAdd( aRotina, { 'Imprimir'     , 'VIEWDEF.MVCPesq', 0, 8, 0, NIL } )
+    aAdd( aRotina, { 'Copiar'       , 'VIEWDEF.MVCPesq', 0, 9, 0, NIL } )
+	*/
+Return aRotina
+
+User Function fShowLeg()
+	
+	BrwLegenda("Status pesquisa e satisfação", "Legenda", _aLegBrw)
+	
+Return
+
+/*/{Protheus.doc} ModelDef
+@deion Monta Model de apresentação
+
+@author  Rafael Karczevski
+@since   09/07/2019
+@version 1.0 
+/*/
+Static Function ModelDef()
+
+	Local oModel 	  := MPFormModel():New( 'MDMVCPES' )
+	Local oSTRMVCPesM := FWFormStruct( 1, 'ZJA' ) 
+
+	//oSTRCH002PM:SetProperty('ZJA_USUARI'	, MODEL_FIELD_INIT,  { |oFields| CH002PINI('ZJA_USUARI'	,oFields) } )
+
+	oModel:AddFields( 'ZJAMASTER', , oSTRMVCPesM )
+    oModel:SetPrimaryKey( {'ZJA_FILIAL','ZJA_CODPES'} )
+     
+Return oModel
+
+
+/*/{Protheus.doc} ViewDef
+@deion Apresentação do model e View junto
+
+@author  Rafael Karczevski
+@since   09/07/2019
+@version 1.0 
+/*/
+Static Function ViewDef()
+
+	Local oView
+	Local oModel  := FWLoadModel( 'MVCPesq' )
+	
+	Local oSTRMVCPesM := FWFormStruct( 2, 'ZJA',/* { |X|  AllTrim(X) $ 'ZJA_USUARI,ZJA_FILIAL,ZJA_FABRIC,ZJA_DIAANA,ZJA_BASE,ZJA_MARGEM,ZJA_DESTOQ,ZJA_GPPROD,ZJA_CURVA,ZJA_FORNEC,ZJA_CONDPG, ZJA_TPFRET,ZJA_FREQUE,ZJA_DIACOM,ZJA_ULTCOM,ZJA_PRXCOM'} */) 
+	
+	oView := FWFormView():New()
+	oView:SetModel( oModel )
+	oView:AddField( 'VZJAMASTER', oSTRMVCPesM, 'ZJAMASTER' )
+	oView:CreateHorizontalBox( 'CABECALHO', 100 )
+	oView:SetOwnerView( 'VZJAMASTER', 'CABECALHO' )
+	oView:EnableTitleView( 'VZJAMASTER' )
+	
+	oView:SetCloseOnOk( {|| .t.} )
+	
+Return oView
+
+/*/{Protheus.doc} MDMVCPES
+@deion Ponto de Entrada Geral da Rotina
+	
+@author  Rafael Karczevski
+@since   09/07/2019
+		
+@param PARAMIXB, Array, [Objeto][IdPonto][IdModel]
+
+@return uRet,  Retorno diversos do PE
+
+/*/
+User Function MDMVCPES()
+
+	Local uRet       := .t.
+	Local aAreaOld   := GetArea()
+	Local oModel     := ParamIXB[1]
+	Local cIdPonto   := ParamIXB[2]
+	Local cIdModel   := ParamIXB[3]
+	local oModelZJA  := oModel:GetModel("ZJAMASTER")
+	
+	If cIdPonto == 'MODELPRE' /* Chamada antes da alteração de qualquer campo do modelo. */
+
+	ElseIf cIdPonto == 'MODELPOS' /* Chamada na validação total do modelo. */
+	
+	ElseIf cIdPonto == 'FORMPRE' /* Chamada na antes da alteração de qualquer campo do formulário. */
+
+	ElseIf cIdPonto == 'FORMPOS' /* Chamada na validação total do formulário. */
+
+	ElseIf cIdPonto == 'FORMLINEPRE' /* Chamada na pre validação da linha do formulário. */
+	
+	ElseIf cIdPonto == 'FORMLINEPOS' /* Chamada na validação da linha do formulário. */
+		
+	ElseIf cIdPonto == 'MODELVLDACTIVE' /* Chamada na validação da ativação do Modelo. */
+		
+	ElseIf cIdPonto == 'MODELCOMMITTTS' /* Chamada apos a gravação total do modelo e dentro da transação. */
+
+	ElseIf cIdPonto == 'MODELCOMMITNTTS' /* Chamada apos a gravação total do modelo e fora da transação. */
+		
+	ElseIf cIdPonto == 'FORMCOMMITTTSPRE' /* Chamada antes da gravação da tabela do formulário. */
+		
+	ElseIf cIdPonto == 'FORMCOMMITTTSPOS' /* Chamada apos a gravação da tabela do formulário. */
+		
+	ElseIf cIdPonto == 'MODELCANCEL' /* Cancela */
+				
+	ElseIf cIdPonto == 'BUTTONBAR' /* Usado para Criação de Botoes Estrutura: { {'Nome', 'Imagem Botap', { || bBlock } } } */
+	
+	EndIf
+	
+	RestArea(aAreaOld)
+	
+Return uRet

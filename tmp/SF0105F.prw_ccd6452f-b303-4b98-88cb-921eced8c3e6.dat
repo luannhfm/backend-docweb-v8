@@ -1,0 +1,621 @@
+#Include "protheus.ch"
+#Include "apwizard.ch"
+#Include "TopConn.ch"
+#include "FileIO.ch"
+
+/*/{Protheus.doc} SF0105F
+	Wizard para importação e exportação de dados do cadastro de bens duráveis.
+	
+@author Franklin B. Oliveira
+@since 07/02/2017
+
+@type function
+/*/
+/*/
+Franklin B. Oliveira - 24/05/2018
+Ajuste para a versão 12
+/*/
+User Function SF0105F()
+Local oWizard
+Local oCombOper, oCombImp, oGetFile
+Local aItens	:= {'I=Importar', 'E=Exportar'}
+Local aItensImp	:= {'I=Inclusão', 'A=Alteração'}
+Local cCombOper := aItens[1]
+Local cCombImp	:= aItensImp[1]
+Local cGetFilDe := Space(TamSX3("ZEA_FILIAL")[1])
+Local cGetFilAt := Space(TamSX3("ZEA_FILIAL")[1])
+Local cGetCodDe := Space(TamSX3("ZEA_CODIGO")[1])
+Local cGetCodAt := Space(TamSX3("ZEA_CODIGO")[1])
+Local cLocFile	:= ""
+Local cPathIni	:= "C:\"
+Local nPanel
+Local lWiz 		:= .F.
+Local lIsP12	:= GetVersao(.F.) == "12"
+
+Private cAliasTrb
+
+	DEFINE WIZARD oWizard TITLE "Atualização do cadastro de bem durável"; 
+	HEADER "Wizard de atualização de bem durável através de importação de arquivo" MESSAGE " "; 
+	TEXT "Assistente para atualizaçõ do cadastro de bens duráveis" + CRLF PANEL;
+	NEXT {|| .T.} FINISH {|| .T.}
+	
+	// PANEL 2
+	//Tela de seleção e validação do arquivo selecionado para importação
+	CREATE PANEL oWizard HEADER "Seleção da rotina" MESSAGE "Selecione a opção desejada" PANEL;
+	BACK {|| .T.} ;
+	NEXT {|| If(cCombOper == 'I', oWizard:SetPanel(2), oWizard:SetPanel(3)), .T.} ; 
+	FINISH {|| .T.} EXEC {|| .T.}
+	
+	@ 010, 010 TO 125,280 OF oWizard:oMPanel[2] PIXEL
+	@ 20, 15 SAY oSayOper VAR "Operação: " OF oWizard:oMPanel[2] PIXEL 
+	oCombOper := TComboBox():New(018, 045, {|u| If(PCount()>0, cCombOper:=u, cCombOper)},;
+	 				aItens, 100, 020, oWizard:oMPanel[2], , , , , , .T., , , , , , , , , 'oCombOper')
+	
+	// PANEL 3
+	//Opções para importação de dados
+	CREATE PANEL oWizard HEADER "Seleção da rotina" MESSAGE "Selecione a opção desejada" PANEL;
+	BACK {|| .T.}; 
+	NEXT {|| If(fVldPnl03(cLocFile, cCombImp), (oWizard:SetPanel(5), .T.), .F.)} FINISH {|| .T.}
+	
+	@ 010, 010 TO 125, 280 OF oWizard:oMPanel[3] PIXEL
+	@ 020, 015 SAY oSay1 VAR "Tipo de Inclusão/Alteração: " OF oWizard:oMPanel[3] PIXEL 
+	oCombImp := TComboBox():New(018, 085, {|u| If(PCount()>0, cCombImp:=u, cCombImp)},;
+	 				aItensImp, 100, 020, oWizard:oMPanel[3], , , , , , .T., , , , , , , , , 'oCombImp')
+	
+	@ 050, 015 GET 		oGetFile01 VAR cLocFile 	SIZE 200, 012 PIXEL WHEN .F. OF oWizard:oMPanel[3]
+	@ 050, 220 BUTTON 	"Selecionar Arquivo"	SIZE 050, 014 PIXEL OF oWizard:oMPanel[3] ACTION ;
+		(cLocFile := cGetFile("Arquivo CSV | *.csv", "Selecione o arquivo CSV", , cPathIni, .T., GETF_LOCALHARD + GETF_NETWORKDRIVE ))
+			
+	//PANEL 4
+	CREATE PANEL oWizard HEADER "Seleção da rotina" MESSAGE "Selecione a opção desejada" PANEL;
+	BACK {|| oWizard:SetPanel(2), .T.}; 
+	NEXT {|| If(fVldPnl04(cGetFilDe, cGetFilAt, cGetCodDe, cGetCodAt), (oWizard:SetPanel(4), .T.), .F.) } FINISH {|| .T.}
+	
+	@ 020, 015 SAY oSay2 VAR "Esta rotina exporta os dados cadastrais dos bens duráveis." + CRLF;
+		+ "Não serão exportados cadastrados com situação 'baixado'." OF oWizard:oMPanel[4] PIXEL
+		
+	@ 050, 015 SAY oSayFilDe VAR "Filial De?.: " OF oWizard:oMPanel[4] PIXEL
+	@ 048, 055 MSGET cGetFilDe Picture "@!" Size 050, 010 F3 "SM0" Of oWizard:oMPanel[4] PIXEL 
+	
+	@ 065, 015 SAY oSayFilAt VAR "Filial Até?: " OF oWizard:oMPanel[4] PIXEL
+	@ 063, 055 MSGET cGetFilAt Picture "@!" Size 050, 010 F3 "SM0" Of oWizard:oMPanel[4] PIXEL
+		
+	@ 080, 015 SAY oSayCodDe VAR "Cod. Bem De?.: " OF oWizard:oMPanel[4] PIXEL
+	@ 078, 055 MSGET cGetCodDe Picture "@!" Size 050, 010 Of oWizard:oMPanel[4] PIXEL
+	
+	@ 095, 015 SAY oSayCodAt VAR "Cod. Bem Até?: " OF oWizard:oMPanel[4] PIXEL
+	@ 093, 055 MSGET cGetCodAt Picture "@!" Size 050, 010 Of oWizard:oMPanel[4] PIXEL
+	
+	// PANEL 5
+	//Opções para importação de dados
+	CREATE PANEL oWizard HEADER "Seleção da rotina" MESSAGE "Selecione a opção desejada" PANEL;
+	BACK {|| .T.}; 
+	NEXT {|| If(fVldPnl05(cLocFile), (oWizard:SetPanel(5), .T.), .F.)} FINISH {|| .T.}
+	
+	@ 010, 010 TO 125, 280 OF oWizard:oMPanel[3] PIXEL
+	@ 020, 015 SAY oSay2 VAR "Selecione o local para salvar o arquivo:" OF oWizard:oMPanel[5] PIXEL 
+		
+	@ 050, 015 GET 		oGetFile02 VAR cLocFile 	SIZE 200, 012 PIXEL WHEN .F. OF oWizard:oMPanel[5]
+	@ 050, 220 BUTTON 	"Selecionar Arquivo"	SIZE 050, 014 PIXEL OF oWizard:oMPanel[5] ACTION ;
+		(cLocFile := cGetFile("", "Salvar Planilha", 0, cPathIni  , .T., GETF_LOCALHARD+GETF_RETDIRECTORY, .F. ))
+	
+	// PANEL 6
+	//Ultimo passo.
+	CREATE PANEL oWizard HEADER "Confirmar Operação" MESSAGE " " PANEL;
+	BACK {|| If(cCombOper == 'I', oWizard:SetPanel(3), oWizard:SetPanel(3)), .T.}; 
+	NEXT {|| .T.} ;
+	FINISH {|| lWiz := .T., .T. } EXEC {|| .T.} 
+	
+	@ 020, 015 SAY oSay2 VAR "Para executar a operação selecionada anteriormente, selecione 'Finalizar.'" OF oWizard:oMPanel[6] PIXEL
+	
+	If lIsP12
+		oWizard:oModal:lEscClose := .F.
+		oWizard:oModal:oOwner:lEscClose := .F.
+	Else
+		oWizard:oDlg:lEscClose := .F.
+	Endif 
+	
+	//oWizard:oDlg:lEscClose := .F. 
+	
+	ACTIVATE WIZARD oWizard CENTERED VALID {|| .T. }
+	
+	If lWiz
+		If cCombOper == 'I' 
+			Processa({|lAbort| fImpZEA(lAbort, cCombImp)}, 'Importação de dados', 'Aguarde, Importando dados...', .T.)
+		ElseIf cCombOper == 'E'
+			Processa({|lAbort| fExpZEA(lAbort, cLocFile, cGetFilDe, cGetFilAt, cGetCodDe, cGetCodAt)},;
+					'Importação de dados', 'Aguarde, Importando dados...', .T.)
+		EndIf
+	EndIf
+
+Return (Nil)
+
+/*/{Protheus.doc} fVldPnl03
+	Função para validação das informações inseridas no Painel 03
+	do wizard.
+	
+@author Franklin de Brito de Oliveira
+@since 08/03/2017
+@param cLocFile, characters, caminho do arquivo que será utilizado para importação.
+@param cCombImp, characters, tipo de importação selecionada: I=Inclusão, A=Alteração
+
+@type function
+/*/
+Static Function fVldPnl03(cLocFile, cCombImp)
+
+Local aCampo	:= {}
+Local aEstrut	:= {}
+Local aTXT		:= {}
+Local lRet 		:= .T.
+
+	cAliasTrb 	:= GetNextAlias()
+	
+	If Empty(cLocFile)
+		lRet := .F.
+		MsgAlert("Nenhum arquivo foi selecionado.")
+		Return lRet
+	EndIf
+	
+	aAdd(aEstrut, {'ZEA_DESC'  , 'C', 250, 0})
+	aAdd(aEstrut, {'ZEA_LOCAL' , 'C', 006, 0})
+	aAdd(aEstrut, {'ZEA_CODRES', 'C', 006, 0})
+	aAdd(aEstrut, {'ZEA_CCORES', 'C', 006, 0})
+	aAdd(aEstrut, {'ZEA_PRCAQS', 'N', 007, 2})
+	aAdd(aEstrut, {'ZEA_NUMSER', 'C', 030, 0})
+	
+	If cCombImp == 'I'
+		aAdd(aEstrut, {'QUANT'     	, 'C', 007, 0})
+		aAdd(aEstrut, {'ZEA_FORNEC' , 'C', 009, 0})
+		aAdd(aEstrut, {'ZEA_LOJA'   , 'C', 004, 0})
+	Else
+		aAdd(aEstrut, {'ZEA_CODIGO', 'C', 010, 0})
+	EndIf
+	
+	cArqTmp := CriaTrab(aEstrut, .T.)
+	
+	dbUseArea( .T.,, cArqTmp, cAliasTrb, .F., .F. )
+	
+	// Cria Indice Temporario do Arquivo de Trabalho.
+	If cCombImp == 'I'
+		cChave   := "ZEA_DESC"
+	Else
+		cChave   := "ZEA_CODIGO"
+	EndIf
+	
+	IndRegua(cAliasTrb,cArqTmp,cChave,,,"Criando Arquivo Temporário...")
+	
+	DbSelectArea(cAliasTrb)
+	DbSetIndex(cArqTmp + OrdBagExt())
+	DbSetOrder(1)
+	
+	// ESTRUTURA DO ARQUIVO TEXTO
+	aAdd(aCampo,"ZEA_DESC")
+	aAdd(aCampo,"ZEA_LOCAL")
+	aAdd(aCampo,"ZEA_CODRES")
+	aAdd(aCampo,"ZEA_CCORES")
+	aAdd(aCampo,"ZEA_PRCAQS")
+	aAdd(aCampo,"ZEA_NUMSER")
+	
+	If cCombImp == 'I'
+		aAdd(aCampo, "QUANT")
+		aAdd(aCampo, "ZEA_FORNEC")
+		aAdd(aCampo, "ZEA_LOJA")
+	Else
+		aAdd(aCampo,"ZEA_CODIGO")
+	EndIf
+	
+	//Define o valor do array conforme estrutura
+	aPosCampos:= Array(Len(aCampo))
+	
+	If (nHandle := FT_FUse(AllTrim(cLocFile)))== -1
+		lRet := .F.
+		Help(" ",1,"NOFILEIMPOR")
+		Return lRet
+	EndIf
+	
+	//Verifica Estrutura do Arquivo
+	FT_FGOTOP()
+	cLinha := FT_FREADLN()
+	nPos	:=	0
+	nAt	:=	1
+	
+	While nAt > 0
+		nPos++
+		nAt	:=	AT(";",cLinha)
+		If nAt == 0
+			cCampo := cLinha
+		Else
+			cCampo	:=	Substr(cLinha,1,nAt-1)
+		Endif
+		nPosCpo	:=	Ascan(aCampo,{|x| x==cCampo})
+		If nPosCPO > 0
+			aPosCampos[nPosCpo]:= nPos
+		Endif
+		cLinha	:=	Substr(cLinha,nAt+1)
+	Enddo
+	
+	If (nPosNil:= Ascan(aPosCampos,Nil)) > 0
+		lRet := .F.
+		Aviso("Estrutura de arquivo inválido.","O campo "+aCampo[nPosNil]+" nao foi encontrado na estrutura, verifique.",{"Sair"})
+		Return lRet
+	Endif
+	
+	// Inicia Importacao das Linhas
+	FT_FSKIP()
+	While !FT_FEOF()
+		cLinha := FT_FREADLN()
+		AADD(aTxt,{})
+		nCampo := 1
+		While At(";",cLinha)>0
+			aAdd(aTxt[Len(aTxt)],Substr(cLinha,1,At(";",cLinha)-1))
+			nCampo ++
+			cLinha := StrTran(Substr(cLinha,At(";",cLinha)+1,Len(cLinha)-At(";",cLinha)),'"','')
+		End
+		If Len(AllTrim(cLinha)) > 0
+			aAdd(aTxt[Len(aTxt)],StrTran(Substr(cLinha,1,Len(cLinha)),'"','') )
+		Else
+			aAdd(aTxt[Len(aTxt)],"")
+		Endif
+		FT_FSKIP()
+	End
+	
+	// Gravacao dos Itens (TRB)
+	FT_FUSE()
+	For nX:=1 To Len(aTxt)
+		For nY:=1 To Len(aCampo)
+			dbSelectArea(cAliastrb)
+			RecLock(cAliasTrb,.T.)
+			For nY:=1 To Len(aCampo)
+				If aCampo[nY] == 'ZEA_PRCAQS'
+					FieldPut(FieldPos(aCampo[nY]), Val(aTxt[nX,aPosCampos[nY]]))
+				Else
+					FieldPut(FieldPos(aCampo[nY]), aTxt[nX,aPosCampos[nY]])
+				EndIf
+			Next
+			MsUnLock()
+		Next
+	Next
+	
+	dbSelectArea(cAliasTrb)
+	dbGotop()
+	
+	If (cAliasTrb)->(EoF())
+		lRet := .F.
+		Aviso("Arquivo Vazio.", "O arquivo selecionado não possui dados", {"Sair"})
+		Return lRet
+	EndIf
+	
+Return (lRet)
+
+/*/{Protheus.doc} fImpZEA
+	Função para importação dos bens duráveis.
+	
+@author Franklin de Brito de Oliveira
+@since 08/03/2017
+@param lAbort, logical, informação para abortar da importação
+@param cCombImp, characters, tipo de importação selecionada: I=Inclusão, A=Alteração
+
+@type function
+/*/
+Static Function fImpZEA(lAbort, cCombImp)
+
+Local oModel, oAux, oStruct
+Local aAux 		:= {}
+Local aCabBem	:= {}
+Local lRet		:= .T.
+Local nTotReg	:= 0
+Local nX
+	
+	DbSelectArea('ZEA')
+	DbSetOrder(1)
+	
+	//Aqui ocorre o instanciamento do Modelo de dados (Model)
+	oModel := FWLoadModel('SF0102S')
+
+	//Instanciamos apenas referentes aos Dados
+	oAux := oModel:GetModel('ZEA' + 'MASTER')
+
+	//Obtemos a estrutura de dados
+	oStruct := oAux:GetStruct()
+	aAux    := oStruct:GetFields()
+	
+	While .Not. ( (cAliasTrb)->(EoF()) )
+		nTotReg++
+		(cAliasTrb)->(DbSkip())
+	EndDo
+	
+	ProcRegua( nTotReg )
+	
+	DbSelectArea(cAliasTrb)
+	DbGotop()
+
+	While .Not. ( (cAliasTrb)->(EoF()) )
+		If lAbort
+			Return (Nil)
+		EndIf
+		
+		If cCombImp == 'I' //Se for inclusão 
+			//Temos que definir qual a operação que sera executada: 3 - Inclusão / 4 - Alteração / 5 - Exclusao
+			oModel:SetOperation(3)
+			
+	    	//Quantidade Bem
+	    	nQtdBem	:= Val( AllTrim((cAliasTrb)->QUANT) )
+	    	
+	    	//Dt. Aquisição
+	    	aAdd(aCabBem, {'ZEA_DTAQUI', Date()})
+	    	
+	    	//Fornecedor
+	    	aAdd(aCabBem, {'ZEA_FORNEC', AllTrim((cAliasTrb)->ZEA_FORNEC)   })
+			
+			//Loja do fornecedor
+			aAdd(aCabBem, {'ZEA_LOJA'  , AllTrim((cAliasTrb)->ZEA_LOJA)    	})
+	    	
+	    	//Situação do bem
+	    	aAdd(aCabBem, {'ZEA_SITBEM', 'A'     				})
+	    Else // Se for Alteração
+	    	oModel:SetOperation(4)
+	    	
+	    	nQtdBem	:= 1
+	    	
+	    	//Codigo      
+	    	aAdd(aCabBem, {'ZEA_CODIGO', AllTrim((cAliasTrb)->ZEA_CODIGO ) })
+	    EndIf
+		
+		//Descricao   
+		If .Not. Empty((cAliasTrb)->ZEA_DESC)
+			aAdd(aCabBem, {'ZEA_DESC'  , AllTrim((cAliasTrb)->ZEA_DESC)   })
+		EndIf
+		
+		//Local       
+		If .Not. Empty((cAliasTrb)->ZEA_LOCAL)
+			aAdd(aCabBem, {'ZEA_LOCAL' , AllTrim((cAliasTrb)->ZEA_LOCAL)  })
+			aAdd(aCabBem, {'ZEA_DESLOC', Posicione("SNL", 1, xFilial("SNL") + AllTrim((cAliasTrb)->ZEA_LOCAL), "NL_DESCRIC")  })		
+		EndIf
+				
+		//Cod. Respons
+		If .Not. Empty((cAliasTrb)->ZEA_CODRES)
+			aAdd(aCabBem, {'ZEA_CODRES', AllTrim((cAliasTrb)->ZEA_CODRES )})
+			aAdd(aCabBem, {'ZEA_NOMRES', Posicione("RD0", 1, xFilial("RD0") + AllTrim((cAliasTrb)->ZEA_CODRES), "RD0_NOME") })		
+		EndIf
+		
+		//Cod. Co-Resp
+		If .Not. Empty((cAliasTrb)->ZEA_CCORES)
+			aAdd(aCabBem, {'ZEA_CCORES', AllTrim((cAliasTrb)->ZEA_CCORES) })
+			aAdd(aCabBem, {'ZEA_NCORES', Posicione("RD0", 1, xFilial("RD0") + AllTrim((cAliasTrb)->ZEA_CCORES), "RD0_NOME") })
+		EndIf
+		
+		//Preco Aquis.
+		If .Not. Empty((cAliasTrb)->ZEA_PRCAQS)
+			aAdd(aCabBem, {'ZEA_PRCAQS', (cAliasTrb)->ZEA_PRCAQS })
+		EndIf
+		
+		//Num Serie   
+		If .Not. Empty((cAliasTrb)->ZEA_NUMSER)
+			aAdd(aCabBem, {'ZEA_NUMSER', AllTrim((cAliasTrb)->ZEA_NUMSER )})
+		EndIf
+		
+		For nZ := 1 to nQtdBem
+			If cCombImp == 'I' .Or. ZEA->( DbSeek(xFilial("ZEA") + AllTrim((cAliasTrb)->ZEA_CODIGO)) ) 
+				
+				//Antes de Atribuirmos os Valores dos Campos temos que Ativar o Modelo
+				oModel:Activate()
+				
+				For nI := 1 To Len(aCabBem)
+					//Verificar se os campos passados existem na estrutura do Modelo
+					//If (nPos := aScan(aAux,{|x| AllTrim(x[3] ) == Alltrim(aCabBem[nI][1])})) > 0
+					If ( nPos := aScan(aAux,{|x| AllTrim( x[3] )== AllTrim(aCabBem[nI][1]) } ) ) > 0
+			
+						// É feita a atribuição do dado ao campo do Model
+						If !(lAux := oModel:SetValue('ZEA' + 'MASTER', aCabBem[nI][1], aCabBem[nI][2]))
+							//Caso a atribuição não possa ser feita, por algum motivo (Validação, por exemplo)
+							//O método SetValue retorna .F.
+							lRet := .F.
+							Exit
+						EndIf
+					EndIf
+				Next nI
+				
+				If lRet
+					//Faz-se a validação dos dados, note que diferentemente das tradicionais "rotinas automaticas"
+					//Nesse momento os dados não são gravados, são somento validados.
+					If (lRet := oModel:VldData())
+						//Se os dados foram validados faz-se a gravação efetiva dos dados (commit)
+						oModel:CommitData()
+					EndIf
+				EndIf
+				
+				If !lRet
+				
+					//Se os dados não foram validados obtemos a descrição do erro para gerar LOG ou mensagem de aviso
+					aErro := oModel:GetErrorMessage()
+					//A estrutura do vetor com o erro é:
+					// [1] Identificador (ID) do formulario de origem
+					// [2] Identificador (ID) do campo de origem
+					// [3] Identificador (ID) do formulario de erro
+					// [4] Identificador (ID) do campo de erro
+					// [5] Identificador (ID) do erro
+					// [6] Mensagem do erro
+					// [7] Mensagem da solução
+					// [8] Valor Atribuido
+					// [9] Valor Anterior
+			
+					AutoGrLog("Id do Formulário de Origem:" + ' [' + AllToChar( aErro[1] ) + ']')
+					AutoGrLog("Id do Campo de Origem:     " + ' [' + AllToChar( aErro[2] ) + ']')
+					AutoGrLog("Id do Formulário de Erro:  " + ' [' + AllToChar( aErro[3] ) + ']')
+					AutoGrLog("Id do Campo de Erro:       " + ' [' + AllToChar( aErro[4] ) + ']')
+					AutoGrLog("Id do Erro:                " + ' [' + AllToChar( aErro[5] ) + ']')
+					AutoGrLog("Mensagem do Erro:          " + ' [' + AllToChar( aErro[6] ) + ']')
+					AutoGrLog("Mensagem da Solução:       " + ' [' + AllToChar( aErro[7] ) + ']')
+					AutoGrLog("Valor Atribuido:           " + ' [' + AllToChar( aErro[8] ) + ']')
+					AutoGrLog("Valor Anterior:            " + ' [' + AllToChar( aErro[9] ) + ']')
+			
+					MostraErro()
+				EndIf
+			
+				//Desativamos o Model
+				oModel:DeActivate()
+			Else
+				Aviso("REGNOEXIST", "O bem [" + AllTrim((cAliasTrb)->ZEA_CODIGO) + "] foi encontrado.", {"Sair"})
+			EndIf
+		Next nZ
+
+		IncProc()
+		(cAliasTrb)->(DbSkip())
+	EndDo
+
+Return (Nil)
+
+/*/{Protheus.doc} fVldPnl04
+	Função para validar as informações inseridas no painel 04 do wizard.
+
+@author Franklin de Brito de Oliveira
+@since 08/03/2017
+@param cGetFilDe, characters, Filial de?
+@param cGetFilAt, characters, Filial até?
+@param cGetCodDe, characters, Código do bem de?
+@param cGetCodAt, characters, Código do bem até?
+
+@type function
+/*/
+Static Function fVldPnl04(cGetFilDe, cGetFilAt, cGetCodDe, cGetCodAt)
+Local lRet := .T.
+
+	If Empty(cGetFilDe) .And. Empty(cGetFilAt) .And. Empty(cGetCodDe) .And. Empty(cGetCodAt)
+		lRet := .F.
+		Aviso("Parâmetros Vazios.", "Os parâmetros informados não foram preenchidos.", {"Sair"})
+	EndIf
+
+Return lRet
+
+/*/{Protheus.doc} fExpZEA
+	Função para exportar os dados do cadastro de bens duráveis
+	conforme parâmetros informados anteriormente.
+	
+@author Franklin de Brito de Oliveira
+@since 08/03/2017
+@param lAbort, logical, descricao
+@param cLocFile, characters, informação para abortar da importação
+@param cGetFilDe, characters, Filial de?
+@param cGetFilAt, characters, Filial até?
+@param cGetCodDe, characters, Código do bem de?
+@param cGetCodAt, characters, Código do bem até?
+
+@type function
+/*/
+Static Function fExpZEA(lAbort, cLocFile, cGetFilDe, cGetFilAt, cGetCodDe, cGetCodAt)
+
+Local cQueryZEA := ""
+Local cCabec	:= ""
+Local cTexto	:= ""
+	
+	cQueryZEA := "SELECT "
+	cQueryZEA += " ZEA.ZEA_CODIGO, "
+	cQueryZEA += " ZEA.ZEA_DESC, "
+	cQueryZEA += " ZEA.ZEA_PRCAQS, "
+	cQueryZEA += " ZEA.ZEA_LOCAL, "
+	cQueryZEA += " ZEA.ZEA_FILORI, "
+	cQueryZEA += " ZEA.ZEA_CODRES, "
+	cQueryZEA += " ZEA.ZEA_FORNEC, "
+	cQueryZEA += " ZEA.ZEA_DOC, "
+	cQueryZEA += " ZEA.ZEA_SERIE, "
+	cQueryZEA += " ZEA.ZEA_ITEM, "
+	cQueryZEA += " ZEA.ZEA_CODPRO, "
+	cQueryZEA += " ZEA.ZEA_LOJA, "
+	cQueryZEA += " ZEA.ZEA_CCORES, "
+	cQueryZEA += " ZEA.ZEA_NUMSER "
+	cQueryZEA += "FROM " + RetSqlName("ZEA") + " ZEA "
+	cQueryZEA += "WHERE "
+	cQueryZEA += " ZEA.D_E_L_E_T_ = ' ' "
+	cQueryZEA += " AND ZEA_FILORI >= '" + cGetFilDe + "' "
+	cQueryZEA += " AND ZEA_FILORI <= '" + cGetFilAt + "' "
+	cQueryZEA += " AND ZEA_CODIGO >= '" + cGetCodDe + "' "
+	cQueryZEA += " AND ZEA_CODIGO <= '" + cGetCodAt + "' "
+	cQueryZEA += " AND ZEA_SITBEM IN ('A', 'E', 'T', 'C')"
+	
+	TCQUERY cQueryZEA NEW ALIAS "ALIASZEA"
+	
+	DbSelectArea("ALIASZEA")
+	
+	Count To nRecTra	
+	ProcRegua(nRecTra)
+	
+	ALIASZEA->(DbGoTop())
+	
+	While .Not. ALIASZEA->(EoF())
+		nRecTra++
+		
+		If lAbort
+			Return (Nil)
+		EndIf
+		
+		cTexto += ALIASZEA->ZEA_CODIGO + ";"
+		cTexto += ALIASZEA->ZEA_DESC + ";"
+		cTexto += StrZero(ALIASZEA->ZEA_PRCAQS) + ";"
+		cTexto += ALIASZEA->ZEA_LOCAL + ";"
+		cTexto += ALIASZEA->ZEA_FILORI + ";"
+		cTexto += ALIASZEA->ZEA_CODRES + ";"
+		cTexto += ALIASZEA->ZEA_FORNEC + ";"
+		cTexto += ALIASZEA->ZEA_DOC + ";"
+		cTexto += ALIASZEA->ZEA_SERIE + ";"
+		cTexto += ALIASZEA->ZEA_ITEM + ";"
+		cTexto += ALIASZEA->ZEA_CODPRO + ";"
+		cTexto += ALIASZEA->ZEA_LOJA + ";"
+		cTexto += ALIASZEA->ZEA_CCORES + ";"
+		cTexto += ALIASZEA->ZEA_NUMSER + ";"
+		cTexto += CRLF
+		
+		ALIASZEA->(DbSkip())
+	EndDo
+	
+	cCabec += "ZEA_CODIGO;"
+	cCabec += "ZEA_DESC;"
+	cCabec += "ZEA_PRCAQS;"
+	cCabec += "ZEA_LOCAL;"
+	cCabec += "ZEA_FILORI;"
+	cCabec += "ZEA_CODRES;"
+	cCabec += "ZEA_FORNEC;"
+	cCabec += "ZEA_DOC;"
+	cCabec += "ZEA_SERIE;"
+	cCabec += "ZEA_ITEM;"
+	cCabec += "ZEA_CODPRO;"
+	cCabec += "ZEA_LOJA;"
+	cCabec += "ZEA_CCORES;"
+	cCabec += "ZEA_NUMSER;"
+	cCabec += CRLF
+	
+	ALIASZEA->(DbCloseArea())
+	
+	nArquivo := FCreate(cLocFile + "ZEA.csv")
+	
+	If nArquivo == -1
+		MsgStop('Erro ao criar o Arquivo.')
+	ElseIf Empty(cTexto)
+		MsgStop('Dados não encontrados com os parâmetros informados.')
+	Else
+		FSeek (nArquivo, 0, FS_SET) 				// Posiciona no inicio do arquivo
+		FWrite(nArquivo, AllTrim(cCabec + cTexto)) 	// Insere texto no arquivo
+		FClose(nArquivo) 							// Fecha arquivo
+	EndIf
+	
+Return (Nil)
+
+/*/{Protheus.doc} fVldPnl05
+	Função para validar dados inseridos no painel 05 do Wizard.
+	
+@author Franklin de Brito de Olvieira
+@since 08/03/2017
+@param cLocFile, characters, Local selecionado para salvar o arquivo.
+
+@type function
+/*/
+Static Function fVldPnl05(cLocFile)
+
+Local lRet := .T.
+
+	If Empty(cLocFile)
+		lRet := .F.
+		MsgAlert("Nenhum local foi selecionado.")
+		Return lRet
+	EndIf
+		
+Return (lRet)

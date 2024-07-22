@@ -1,0 +1,150 @@
+#INCLUDE 'PROTHEUS.CH'
+
+/*/{Protheus.doc} SN73R01M
+	Esta Planilha será utilizada pelo SENAI contendo o Total de Oportunidades no Período informado.
+@author marcel.rodrigues
+@since 14/08/2017
+@version 1.0
+/*/
+
+User Function SN73R01M()
+
+	
+	Local _cPlanilha 	:= "Relatorio"
+	Local _cTitulo	:= "Total de Oportunidades no Período"	
+	Private cPerg		:= "SN73R01M"	
+	Private _aDados 	:= {}
+	Private cCadastro	:= "Exportação do Total de Oportunidades no Período"
+	Private aSays		:= {}
+	Private aButtons	:= {}
+	Private nOpca 	:= 0
+		//Alias	
+	Private _cTmp		    := GetNextAlias()
+	
+	
+	AjustaSx1(cPerg)
+	Pergunte(cPerg,.F. )
+	
+	AADD(aSays,"Este programa irá realizar a exportação do  " )
+	AADD(aSays,"Total de Oportunidades no Período" )
+
+	AADD(aButtons, { 5,.T.,{|| Pergunte(cPerg,.T. )}})
+	AADD(aButtons, { 1,.T.,{|o| nOpca := 1,FechaBatch()}})
+	AADD(aButtons, { 2,.T.,{|o| FechaBatch() }} )
+
+	FormBatch( cCadastro, aSays, aButtons )
+
+If nOpca == 1
+
+
+
+
+//Gera Excel
+			Processa({|| FGeraExcel()})
+			
+	EndIf
+Return
+
+Static Function FGeraExcel()
+
+Local oExcel 		:= FWMSEXCEL():New()
+Local _cQuery 	:= ""
+Local _cPlanilha 	:= "Total Oportunidades"
+Local _ctitulo	:= "Total de Oportunidades"
+Local dDataIni 	:= DTOS(mv_par01)
+Local dDataFim 	:= DTOS(mv_par02)
+
+
+
+			_cQuery1 := " SELECT DISTINCT															"
+			_cQuery1 += " 	AD1.AD1_FILIAL FILIAL,												"
+			_cQuery1 += "		SUBSTR(AD1.AD1_DATA,1,4) ANO,										"
+			_cQuery1 += "		SA3.A3_NOME NOMVEND,													"
+			_cQuery1 += "		CASE AD1.AD1_FILIAL 													"
+			SM0->( DBGOTOP() )
+			while .Not. SM0->(EOF())
+  				If "03MT" $ SM0->M0_CODFIL
+   					_cQuery1  += "WHEN '"+SM0->M0_CODFIL+"' THEN '"+SM0->M0_FILIAL+"'			"
+  				Endif
+  				SM0->(DbSkip())
+			End
+			_cQuery1 += " END AS DESCFIL,														"
+			_cQuery1 += " TO_DATE("+ dDataFim +", 'YYYYMMDD')- TO_DATE("+ dDataIni +", 'YYYYMMDD') AS PERIODO,					"			
+			_cQuery1 += "	COUNT(AD1.AD1_NROPOR) TOTOPORT											"
+			_cQuery1 += "	FROM " + RetSqlName("AD1") + " AD1										"
+			_cQuery1 += "	INNER JOIN " + RetSqlName("SA3") + " SA3 ON SUBSTR(AD1.AD1_FILIAL ,1,4) = SUBSTR(SA3.A3_FILIAL ,1,4) AND AD1.AD1_VEND = SA3.A3_COD AND SA3.D_E_L_E_T_ <> '*'"
+			_cQuery1 += "	WHERE																		"
+			_cQuery1 += "	AD1.D_E_L_E_T_ <> '*' 													"
+			_cQuery1 += "	AND AD1.AD1_DATA >= '"+ dDataIni +"'									"
+			_cQuery1 += "	AND AD1.AD1_DATA <= '"+ dDataFim +"'									"
+			_cQuery1 += "	AND SUBSTR(AD1.AD1_FILIAL ,1,4) = '03MT'								"
+			_cQuery1 += "	GROUP BY AD1.AD1_FILIAL, SUBSTR(AD1.AD1_DATA,1,4),SA3.A3_NOME		"
+			_cQuery1 += "	ORDER BY SA3.A3_NOME, AD1.AD1_FILIAL 									"
+			
+
+	oExcel:AddworkSheet(_cPlanilha)
+	oExcel:AddTable (_cPlanilha,_cTitulo)
+	oExcel:AddColumn(_cPlanilha,_cTitulo,"VENDEDOR"											,1,1)
+	oExcel:AddColumn(_cPlanilha,_cTitulo,"FILIAL"		 	     								,1,1)
+	oExcel:AddColumn(_cPlanilha,_cTitulo,"ANO"			  									,1,1)
+	oExcel:AddColumn(_cPlanilha,_cTitulo,"DESCRIÇÃO FILIAL"									,1,1)
+	oExcel:AddColumn(_cPlanilha,_cTitulo,"PERIODO DE SOLICITAÇÃO"  						,2,1)
+	oExcel:AddColumn(_cPlanilha,_cTitulo,"TOTAL DE OPORTUNIDADES"							,2,1)
+	
+	_cQuery1 := ChangeQuery( _cQuery1 )
+	
+	Memowrite("c:\temp\SN73R01M.txt",_cQuery1)
+			dbUseArea( .T., "TOPCONN", TcGenQry(,,_cQuery1), _cTmp, .T., .T. )
+			
+	(_cTmp)->( DBGOTOP() )
+	
+
+	While .Not. (_cTmp)->( EOF() )
+		
+	oExcel:AddRow(_cPlanilha,_cTitulo,{(_cTmp)->NOMVEND,;
+				 (_cTmp)->FILIAL,;
+				 (_cTmp)->ANO,;
+				 (_cTmp)->DESCFIL,;
+				 (_cTmp)->PERIODO,;
+				 (_cTmp)->TOTOPORT})
+				 				
+
+	(_cTmp)->( DBSKIP() )
+	
+	EndDo
+
+	
+	(_cTmp)->( DBCLOSEAREA() )
+	
+	oExcel:Activate()
+		cPlaNew := Upper(cGetFile('Arquivos XLS (*.xls) |*.xls|', 'Salvar Planilha Como',,'K:\UTIL\',.T.,nOR( GETF_LOCALHARD, GETF_LOCALFLOPPY, GETF_RETDIRECTORY ),.F.))
+		oExcel:GetXMLFile(cPlaNew+"oportunidades.XML")
+	
+	MsgInfo("O Arquivo foi salvo em: "+cPlaNew+".XML")
+	
+	
+Return()
+	
+	
+
+Static Function AjustaSx1(cPerg)
+	
+	Local aHelp := {}
+
+//	AAdd(aHelp, {{"Do Contrato ?"}, {""}, {""}})
+//	AAdd(aHelp, {{"Ate o Contrato ?"}, {""}, {""}})
+	AAdd(aHelp, {{"Da Data ?" }, {""}, {""}})
+	AAdd(aHelp, {{"Ate a Data ?" }, {""}, {""}})
+
+
+	//???????????????????????????????????
+	//?MV_PAR01  Contrato 				 ?
+	//?MV_PAR02  Data de Aplicacao 		 ?
+	//???????????????????????????????????
+	
+//	u_SFPUTSX1( cPerg, "01","Do Contrato ?					","","","mv_ch1","C",TamSX3("CN9_NUMERO")[1] ,0,0,"G","","","","","mv_par01","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")
+//	u_SFPUTSX1( cPerg, "02","Ate o Contrato ?				","","","mv_ch2","C",TamSX3("CN9_NUMERO")[1] ,0,0,"G","","","","","mv_par02","","","","","","","","","","","","","","","","",aHelp[2,1],aHelp[2,2],aHelp[2,3],"")
+	u_SFPUTSX1( cPerg, "01","Da Data ?						","","","mv_ch1","D",TamSX3("AD1_DATA")[1] ,0,0,"G","","","","","mv_par01","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")
+	u_SFPUTSX1( cPerg, "02","Ate a Data ?					","","","mv_ch2","D",TamSX3("AD1_DATA")[1] ,0,0,"G","","","","","mv_par02","","","","","","","","","","","","","","","","",aHelp[2,1],aHelp[2,2],aHelp[2,3],"")
+
+Return( Nil )	

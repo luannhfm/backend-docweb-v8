@@ -1,0 +1,202 @@
+#Include 'Protheus.ch'
+
+
+/*/{Protheus.doc} SF0402F
+Função para envio do e-mail de requisição de produtos ao estoque do CD.
+
+@author Franklin de Brito de Oliveira
+@since 24/07/2015
+@version 1.0
+
+@return $Nil
+/*/
+User Function SF0402F()
+
+Local aArea		:= GetArea()
+Local aDados		:= {} 
+
+Local cMailDest	:= UsrRetMail( SuperGetMV("MV_XUSRSCD", .F., , ) )		//E-mail do usuário responsável pelo CD
+Local cMailSol	:= UsrRetMail( RetCodUsr() )								//E-mail do usuário solicitante
+Local cFuncName	:= "SF0402F"
+Local cAssunto	:= "Requisição de produto ao estoque"
+Local cMensagem	:= ""
+Local cNumSA		:= SCP->CP_NUM
+Local cEmissao	:= SCP->CP_EMISSAO
+
+Local lConfLei	:= .T.															//Confirma leitura de e-mail
+
+Local nCont		:= 1
+Local nQtRequ		:= 0
+Local nQtSal		:= 0
+	
+	dbSelectArea("SCP")
+	
+	If dbSeek(xFilial("SCP")+cNumSA)
+		
+		While !Eof() .And. ( SCP->CP_FILIAL+SCP->CP_NUM == xFilial("SCP")+cNumSA)
+	
+			dbSelectArea("SB2")
+			dbSetOrder(1)
+			If dbSeek(xFilial()+SCP->CP_PRODUTO+SCP->CP_LOCAL)
+				
+				nQtRequ	:= SCP->CP_QUANT - SCP->CP_QUJE
+				nQtSal  	:= SB2->B2_QATU - ( SB2->B2_RESERVA + SB2->B2_QEMP + SB2->B2_QACLASS + (SB2->B2_QEMPSA - nQtRequ) )
+			
+				If Empty(SCP->CP_STATUS) .And. SCP->CP_PREREQU == "S" .And. (nQtRequ > nQtSal)
+					
+					AAdd(aDados, {SCP->CP_PRODUTO											,;	//Código do produto
+									SCP->CP_DESCRI											,;	//Descrição do produto
+									nQtRequ - nQtSal					,;	//Quantidade necessária
+									SCP->CP_XVUNIT											,;	//Valor unitário
+									( nQtRequ - nQtSal ) * SCP->CP_XVUNIT	})	//Valor total
+												
+				EndIf
+			
+			EndIf
+						
+			SCP->( DBSkip() )
+			
+		EndDo
+		
+	EndIf
+		
+	If Len(aDados) <= 0
+	
+		MsgStop("Não há itens pendentes para a SA: "+ cNumSA +", verifique.", "Atenção")
+		Return(Nil)
+		
+	EndIf
+			
+	cMensagem := 	"<!DOCTYPE html>"
+	cMensagem +=	"<html>"
+	cMensagem +=	"	<head>"
+	cMensagem +=	"		<style>"
+	cMensagem +=	"		div.header {"
+	cMensagem +=	"			border-color: black;"
+	cMensagem +=	"			border-radius: 25px;"
+	cMensagem +=	"			border-style: solid;"
+	cMensagem +=	"			background-color:#005EA8;"
+	cMensagem +=	"		}"
+	cMensagem +=	"		div.scope{"
+	cMensagem +=	"			margin-top:25px;"
+	cMensagem +=	"			margin-bottom:25px;"
+	cMensagem +=	"		}"
+	cMensagem +=	"		p.header {"
+	cMensagem +=	"				color:white;"
+	cMensagem +=	"				font:20px arial bold;"
+	cMensagem +=	"				font-weight:900;"
+	cMensagem +=	"				text-align:center;"
+	cMensagem +=	"		}"
+	cMensagem +=	"		table {"
+	cMensagem +=	"			width:100%;"
+	cMensagem +=	"		}"
+	cMensagem +=	"		table, th, td {"
+	cMensagem +=	"			border: 1px solid black;"
+	cMensagem +=	"			border-collapse: collapse;"
+	cMensagem +=	"		}"
+	cMensagem +=	"		th, td {"
+	cMensagem +=	"			padding:5px;"
+	cMensagem +=	"			text-align:left;	"		
+	cMensagem +=	"		}"
+	cMensagem +=	"		td.blank{"
+	cMensagem +=	"			width:40%;"
+	cMensagem +=	"			border:none;"
+	cMensagem +=	"			background-color:white;"
+	cMensagem +=	"		}"
+	cMensagem +=	"		#data {"
+	cMensagem +=	"			width:100%;"
+	cMensagem +=	"			border-collapse:collapse;"
+	cMensagem +=	"		}"
+	cMensagem +=	"		#data td, #data th {"
+	cMensagem +=	"			font-size: 1em;"
+	cMensagem +=	"			border: 1px solid #005EA8;"
+	cMensagem +=	"			padding: 3px 7px 2px 7px;"
+	cMensagem +=	"		}"
+	cMensagem +=	"		#data th {"
+	cMensagem +=	"			font-size: 1.1em;"
+	cMensagem +=	"			text-align: left;"
+	cMensagem +=	"			padding-top: 5px;"
+	cMensagem +=	"			padding-bottom: 4px;"
+	cMensagem +=	"			background-color: #005EA8;"
+	cMensagem +=	"			color: #ffffff;"
+	cMensagem +=	"		}"
+	cMensagem +=	"		</style>"
+	cMensagem +=	"	</head>"
+	cMensagem +=	"	<body>"
+	cMensagem +=	"		<div class='header'>"
+	cMensagem +=	"			<p class='header' >Solicitação ao Armazém</p>"
+	cMensagem +=	"			<p style='padding-left:10px; font-size:100%; text-align:left; color: white;'>Informativo do Protheus</p>"
+	cMensagem +=	"		</div>"
+	cMensagem +=	"		<div class='scope'>"
+	cMensagem +=	"			<p>Prezados,</p>"
+	cMensagem +=	"			<p>Foi incluído no Sistema Protheus, módulo de estoque, a solicitação ao armazém "+ cNumSA +" na filial "+ FWFilialName(cEmpAnt, xFilial("SCP"), 1) +"</p>"
+	cMensagem +=	"			<p style='font-weight:bold; font-size:24px; font-color:red;' >ANTENÇÃO: Verificar disponibilidade do produto no estoque do centro de distribuição.</p>"
+	cMensagem +=	"			<div class='header'>"
+	cMensagem +=	"				<p class='header' >Situação da solicitação</p>"
+	cMensagem +=	"			</div>"
+	cMensagem +=	"			<table style='margin-top:25px; margin-bottom:25px; border:2px solid black;'>"
+	cMensagem +=	"				<tr>"
+	cMensagem +=	"					<td>Filial:</td>"
+	cMensagem +=	"					<td>"+ FWFilialName(cEmpAnt, xFilial("SCP"), 1) +"</td>"
+	cMensagem +=	"					<td>Data Emissão</td>"
+	cMensagem +=	"					<td>"+ DToC(cEmissao) +"</td>		"	
+	cMensagem +=	"				</tr>"
+	cMensagem +=	"				<tr>"
+	cMensagem +=	"					<td>Usuário Solicitante:</td>"
+	cMensagem +=	"					<td>"+ UsrRetName( RetCodUsr() ) +"</td>"
+	cMensagem +=	"					<td>Nº da SA</td>"
+	cMensagem +=	"					<td>"+ cNumSA +"</td>"
+	cMensagem +=	"				</tr>"
+	cMensagem +=	"			</table>"
+	cMensagem +=	"		</div>"
+	cMensagem +=	"		<div>"
+	cMensagem +=	"			<table id='data'>"
+	cMensagem +=	"				<tr>"
+	cMensagem +=	"					<th>Seq.</th>"
+	cMensagem +=	"					<th>Cód. Produto</th>"
+	cMensagem +=	"					<th>Descrição</th>"
+	cMensagem +=	"					<th>Qtde.</th>"
+	cMensagem +=	"					<th>Valor</th>"
+	cMensagem +=	"					<th>Total</th>"
+	cMensagem +=	"				</tr>"
+	
+	For n := 1 To Len(aDados)
+	
+		cMensagem +=	"				<tr>"
+		cMensagem +=	"					<td>"+ Transform(nCont			, PesqPict("SCP", "CP_ITEM"))		+"</td>"
+		cMensagem +=	"					<td>"+ aDados[n][1]	+"</td>"
+		cMensagem +=	"					<td>"+ aDados[n][2]	+"</td>"
+		cMensagem +=	"					<td>"+ Transform(aDados[n][3]	, PesqPict("SCP", "CP_QUANT"))		+"</td>"
+		cMensagem +=	"					<td>"+	Transform(aDados[n][4]	, PesqPict("SCP", "CP_XVUNIT"))		+"</td>"
+		cMensagem +=	"					<td>"+	Transform(aDados[n][5]	, PesqPict("SCP", "CP_XVLRTOT"))	+"</td>"
+		cMensagem +=	"				</tr>"
+		
+		nCont++
+		
+	Next
+	
+	cMensagem +=	"			</table>"
+	cMensagem +=	"		</div>"
+	cMensagem +=	"		<div>"
+	cMensagem +=	"			<p style='font-weight:bold; font-size:24px; font-color:red;'>Protheus SFIEMT - Mensagem automática, favor não responder este e-mail.</p>"
+	cMensagem +=	"		</div>"
+	cMensagem +=	"	</body>"
+	cMensagem +=	"</html>"
+		
+		
+	If !Empty(cMailDest)
+	
+		If U_SFEnvEmail(cMailSol/* p_cFrom*/, cMailDest, /*p_cCC*/, /*p_cBcc */, cAssunto, cMensagem, /*p_cAttach*/, lConfLei /*p_lConLe*/)
+			ApMsgInfo("Email enviado com sucesso!","Email enviado")
+		Else
+			ApMsgInfo("Não foi possível enviar Email","Email nao enviado")
+		EndIf	
+		
+	Else
+		ApMsgInfo("Não existe e-mail cadastrado para o usuario " + UsrRetName(_cCodUsu),"Email nao enviado")
+	EndIf
+	
+	RestArea(aArea)
+	
+Return (Nil)
+

@@ -1,0 +1,131 @@
+#INCLUDE 'PROTHEUS.CH'
+
+
+/*/{Protheus.doc} F040ALT
+Grava informações após gravar alteração nos títulos.
+
+@author Allan da Silva Faria
+@since 22/04/2016
+@version 1.0
+/*/
+User Function F040ALT()
+
+    Local cBanUni   := GetNewPar('MV_XBANCO', '')
+    Local cAgeUni 	:= GetNewPar('MV_XAGENC', '')
+    Local cConUni 	:= GetNewPar('MV_XCONTA', '')
+	Local aOldAArea := GetArea()
+
+	If (Type("_cSPC")#"U" .AND. Type("_cCOBJ")#"U")
+
+		//----------------------------------
+		//-- Processa Historico Inclusão SPC
+		//----------------------------------
+		ProcHistor("SPC")
+
+		//----------------------------------
+		//-- Processa Historico Inclusão COBJUD
+		//----------------------------------
+		ProcHistor("COBJ")
+
+	EndIf
+
+	If SE1->E1_PORTADO = cBanUni .and. SE1->E1_AGEDEP = cAgeUni .and. SE1->E1_CONTA = cConUni .and. SE1->E1_XENVBOL = '4'
+		// Analisa dados e gera eventos de Alterações dos Boletos para serem enviados ao banco do Brasil via API de Integração de Boletos.
+		U_F06A64XS()
+	EndIf
+
+	/*If SE1->E1_XENVBOL = '4'
+
+		If RecLock('SE1',.F.)
+			SE1->E1_XENVBOL := "5"
+		EndIf
+
+		DbSelectArea('SEA')
+		SEA->(DbSetOrder(1)) //EA_FILIAL+EA_NUMBOR+EA_PREFIXO+EA_NUM+EA_PARCELA+EA_TIPO+EA_FORNECE+EA_LOJA
+		If SEA->(DbSeek(FWxFilial('SEA') + SE1->E1_NUMBOR + SE1->E1_PREFIXO + SE1->E1_NUM + SE1->E1_PARCELA + SE1->E1_TIPO ))
+			If RecLock('SEA', .F.)
+				SEA->EA_XSTATUS := "02"
+				SEA->EA_XMENSG  := "Titulo Pendente Envio Automatico"
+			EndIf
+		EndIf
+		SEA->(DbCloseArea())
+
+	EndIf*/
+
+	RestArea(aOldAArea)
+
+Return
+
+
+/*/{Protheus.doc} ProcHistor
+Processa Historico de Inclusão/Exclusão de SPC/Cobrança Judicial.
+
+@author Allan da Silva Faria
+@since 22/04/2016
+@version 1.0
+@param _cTipo, Catacter, SPC e COBJ
+/*/
+Static Function ProcHistor(_cTipo)
+
+	Local _aHistCob := Array(9)
+	Local _cVarField:= &("_c"+_cTipo)
+	Local _cSE1Field:= &("SE1->E1_X"+_cTIPO)
+	Local _dSE1DT	:= &("SE1->E1_X"+_cTIPO+"DT")
+	Local _cOrigem	:= IIF(_cTipo == "SPC","FINA040S","FINA040J")
+
+	If (_cVarField # _cSE1Field)
+
+		_aHistCob[1]:= SE1->E1_CLIENTE
+		_aHistCob[2]:= SE1->E1_LOJA
+		_aHistCob[3]:= SE1->E1_PREFIXO
+		_aHistCob[4]:= SE1->E1_NUM
+		_aHistCob[5]:= SE1->E1_PARCELA
+		_aHistCob[6]:= SE1->E1_TIPO
+
+		//---------------------
+		//-- Inclusão
+		//---------------------
+		AddHistor(_aHistCob,_cTipo,_cOrigem,_dSE1DT,_cSE1Field)
+
+	EndIf
+
+Return Nil
+
+
+/*/{Protheus.doc} AddHistor
+Inclui Historico
+
+@author Allan da Silva Faria
+@since 22/04/2016
+@version 1.0
+@param _aHistCob	, Array		, Dados do titulos/Historico
+@param _cTipo		, Caracter	, Tipo SPC e COBJ
+@param _cOrigem		, Caracter	, Origem do Historico
+@param _dData		, Date		, Data da Inclução
+@param _cField		, Caracter	, Gerar Historico de Inclucao ou Exçãi
+/*/
+Static Function AddHistor(_aHistCob,_cTipo,_cOrigem,_dData,_cField)
+
+	_aHistCob[7]:= STOD("//")
+	If (_cTipo == "SPC")
+		If (_cField == "S")
+			_aHistCob[8]:= "TÍTULO INCLUÍDO NO SPC " + CRLF
+			_aHistCob[8]+= "Data da Inclusão: " + DToC(_dData) + CRLF
+		Else
+			_aHistCob[8]:= "TÍTULO EXCLUÍDO NO SPC " + CRLF
+		EndIf
+	Else
+		If (_cField == "S")
+			_aHistCob[8]:= "TÍTULO ENVIADO PARA COBRANÇA JUDICIAL " + CRLF
+			_aHistCob[8]+= "Data do Envio: " + DToC(_dData) + CRLF
+		Else
+			_aHistCob[8]:= "TÍTULO RETIRADO DA COBRANÇA JUDICIAL " + CRLF
+		EndIf
+	EndIf
+	_aHistCob[9]:= "01"
+
+	//---------------------------------------
+	//-- Chama Função que grava historico
+	//---------------------------------------
+	U_SF06A74X(_aHistCob,_cOrigem,NIL)
+Return Nil

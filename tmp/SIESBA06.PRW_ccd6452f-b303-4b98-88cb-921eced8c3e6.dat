@@ -1,0 +1,170 @@
+#INCLUDE "PROTHEUS.CH"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIESBA06   ºAutor  ³Microsiga          º Data ³  22/03/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Receptor de EAI - Lancamento Contabil                      º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ MP 11.5 - Sistema Industria                                º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function SIESBA06(_cXML,cXMLError)
+Local _cError   := ""
+Local _cWarning := ""
+Local _cDelimit := "_"
+Local aStru     := {}
+Local _lInput    := GetRemoteType() == -1 //-1 = sem remote/ 0 = delphi/ 1 = QT windows/ 2 = QT Linux
+Default _cXML    := ""
+
+IF !_lInput // Chamada via ESB/EAI
+	Return
+ENDIF
+
+//Gera o Objeto XML com a estrutura recebida
+oXml := XmlParser(_cXML, _cDelimit, @_cError, @_cWarning)
+
+//Verifica se a estrutura foi criada
+IF !(Empty(_cError) .and. Empty(_cWarning))   
+	cXMLError := _cError
+	Break	
+	Return()
+ENDIF
+
+_nOperac := Val(oXml:_CTBA102:_OPERATION:TEXT)
+_nLaco   := IIF(Type("oXml:_CTBA102:_CT2MASTER:_CT2DETAIL:_ITEMS:_ITEM") == "A",Len(oXml:_CTBA102:_CT2MASTER:_CT2DETAIL:_ITEMS:_ITEM),1)
+
+// ID ESB
+IF Type("oXml:_CTBA102:_CT2MASTER:_CT2DETAIL:_ITEMS:_ITEM"+IIF(_nLaco>1,"[1]:",":")+"_CT2_XIDESB:REALNAME") <> "U"
+	_cIDESB := &("oXml:_CTBA102:_CT2MASTER:_CT2DETAIL:_ITEMS:_ITEM"+IIF(_nLaco>1,"[1]:",":")+"_CT2_XIDESB:TEXT")
+ELSE
+	_cIDESB := ""
+ENDIF
+
+IF _nOperac <> 3 // liberado somente para inclusão
+	_cMotivo := "Utilize Operacao igual a 3 (Inclusao)"      
+    cXMLError:= _cMotivo
+	// Gera XML de retorno
+	U_SIXMLMSG("CTBA102","Movimento Contabil",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)    
+    Break
+	Return()
+ENDIF
+
+// Verifica se mensagem trata-se de Lancamento Contabil
+IF Type('oXml:_CTBA102:_CT2MASTER') == "U" .or. Type("oXml:_CTBA102:_CT2MASTER:_CT2DETAIL") == "U"
+	_cMotivo := "Mensagem invalida para a rotina CTBA102 - Lancamento Contabil"         
+    cXMLError:= _cMotivo
+	// Gera XML de retorno
+	U_SIXMLMSG("CTBA102","Movimento Contabil",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+     Break
+	Return()
+ENDIF
+
+_dData   := IIF(Type("oXml:_CTBA102:_CT2MASTER:_DDATALANC") == "U","",Stod(oXml:_CTBA102:_CT2MASTER:_DDATALANC:_VALUE:TEXT))
+_cLote   := IIF(Type("oXml:_CTBA102:_CT2MASTER:_CLOTE") == "U","",oXml:_CTBA102:_CT2MASTER:_CLOTE:_VALUE:TEXT)
+_cSbLote := IIF(Type("oXml:_CTBA102:_CT2MASTER:_CSUBLOTE") == "U","",oXml:_CTBA102:_CT2MASTER:_CSUBLOTE:_VALUE:TEXT)
+_cDoc    := IIF(Type("oXml:_CTBA102:_CT2MASTER:_CDOC") == "U","",oXml:_CTBA102:_CT2MASTER:_CDOC:_VALUE:TEXT)
+
+// Verifica faltam campos do cabecalho
+IF Empty(_dData) .or. Empty(_cLote) .or. Empty(_cSbLote) .or. Empty(_cDoc)
+	_cMotivo := "Alguns campos do cabecalho nao foram informados. Verifique!"   
+    cXMLError:= _cMotivo
+	// Gera XML de retorno
+	U_SIXMLMSG("CTBA102","Movimento Contabil",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)  
+    Break
+	Return()
+ELSE
+	_aCab := {{"dDataLanc",_dData,NIL},{"cLote",_cLote,NIL},{"cSubLote",_cSbLote,NIL},{"cDoc",_cDoc,NIL}}
+ENDIF
+
+_aItem    := {}
+_aTotItem := {}
+
+For i := 1 to _nLaco
+	
+	SX3->(dbSetOrder(1))
+	SX3->(dbGoTop())
+	SX3->(dbSeek("CT2"))
+	
+	// Carrega vetor com os campos
+	While SX3->(!Eof()) .and. SX3->X3_ARQUIVO == "CT2"
+		
+		IF Type("oXml:_CTBA102:_CT2MASTER:_CT2DETAIL:_ITEMS:_ITEM"+IIF(_nLaco>1,"["+Alltrim(Str(i))+"]:",":")+"_"+Alltrim(SX3->X3_CAMPO)+":REALNAME") <> "U"
+			// Carrega conteudo do variavel
+			_cCampo := &("oXml:_CTBA102:_CT2MASTER:_CT2DETAIL:_ITEMS:_ITEM"+IIF(_nLaco>1,"["+Alltrim(Str(i))+"]:",":")+"_"+Alltrim(SX3->X3_CAMPO)+":TEXT")
+			
+			// Faz tratamento do dado
+			IF SX3->X3_TIPO == "C"
+				_cCampo := PadR(_cCampo,SX3->X3_TAMANHO)
+			ELSEIF SX3->X3_TIPO == "N"
+				_cCampo := Val(_cCampo)
+			ELSEIF SX3->X3_TIPO == "D"
+				_cCampo := Stod(_cCampo)
+			ENDIF
+			IF SX3->X3_CONTEXT == "V"
+				SX3->(dbSkip())
+				Loop
+			ENDIF
+			
+			// Carrega vetor para rotina automatica
+			Aadd(_aItem,{Alltrim(SX3->X3_CAMPO),_cCampo,NIL} )
+		ENDIF
+		SX3->(dbSkip())
+	Enddo
+	Aadd(_aItem,{'CT2_ORIGEM','MSEXECAUT',NIL} )
+	Aadd(_aTotItem, _aItem )
+	_aItem := {}
+Next
+
+INCLUI         := .T.
+lMsErroAuto    := .F.
+lMsHelpAuto    := .T.
+lAutoErrNoFile := .T.
+CT2->( dbSetOrder( 1 ) )
+
+Begin Transaction
+
+MSExecAuto( {|X,Y,Z| CTBA102(X,Y,Z)}, _aCab , _aTotItem , _nOperac )
+
+If lMsErroAuto
+	
+	If (__lSX8)
+		RollBackSX8()
+	EndIf
+	
+	DisarmTransaction()
+	
+	// Tratamento da Mensagem de erro do MSExecAuto
+	aLogErr  := GetAutoGRLog()
+	aLogErr2 := U_SIESBID(aLogErr)
+	_cMotivo := ""
+	
+	For i := 1 to Len(aLogErr2)
+		_cMotivo += aLogErr2[i]
+	Next
+	
+	// Gera XML de retorno
+	U_SIXMLMSG("CTBA102","Movimento Contabil",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+	cXMLError := _cMotivo
+	Break
+Else
+	If (__lSX8)
+		ConfirmSX8()
+	EndIf
+	
+	// Gera XML de retorno
+	U_SIXMLMSG("CTBA102","Movimento Contabil",Alltrim(Str(_nOperac)),_cIDESB,"0","")
+	
+EndIf
+
+End Transaction
+
+CT2->(dbCloseArea())
+
+Return()

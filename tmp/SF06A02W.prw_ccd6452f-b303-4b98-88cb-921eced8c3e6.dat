@@ -1,0 +1,557 @@
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE 'RWMAKE.CH'
+#INCLUDE 'FONT.CH'
+#INCLUDE 'COLORS.CH'
+
+#DEFINE CCR Chr(10) + Chr(13)
+
+Public aItemsFI2 := {}
+
+/*/{Protheus.doc} SF06A02W
+//TODO Descrição User Function para atualizar títulos financeiros e criar instrução de cobranças para envio ao banco.
+@author Walmir Junior
+@since 29/04/2020
+@version 1.0
+@return
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+User Function SF06A02W
+
+Private _cFilIn	:= Space(TamSx3("E1_FILIAL")[1])
+Private _cFilFn	:= Space(TamSx3("E1_FILIAL")[1])
+Private _dVenIn	:= SToD('  /  /    ')
+Private _dVenFn	:= SToD('  /  /    ')
+Private _dEmiIn	:= SToD('  /  /    ')
+Private _dEmiFn	:= SToD('  /  /    ')
+Private _cPrfIn	:= Space(TamSx3("E1_PREFIXO")[1])
+Private _cPrfFn	:= Space(TamSx3("E1_PREFIXO")[1])
+Private _cNmIn	:= Space(TamSx3("E1_NUM")[1])
+Private _cNmFn	:= Space(TamSx3("E1_NUM")[1])
+
+Private _nDscAd := 0
+
+Private _aNTit	:= {0,0}
+
+Private _aBotao := {{"CANCEL", {|| fCanc()}, "Cancelar Alteração"}}
+
+Private _aItem	:= {'1 - Concessão de Desconto','2 - Isenção de Juros','3 - Isenção de Multa','4 - Inserção de Juros','5 - Inserção de Multa','6 - Remoção de Desconto Adicional'}
+Private _cOper	:= _aItem[1]
+
+Private _aTabTit := {}
+
+_cFilIn	:= cFilAnt
+
+/*
+±±ÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ±±
+±± Declaração de Variaveis Private dos Objetos                          ±±
+±±ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ±±
+*/
+
+SetPrvt("oGTit","oSay1","oSay2","oSay3","oSay4","oSay5","oSay6","oSay7","oSay8","oGrp1")
+SetPrvt("oGet1","oGet2","oGet3","oGet4","oGet5","oGet6","oBtn2")
+
+
+SetPrvt("oSay9","oSay10","oSay11","oGet7")
+/*
+±±ÄÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ±±
+±± Definicao do Dialog e todos os seus componentes.                     ±±
+±±ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ±±
+*/	
+oGTit       := MSDialog():New( 091,214,500,650," Alteração de Títulos a Receber ",,,.F.,,,,,,.T.,,,.T. )
+oGTit:bInit := {||EnchoiceBar(oGTit,{|| Processa()},{|| oGTit:End()},.F.,_aBotao)}
+
+//oGrp1       := TGroup():New(001,001,090,090,"",oGTit,CLR_BLACK,CLR_WHITE,.F.,.F. )
+oSay1       := TSay():New(032,008,{||"Informe abaixo o filtro para busca dos títulos desejados, ATENÇÃO, pois,"},oGTit,,,.F.,.F.,.F.,.T.,CLR_BLUE,CLR_WHITE,300,008)
+oSay2       := TSay():New(037,008,{||"serão alterados apenas os títulos em aberto e já em borderô."},oGTit,,,.F.,.F.,.F.,.T.,CLR_BLUE,CLR_WHITE,300,008)
+
+oSay3       := TSay():New(052,004,{||"Filial:"}	,oGTit,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,032,008)//Operadora de Cartao
+oGet1       := TGet():New(052,036, {|u| If(PCount() > 0 , _cFilIn     := u,_cFilIn    )},oGTit,060,008,'',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","",,)	
+oGet1:cF3   := "SM0"
+oGet1:lReadOnly		:= .T.
+//oSay4       := TSay():New(056,110,{||"Filial Ate:"}	,oGTit,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,032,008)
+oSay15      := TSay():New(071,004,{||"Emissão De:"}	,oGTit,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,032,008)
+oSay16      := TSay():New(071,110,{||"Emissão Ate:"},oGTit,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,032,008)
+oGet10      := TGet():New(071,036, {|u| If(PCount() > 0 , _dEmiIn	:= u,_dEmiIn)},oGTit,060,008,'',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","",,)
+oGet11      := TGet():New(071,144, {|u| If(PCount() > 0 , _dEmiFn	:= u,_dEmiFn)},oGTit,060,008,'',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","",,)
+
+
+oSay12      := TSay():New(090,004,{||"Vencto De:"}	,oGTit,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,032,008)
+oSay13      := TSay():New(090,110,{||"Vencto Ate:"},oGTit,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,032,008)
+oGet8       := TGet():New(090,036, {|u| If(PCount() > 0 , _dVenIn	:= u,_dVenIn)},oGTit,060,008,'',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","",,)
+oGet9       := TGet():New(090,144, {|u| If(PCount() > 0 , _dVenFn	:= u,_dVenFn)},oGTit,060,008,'',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","",,)
+
+oSay5       := TSay():New(109,004,{||"Prefixo De:"}	,oGTit,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,032,008)
+oSay6       := TSay():New(109,110,{||"Prefixo Ate:"},oGTit,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,032,008)
+oGet3       := TGet():New(109,036, {|u| If(PCount() > 0 , _cPrfIn	:= u,_cPrfIn)},oGTit,060,008,'',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","",,)
+oGet4       := TGet():New(109,144, {|u| If(PCount() > 0 , _cPrfFn	:= u,_cPrfFn)},oGTit,060,008,'',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","",,)
+
+
+oSay7       := TSay():New(128,004,{||"Numero De:"}	,oGTit,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,049,008)
+oSay8       := TSay():New(128,110,{||"Numero Ate:"}	,oGTit,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,049,008)
+oGet5       := TGet():New(128,036, {|u| If(PCount() > 0 , _cNmIn	:= u,_cNmIn)},oGTit,060,008,'',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","",,)
+oGet6       := TGet():New(128,144, {|u| If(PCount() > 0 , _cNmFn	:= u,_cNmFn)},oGTit,060,008,'',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","",,)
+
+oSay9       := TSay():New(147,008,{||"Informe tipo de operação que será executada e no caso de desconto, o campo "}	,oGTit,,,.F.,.F.,.F.,.T.,CLR_BLUE,CLR_WHITE,300,008)
+oSay10      := TSay():New(152,008,{||"numerico. Serão alterados apenas os títulos em aberto e já em borderô."},oGTit,,,.F.,.F.,.F.,.T.,CLR_BLUE,CLR_WHITE,300,008)
+
+oSay14      := TSay():New(170,004,{||"Operação:"}	,oGTit,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,049,008)
+
+oGet8       := TComboBox():New(166,036, {|u|if(PCount()>0,_cOper:=u,_cOper)},_aItem,100,20,oGTit,,{||Iif(SubStr(_cOper,1,1)$'16',;
+				MsgInfo('Você precisa informar o valor do desconto no campo a seguir.'),;
+				MsgInfo('O valor do campo a seguir será ignorado.'))};
+				,,,,.T.,,,,,,,,,'')
+
+oSay11      := TSay():New(185,004,{||"Desc Adic:"}	,oGTit,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,049,008)
+
+oGet7       := TGet():New(185,036, {|u| If(PCount() > 0 , _nDscAd	:= u,_nDscAd)},oGTit,060,008,'@E 99',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","",,)
+	
+oGTit:Activate(,,,.T.)
+
+Return
+
+/*/{Protheus.doc} Proceesa
+(long_description)
+@author Walmir Junior
+@since 05/05/2020
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+Static Function fCanc()
+Local _cCdAlt	:= "" 
+Local _cChvZGA	:= ""
+Local _cMsgA	:= ""
+Local _cCdUsr	:= SuperGetMV('MV_XUSCAN2',,'001019')
+Local _cCdOcr
+
+If !(RetCodUsr() $ _cCdUsr)
+	Alert("Você não possui acesso a esta operação, procure a COFIN.")
+	oGTit:End()
+	Return
+EndIf
+
+If MsgYesNo( "É IMPORTANTE que não se precise CANCELAR ALTERAÇÕES, o"+CRLF;
+			+"procedimento de alteração de títulos é critico e incorre em uma"+CRLF;
+			+"série de ações internas no sistema."+CRLF;
+			+"Havendo real necessidade, você precisa ter em mãos o código"+CRLF;
+			+"exato da alteração que deseja cancelar, observando SEMPRE a"+CRLF;
+			+"filial logada."+CRLF+CRLF+CRLF;
+			+"Deseja continuar?","ATENÇÃO")
+
+	_cCdAlt :=  FWInputBox("Informe o código da alteração que deseja cancelar!", "")
+	
+	Do Case
+		Case Empty(_cCdAlt)
+			Alert("ATENÇÃO, não foi informado nenhum código, operação interrompida!")
+			Return
+		Case !IsDigit(_cCdAlt)
+			Alert("ATENÇÃO, o conteúdo informado[" + AllTrim(_cCdAlt) + "] não é numérico, portanto inválido!")
+			Return
+		Case !Len(Alltrim(_cCdAlt)) == 6
+			Alert("ATENÇÃO, o formato informado é inválido!")
+			Return
+	EndCase
+	
+	_cCdOcr :=  FWInputBox("Informe a ocorrênciaW!", "")
+	
+	DBSelectArea("ZGA")
+	ZGA->(DBSetOrder(1))
+		
+	If ZGA->(DbSeek(FWxFilial("ZGA")+Alltrim(_cCdAlt)))
+	
+		BEGIN TRANSACTION
+		_cChvZGA := ZGA->(ZGA_FILIAL + ZGA_CODIGO) 
+		While _cChvZGA == ZGA->(ZGA_FILIAL + ZGA_CODIGO) 
+			
+			DBSelectArea("SE1")
+			SE1->(DBSetOrder(1))
+			If SE1->(DbSeek(ZGA->ZGA_CHVSE1))
+				//Alterar SE1
+				If RecLock("SE1",.F.)
+					SE1->E1_DESCFIN := (SE1->E1_DESCFIN - (Val(ZGA->ZGA_VALNOV) - Val(ZGA->ZGA_VALANT)))
+					SE1->(MsUnlock())
+				Else
+					DisarmTransaction()
+					_cMsgA := "O título ["+AllTrim(ZGA->ZGA_CHVSE1)+"] não pode ser alterado, operação cancelada!"
+					Exit
+				EndIF
+				
+				//Excluir FI2
+				DBSelectArea("FI2")
+				FI2->(DBSetOrder(1))
+				If FI2->(DbSeek(xFilial("FI2")+"1"+SE1->(E1_NUMBOR+E1_PREFIXO+E1_NUM+E1_PARCELA+E1_TIPO+E1_CLIENTE+E1_LOJA)+ AllTrim(_cCdOcr) +"2"))
+					If RecLock("FI2",.F.)
+						FI2->(dbDelete())
+						FI2->(MsUnlock())
+						
+						//Excluir ZGA
+						If RecLock("ZGA",.F.)
+							ZGA->(dbDelete())
+							ZGA->(MsUnlock())
+						Else
+							DisarmTransaction()
+							_cMsgA := "O log de alteração ["+AllTrim(ZGA->ZGA_CODIGO)+"] não pode ser alterado, operação cancelada!"
+							Exit
+						EndIF
+
+					Else
+						DisarmTransaction()
+						_cMsgA := "Uma Instrução de Cobrança do título["+AllTrim(FI2->FI2_FILIAL + FI2->FI2_PREFIX + FI2->FI2_TITULO + FI2->FI2_PARCEL)+"] não pode ser alterada, operação cancelada!"
+						Exit
+					EndIF 
+				Else
+					DisarmTransaction()
+					_cMsgA := "Instrução de cobrança não encontrada, operação cancelada!"
+					Exit						
+				EndIf
+			Else
+				DisarmTransaction()
+				_cMsgA := "Título não encontrado, operação cancelada!"
+				Exit
+			EndIf
+			ZGA->(dbSkip())
+		EndDo
+		
+		END TRANSACTION
+	Else
+		Alert("ATENÇÃO, a alteração informada ["+ Alltrim(_cCdAlt) +"] não foi encontrada para filial ["+ FWxFilial("ZGA") +"]!")
+	EndIf	
+	
+	If !Empty(_cMsgA)
+		Alert(_cMsgA)
+	EndIf
+EndIf
+
+oGTit:End()
+
+Return 
+
+/*/{Protheus.doc} Proceesa
+(long_description)
+@author Walmir Junior
+@since 29/04/2020
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function Processa
+Local _cNomU	:= UsrFullName(RetCodUsr())
+
+Private _cOp	:= SubStr(_cOper,1,1)
+
+_aNTit	:= {0,0}
+
+_cNomU := SubStr(_cNomU,1,At(" ", _cNomU, 1 )) 
+
+If ValCampo() 
+
+	FWMsgRun(, {|| fBusca() }, "Processando", "Buscando títulos...")
+	
+	If _aNTit[1] > 0 .And. !MsgYesNo(	_cNomU + ", você está prestes a atualizar [" + Str(_aNTit[1]) + "] títulos de ["+ Str(_aNTit[2]) +"] borderôs! Serão geradas para as alterações as instruções de cobrança."+ CRLF + CRLF +;
+								"Deseja realmente efetuar esta operação?", "ATENÇÃO")
+								
+		MsgInfo("Operação cancelada pelo usuário!")
+		
+		_aTabTit := {}
+				
+		Return
+	ElseIf _aNTit[1] == 0
+		MsgInfo("Nenhum registro foi encontrado com os parâmetros informados!")
+		Return
+	EndIf
+	
+	oGTit:End()
+	
+	FWMsgRun(, {|| fExecA() }, "Processando", "Executando alteração de títulos...")
+	
+Else
+
+	Aviso("Atenção", "Você precisa informar todos os campos de filtro e se for conceder desconto, definir o valor adicional de desconto que deseja conceder.", {"Ok"}, 1)
+		
+EndIf	
+	
+Return
+
+Static Function fExecA()
+Local _cCod		:= ""
+Local _aAux		:= {}
+Local _nItem	:= 0
+Local _lIns		:= .F.
+		
+_cCod := GetSXEnum("ZGA", "ZGA_CODIGO")
+
+dbSelectArea("SE1")
+
+While !(TRB->(Eof()))
+	_aAux		:= {}
+	aItemsFI2	:= {}
+	_nItem++
+		
+	/*Essa estrutura do array pode ser utilizada no futuro para tratar todas alterações efetuadas na SE1 
+		aItemsFI2[x][1]: Ocorrencia                     
+		aItemsFI2[x][2]: Titulo do campo (nao utilizado)
+		aItemsFI2[x][3]: Valor anterior                 
+		aItemsFI2[x][4]: Novo valor                     
+		aItemsFI2[x][5]: Nome do campo                  
+		aItemsFI2[x][6]: Tipo do campo  
+	*/
+	
+	SE1->(DbSetOrder(1))
+	SE1->(DbGoTo(TRB->RECNO))
+	If _cOp == '1' .or. _cOp == '6'
+		aAdd(_aAux, Iif(SE1->E1_DESCFIN==0,"07","16"))
+		aAdd(_aAux, " ")
+		aAdd(_aAux, TRANSFORM(SE1->E1_DESCFIN, "@E99.99999"))
+		aAdd(_aAux, IIF(cOp == '1',TRANSFORM(SE1->E1_DESCFIN + _nDscAd, "@E99.99999"),TRANSFORM(SE1->E1_DESCFIN - _nDscAd, "@E99.99999")))
+		aAdd(_aAux, "E1_DESCFIN")
+		aAdd(_aAux, "N")
+	ElseIf _cOp == '2' .or. _cOp == '3'
+		aAdd(_aAux, Iif(_cOp=='2',"13","14"))
+		aAdd(_aAux, " ")
+		aAdd(_aAux, " ")
+		aAdd(_aAux, " ")
+		aAdd(_aAux, Iif(_cOp=='2',"ISENT_JURO","ISENT_MULT"))
+		aAdd(_aAux, "C")	
+	ElseIf _cOp == '4' .or. _cOp == '5'
+		aAdd(_aAux, Iif(_cOp=='4',"12","14"))
+		aAdd(_aAux, " ")
+		aAdd(_aAux, Iif(_cOp=='4',TRANSFORM(SE1->E1_PORCJUR, "@E99.99999")," " ))
+		aAdd(_aAux, Iif(_cOp=='4',TRANSFORM(SE1->E1_PORCJUR, "@E99.99999"),TRANSFORM(GetMV("MV_LJMULTA"),"@E 99.99999")))
+		aAdd(_aAux, Iif(_cOp=='4',"E1_PORCJUR","INSER_MULT"))
+		aAdd(_aAux, "C")	
+	ElseIf _cOp == '7' 
+		aAdd(_aAux, "19")
+		aAdd(_aAux, " ")
+		aAdd(_aAux, " ")
+		aAdd(_aAux, DTOC(DataValida(SE1->E1_VENCTO+29,.T.)))
+		aAdd(_aAux, "LIMIT_RECB")
+		aAdd(_aAux, "C")	
+	EndIf
+				
+	aAdd(aItemsFI2, _aAux)
+	
+	BEGIN TRANSACTION
+	
+	If _cOp == '1' .or. _cOp == '6'
+		If RecLock("SE1", .F.)
+			SE1->E1_DESCFIN	:= IIF(_cOp=='1',SE1->E1_DESCFIN + _nDscAd, _nDscAd)
+			SE1->(MsUnlock())
+			
+			If SE1->E1_XTITFUN != 'S'
+				F040GrvFI2()
+			EndIf
+			
+			dbSelectArea("ZGA")
+			If RecLock("ZGA", .T.)
+				ZGA->ZGA_FILIAL	:= _cFilIn
+				ZGA->ZGA_DATA	:= Date()
+				ZGA->ZGA_CODIGO	:= _cCod
+				ZGA->ZGA_ITEM	:= StrZero(_nItem,6)
+				ZGA->ZGA_CHVSE1	:= TRB->E1_FILIAL + TRB->E1_PREFIXO + TRB->E1_NUM + TRB->E1_PARCELA + TRB->E1_TIPO
+				ZGA->ZGA_USUARI	:= LogUserName()
+				ZGA->ZGA_CAMPO	:= _aAux[5]
+				ZGA->ZGA_VALANT	:= _aAux[3]
+				ZGA->ZGA_VALNOV	:= _aAux[4]
+				ZGA->ZGA_NUMBOR := SE1->E1_NUMBOR
+				ZGA->(MsUnlock())
+				_lIns := .T.
+			Else
+				RollBackSX8()
+				Alert('Erro ao gravar registro de log!')
+				DisarmTransaction()
+			EndIf
+		EndIf
+	Else
+		If SE1->E1_XTITFUN != 'S'
+			F040GrvFI2()
+		EndIf
+		
+		dbSelectArea("ZGA")
+		If RecLock("ZGA", .T.)
+			ZGA->ZGA_FILIAL	:= _cFilIn
+			ZGA->ZGA_DATA	:= Date()
+			ZGA->ZGA_CODIGO	:= _cCod
+			ZGA->ZGA_ITEM	:= StrZero(_nItem,6)
+			ZGA->ZGA_CHVSE1	:= TRB->E1_FILIAL + TRB->E1_PREFIXO + TRB->E1_NUM + TRB->E1_PARCELA + TRB->E1_TIPO
+			ZGA->ZGA_USUARI	:= LogUserName()
+			ZGA->ZGA_CAMPO	:= _aAux[5]
+			ZGA->ZGA_VALANT	:= _aAux[3]
+			ZGA->ZGA_VALNOV	:= _aAux[4]
+			ZGA->ZGA_NUMBOR := SE1->E1_NUMBOR
+			ZGA->(MsUnlock())
+			_lIns := .T.
+		Else
+			RollBackSX8()
+			Alert('Erro ao gravar registro de log!')
+			DisarmTransaction()
+		EndIf
+	EndIf
+	
+	END TRANSACTION
+	
+	TRB->(DBSkip())
+
+EndDo
+
+If _lIns
+	ConfirmSX8()
+	U_SF06R01W(_cFilIn, _cCod, _cOper)
+EndIf
+		
+Return
+
+/*/{Protheus.doc} fBusca
+(long_description)
+@author Walmir Junior
+@since 29/04/2020
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function fBusca()
+Local _cSQL		:= ""
+Local _cBor		:= ""
+Local _mostr	:= .F.
+
+If MsgYesNo("Deseja visualizar a lista de títulos antes do processamento?", "ATENÇÃO")
+	_mostr := .T.
+EndIf
+
+_cSQL += " SELECT E1_FILIAL,E1_NUMBOR, E1_PREFIXO, E1_NUM, E1_PARCELA, E1_TIPO, E1_FILIAL || E1_NUMBOR FILBOR, R_E_C_N_O_ RECNO, E1_VALOR, E1_CLIENTE, E1_LOJA, E1_NOMCLI " + CRLF
+_cSQL += " FROM "+RetSQLName("SE1")+" SE1 " + CRLF
+_cSQL += " WHERE SE1.D_E_L_E_T_<>'*' AND E1_SALDO > 0 " + CRLF
+/*_cSQL += " AND (( ROUND(SYSDATE - TO_DATE(E1_VENCREA, 'YYYYMMDD'),0) > 0 AND ROUND(SYSDATE-TO_DATE(E1_VENCREA, 'YYYYMMDD'),0) <= 29) Or " + CRLF
+_cSQL += "        TO_DATE(E1_VENCREA, 'YYYYMMDD') > SYSDATE) " + CRLF*/
+	_cSQL += " AND E1_EMISSAO BETWEEN '"+ Dtos(_dEmiIn) +"' AND '"+ Dtos(_dEmiFn) +"' " + CRLF
+If _cOp=='1'
+	_cSQL += " AND TO_DATE(E1_VENCREA, 'YYYYMMDD') >= SYSDATE " + CRLF 
+	_cSQL += " AND E1_VENCTO BETWEEN '"+ Dtos(_dVenIn) +"' AND '"+ Dtos(_dVenFn) +"' " + CRLF
+Else
+	_cSQL += " AND (	(ROUND(SYSDATE-TO_DATE(E1_VENCREA, 'YYYYMMDD'),0)-1 > 0 AND ROUND(SYSDATE-TO_DATE(E1_VENCREA, 'YYYYMMDD'),0)-1 <=29" + CRLF
+	_cSQL += " 			AND E1_VENCTO BETWEEN '"+ Dtos(_dVenIn) +"' AND '"+ Dtos(_dVenFn) +"' )" + CRLF
+	_cSQL += " OR E1_VENCTO BETWEEN '"+ Dtos(_dVenIn) +"' AND '"+ Dtos(_dVenFn) +"' )" + CRLF
+EndIf
+_cSQL += " AND E1_FILIAL  = '"+ _cFilIn +"' " + CRLF // AND E1_FILIAL 	<= '"+ _cFilFn +"' " + CRLF
+_cSQL += " AND E1_PREFIXO >= '"+ _cPrfIn +"' AND E1_PREFIXO	<= '"+ _cPrfFn +"' "+ CRLF
+_cSQL += " AND E1_NUM     >= '"+ _cNmIn	 +"' AND E1_NUM 	<= '"+ _cNmFn  +"' " + CRLF
+_cSQL += " AND ((E1_NUMBOR != ' ' AND E1_NUMBCO != ' ' AND E1_PORTADO = '001') " + CRLF
+If _cOp=='1'
+	_cSQL += " OR E1_XTITFUN = 'S' ) " + CRLF
+Else
+	_cSQL += " ) "
+EndIf
+If _cOp=='1'
+	_cSQL += " AND NOT EXISTS (SELECT 1 FROM "+RetSQLName("ZGA")+"  WHERE D_E_L_E_T_ = ' ' AND ZGA_CAMPO = 'E1_DESCFIN' AND ZGA_CHVSE1 = E1_FILIAL || E1_PREFIXO || E1_NUM || E1_PARCELA || E1_TIPO) "+CRLF
+ElseIf _cOp=='2'
+	_cSQL += " AND NOT EXISTS (SELECT 1 FROM "+RetSQLName("ZGA")+"  WHERE D_E_L_E_T_ = ' ' AND ZGA_CAMPO = 'ISENT_JURO' AND ZGA_CHVSE1 = E1_FILIAL || E1_PREFIXO || E1_NUM || E1_PARCELA || E1_TIPO) "+CRLF
+ElseIf _cOp=='3'
+	_cSQL += " AND NOT EXISTS (SELECT 1 FROM "+RetSQLName("ZGA")+"  WHERE D_E_L_E_T_ = ' ' AND ZGA_CAMPO = 'ISENT_MULT' AND ZGA_CHVSE1 = E1_FILIAL || E1_PREFIXO || E1_NUM || E1_PARCELA || E1_TIPO) "+CRLF
+EndIf
+_cSQL += " ORDER BY E1_FILIAL,E1_NUMBOR, E1_CLIENTE, E1_LOJA, E1_PREFIXO, E1_NUM, E1_PARCELA, E1_TIPO " + CRLF
+
+MemoWrite("D:\LOGSQL\" + FunName() + "_" + ProcName() + ".txt" , _cSQL)
+
+If Select("TRB") > 0
+	TRB->(dbClosearea())
+Endif
+
+DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSQL)), "TRB", .F., .F.)
+
+TCSetField( "TRB", "E1_VALOR", TamSX3("E1_VALOR")[3], TamSX3("E1_VALOR")[1], TamSX3("E1_VALOR")[2])
+
+While !(TRB->(Eof()))
+	_aNTit[1]++
+	
+	If _mostr
+		aAdd( _aTabTit,{Alltrim(TRB->E1_FILIAL),;
+						Alltrim(TRB->E1_NUMBOR),;
+						Alltrim(TRB->E1_PREFIXO),;
+						Alltrim(TRB->E1_NUM),;
+						Alltrim(TRB->E1_PARCELA),;
+						Alltrim(Transform(TRB->E1_VALOR,PesqPict("SE1","E1_VALOR"))),;
+						Alltrim(TRB->E1_CLIENTE),;
+						Alltrim(TRB->E1_LOJA),;
+						Alltrim(TRB->E1_NOMCLI),;
+						.F.})
+	EndIf	
+	If _cBor != TRB->FILBOR
+		_aNTit[2]++
+		_cBor := TRB->FILBOR
+	EndIf 
+	TRB->(dbSkip())
+EndDo
+
+TRB->(dbGoTop())
+
+If TRB->(Eof())
+	//Evitar erro se alguém chamar no futuro de outro lugar.
+	aAdd(_aTabTit,{"","","","","","","","","",})
+ElseIf _mostr
+	fShowTit()
+EndIf 
+	
+Return
+
+
+
+/*/{Protheus.doc} fShowTit
+(long_description)
+@author Walmir Junior
+@since 11/11/2020
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+Static Function fShowTit()
+
+	Local oGroup1
+	Local oListBox1
+	Local oDlg
+
+	DEFINE MSDIALOG oDlg TITLE "Títulos Encontrados" FROM 000, 000  TO 550, 800 COLORS 0, 16777215 PIXEL
+
+	@ 004, 004 LISTBOX oListBox1 FIELDS HEADER " Filial","Bordero"," Prefixo", " Numero", " Parcela", " Valor", " Cliente", " Loja", " Nome do Cliente" ;
+		SIZE 400, 250 OF oDlg COLORS 0, 16777215 PIXEL //WHEN .T.
+	oListBox1:SetArray( _aTabTit )
+	oListBox1:bLine := {|| {_aTabTit[oListBox1:nAt,1],;
+		_aTabTit[oListBox1:nAt,2],;
+		_aTabTit[oListBox1:nAt,3],;
+		_aTabTit[oListBox1:nAt,4],;
+		_aTabTit[oListBox1:nAt,5],;
+		_aTabTit[oListBox1:nAt,6],;
+		_aTabTit[oListBox1:nAt,7],;
+		_aTabTit[oListBox1:nAt,8],;
+		_aTabTit[oListBox1:nAt,9]} }
+
+oBtn := tButton():New(260,340,"Fechar",oDlg,{||oDlg:END()},036,012,,,,.T.,,"",,,,.F.)
+	ACTIVATE MSDIALOG oDlg CENTERED
+
+Return
+
+/*/{Protheus.doc} ValCampo
+(long_description)
+@author Walmir Junior
+@since 29/04/2020
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ValCampo()
+	Local lRet        := .T.
+	
+	If /*Empty(_cFilFn) .Or.*/ Empty(_cPrfFn) .Or. Empty(_cNmFn) .Or. Empty(_dEmiIn) .Or. Empty(_dEmiFn) .Or. ( _cOp $ '16' .And. Empty(_nDscAd))
+		lRet := .F.
+	EndIf
+	
+Return lRet

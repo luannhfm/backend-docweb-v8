@@ -1,0 +1,224 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} SF06R01X
+(long_description)
+@author j2a.luizjunior
+@since 27/09/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+User Function SF06R05X
+
+	Local   oReport
+	Private cPerg   := "SF06R05X"	
+	
+	CriaSX1(cPerg)
+	If !Pergunte(cPerg,.T.)
+		Return(Nil)
+	EndIf
+
+	oReport  := ReportDef()
+	oReport:PrintDialog()
+
+Return
+
+/*/{Protheus.doc} ReportDef 
+(long_description)
+@author Luiz Junior
+@since 29/07/2015
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ReportDef(cPerg)
+
+	Local oReport
+	Local cIDCelula	:= ""	
+	Local cNomeRel	:= "SF06R05X"
+	Local cTitRel	:= "Exrato Cartão de Credito"
+	Local cDescRel	:= "Exrato Cartão de Credito"
+	
+	oReport := TReport():New( cNomeRel, cTitRel, cPerg, { |oReport| ReportPrint(oReport) }, cDescRel )
+	oReport:SetPortrait() 
+	oReport:SetTotalInLine(.F.) 
+	oReport:Page()
+	
+	//-> Titulos
+	oTitulo := TRSection():New(oReport, "Titulo", {"SE2"})
+	TRCell():New(oTitulo,"E2_FILIAL"    ,"SE2")
+	TRCell():New(oTitulo,"E2_XNUM"      ,"SE2")
+	TRCell():New(oTitulo,"E2_XTIPO"     ,"SE2")
+	TRCell():New(oTitulo,"A2_NOME"      ,"SA2")
+	TRCell():New(oTitulo,"E2_PREFIXO"   ,"SE2")
+	TRCell():New(oTitulo,"E2_NUM"       ,"SE2")
+	TRCell():New(oTitulo,"E2_PARCELA"   ,"SE2")
+	TRCell():New(oTitulo,"E2_TIPO"      ,"SE2")
+	TRCell():New(oTitulo,"E2_VENCTO"    ,"SE2")
+	TRCell():New(oTitulo,"E2_XNCART"    ,"SE2")
+	TRCell():New(oTitulo,"ZF2_TITAUT"   ,"ZF2")
+	TRCell():New(oTitulo,"E2_VALOR"     ,"SE2")
+	
+	oBrFil  := TRBreak():New(oTitulo,oTitulo:Cell("E2_FILIAL"),Nil,.T.)
+	TRFunction():New(oTitulo:Cell("E2_NUM"),"T_VAL"   ,"COUNT",,"Total Registros",,,.T.,.F.)
+	TRFunction():New(oTitulo:Cell("E2_VALOR"),"T_VAL" ,"SUM"  ,,"Total",,,.T.,.F.)
+	
+Return(oReport) 
+
+/*/{Protheus.doc} PrintReport
+(long_description)
+@author Luiz Junior
+@since 30/07/2015
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ReportPrint(oReport)
+
+	Local cAlias     := GetNextAlias()
+	Local cSQL       := ""
+	Local cAlSec5    := GetNextAlias() 
+	Local oSec4      := oReport:Section(1)
+	Local cPrefixo   := GetNewPar("MV_XPCPREF")
+	Local cFilStr    := ""
+	Local cFornece   := ""
+	Local cNome      := ""
+	Local cCartao    := ""
+	Local cZF2TITAUT := ""
+	Local cZF2TITUL  := ""
+	Local cNomFil    := ""
+	Local lPrintAll  := .F. 
+	
+	If !Empty(MV_PAR01) .And. !Empty(MV_PAR02) 
+		cSQL += " AND E2_FILIAL BETWEEN '"  + MV_PAR01 + "' AND '" + MV_PAR02 + "'"	
+	EndIf
+	
+	If !Empty(MV_PAR03) .And. !Empty(MV_PAR04) 
+		cSQL += " AND E2_VENCTO BETWEEN '" + DToS(MV_PAR03) + "' AND '" + DToS(MV_PAR04) + "'"	
+	EndIf
+	
+	If !Empty(MV_PAR05) .And. !Empty(MV_PAR06) 
+		cSQL += " AND E2_FORNECE >= '" + MV_PAR05 + "' "
+		cSQL += " AND E2_LOJA    >= '" + MV_PAR06 + "' "	
+	EndIf
+	
+	If !Empty(MV_PAR07) .And. !Empty(MV_PAR08) 
+		cSQL += " AND E2_FORNECE <= '" + MV_PAR07 + "' "
+		cSQL += " AND E2_LOJA    <= '" + MV_PAR08 + "' "	
+	EndIf
+	
+	If !Empty(MV_PAR09) .And. !Empty(MV_PAR10) 
+		cSQL += " AND E2_XNCART BETWEEN '"  + MV_PAR09 + "' AND '" + MV_PAR10 + "'"	
+	EndIf
+	
+	If MV_PAR11 = 1
+		cSQL += " AND E2_SALDO != E2_VALOR AND E2_BAIXA != '' "	
+	EndIf
+	
+	cSQL := "%"+cSQL+"%"
+	
+	BeginSql Alias cAlias
+		
+		SELECT E2_FILIAL,
+		       E2_XNUM,
+		       E2_XTIPO,
+		       E2_PREFIXO,
+		       E2_NUM,
+		       E2_PARCELA,
+		       E2_TIPO,
+		       E2_VENCTO,
+		       E2_VALOR,
+		       E2_XCODFOR,
+		       E2_XLOJA,
+		       E2_FORNECE,
+		       E2_LOJA,
+		       E2_XNCART
+		FROM   %Table:SE2%
+		WHERE  E2_PREFIXO = %Exp:cPrefixo%
+		AND    %NOTDEL%	
+		%Exp:cSQL%
+		ORDER BY E2_FILIAL,E2_FORNECE,E2_LOJA 
+	
+	EndSql
+
+	While !(cAlias)->(Eof())
+		
+		cZF2TITAUT := Posicione("ZF2",1,xFilial("ZF2") + (cAlias)->E2_FORNECE + (cAlias)->E2_LOJA,"ZF2_TITAUT")
+		
+		//-> Titulos
+		oSec4:Init()
+		oSec4:Cell("E2_FILIAL"):SetValue((cAlias)->E2_FILIAL)
+		oSec4:Cell("E2_XNUM"):SetValue((cAlias)->E2_XNUM)
+		oSec4:Cell("E2_XTIPO"):SetValue((cAlias)->E2_XTIPO)
+		cNOrig := Posicione("SA2",1,xFilial("SA2") + (cAlias)->E2_XCODFOR + (cAlias)->E2_XLOJA,"A2_NOME")
+		oSec4:Cell("A2_NOME"):SetValue(cNOrig)
+		oSec4:Cell("E2_PREFIXO"):SetValue((cAlias)->E2_PREFIXO)
+		oSec4:Cell("E2_NUM"):SetValue((cAlias)->E2_NUM)
+		oSec4:Cell("E2_PARCELA"):SetValue((cAlias)->E2_PARCELA)
+		oSec4:Cell("E2_TIPO"):SetValue((cAlias)->E2_TIPO)
+		oSec4:Cell("E2_VENCTO"):SetValue(DToC(SToD((cAlias)->E2_VENCTO)))
+		oSec4:Cell("E2_XNCART"):SetValue((cAlias)->E2_XNCART)
+		oSec4:Cell("ZF2_TITAUT"):SetValue(cZF2TITAUT)		
+		oSec4:Cell("E2_VALOR"):SetValue((cAlias)->E2_VALOR)
+			
+		oSec4:Printline()
+		
+		If oReport:Cancel()
+			Return(Nil)
+		EndIf
+		
+		(cAlias)->(DbSkip())
+	EndDo
+	
+	(cAlias)->(DbCloseArea())
+	
+	oSec4:Finish()
+
+Return
+
+/*/{Protheus.doc} CriaSx1
+(long_description)
+@author Luiz Junior
+@since 12/05/2015
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function CriaSx1
+
+	Local aHelp := {}
+	
+	//-> Texto do help em português,inglês, espanhol
+	AAdd(aHelp, {{"Da  Filial?"  }      ,{""},{""}})
+	AAdd(aHelp, {{"Até Filial?"  }      ,{""},{""}})
+	AAdd(aHelp, {{"Do Vencimento?"}     ,{""},{""}})
+	AAdd(aHelp, {{"Até Vencimento?"}    ,{""},{""}})
+	AAdd(aHelp, {{"Do Fornecedor?"}     ,{""},{""}})
+	AAdd(aHelp, {{"Da Loja?"}           ,{""},{""}})
+	AAdd(aHelp, {{"Do Fornecedor?"}     ,{""},{""}})
+	AAdd(aHelp, {{"Da Loja?"}           ,{""},{""}})
+	AAdd(aHelp, {{"Do Cartão?"}         ,{""},{""}})
+	AAdd(aHelp, {{"Até Cartão?"}        ,{""},{""}})
+	AAdd(aHelp, {{"Considera Baixado?"} ,{""},{""}})	
+	
+	u_SFPUTSX1(cPerg,"01","Da Filial?"          ,"","","mv_ch1" ,"C",08,00,00,"G","","SM0" ,"","","mv_par01",""   ,"","","",""   ,"","","","","","","","","","","" ,aHelp[1,1] ,aHelp[1,2] ,aHelp[1,3] ,"")
+	u_SFPUTSX1(cPerg,"02","Até Filial?"         ,"","","mv_ch2" ,"C",08,00,00,"G","","SM0" ,"","","mv_par02",""   ,"","","",""   ,"","","","","","","","","","","" ,aHelp[2,1] ,aHelp[2,2] ,aHelp[2,3] ,"")
+	u_SFPUTSX1(cPerg,"03","Do Vencimento?"      ,"","","mv_ch3" ,"D",08,00,00,"G","",""    ,"","","mv_par03",""   ,"","","",""   ,"","","","","","","","","","","" ,aHelp[3,1] ,aHelp[3,2] ,aHelp[3,3] ,"")
+	u_SFPUTSX1(cPerg,"04","Até Vencimento?"     ,"","","mv_ch4" ,"D",08,00,00,"G","",""    ,"","","mv_par04",""   ,"","","",""   ,"","","","","","","","","","","" ,aHelp[4,1] ,aHelp[4,2] ,aHelp[4,3] ,"")
+	u_SFPUTSX1(cPerg,"05","Do Fornecedor?"      ,"","","mv_ch5" ,"C",09,00,00,"G","","SA2A","","","mv_par05",""   ,"","","",""   ,"","","","","","","","","","","" ,aHelp[5,1] ,aHelp[5,2] ,aHelp[5,3] ,"")
+	u_SFPUTSX1(cPerg,"06","Da Loja?"            ,"","","mv_ch6" ,"C",04,00,00,"G","",""    ,"","","mv_par06",""   ,"","","",""   ,"","","","","","","","","","","" ,aHelp[6,1] ,aHelp[6,2] ,aHelp[6,3] ,"")
+	u_SFPUTSX1(cPerg,"07","Do Fornecedor?"      ,"","","mv_ch7" ,"C",09,00,00,"G","","SA2A","","","mv_par07",""   ,"","","",""   ,"","","","","","","","","","","" ,aHelp[7,1] ,aHelp[7,2] ,aHelp[7,3] ,"")
+	u_SFPUTSX1(cPerg,"08","Da Loja?"            ,"","","mv_ch8" ,"C",04,00,00,"G","",""    ,"","","mv_par08",""   ,"","","",""   ,"","","","","","","","","","","" ,aHelp[8,1] ,aHelp[8,2] ,aHelp[8,3] ,"")
+	u_SFPUTSX1(cPerg,"09","Do Cartão?"          ,"","","mv_ch9" ,"C",04,00,00,"G","","ZF21","","","mv_par09",""   ,"","","",""   ,"","","","","","","","","","","" ,aHelp[9,1] ,aHelp[9,2] ,aHelp[9,3] ,"")
+	u_SFPUTSX1(cPerg,"10","Até Cartão?"         ,"","","mv_ch10","C",04,00,00,"G","","ZF21","","","mv_par10",""   ,"","","",""   ,"","","","","","","","","","","" ,aHelp[10,1],aHelp[10,2],aHelp[10,3],"")
+	u_SFPUTSX1(cPerg,"11","Considera Baixados?" ,"","","mv_ch11","C",01,00,00,"C","",""    ,"","","mv_par11","Sim","","","","Nao","","","","","","","","","","","" ,aHelp[11,1],aHelp[11,2],aHelp[11,3],"")
+
+Return

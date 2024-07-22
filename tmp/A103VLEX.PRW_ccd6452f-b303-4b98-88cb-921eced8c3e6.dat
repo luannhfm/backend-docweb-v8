@@ -1,0 +1,87 @@
+#DEFINE CCR Chr(13) + Chr(10)
+
+/*/{Protheus.doc} A103VLEX
+Determina validações adicionais na exclusão do documento de entrada
+
+@author 	j2a.luizjunior
+@since 	26/09/2016
+@version 	1.0
+
+@see 
+http://tdn.totvs.com/pages/releaseview.action?pageId=6085718
+/*/
+
+User Function A103VLEX
+
+	Local lRet    := .T.
+	Local cCartao := Posicione("SE4",1,xFilial("SE4") + SF1->F1_COND,"E4_XTIPO")
+	
+	If cCartao == "1"
+	
+		ChkTITSE2()	 
+	
+	EndIf	
+
+Return lRet
+
+/*/{Protheus.doc} ChkTITSE2
+(long_description)
+@author j2a.luizjunior
+@since 26/09/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ChkTITSE2
+	
+	Local aArea       := GetArea()
+	Local oRCartao    := SF06A05X():New()  
+	Local lExclui     := .F.
+	Local aDados      := {}
+
+	/*
+	Pega prefixo do parametro MV_XPCPREF para a geracao do novo titulo
+	*/
+	Local cE2_PREFIXO := GetNewPar("MV_XPCPREF")
+	
+	DbSelectArea("SE2")
+	SE2->(DbSetOrder(6))
+	SE2->(DbGoTop())	
+	If SE2->(DbSeek(SF1->F1_FILIAL + SF1->F1_FORNECE + SF1->F1_LOJA + SF1->F1_SERIE + SF1->F1_DOC))
+
+		While !SE2->(Eof()) .And. SE2->E2_FILIAL + SE2->E2_FORNECE + SE2->E2_LOJA + SE2->E2_PREFIXO + SE2->E2_NUM  == SF1->F1_FILIAL + SF1->F1_FORNECE + SF1->F1_LOJA + SF1->F1_SERIE + SF1->F1_DOC
+			
+			If SE2->E2_SALDO = 0 .And. !Empty(SE2->E2_BAIXA)
+			
+				For nX := 1 To FCount()
+					aAdd(aDados, {FieldName(nX), SE2->&(FieldName(nX)), Nil})
+				Next nX
+						
+				lExclui := .T.
+				
+			EndIf		
+	
+			SE2->(DbSkip())	
+		EndDo	
+		
+		If lExclui
+		
+			BEGIN TRANSACTION
+			
+				MsgRun("Excluindo titulo(s) da operadora, aguarde...", "Pagamento com cartão de credito a fornecedor",                                            {||CursorWait(),oRCartao:BXCARSE2(cE2_PREFIXO,SF1->F1_DOC),CursorArrow()})
+			
+				MsgRun("Cancelando baixa do titulo: " + SF1->F1_SERIE + Space(01) + SF1->F1_DOC + ", aguarde...", "Pagamento com cartão de credito a fornecedor",{||CursorWait(),oRCartao:EXCLUISE2(aDados)                          ,CursorArrow()})					
+			
+			END TRANSACTION
+			
+			FreeObj(oRCartao)
+			
+		EndIf
+		
+	EndIf	
+	
+	RestArea(aArea)
+	
+Return

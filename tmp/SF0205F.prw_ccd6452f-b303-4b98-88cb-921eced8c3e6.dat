@@ -1,0 +1,83 @@
+#Include "protheus.ch"
+#Include "TopConn.ch"
+
+/*/{Protheus.doc} SF0205F
+	Rotina para ajustar produtos cadastrados sem a inclusão do complemento.
+	
+@author Franklin B. Oliveira
+@since 23/03/2017
+
+@type function
+/*/
+User Function SF0205F()
+Local aSays 	:= {}
+Local aButtons	:= {}
+Local nOpca 	:= 0
+	
+	AADD(aSays, 'Este programa tem como objetivo incluir a descrição cientifica dos produtos.') 
+	AADD(aButtons, { 1, .T., {|| nOpca := 1, FechaBatch() } }) 
+	AADD(aButtons, { 2, .T., {|| FechaBatch() } })  
+	
+	FormBatch( 'Dados adicionais do produto', aSays, aButtons )
+	
+	If nOpca == 1                   
+		Processa( {|| IncSB5() }, "Aguarde ", "Iniciando Processamento", .F.)
+	EndIf
+
+Return Nil
+
+Static Function IncSB5()
+
+Local aCab 		:= {}
+Local cQuery	:= ""
+Local nTotReg	:= 0
+Local nX		:= 0
+
+Private lMsErroAuto := .F.
+	
+	cQuery := "SELECT SB1.B1_FILIAL, SB1.B1_COD, SB1.B1_DESC, B1_GRUPO, B1_CODITE " + CRLF
+	cQuery += "FROM " + RetSqlName("SB1") + " SB1 " + CRLF
+	cQuery += "WHERE NOT EXISTS " + CRLF
+	cQuery += "  (SELECT SB5.B5_COD " + CRLF
+	cQuery += "	  FROM " + RetSqlName("SB5") + " SB5 " + CRLF 
+	cQuery += "	  WHERE SB5.B5_FILIAL = SB1.B1_FILIAL " + CRLF
+	cQuery += "	        AND SB5.B5_COD  = SB1.B1_COD) " + CRLF
+	cQuery += "	AND SB1.D_E_L_E_T_ = ' '"
+	
+	TCQUERY cQuery NEW ALIAS "ALIASSB1"
+	
+	DbSelectArea("ALIASSB1")
+	
+	While .Not. ( ALIASSB1->(EoF()) )
+		nTotReg++
+		ALIASSB1->(DbSkip())
+	EndDo
+	
+	ALIASSB1->(DbGoTop())
+	
+	DbSelectArea("SB5")
+	
+	For nX := 1 To nTotReg
+		lMsErroAuto := .F.
+		
+		IncProc("Importando: " + cValtoChar(nX) + " de " + cValtoChar(nTotReg))
+		
+		aCab := { 	{"B5_FILIAL", ALIASSB1->B1_FILIAL, Nil},;
+				 	{"B5_COD"   , ALIASSB1->B1_COD   , Nil},;
+				 	{"B5_CEME"  , ALIASSB1->B1_DESC  , Nil},;
+				}
+				
+		Begin Transaction
+			RecLock("SB5", .T.)
+				SB5->B5_FILIAL     := ALIASSB1->B1_FILIAL
+				SB5->B5_COD        := ALIASSB1->B1_COD
+				SB5->B5_CEME       := ALIASSB1->B1_DESC
+			MsUnlock()
+		End Transaction
+		
+		ALIASSB1->(DbSkip())
+	Next nX
+	
+	ALIASSB1->(DbCloseArea())
+	SB5->(DbCloseArea())
+Return Nil

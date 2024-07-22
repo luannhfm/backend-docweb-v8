@@ -1,0 +1,449 @@
+#Include "rwmake.ch"
+#Include "Totvs.ch"
+#Include "RestFul.ch"
+#Include "TbiConn.ch"
+
+/*
+	Method   : API Consulta Saldo PCO conforme cubo/abrangencia
+	Autor    : Diogo Barros
+	Data/Time: 16/11/21
+	Descricao: Consulta saldo PCO
+	Sintaxe  :
+*/
+/*
+API para consulta de saldo em estoque
+*/
+User Function SF57API01X()
+Return(Nil)
+
+	WSRESTFUL SLDPCO DESCRIPTION 'API Consulta Saldo PCO Por Cubo' FORMAT APPLICATION_JSON
+
+		WSDATA CODIGO_EMPRESA As String
+		WSDATA CODIGO_FILIAL As String
+		WSDATA CODIGO_CUBO As String
+		WSDATA CODIGO_OPERACAO As String
+		WSDATA CLASSE_VALOR As String
+		WSDATA CONTA_ORCAMENTARIA As String
+		WSDATA CENTRO_CUSTO As String
+		WSDATA ITEM_CONTABIL As String
+		WSDATA TIPO_SALDO As String
+		WSDATA DATA_SALDO As String
+		WSDATA DATADE As String
+		WSDATA DATAATE As String
+		WSDATA CODIGO_CHAVE As String
+		WSDATA CODIGO_PLANILHA As String
+		WSDATA RequestNumber As Character
+
+		WSMETHOD GET DESCRIPTION "Consulta Saldo PCO" WSSYNTAX " /SLDPCO/ || /SLDPCO/{CODIGO_CHAVE}"
+
+	ENDWSRESTFUL
+
+	WSRESTFUL SLDABR DESCRIPTION 'API Consulta Saldo PCO por Conta Orçamentaria' FORMAT APPLICATION_JSON
+
+		WSDATA CODIGO_EMPRESA As String
+		WSDATA CODIGO_FILIAL As String
+		WSDATA CENTRO_CUSTO As String
+		WSDATA ITEM_CONTABIL As String
+		WSDATA CONTA_ORCAMENTARIA As String
+		WSDATA CODIGO_OPERACAO As String
+		WSDATA DATADE As String
+		WSDATA DATAATE As String
+
+		WSMETHOD GET DESCRIPTION "Consulta Saldo PCO" WSSYNTAX " /SLDABR/ || /SLDABR/{CONTA_ORCAMENTARIA}"
+
+	ENDWSRESTFUL
+
+	WSRESTFUL SLDJSON DESCRIPTION 'API Consulta Saldo Via JSON' FORMAT APPLICATION_JSON
+		WSMETHOD GET DESCRIPTION "Consulta Saldo JSON" WSSYNTAX " /SLDJSON/"
+	ENDWSRESTFUL
+
+
+WSMETHOD GET WSRECEIVE RECEIVE WSSERVICE SLDPCO
+
+	Local _cCodEmp 		:= ltrim(::CODIGO_EMPRESA)
+	Local _cCodFil 		:= ltrim(::CODIGO_FILIAL)
+	Local _cFilial4     := Substring(_cCodFil,1,4)
+	Local _cCubo 		:= ltrim(::CODIGO_CUBO)
+	Local _cOper 		:= ltrim(::CODIGO_OPERACAO)
+	Local _cClasse 		:= ltrim(::CLASSE_VALOR)
+	Local _cCO			:= ltrim(::CONTA_ORCAMENTARIA)
+	Local _cCC 			:= ltrim(::CENTRO_CUSTO)
+	Local _cItCtb 		:= ltrim(::ITEM_CONTABIL)
+	Local _cTpSld		:= ltrim(::TIPO_SALDO)
+	Local _cData 		:= Alltrim("'"+ ::DATA_SALDO +"'")
+
+	Local _cChave  		:= ::CODIGO_CHAVE
+
+	Local lRet  		:= .T.
+	Local oJson 		:= Nil
+	Local aResult 		:= {}
+	Local aSaldoOR
+
+	Private lMsErroAuto     := .F.
+	Private lMsHelpAuto     := .T.
+	Private lAutoErrNoFile  := .T.
+
+	FreeObj(oJson)
+	oJson	:= JsonObject():New()
+
+	::SetContentType("application/json")
+
+	If GetRemoteType() == -1
+		If Type("cFilAnt") == "C" .and. TCIsConnected() //Não tenho interface
+			ConOut("***********************************************************************************************")
+			ConOut("*		Ambiente Protheus aberto e pronto para uso 																								*")
+			ConOut("***********************************************************************************************")
+		Else
+			ConOut("Empresa: 	" + _cCodEmp)
+			ConOut("Filial: 	" + SubStr(_cCodFil,1,2))
+			RpcSetEnv(_cCodEmp,SubStr(_cCodFil,1,2)) //Abro o ambiente, pois o mesmo não encontrava-se aberto
+		Endif
+	EndIf
+
+	// Cubo 50
+	// AKD->AKD_OPER+AKD->AKD_CLASSE+AKD->AKD_CO+AKD->AKD_CC+AKD->AKD_ITCTB+AKD->AKD_TPSALD
+	// _cCubo 		:= '50'
+	// _cChave 		:= '03MT0001  00000142020102001         13                  1930210010101       RC'
+	// _dData 		:= CTOD('31/01/2019')
+
+	If ( !Empty(_cChave) )
+
+		ConOut("Empresa: " + _cCodEmp  )
+		ConOut("Filial:  " + _cCodFil  )
+		Conout("Filial 4 " + _cFilial4 )
+		ConOut("Cubo:    " + _cCubo    )
+		ConOut("Oper:    " + _cOper    )
+		ConOut("Classe:  " + _cClasse  )
+		ConOut("CO:      " + _cCO      )
+		ConOut("CC:      " + _cCC      )
+		ConOut("Itctb:   " + _cItCtb   )
+		ConOut("tpsld:   " + _cTpSld   )
+		ConOut("Chave:   " + _cChave   )
+		ConOut("Data:    " + _cData    )
+
+		aSaldoOR	:=	PcoRetSld(_cCubo, _cChave, ctod(_cData))
+
+		VarInfo("aResult",aSaldoOR)
+		Aadd(aResult, aSaldoOR[1][1])
+		// Aadd(aResult, aSaldoOR[2][1])
+
+		// Aadd(aResult, aSaldoOR[1][1])	// Valor Orcado
+		// Aadd(aResult, aSaldoRE[2][1])	// Valor Realizado
+
+		oJson['Resultado'] := aResult
+
+		::SetResponse( oJson:toJSON() )
+		ConOut("OJSON::::: "+ oJson:toJSON())
+
+	EndIf
+
+	FreeObj(oJson)
+
+	RESET ENVIRONMENT
+
+	ConOut("***********************************************************************************************")
+	ConOut("* Fechando Ambiente                                                                           *")
+	ConOut("***********************************************************************************************")
+
+Return(lRet)
+
+
+WSMETHOD GET WSRECEIVE RECEIVE WSSERVICE SLDABR
+
+	Local _cCodEmp         := alltrim(::CODIGO_EMPRESA)
+	Local _cCodFil         := alltrim(::CODIGO_FILIAL)
+	Local _cFilial4		   := Substring(_cCodFil,1,4)
+	Local _cCC             := alltrim(::CENTRO_CUSTO)
+	Local _cItCtb          := alltrim(::ITEM_CONTABIL)
+	Local _cCOper          := alltrim(::CODIGO_OPERACAO)
+	Local _cCO             := alltrim(::CONTA_ORCAMENTARIA)
+	Local _cDataDe         := Alltrim(::DATADE)
+	Local _cDataAte        := Alltrim(::DATAATE)
+	Local lRet             := .T.
+	Local oJson            := Nil
+	Local _cAlias          := GetNextAlias()
+	Local _cAlias1         := GetNextAlias()
+	Local aJson            := {}
+	Local cVerSaldo 	   := ""
+	Local _nI              := 0
+	Private lMsErroAuto    := .F.
+	Private lMsHelpAuto    := .T.
+	Private lAutoErrNoFile := .T.
+
+	FreeObj(oJson)
+	oJson	:= JsonObject():New()
+
+	::SetContentType("application/json")
+
+	If GetRemoteType() == -1
+		If Type("cFilAnt") == "C" .and. TCIsConnected() //Não tenho interface
+			ConOut("***********************************************************************************************")
+			ConOut("*		Ambiente Protheus aberto e pronto para uso 																								*")
+			ConOut("***********************************************************************************************")
+		Else
+			ConOut("Empresa: 	" + _cCodEmp)
+			ConOut("Filial: 	" + SubStr(_cCodFil,1,2))
+			RpcSetEnv(_cCodEmp,SubStr(_cCodFil,1,2)) //Abro o ambiente, pois o mesmo não encontrava-se aberto
+		Endif
+	EndIf
+
+	// Trato as variaveis para incluir no sql
+
+	If Empty(_cCC)
+		// SetRestFault(500, "Centro de custo nao informado!")
+		_cCCINI := Repl(' ',TamSX3("AKD_CC")[1])
+		_cCCFIM := Repl('Z',TamSX3("AKD_CC")[1])
+	Else
+		_cCCINI 	:= TRIM(_cCC)
+		_cCCFIM 	:= TRIM(_cCC)
+	EndIf
+
+	//alteracao vitorj2a,20220712, varias conta contabeis para a query
+	If !Empty(_cItCtb)
+		_cItCtb := "%IN ("+xfSqlIN(_cItCtb,TamSX3("AKD_ITCTB")[1])+")%"
+	Else
+		_cItCtb := "%NOT IN ('"+Replicate(Space(1),TamSX3("AKD_ITCTB")[1])+"')%"
+	EndIf
+
+	If Empty(_cCOper)
+		// SetRestFault(500, "Item Contabil nao informado!")
+		_cCOperINI := Repl(' ',TamSX3("AKD_OPER")[1])
+		_cCOperFIM := Repl('Z',TamSX3("AKD_OPER")[1])
+	Else
+		_cCOperINI := TRIM(_cCOper)
+		_cCOperFIM := TRIM(_cCOper)
+	EndIf
+
+	If Empty(_cCO)
+		// SetRestFault(500, "Item Contabil nao informado!")
+		_cCOINI := Repl(' ',TamSX3("AKD_CO")[1])
+		_cCOFIM := Repl('Z',TamSX3("AKD_CO")[1])
+	Else
+		_cCOINI := TRIM(_cCO)
+		_cCOFIM := TRIM(_cCO)
+	EndIf
+
+	ConOut("_cCC: "    		+ _cCCINI)
+	ConOut("_cCC: "    		+ _cCCFIM)
+	ConOut("_cItCtb: " 		+ AlLTrim(::ITEM_CONTABIL))
+	ConOut("_cCOper: "  	+ _cCOperINI)
+	ConOut("_cCOper: "  	+ _cCOperFIM)
+	ConOut("_cCO: " 		+ _cCOINI)
+	ConOut("_cCO: " 		+ _cCOFIM)
+	ConOut("_cDataDe: " 	+ _cDataDe)
+	ConOut("_cDataAte: " 	+ _cDataAte)
+	Conout("Filial 4 "      + _cFilial4 )
+
+	//alteracao vitorj2a, 20220713, ajustando query para pegar sempre a ultima versao do orçado na planilha
+	BeginSQl Alias _cAlias1
+        SELECT
+            'O'||SUBSTRING(MAX(akdvr.AKD_VERSAO),4,1)  AS VERSAO_FINAL
+        FROM
+            %Table:AKD% akdvr
+        WHERE
+            akdvr.akd_status = '1'
+            AND TRIM(akdvr.akd_cc) BETWEEN %EXP:_cCCINI% AND %EXP:_cCCFIM%
+            AND akdvr.akd_itctb %Exp:_cItCtb%
+			AND akdvr.%NotDel%
+	EndSql
+
+	If (_cAlias1)->(!Eof())
+		cVerSaldo := (_cAlias1)->VERSAO_FINAL
+	Else
+		cVerSaldo := "OR"
+	EndIf
+
+	If Select(_cAlias) > 0
+		Conout('Alias em uso')
+		(_cAlias)->(DbCloseArea())
+	EndIf
+// AJUSTADO QUERY PARA BUSCAR SEMPRE O ORCADO DO SHIFT PARA EVITAR DIVERGENCIAS - 09/09/2022 - BRENO NOGUEIRA
+	BeginSql Alias _cAlias
+		SELECT
+			COALESCE(
+				(
+					SELECT
+						SUM(AKD_VALOR1) AS AKD_VALOR
+					FROM
+						(
+							SELECT
+								CASE
+									WHEN AKDRE.AKD_TIPO = '1' THEN SUM(AKDRE.AKD_VALOR1)
+									WHEN AKDRE.AKD_TIPO = '2' THEN SUM(- AKDRE.AKD_VALOR1)
+									ELSE 0
+								END AS AKD_VALOR1
+							FROM
+								%Table:AKD% AKDRE
+							WHERE
+								akdre.%NOTDEL%
+								AND akdre.akd_status = '1'
+								AND TRIM(akdre.akd_cc) BETWEEN %EXP:_cCCINI% AND %EXP:_cCCFIM%
+								AND akdre.akd_itctb %Exp:_cItCtb%
+								AND TRIM(akdre.akd_oper) BETWEEN %EXP:_cCOperINI% AND %EXP:_cCOperFIM%
+								AND akdre.akd_data BETWEEN %EXP:_cDataDe% AND %EXP:_cDataAte%
+								AND akdre.akd_filial = %exp:_cFilial4%
+								AND akdre.akd_tpsald = 'RC'
+							GROUP BY
+								AKDRE.AKD_TIPO
+						) TBL
+				),
+				0
+			) AS AKD_REALIZADO,
+			COALESCE(
+				(
+					SELECT
+						SUM(AKD_VALOR1) AS AKD_VALOR
+					FROM
+						(
+							SELECT
+								CASE
+									WHEN AKDOR.AKD_TIPO = '1' THEN SUM(AKDOR.AKD_VALOR1)
+									WHEN AKDOR.AKD_TIPO = '2' THEN SUM(- AKDOR.AKD_VALOR1)
+									ELSE 0
+								END AS AKD_VALOR1
+							FROM
+								%Table:AKD% AKDOR
+							WHERE
+								akdor.%NOTDEL%
+								AND akdor.akd_status = '1'
+								AND TRIM(akdor.akd_cc) BETWEEN %EXP:_cCCINI% AND %EXP:_cCCFIM%
+								AND akdor.akd_itctb %Exp:_cItCtb%
+								AND TRIM(akdor.akd_oper) BETWEEN %EXP:_cCOperINI% AND %EXP:_cCOperFIM%
+								AND akdor.akd_data BETWEEN %EXP:_cDataDe% AND %EXP:_cDataAte%
+   								AND akdor.akd_filial = %exp:_cFilial4%
+								AND akdor.akd_tpsald = 'OR'
+							GROUP BY
+								AKDOR.AKD_TIPO
+						) TBL
+				),
+				0
+			) AS AKD_ORCADO
+		FROM
+			%Table:AKD% AKD
+		WHERE
+			ROWNUM = 1
+	EndSql
+
+	dbSelectArea(_cAlias)
+	(_cAlias)->(DbGoTop())
+
+	aJson := {}
+	While ( (_cAlias)->(!EOF()) )
+
+		Aadd(aJson,JsonObject():new())
+		_nI := Len(aJson)
+		aJson[_nI]['Orcado']  := CValToChar( (_cAlias)->AKD_ORCADO )
+		aJson[_nI]['Realizado']	:= CValToChar( (_cAlias)->AKD_REALIZADO )
+		(_cAlias)->(DbSkip())
+
+	EndDo
+
+	(_cAlias)->(DbCloseArea())
+	oJson:set(aJson)
+	::SetResponse( oJson:toJSON() )
+	VarInfo("Json ",oJson:toJSON())
+
+Return(lRet)
+
+
+WSMETHOD GET WSRECEIVE RECEIVE WSSERVICE SLDJSON
+
+	Local cJson    := Self:GetContent()
+	local cError   := ""
+	Local lRet     := .T.
+	local oJson
+	Local _cCodEmp := oJson:GetJsonObject( 'CODIGO_EMPRESA' )
+	Local _cCodFil := oJson:GetJsonObject( 'CODIGO_FILIAL' )
+	Local _cCC     := oJson:GetJsonObject( 'CENTRO_CUSTO' )
+	Local _cItc    := oJson:GetJsonObject( 'ITEM_CONTABIL' )
+	Local _cDatDe  := oJson:GetJsonObject( 'DATADE' )
+	Local _cDatAte := oJson:GetJsonObject( 'DATAATE' )
+
+	Private lMsErroAuto     := .F.
+	Private lMsHelpAuto     := .T.
+	Private lAutoErrNoFile  := .T.
+	Private lNewVersion 	:=  ""
+
+	freeObj(oJson)
+	oJson	:= JsonObject():New()
+
+	::SetContentType("application/json")
+
+	//Definindo o conteúdo como JSON, e pegando o content e dando um parse para ver se a estrutura está ok
+	::SetContentType("application/json")
+	oJson   := JsonObject():New()
+	cError  := oJson:FromJson(cJson)
+
+	QOUT('cJson: '          + cJson)
+	QOUT('CODIGO_EMPRESA: ' + _cCodEmp)
+	QOUT('CODIGO_FILIAL: ' 	+ _cCodFil)
+	QOUT('CENTRO_CUSTO: ' 	+ _cCC)
+	QOUT('ITEM_CONTABIL: ' 	+ _cItc)
+	QOUT('DATADE: ' 		+ _cDatDe)
+	QOUT('DATAATE: ' 		+ _cDatAte)
+
+	//Se tiver algum erro no Parse, encerra a execução
+	If .NOT. Empty(cError)
+		SetRestFault(500,'Parser Json Error',.T.)
+		DisarmTransaction()
+		lRet    := .F.
+	Else
+
+		If GetRemoteType() == -1
+			If Type("cFilAnt") == "C" .and. TCIsConnected() //Não tenho interface
+
+			Else
+				RpcSetEnv(_cCodEmp,_cCodFil) //Abro o ambiente, pois o mesmo não encontrava-se aberto
+			Endif
+		EndIf
+
+		ret := oJson:FromJson(cJson)
+
+		If ValType(ret) == "C"
+			conout("Falha ao transformar texto em objeto json. Erro: " + ret)
+			Return
+		EndIf
+
+		::SetResponse( _oJson:toJSON() )
+		qqout()
+
+	Endif 
+
+	FreeObj(oJson)
+	RESET ENVIRONMENT
+
+Return(lRet)
+
+/*/{Protheus.doc} fSqlIN
+formata a string para clausula IN do sql
+@type function
+@version 12.1.27
+@author Vitor
+@since 12/07/2022
+@param cTexto, character, string a ser formatada
+@param nStep, numeric, limite para quebra do in
+@return character, string formatada
+/*/
+Static Function xfSqlIN( cTexto, nStep )
+
+	Local cRet   := ""
+	Local i,nI
+	Local cAux  := ""
+	Local aItens := {}
+
+	If Len( cTexto ) > 0
+		aItens := StrToKarr2(cTexto,",")
+		For nI := 1 To Len(aItens)
+			cAux += PadR(aItens[nI],nStep)
+		Next
+		cTexto := cAux
+		For i := 1 To Len( cTexto ) Step nStep
+			cRet += "'" + SubStr( cTexto, i, nStep ) + "'"
+
+			If i + nStep <= Len( cTexto )
+				cRet += ","
+			EndIf
+		Next
+	EndIf
+
+Return( cRet )

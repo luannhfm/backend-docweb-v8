@@ -1,0 +1,734 @@
+#Include "Protheus.ch"
+#Include "TopConn.ch"
+#Include "ApWizard.ch"
+
+/*/{Protheus.doc} EXPSGT
+Funcao para gerar CSV - Carga de Funcionarios pra o Sistema SGT
+
+@author 	Jose Leite de Barros Neto
+@since 	10/08/2015
+@version 	1.0
+@return 	Nil, Nulo
+/*/
+User Function EXPSGT()
+	
+	Local cTitle  := "Wizard - Exportação de arquivos CSV"
+	Local cDescri := "Arquivos CSV Protheus x SGT."
+
+	Private oWizard 	:= Nil
+	Private nRadioExp 	:= 0
+	Private nTermExp  	:= 0
+	Private cDbSql 		:= GetNewPar("MV_XDBSTT",'MSSQL/STTPRO')
+	Private cSrvSql		:= GetNewPar("MV_XSRVSTT",'CLUTOP01') 
+	Private nHErp  		:= AdvConnection()
+	Private nHndSql  	:= 0
+	Private lWrite		:= .F.
+	
+	//----------//
+	// Painel 1 //
+	//----------//
+	DEFINE WIZARD oWizard TITLE cTitle HEADER cTitle MESSAGE "Exportação de Dados Protheus x SGT" PANEL NEXT {|| .T.} FINISH{||.T.} 
+	
+	ogr01 := TGroup():New( 010, 005, 135, 295, "Gerar Arquivo", oWizard:oMPanel[1],,,.T.,.T.,, .T.)
+	
+	@ 20, 10 RADIO oRadio Var nRadioExp  Items "Colaboradores"      	,;
+                                              "Clientes" 				,;
+                                              "Contatos"				,;
+                                              "Endereços"				,;
+                                              "Despesas"				,;
+                                              "Receitas"				,;
+                                              "Produção"				Size 90, 08 Of oWizard:oMPanel[1] Pixel
+
+	//-----------//
+	// Painel 2  //
+	//-----------//
+	CREATE PANEL oWizard HEADER cTitle MESSAGE "Processamento: Exportando arquivo." PANEL BACK {|| .T. } NEXT {|| .F. } FINISH {|| .T.} EXEC {|| .T. }
+	
+	@ 060,090 Say "Gerando arquivo de Exportação..."  Of oWizard:oMPanel[2] Pixel
+	
+	oTermExp := tMeter():New( 068, 010, { |u| Iif(Pcount()>0, nTermExp:=u,nTermExp )}, 100, oWizard:oMPanel[2], 285, 30,,.T.)
+	
+	oWizard:oDlg:lEscClose	:= .F.
+	oWizard:oFinish:bAction 	:= {|| GeraCabec(), ::End() }
+
+	oWizard:oFinish:cCaption := "&Processar"
+	oWizard:oFinish:cTitle   := "&Processar"
+
+	ACTIVATE WIZARD oWizard CENTERED VALID {|| .T. }
+	
+Return( Nil )
+
+/** {Protheus.doc} GeraCabec
+Funcao que realiza a geracao do arquivo Excel
+
+@author: 	Jose Leite de Barros Neto
+@since: 	10/08/2015
+@Uso: 		SFIEMT
+*/
+Static Function GeraCabec()
+
+	Local aHeader 	:= {}
+	Local cDescr		:= ''
+	
+	// Array com os campos para a planilha
+	
+	//Colaboradores
+	If nRadioExp == 1
+	 
+		aAdd(aHeader, {"nome"									,"NOME" 									,"@!"		,TAMSX3("RA_NOME")[1]			,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"cpf"									,"CPF" 									,"@!"		,TAMSX3("RA_CIC")[1]			,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"telefone"							,"TELEFONE"								,"@!"		,TAMSX3("RA_TELEFON")[1]+2	,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"numeroCentroResponsabilidade"	,"NUMEROCENTRORESPONSABILIDADE" 	,"@E"		,TAMSX3("RA_ITEM")[1]			,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"email"								,"EMAIL"	 								,"@!"		,TAMSX3("RA_EMAIL")[1]		,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"formacaoColaborador"				,"FORMACAOCOLABORADOR"				,"@E 9"	,01									,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"tipoContratoColaborador"			,"TIPOCONTRATOCOLABORADOR"			,"@E 9"	,01									,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"codUnidade"							,"CODUNIDADE"							,"@!"		,14									,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"numeroDeHorasDeTrabalho"			,"NUMERODEHORASDETRABALHO"			,"@E 999"	,TAMSX3("RA_HRSMES")[1]		,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"linkCurriculumVitae"				,"Curriculum" 							,"@!"		,40									,0,"","","C","TEMP1","R"})
+		
+		cDescr := "Colaboradores - Carga"
+	
+	//Clientes
+	ElseIf nRadioExp == 2
+		
+		aAdd(aHeader, {"tipo_pessoa"						,"TIPO_PESSOA"				,"@E"		,01									,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"cpfcnpj"								,"CPFCNPJ"					,"@!"		,TAMSX3("A1_CGC")[1]			,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"inscricaoEstadual"					,"INSCRICAOESTADUAL"		,"@!"		,TAMSX3("A1_INSCR")[1]		,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"cnae"									,"CNAE"						,"@!"		,TAMSX3("A1_CNAE")[1]			,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"nome"									,"NOME"						,"@!"		,TAMSX3("A1_NOME")[1]			,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"razaoSocial"						,"RAZAO_SOCIAL"				,"@!"		,TAMSX3("A1_NOME")[1]			,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"numeroDeFuncionarios"				,"NUMERODEFUNCIONARIOS"	,"@E"		,06									,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"regional"							,"REGIONAL"					,"@E"		,02									,0,"","","N","TEMP1","R"})
+		
+		
+		cDescr := "Clientes - Carga"
+	
+	//Clientes - Contatos
+	ElseIf nRadioExp == 3
+
+		aAdd(aHeader, {"cpfcnpj"								,"CPFCNPJ"		,"@!"		,TAMSX3("A1_CGC")[1]			,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"nome"									,"NOME"			,"@!"		,TAMSX3("A1_NOME")[1]			,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"setor"								,"SETOR"			,"@!"		,TAMSX3("A1_NREDUZ")[1]		,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"telefone"							,"FONE"			,"@!"		,15									,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"email"								,"EMAIL"			,"@!"		,TAMSX3("A1_EMAIL")[1]		,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"regional"							,"REGIONAL"		,"@E"		,02									,0,"","","N","TEMP1","R"})
+		
+		cDescr := "Clientes_Contatos - Carga"
+	
+	//Clientes - Endereços
+	ElseIf nRadioExp == 4
+		
+		aAdd(aHeader, {"cpfcnpj"								,"CPFCNPJ"		,"@!"		,TAMSX3("A1_CGC")[1]			,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"numero"								,"NUMERO"			,"@!"		,06									,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"logradouro"							,"LOGRADOURO"	,"@!"		,TAMSX3("A1_END")[1]			,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"bairro"								,"BAIRRO"			,"@!"		,TAMSX3("A1_BAIRRO")[1]		,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"complemento"						,"COMPLEMENTO"	,"@!"		,TAMSX3("A1_BAIRRO")[1]		,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"cep"									,"CEP"				,"@!"		,TAMSX3("A1_CEP")[1]			,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"codigoIBGE"							,"CODIBGE"		,"@E"		,TAMSX3("A1_IBGE")[1]			,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"tipoEndereco"						,"TIPOENDERECO"	,"@E"		,01									,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"regional"							,"REGIONAL"		,"@E"		,02									,0,"","","N","TEMP1","R"})
+	
+		cDescr := "Clientes_Endereços - Carga"
+	
+	//Despesas
+	ElseIf nRadioExp == 5
+		
+		aAdd(aHeader, {"ano"									,"ANO"				,"@E"		,04									,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"mes"									,"MES"				,"@E"		,02									,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"regional"							,"REGIONAL"		,"@E"		,02									,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"unidade"								,"UNIDADE" 		,"@!"		,14									,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"produtoLinha"						,"PRODUTO"		,"@E"		,01									,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"produtoCategoria"					,"CATEGORIA"		,"@E"		,01									,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"vlrDespesaRealizado"				,"REALIZADO"		,"@E"		,16									,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"vlrDespesaPrevisto"				,"PREVISTO"		,"@E"		,16									,0,"","","N","TEMP1","R"})
+		
+		cDescr := "Despesas - Carga"
+	
+	//Receitas
+	ElseIf nRadioExp == 6
+		
+		aAdd(aHeader, {"ano"									,"ANO"				,"@E"		,04									,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"mes"									,"MES"				,"@E"		,02									,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"regional"							,"REGIONAL"		,"@E"		,02									,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"unidade"								,"UNIDADE" 		,"@!"		,14									,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"produtoLinha"						,"PRODUTO"		,"@E"		,01									,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"produtoCategoria"					,"CATEGORIA"		,"@E"		,01									,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"vlrReceitaRealizado"				,"REALIZADO"		,"@E"		,16									,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"vlrReceitaPrevisto"				,"PREVISTO"		,"@E"		,16									,0,"","","N","TEMP1","R"})
+	
+		cDescr := "Receitas - Carga"
+	
+	//Produção
+	ElseIf nRadioExp == 7
+		
+		aAdd(aHeader, {"ano"									,"ANO"								,"@E"		,04					,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"mes"									,"MES"								,"@!"		,02					,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"regional"							,"REGIONAL"						,"@E"		,02					,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"unidade"								,"CODUNIDADE"					,"@!"		,14					,0,"","","C","TEMP1","R"})
+		aAdd(aHeader, {"produtoLinha"						,"PRODUTOLINHA"					,"@E"		,02					,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"produtoCategoria"					,"PRODUTOCATEGORIA"			,"@E"		,02					,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"qtdeProducaoPrevisto"				,"QTDEPRDPREV"					,"@E"		,06					,2,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"qtdeProducaoRealizado"			,"QTDPRDREAL"					,"@E"		,06					,2,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"qtdeProducaoPrevistoM"			,"QTDEPRDPREVM"		,"@E"		,06					,0,"","","N","TEMP1","R"})
+		aAdd(aHeader, {"qtdeProducaoRealizadoM"			,"QTDEPRDREALM"	,"@E"		,06					,0,"","","N","TEMP1","R"})
+		
+		cDescr := "Produção - Carga"
+	
+	EndIf
+
+	// Chamada da função de conversão para a csv
+	If Len(aHeader) > 0
+		MsAguarde({|| GeraCSV(aHeader, cDescr) },"Aguarde","Gerando Planilha",.F.)
+	EndIf
+ 
+Return( Nil )
+
+/** {Protheus.doc} GeraCSV
+Funcao que realiza a geracao do arquivo CSV
+
+@param: 	aHeader, Cabecalho do csv
+@param:	pDesc, nome do arquivo a ser gerado
+
+@author: 	Jose Leite de Barros Neto
+@since: 	10/08/2015
+@Uso: 		SFIEMT
+*/
+Static Function GeraCSV(aHeader, pDesc)
+	
+	Local cDirDocs 	:= GetNewPar("MV_XARQSGT",'C:\Temp\')
+	Local cArquivo	:= pDesc //+ StrTran(DtoC(dDataBase),'/','') + "_" + AllTrim(StrTran(Time(),':',''))
+	Local cPath		:= AllTrim(GetTempPath())
+	Local oExcelApp
+	Local nHandle
+	Local cCrLf 		:= Chr(13) + Chr(10)
+	Local nX
+	Local _ni
+	Local lSetCon	:= .F.
+	Local _cQuery	:= ""
+	Local _cCpf		:= ""
+	Local _cAlias	:= ""
+	Local _uValor
+	
+	//Colaboradores
+	If nRadioExp == 1
+		
+		lSetCon := GetConexao()
+				
+		If lSetCon
+			//View de COLABORADORES
+			_cQuery := 'SELECT * FROM VISAO_SGT_COLABORADORES'
+		EndIf
+		
+	//Clientes
+	ElseIf nRadioExp == 2
+		
+		lSetCon := GetConexao()
+				
+		If lSetCon
+			//View de CLIENTES
+			_cQuery := 'SELECT * FROM VISAO_SGT_CLIENTES'
+		EndIf
+		
+	//Clientes - Contatos
+	ElseIf nRadioExp == 3
+		
+		Alert("Em Desenvolvimento - Clientes - Contatos")
+		Return
+		
+	//Clientes - Endereços
+	ElseIf nRadioExp == 4
+		
+		lSetCon := GetConexao()
+				
+		If lSetCon
+			//View de ENDERECOS
+			_cQuery := 'SELECT * FROM VISAO_SGT_ENDERECOS'
+		EndIf
+		
+	//Despesas
+	ElseIf nRadioExp == 5
+		
+		Alert("Em Desenvolvimento - Despesas")
+		Return
+		
+	//Receitas
+	ElseIf nRadioExp == 6
+		
+		Alert("Em Desenvolvimento - Receitas")
+		Return
+		
+	//Produção
+	ElseIf nRadioExp == 7
+		
+		lSetCon := GetConexao()
+				
+		If lSetCon
+			//View de PRODUCAO
+			_cQuery := ' SELECT MES, ANO, REGIONAL, CODUNIDADE, PRODUTOLINHA, PRODUTOCATEGORIA, 	'
+			_cQuery += ' SUM(QTDEPRODUCAOPREVISTO) QTDEPRDPREV, 												'
+			_cQuery += ' SUM(QTDEPRODUCAOREALIZADO) QTDPRDREAL, 												'
+			_cQuery += ' SUM(QTDEPRODUCAOPREVISTOM) QTDEPRDPREVM, 											'
+			_cQuery += ' SUM(QTDEPRODUCAOREALIZADAM) QTDEPRDREALM 											'
+			_cQuery += ' FROM VISAO_SGT_PRODUCAO																	' 
+			_cQuery += ' WHERE ANO = '+ cValToChar(Year(dDataBase))
+			_cQuery += ' GROUP BY MES, ANO, REGIONAL, CODUNIDADE, PRODUTOLINHA, PRODUTOCATEGORIA	' 
+			_cQuery += ' ORDER BY ANO, MES
+		EndIf
+		
+	EndIf
+	
+	If Select("TRA") > 0
+		DbSelectArea("TRA")
+	 	DbCloseArea()
+	EndIf
+				
+	//_cQuery := ChangeQuery(_cQuery)
+	
+	TCQUERY _cQuery NEW ALIAS "TRA"
+		
+	DbSelectArea("TRA")
+	TRA->(DbGoTop())
+	
+	_cAlias := "TRA"
+	
+	nHandle := MsfCreate(cDirDocs+""+cArquivo+".CSV",0)
+	
+	If nHandle > 0
+		
+		// Grava o cabecalho do arquivo
+		aEval(aHeader, {|e, nX| fWrite(nHandle, e[1] + If(nX < Len(aHeader), ";", "") ) } )
+		fWrite(nHandle, cCrLf ) // Pula linha
+		
+		TRA->( DbGoTop() )
+		While .Not. TRA->( EOF() )
+			
+			lWrite := .F.
+						
+			For _ni := 1 To Len(aHeader)
+				
+				//Colaboradores
+				If nRadioExp == 1
+					
+					_cCpf := TRA->CPF
+					
+					_uValor := ColabSGT2(aHeader, _ni, _cAlias, _cCpf)
+					
+					If _uValor == '9999'
+						Exit
+						lWrite := .F.
+					EndIf
+					
+				//Clientes
+				ElseIf nRadioExp == 2
+					
+					_uValor := ClienteSGT(aHeader, _ni, _cAlias)
+					
+					If _uValor == '9999'
+						Exit
+						lWrite := .F.
+					EndIf
+					
+				//Clientes - Contatos
+				ElseIf nRadioExp == 3
+					
+					Alert("Em Desenvolvimento - Clientes - Contatos")
+					Return
+					
+				//Clientes - Endereços
+				ElseIf nRadioExp == 4
+					
+					_uValor := CliEndSGT(aHeader, _ni, _cAlias)
+					
+					If _uValor == '9999'
+						Exit
+						lWrite := .F.
+					EndIf
+					
+				//Despesas
+				ElseIf nRadioExp == 5
+					
+					Alert("Em Desenvolvimento - Despesas")
+					Return
+					
+				//Receitas
+				ElseIf nRadioExp == 6
+					
+					Alert("Em Desenvolvimento - Receitas")
+					Return
+					
+				//Produção
+				ElseIf nRadioExp == 7
+					
+					_uValor := ProducaoSGT(aHeader, _ni, _cAlias)
+					
+					If _uValor == '9999'
+						Exit
+						lWrite := .F.
+					EndIf
+					
+				EndIf
+				
+				If _ni <= Len(aHeader)
+					If lWrite
+						If _ni == Len(aHeader)
+							fWrite(nHandle, _uValor)
+						Else
+							fWrite(nHandle, _uValor + ";")
+						EndIf
+					EndIf
+				EndIf
+				
+			Next _ni
+			
+			If lWrite
+				fWrite(nHandle, cCrLf)
+			EndIf
+			
+			TRA->(DbSkip())
+			
+		End
+		
+		If nHndSql > 0
+			TcUnlink(nHndSql)
+			ConOut("Conexao com STT Net desconectada.")
+		EndIf
+		
+		fClose(nHandle)
+		//CpyS2T( cDirDocs+""+cArquivo+".CSV" , cPath, .T. )
+		
+		If .Not. ApOleClient( 'MsExcel' )
+			MsgAlert( 'MsExcel nao instalado' )
+			Return
+		EndIf
+		
+		oExcelApp := MsExcel():New()
+		oExcelApp:WorkBooks:Open( cDirDocs+cArquivo+".CSV" ) // Abre uma planilha
+		oExcelApp:SetVisible(.T.)
+		
+		MsgInfo('Arquivo gerado com sucesso em: '+ cDirDocs+cArquivo+".csv",'Atenção')
+		
+	Else
+		MsgAlert("Falha na criação do arquivo")
+	EndIf
+	
+Return
+
+/** {Protheus.doc} GetConexao
+Funcao que realiza conexao com o banco de dados do STT NET
+
+@author: 	Jose Leite de Barros Neto
+@since: 	20/08/2015
+@Uso: 		SFIEMT
+@return 	lRetorno, Retorna o status da conexao
+*/
+Static Function GetConexao()
+	
+	Local lRetorno		:= .T.
+
+ 	nHndSql := TcLink(cDbSql, cSrvSql, 7890)
+ 
+ 	If nHndSql < 0
+     UserException( "EXPSGT: Erro ("+ Str(nHndSql, 4) +") ao conectar com "+ cDbSql +" em " + cSrvSql )
+     lRetorno := .F.
+	EndIf
+	
+	If lRetorno
+		If .Not. TCSetConn(nHndSql)
+	 		Conout("EXPSGT: Houve problema na troca de conexao para o Ambiente, contate o Administrador")
+	  		Conout("EXPSGT: Processo Finalizado")
+	  		lRetorno := .F.
+		EndIf
+	 
+		Conout( "EXPSGT: "+ cDbSql + " conectado - Handler" + Str(nHndSql, 4) )
+ 	EndIf
+ 	
+Return( lRetorno )
+
+/** {Protheus.doc} ColabSGT2
+Funcao que realiza o tratamento dos dados de Colaboradores
+
+@param: 	p_aHeader, Cabecalho do csv
+@param:	p_ni, Linha a realizar o tratamento
+@param:	p_cCpf, CPF do colaborador STT Net
+
+@author: 	Jose Leite de Barros Neto
+@since: 	10/08/2015
+@Uso: 		SFIEMT
+@return 	_xValor, Retorna a informacao tratada
+*/
+Static Function ColabSGT2(p_aHeader, p_ni, p_cAlias, p_cCpf)
+	
+	Local _xValor	:= '9999'
+	Local _cAlias 	:= p_cAlias
+	Local _cCpf		:= p_cCpf
+	
+	lWrite := .T.
+	
+	// Trata campos data
+	If p_aHeader[p_ni,8] == "D" 
+		_xValor := DtoC(&(_cAlias + "->" + p_aHeader[p_ni,2]))
+		
+	// Trata campos numericos
+	ElseIf p_aHeader[p_ni,8] == "N" 
+	
+		If p_aHeader[p_ni,1] == "formacaoColaborador"
+			
+			_xValor := Alltrim(transform(&(_cAlias + "->" + p_aHeader[p_ni,2]),p_aHeader[p_ni,3]))
+			
+			TcSetConn(nHErp)
+			
+			If Empty(_xValor)
+				
+				If Select("TMPSRA") > 0
+					DbSelectArea("TMPSRA")
+				 	DbCloseArea()
+				EndIf
+				
+				_cQuery := " SELECT 								"
+				_cQuery += "		RA_GRINRAI						"
+				_cQuery += "	FROM "+RetSqlName("SRA")
+				_cQuery += "	WHERE 	RA_CIC						= '"+p_cCpf+"' 	"
+				_cQuery += "			AND RA_SITFOLH 			<> 'D'				"
+				_cQuery += "			AND D_E_L_E_T_ 			<> '*'				"
+				_cQuery += "	ORDER BY RA_FILIAL									"
+				
+				TCQUERY _cQuery NEW ALIAS "TMPSRA"
+					
+				DbSelectArea("TMPSRA")
+				TMPSRA->(DbGoTop())
+				
+				If TMPSRA->( EOF() )
+					_xValor := transform(4,p_aHeader[p_ni,3])
+				Else
+					/* Tabela de Formacao - SGT
+						Codigo 	Formacao 
+						1 			ENSINO BASICO
+						2 			ENSINO MEDIO 
+						3 			TECNICO 
+						4 			GRADUACAO 
+						5 			ESPECIALIZACAO 
+						6 			MBA 
+						7 			MESTRADO 
+						8 			DOUTORADO 
+						9 			POS-DOUTORADO
+					*/
+					If Val(TMPSRA->(RA_GRINRAI)) <= 35
+						_xValor := transform(1,p_aHeader[p_ni,3])
+					ElseIf Val(TMPSRA->(RA_GRINRAI)) == 40 .OR. Val(TMPSRA->(RA_GRINRAI)) == 45
+						_xValor := transform(2,p_aHeader[p_ni,3])
+					ElseIf Val(TMPSRA->(RA_GRINRAI)) == 50 .OR. Val(TMPSRA->(RA_GRINRAI)) == 55
+						_xValor := transform(4,p_aHeader[p_ni,3])
+					ElseIf Val(TMPSRA->(RA_GRINRAI)) == 65
+						_xValor := transform(7,p_aHeader[p_ni,3])
+					ElseIf Val(TMPSRA->(RA_GRINRAI)) == 75
+						_xValor := transform(8,p_aHeader[p_ni,3])
+					ElseIf Val(TMPSRA->(RA_GRINRAI)) == 85
+						_xValor := transform(5,p_aHeader[p_ni,3])
+					ElseIf Val(TMPSRA->(RA_GRINRAI)) == 95
+						_xValor := transform(9,p_aHeader[p_ni,3])
+					Else
+						_xValor := transform(4,p_aHeader[p_ni,3])
+					EndIf
+				EndIf
+				
+				TMPSRA->(DbCloseArea())
+				
+			EndIf
+			
+			TcSetConn(nHndSql)
+			
+		ElseIf p_aHeader[p_ni,1] == "tipoContratoColaborador"
+			If &(_cAlias + "->" + p_aHeader[p_ni,2]) == 'HORISTA'
+				_xValor := transform(1,p_aHeader[p_ni,3])
+			Else
+				_xValor := transform(2,p_aHeader[p_ni,3])
+			EndIf
+			
+		ElseIf p_aHeader[p_ni,1] == "numeroCentroResponsabilidade"
+			
+			_xValor := Alltrim(transform(&(_cAlias + "->" + p_aHeader[p_ni,2]),p_aHeader[p_ni,3]))
+			
+			If Empty(_xValor)
+				
+				TcSetConn(nHErp)
+				
+				If Select("TMPSRA") > 0
+					DbSelectArea("TMPSRA")
+				 	DbCloseArea()
+				EndIf
+				
+				_cQuery := " SELECT 								"
+				_cQuery += "		RA_ITEM							"
+				_cQuery += "	FROM "+RetSqlName("SRA")
+				_cQuery += "	WHERE RA_CIC						= '"+p_cCpf+"' 	"
+				_cQuery += "			AND RA_SITFOLH 			<> 'D'				"
+				_cQuery += "			AND D_E_L_E_T_ 			<> '*'				"
+				_cQuery += "	ORDER BY RA_FILIAL									"
+				
+				TCQUERY _cQuery NEW ALIAS "TMPSRA"
+					
+				DbSelectArea("TMPSRA")
+				TMPSRA->(DbGoTop())
+				
+				If TMPSRA->( EOF() )
+					_xValor := '1530201020201'
+				Else
+					_xValor := transform(TMPSRA->(RA_ITEM),p_aHeader[p_ni,3])
+				EndIf
+				
+				TMPSRA->(DbCloseArea())
+				
+				TcSetConn(nHndSql)
+				
+			EndIf
+		
+		ElseIf p_aHeader[p_ni,1] == "numeroDeHorasDeTrabalho"
+		
+			_xValor := Alltrim(transform(&(_cAlias + "->" + p_aHeader[p_ni,2]),p_aHeader[p_ni,3]))
+			
+			If Empty(_xValor)
+				_xValor := '0'
+			EndIf
+				
+		Else
+			_xValor := transform(&(_cAlias + "->" + p_aHeader[p_ni,2]),p_aHeader[p_ni,3])
+		EndIf
+			
+	// Trata campos caracter	
+	ElseIf p_aHeader[p_ni,8] == "C" 
+		
+		If p_aHeader[p_ni,1] == 'nome'
+			_xValor := Upper(AllTrim(&(_cAlias + "->" + p_aHeader[p_ni,2])))
+		ElseIf p_aHeader[p_ni,1] == 'linkCurriculumVitae'
+			_xValor := ' '
+		Else
+			_xValor := AllTrim(&(_cAlias + "->" + p_aHeader[p_ni,2]))
+		EndIf
+		
+	EndIf	
+	
+Return( _xValor )
+
+/** {Protheus.doc} ClienteSGT
+Funcao que realiza o tratamento dos dados de Clientes
+
+@param: 	p_aHeader, Cabecalho do csv
+@param:	p_ni, Linha a realizar o tratamento
+
+@author: 	Jose Leite de Barros Neto
+@since: 	21/08/2015
+@Uso: 		SFIEMT
+@return 	_xValor, Retorna a informacao tratada
+*/
+Static Function ClienteSGT(p_aHeader, p_ni, p_cAlias)
+	
+	Local _xValor	:= '9999'
+	Local _cAlias 	:= p_cAlias
+	
+	lWrite := .T.
+		
+	// Trata campos data
+	If p_aHeader[p_ni,8] == "D" 
+		_xValor := DtoC(&(_cAlias + "->" + p_aHeader[p_ni,2]))
+		
+	// Trata campos numericos
+	ElseIf p_aHeader[p_ni,8] == "N" 
+			
+		If  p_aHeader[p_ni,1] == "tipo_pessoa"
+			
+			If &(_cAlias + "->" + p_aHeader[p_ni,2]) == 'FÍSICA'
+				_xValor := transform(0,p_aHeader[p_ni,3])
+			Else
+				_xValor := transform(1,p_aHeader[p_ni,3])
+			EndIf
+		
+		ElseIf p_aHeader[p_ni,1] == "numeroDeFuncionarios"
+			If Empty(&(_cAlias + "->" + p_aHeader[p_ni,2]))
+				_xValor := transform(0,p_aHeader[p_ni,3])
+			EndIf
+		Else
+			_xValor := transform(&(_cAlias + "->" + p_aHeader[p_ni,2]),p_aHeader[p_ni,3])
+		EndIf
+			
+	// Trata campos caracter	
+	ElseIf p_aHeader[p_ni,8] == "C" 
+	
+		_xValor := AllTrim(&(_cAlias + "->" + p_aHeader[p_ni,2]))
+		
+	EndIf
+	
+Return( _xValor )
+
+/** {Protheus.doc} CliEndSGT
+Funcao que realiza o tratamento dos dados de Clientes - Enderecos
+
+@param: 	p_aHeader, Cabecalho do csv
+@param:	p_ni, Linha a realizar o tratamento
+
+@author: 	Jose Leite de Barros Neto
+@since: 	21/08/2015
+@Uso: 		SFIEMT
+@return 	_xValor, Retorna a informacao tratada
+*/
+Static Function CliEndSGT(p_aHeader, p_ni, p_cAlias)
+	
+	Local _xValor	:= '9999'
+	Local _cAlias 	:= p_cAlias
+	
+	lWrite := .T.
+		
+	// Trata campos data
+	If p_aHeader[p_ni,8] == "D" 
+		_xValor := DtoC(&(_cAlias + "->" + p_aHeader[p_ni,2]))
+		
+	// Trata campos numericos
+	ElseIf p_aHeader[p_ni,8] == "N" 
+			
+		_xValor := transform(&(_cAlias + "->" + p_aHeader[p_ni,2]),p_aHeader[p_ni,3])
+			
+	// Trata campos caracter	
+	ElseIf p_aHeader[p_ni,8] == "C" 
+	
+		_xValor := AllTrim(&(_cAlias + "->" + p_aHeader[p_ni,2]))
+		
+	EndIf
+	
+Return( _xValor )
+
+/** {Protheus.doc} ProducaoSGT
+Funcao que realiza o tratamento dos dados de Producao
+
+@param: 	p_aHeader, Cabecalho do csv
+@param:	p_ni, Linha a realizar o tratamento
+
+@author: 	Jose Leite de Barros Neto
+@since: 	21/08/2015
+@Uso: 		SFIEMT
+@return 	_xValor, Retorna a informacao tratada
+*/
+Static Function ProducaoSGT(p_aHeader, p_ni, p_cAlias)
+	
+	Local _xValor	:= '9999'
+	Local _cAlias 	:= p_cAlias
+	
+	lWrite := .T.
+		
+	// Trata campos data
+	If p_aHeader[p_ni,8] == "D" 
+		_xValor := DtoC(&(_cAlias + "->" + p_aHeader[p_ni,2]))
+		
+	// Trata campos numericos
+	ElseIf p_aHeader[p_ni,8] == "N" 
+		_xValor := transform(&(_cAlias + "->" + p_aHeader[p_ni,2]),p_aHeader[p_ni,3])
+			
+	// Trata campos caracter	
+	ElseIf p_aHeader[p_ni,8] == "C" 
+		
+		If Upper(p_aHeader[p_ni,1]) == "MES"
+			_xValor := StrZero(&(_cAlias + "->" + p_aHeader[p_ni,2]),2)
+		Else
+			_xValor := AllTrim(&(_cAlias + "->" + p_aHeader[p_ni,2]))
+		EndIf
+	EndIf
+	
+Return( _xValor )

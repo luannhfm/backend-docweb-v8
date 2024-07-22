@@ -1,0 +1,123 @@
+#INCLUDE 'RWMAKE.CH'
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE 'TOPCONN.CH'
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SF06A49X  ºAutor  ³Leonardo P de Castroº Data ³  15/11/09   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³CHAMA A IMPRESSAO DO CONTRATO DE NEGOCIACAO PADRAO          º±±
+±±º          ³IMPRESSORA ZEBRA                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P-10 MEGAMODAS                                             º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function SF06A49X(_cOrc)
+
+Local _cQuery		:= ''
+Local _cQryAlias	:= ''
+Local _cTesLoc		:= ''
+Local _cTesTmp		:= ''
+Local _cXLjImp := GetMv( 'J2A_XLJIMP' ) //Tipo da impressora
+Local _aContrato	:= {}
+Local _dDatCom := CtoD("")  
+Local _nVlrCom := 0
+Local _nVlrFin := 0
+Local _nVlrEnt := 0
+Local _nVlrPar := 0
+
+//Gera string com as Formas que não serão consideradas para efeito de soma dos orcamentos pendentes do cliente.
+_cTesLoc := GetNewPar("MV_FINLJA","FI/CA/CH/CP")
+
+//Separo as Formas de Pagamento para montar o Filtro em sintaxe SQL
+If (' ' $ AllTrim(_cTesLoc)) .OR. (',' $ AllTrim(_cTesLoc)) .OR. ('-' $ AllTrim(_cTesLoc)) .OR. ('|' $ AllTrim(_cTesLoc)) .OR. ('#' $ AllTrim(_cTesLoc)) .OR. ('/' $ AllTrim(_cTesLoc))
+	For nI := 1 To Len(AllTrim(_cTesLoc))
+		If (Substr(_cTesLoc,nI,1) $ ' ,-|#/') .And. nI < Len(AllTrim(_cTesLoc))
+			_cTesTmp += "','"
+		ElseIf nI == 1
+			_cTesTmp += "'" + Substr(_cTesLoc,nI,1)
+		ElseIf nI == Len(AllTrim(_cTesLoc))
+			_cTesTmp += Substr(_cTesLoc,nI,1) + "'"
+		Else
+			_cTesTmp += Substr(_cTesLoc,nI,1)
+		EndIf
+	Next nI
+Else
+	_cTesTmp := "'"+_cTesLoc+"'"
+EndIf
+
+_cQuery := " SELECT "
+_cQuery += " 		E1_CLIENTE+E1_LOJA CLIENTE, "
+_cQuery += " 		E1_NUM CONTRATO, "
+_cQuery += " 		E1_PREFIXO PREFIXO, "
+_cQuery += "        E1_NUM NUMERO, "
+_cQuery += "        E1_PARCELA PARCELA, "
+_cQuery += "        E1_TIPO TIPO, "
+_cQuery += "        E1_VALOR VALOR, "
+_cQuery += " 		E1_EMISSAO EMISSAO, "
+_cQuery += "        E1_VENCREA VENCIMENTO "
+_cQuery += " FROM "
+_cQuery +=  		RetSqlName("SE1")
+_cQuery += " WHERE "
+_cQuery += " 		D_E_L_E_T_ = ' ' "
+_cQuery += " 		AND E1_NUM = '" + _cOrc + "' "
+_cQuery += " 		AND E1_TIPO IN (" + _cTesTmp + ") "
+_cQuery += " ORDER BY "
+_cQuery += " 		E1_PARCELA "
+
+_cQryAlias := GetNextAlias()
+DbUseArea(.T.,'TOPCONN',TcGenQry(,,_cQuery),_cQryAlias,.F.,.T.)
+TcSetField(_cQryAlias,'EMISSAO','D')
+TcSetField(_cQryAlias,'VENCIMENTO','D')   
+
+//DTCOMPRA, VLRCOMPRA, FINANCIADO, ENTRADA, PARCELADO
+
+If !(_cQryAlias)->(Eof())
+	//Trato Variaveis
+	While !(_cQryAlias)->(Eof())
+		If (_cQryAlias)->PARCELA = '01'
+			_dDatCom := (_cQryAlias)->EMISSAO
+			_nVlrEnt := (_cQryAlias)->VALOR
+		EndIF
+		_nVlrCom += (_cQryAlias)->VALOR
+		_nVlrFin += (_cQryAlias)->VALOR
+		_nVlrPar += (_cQryAlias)->VALOR
+		(_cQryAlias)->(DbSkip())
+	EndDo
+	
+	(_cQryAlias)->(DbGoTop())
+	
+	While !(_cQryAlias)->(Eof())
+		If Len(_aContrato) = 0
+			aAdd( _aContrato , (_cQryAlias)->CLIENTE)
+			aAdd( _aContrato , _dDatCom)
+			aAdd( _aContrato , _nVlrCom)
+			aAdd( _aContrato , _nVlrFin)
+			aAdd( _aContrato , _nVlrEnt)
+			aAdd( _aContrato , _nVlrPar)
+			aAdd( _aContrato , (_cQryAlias)->CONTRATO )
+			aAdd( _aContrato , { { (_cQryAlias)->PREFIXO, (_cQryAlias)->NUMERO, (_cQryAlias)->PARCELA, (_cQryAlias)->TIPO, (_cQryAlias)->VALOR, (_cQryAlias)->VENCIMENTO } } )
+		Else
+			aAdd( _aContrato[8], { (_cQryAlias)->PREFIXO, (_cQryAlias)->NUMERO, (_cQryAlias)->PARCELA, (_cQryAlias)->TIPO, (_cQryAlias)->VALOR, (_cQryAlias)->VENCIMENTO } )
+		EndIF
+		(_cQryAlias)->(DbSkip())
+	EndDo
+	
+	If Aviso('Atenção','Verifique impressora e posicionamento do papel!',{'Imprime','Sair'},,'Imprime Contrato ?') = 1
+		If _cXLjImp == '1' //Adicionado por Fabrício Rosa (28/10/2019)
+			U_SF06A51X(_aContrato,_cOrc)
+		ElseIf _cXLjImp == '2'
+			U_SF06A50X(_aContrato,_cOrc)
+		EndIf
+	EndIF
+	
+EndIf
+
+(_cQryAlias)->(DbCloseArea())
+
+Return( Nil )

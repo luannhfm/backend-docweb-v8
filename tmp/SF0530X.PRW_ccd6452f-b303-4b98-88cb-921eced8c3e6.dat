@@ -1,0 +1,683 @@
+#INCLUDE "PROTHEUS.CH" 
+#INCLUDE "FWMBROWSE.CH"
+
+/*/{Protheus.doc} SF0530X
+(long_description)
+@author j2a.luizjunior
+@since 25/09/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+User Function SF0530X
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0530X")
+	Local   nOpca   := 0 
+	Local   cTitulo := "Gera Medição"	
+	Local   aSays   := {}
+	Local   aBtn    := {}
+	Private cPerg   := "SF0530X"
+
+	CriaSX1(cPerg)
+	Pergunte(cPerg,.F.)
+
+	Aadd(aSays, "Essa rotina tem o intuito de Gerar a Medição e Faturamento de "    )
+	Aadd(aSays, "de contratos de acordo com os parametros informados.")
+		
+	Aadd(aBtn , {5, .T.,  {|| Pergunte(cPerg, .T.)     }}             )
+	Aadd(aBtn , {1, .T.,  {|| nOpca := 1, FechaBatch() }}             )
+	Aadd(aBtn , {2, .T.,  {|| FechaBatch()             }}             )
+	
+	FormBatch(cTitulo,aSays,aBtn,,/*Altura*/,/*Largura*/)
+	
+	If nOpca = 1
+		FWMsgRun(,{|| EXECMED() },"Gerando Medição/Faturamento dos pedidos, aguarde...","Aguarde")
+	EndIf
+
+Return
+
+/*/
+{Protheus.doc} EXECMED
+(long_description)
+@author j2a.luizjunior
+@since 22/09/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function EXECMED
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0530X")
+	Local   aCabec      := {}
+	Local   aItem       := {}   
+	Local   dData       := "" 
+	Local   dDataI      := ""
+	Local   cContra     := ""
+	Local   cRevisa     := ""
+	Local   cMedEve     := ""
+	Private lMsErroAuto := .F.
+	
+	DbSelectArea("CN9")
+	DbSetOrder(1)
+	If DbSeek(xFilial("CN9") + MV_PAR01 + MV_PAR02)
+		
+		cMedEve := Posicione("CN1",1,xFilial("CN1") + CN9->CN9_TPCTO ,"CN1_MEDEVE")
+		
+		If cMedEve == "1"  
+			Aviso(OemToAnsi("Atenção"),OemToAnsi("Contratos do tipo 'Medição Eventual' não podera ser faturado por esta rotina. "),{"Ok"})
+			Return
+		EndIf
+
+		dData   := CN9->CN9_DTFIM 
+		dDataI  := CN9->CN9_DTINIC
+		
+		cContra := CN9->CN9_NUMERO 
+		cRevisa := CN9->CN9_REVISA		
+
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Abertura do ambiente                                         |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		
+		ConOut(Repl("-",80))
+		ConOut(PadC("Rotina Automática para a Medição do Contrato de Compras e Vendas",80))
+	
+		cContra := CN9->CN9_NUMERO
+		cRevisa := CN9->CN9_REVISA
+		
+		ConOut("Inicio: "+Time())       	
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Filtra parcelas de contratos automaticos ³
+		//³ pendentes para a data atual              ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		
+		cArqTrb	:= CriaTrab(nil, .F.)
+		
+		cQuery  := " SELECT CNF.CNF_COMPET,                             "
+		cQuery  += "        CNF.CNF_CONTRA,                             "
+		cQuery  += " 	    CNF.CNF_REVISA,                             "
+		cQuery  += " 	    CNA.CNA_NUMERO,                             "
+		cQuery  += " 	    CNF.CNF_PARCEL,                             "
+		cQuery  += " 	    CN9.CN9_FILIAL                              "
+		cQuery  += " FROM " + RetSQLName("CNF")    + " CNF,             " 
+		cQuery  +=          + RetSQLName("CNA")    + " CNA,             "
+		cQuery  +=          + RetSQLName("CN9")    + " CN9              "
+		cQuery  += " WHERE  CNF.CNF_FILIAL    = '" + xFilial("CNF") +"' "
+		cQuery  += " AND    CNA.CNA_FILIAL    = '" + xFilial("CNA") +"' " 
+		cQuery  += " AND    CN9.CN9_FILIAL    = '" + xFilial("CN9") +"' "  
+		cQuery  += " AND    CN9.CN9_NUMERO    = '" + cContra        +"' "
+		cQuery  += " AND    CN9.CN9_REVISA    = '" + cRevisa        +"' "	
+		cQuery  += " AND    CNF.CNF_NUMERO    = CNA.CNA_CRONOG          "
+		cQuery  += " AND    CNF.CNF_CONTRA    = CNA.CNA_CONTRA          "
+		cQuery  += " AND    CNF.CNF_REVISA    = CNA.CNA_REVISA          "
+		cQuery  += " AND    CNF.CNF_CONTRA    = CN9.CN9_NUMERO          "
+		cQuery  += " AND    CNF.CNF_REVISA    = CN9.CN9_REVISA          "
+		cQuery  += " AND    CN9.CN9_SITUAC    =  '05'                   "
+		cQuery  += " AND    CNF.CNF_PRUMED   >= '" + DTOS(dDataI)   +"' "
+		cQuery  += " AND    CNF.CNF_PRUMED   <= '" + DTOS(dData)    +"' "
+		cQuery  += " AND    CNF.CNF_SALDO    > 0                        "
+		cQuery  += " AND    CNA.CNA_SALDO    > 0                        "
+		cQuery  += " AND    CNF.D_E_L_E_T_    = ' '                     "
+		cQuery  += " AND    CNA.D_E_L_E_T_    = ' '                     "
+		
+		cQuery  := ChangeQuery(cQuery)
+		
+		DbUseArea(.T.,"TopConn",TCGenQry(,,cQuery),cArqTrb,.T.,.T.)     
+		
+		If (cArqTrb)->(Eof())    	
+			ConOut("PJ - Nao e possivel medir esse contrato! "+cContra)	
+		EndIf
+		
+		While !(cArqTrb)->(Eof())	
+	
+			cDoc := CN130NUMMD()
+			
+			aAdd(aCabec,{"CND_CONTRA",(cArqTrb)->CNF_CONTRA,NIL})	
+			aAdd(aCabec,{"CND_REVISA",(cArqTrb)->CNF_REVISA,NIL})	
+			aAdd(aCabec,{"CND_COMPET",(cArqTrb)->CNF_COMPET,NIL})	
+			aAdd(aCabec,{"CND_NUMERO",(cArqTrb)->CNA_NUMERO,NIL})	
+			aAdd(aCabec,{"CND_NUMMED",cDoc                 ,NIL})	
+			
+			If !Empty(CND->(FieldPos("CND_PARCEL")))		
+				aAdd(aCabec,{"CND_PARCEL",(cArqTrb)->CNF_PARCEL,NIL})	
+			EndIf		
+			
+			DbSelectArea("CNB")
+			DbSetOrder(1)
+			If DbSeek(CN9->CN9_FILIAL + cContra)
+				While !CNB->(Eof()) .And. CNB->CNB_FILIAL + CNB->CNB_CONTRA == CN9->CN9_FILIAL + cContra
+				
+					aAdd(aItem,{}) 
+				
+					aAdd(aItem[Len(aItem)],{"CNE_ITEM"  ,  CNB->CNB_ITEM   ,NIL})
+					aAdd(aItem[Len(aItem)],{"CNE_PRODUT",  CNB->CNB_PRODUT ,NIL})
+					aAdd(aItem[Len(aItem)],{"CNE_QUANT" ,  CNB->CNB_QUANT  ,NIL})
+					aAdd(aItem[Len(aItem)],{"CNE_VLUNIT",  CNB->CNB_VLUNIT ,NIL})
+			
+					CNB->(DbSkip())
+				EndDo
+			EndIf	
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿	
+			//³ Executa rotina automatica para gerar as medicoes ³	
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ	
+			
+			If Type("lMsErroAuto") # "L"		
+				Private lMsErroAuto := .F.		
+			Else
+				lMsErroAuto := .F.
+			EndIf
+				
+			MsExecAuto({|a,b,c|,CNTA120(a,b,c)},aCabec,aItem,3)	
+				
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿	
+			//³ Executa rotina automatica para encerrar as medicoes ³	
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ		
+				
+			If !lMsErroAuto
+				MsExecAuto({|a,b,c|,CNTA120(a,b,c)},aCabec,aItem,6)
+				If !lMsErroAuto						
+					GERAFAT(cContra)		
+					ConOut("PJ - Incluido com sucesso! "+cDoc)		
+				Else
+					MostraErro()
+					ConOut("PJ - Erro na inclusao!")					
+				EndIf
+			Else
+				MostraErro()				
+			EndIf
+				
+			aCabec := {}
+			aItem  := {}
+			aAdd(aItem,{})
+		
+			(cArqTrb)->(dbSkip())
+		EndDo	
+		
+		(cArqTrb)->(dbCloseArea())
+		
+	EndIf	   
+
+Return
+
+/*/{Protheus.doc} GERAFAT
+(long_description)
+@author j2a.luizjunior
+@since 25/09/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function GERAFAT(pContra)
+	
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0530X")
+	Local   cContra  := pContra 
+	Local   aCoors   := FWGetDialogSize(oMainWnd)	 
+	Local   oMarkSE1 := Nil
+	Local   cNota    := Space(TamSx3("C5_NOTA")[1])
+	Local   cSerie   := Space(TamSx3("C5_SERIE")[1])	
+	Local   cFiltro  := " SC5->C5_FILIAL = '" + xFilial("SC5") + "' .And. SC5->C5_MDCONTR = '" + cContra + "' .And. SC5->C5_NOTA = '" + cNota + "' .And. SC5->C5_SERIE = '" + cSerie + "'"
+	Private oGTit    := Nil
+	Private aRotina	 := MenuDef()	
+	Private oMarkSE1 := Nil  
+	Private aNota    := {}
+	
+	oGTit := MSDialog():New( aCoors[1],aCoors[2],aCoors[3],aCoors[4]," Pedidos gerados para o contrato: " +cContra ,,,.F.,,,,,,.T.,,,.T. )
+	
+	oMarkSE1 := FWMarkBrowse():New()
+	oMarkSE1:SetOwner(oGTit)
+	
+	oMarkSE1:SetAlias("SC5") 
+	oMarkSE1:SetDescription("Pedido de Vendas")
+	oMarkSE1:SetProfileID("1")
+	oMarkSE1:ForceQuitButton()		
+	oMarkSE1:SetFilterDefault(cFiltro)			
+	oMarkSE1:SetFieldMark("C5_OK")
+	oMarkSE1:SetOnlyFields({"C5_FILIAL","C5_NUM","C5_CLIENTE","C5_LOJACLI"}) 
+	oMarkSE1:SetMenuDef("")
+	oMarkSE1:SetAfterMark({|| AFTERMARK(@oMarkSE1) })
+	oMarkSE1:SetAllMark(  {|| ALLMARK(@oMarkSE1)   })								
+	oMarkSE1:Activate()
+	
+	oGTit:Activate(,,,.T.)
+
+Return
+
+/*/{Protheus.doc} MenuDef
+(long_description)
+@author j2a.luizjunior
+@since 25/09/2017
+@version 1.0
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function MenuDef()
+	
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0530X")
+
+	Public  bProcessa := {|| Processa()}
+	Private aRotina   := {{"Processa","Eval(bProcessa)",0,6}}
+	
+Return(aRotina)
+
+/*/{Protheus.doc} AFTERMARK
+(long_description)
+@author j2a.luizjunior
+@since 25/09/2017
+@version 1.0
+@param oMark, objeto, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function  AFTERMARK(oMark)
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0530X")
+	Local cMarca  := oMark:Mark()
+	Local nPosDel := 0
+	
+	If oMark:IsMark(cMarca)		
+		aAdd(aNota,{Recno()})
+	Else
+		nPosDel := aScan(aNota,{|x| x[1] = Recno()})
+		If nPosDel > 0
+			aDel(aNota,nPosDel)
+			aSize(aNota,Len(aTSel)-1)
+		EndIf
+	EndIf
+
+	If cMarca != SC5->C5_OK		
+		If SE1->(MsRLock())
+			SC5->C5_OK := "  "
+		EndIf		
+	Else	
+		If SC5->(MsRLock())
+			SC5->C5_OK := cMarca
+		EndIf		
+	EndIf
+
+Return
+
+/*/{Protheus.doc} ALLMARK
+(long_description)
+@author j2a.luizjunior
+@since 25/09/2017
+@version 1.0
+@param oMark, objeto, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ALLMARK(oMark)
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0530X")
+	Local cMarca  := oMark:Mark()
+	Local nPosRec := 0 
+	
+	oMark:AllMark()	
+	
+	If oMark:lInvert
+	
+		DbSelectArea("SC5")
+		SC5->(DbGoTop())
+		While !SC5->(Eof())
+		
+			If oMark:IsMark(cMarca)					
+				nPosRec := aScan(aNota,{|x| x[1] == Recno()})					
+				If nPosRec = 0
+					aAdd(aNota,{Recno()})
+				EndIf				
+			Else				
+				nPosDel := aScan(aNota,{|x| x[1] == Recno()})
+				If nPosDel > 0
+					aDel(aNota,nPosDel)
+					aSize(aNota,Len(aTSel)-1)
+				EndIf			
+			EndIf
+
+			If cMarca != SC5->C5_OK		
+				If SC5->(MsRLock())
+					SC5->C5_OK := "  "
+				EndIf		
+			Else	
+				If SC5->(MsRLock())
+					SC5->C5_OK := cMarca
+				EndIf		
+			EndIf				
+		
+			SC5->(DbSkip())
+		EndDo
+	
+	EndIf		
+
+Return
+
+/*/{Protheus.doc} Processa
+(long_description)
+@author j2a.luizjunior
+@since 25/09/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function Processa 
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0530X")
+
+	For nX := 1 To Len(aNota)	
+		DbSelectArea("SC5")
+		DbGoTo(aNota[nX][1])
+		  FWMsgRun(,{|| PROCPEDIDO() },"Faturando pedido: " + SC5->C5_NUM + ", aguarde...","Aguarde")		
+	Next nX
+	
+	aNota := {}
+	oGTit:End()
+	
+Return
+
+/*/{Protheus.doc} PROCPEDIDO
+(long_description)
+@author j2a.luizjunior
+@since 25/09/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function PROCPEDIDO 
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0530X")
+	Local cQuery   := ""
+	Local cNFSaida := ""
+	Local aPvlNfs  := {}
+	Local aPedidos := {}
+	Local cSerie   := GetNewPar("MV_XPREPRQ","RMF")
+
+	//Obtem os pedidos da Nota
+	cQuery := " SELECT SC5.*,                                     "
+	cQuery += " SC5.R_E_C_N_O_ RECNOSC5                           "
+	cQuery += " FROM " + RetSqlName("SC5")  + " SC5               "			
+	cQuery += " WHERE SC5.C5_FILIAL   = '"  + xFilial("SC5") + "' "
+	cQuery += " AND   SC5.D_E_L_E_T_ != '*'                       "
+	cQuery += " AND   C5_NUM          = '"  + SC5->C5_NUM    + "' "
+
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³Valida se arquivo temporario está em uso.³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+
+	If Select("TMPSC5") > 0
+		TMPSC5->( dbCloseArea() )
+	EndIf
+
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³Executa Query³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),"TMPSC5",.T.,.T.)
+
+	DbSelectArea("TMPSC5")
+	TMPSC5->(DbGotop())
+    
+	While !TMPSC5->(Eof())
+	
+		DbSelectArea("SC9")
+		SC9->(DbSetOrder(1))
+		DbSelectArea("SC6")
+		SC6->(DbSetOrder(1))
+		DbSelectArea("SE4")
+		SE4->(DbSetOrder(1))
+		DbSelectArea("SB1")
+		SB1->(DbSetOrder(1))
+		DbSelectArea("SB2")
+		SB2->(DbSetOrder(1))
+	
+		//Marca os pediso para flagar que a nota fiscal foi gerada
+		If aScan(aPedidos , TMPSC5->C5_NUM ) <= 0
+			AADD(aPedidos , TMPSC5->C5_NUM)
+		EndIf
+	
+		If SC9->(DbSeek(xFilial("SC9")+TMPSC5->C5_NUM))
+		
+			While SC9->(!Eof()) .AND. SC9->C9_PEDIDO == TMPSC5->C5_NUM
+				  SC6->(DbSeek(xFilial("SC6")+SC9->C9_PEDIDO+SC9->C9_ITEM+SC9->C9_PRODUTO ))
+				  SE4->(DbSeek(xFilial("SE4")+SC5->C5_CONDPAG                             ))
+				  SB1->(DbSeek(xFilial("SB1")+SC9->C9_PRODUTO                             ))
+				  SB2->(DbSeek(xFilial("SB2")+SC9->C9_PRODUTO+SC9->C9_LOCAL               ))
+				  SF4->(DbSeek(xFilial("SF4")+SC6->C6_TES                                 ))
+			
+				  aAdd(aPvlNfs,{        ;
+					   SC9->C9_PEDIDO  ,;
+			           SC9->C9_ITEM    ,;
+					   SC9->C9_SEQUEN  ,;
+			           SC9->C9_QTDLIB  ,;
+			           SC9->C9_PRCVEN  ,;
+			           SC9->C9_PRODUTO ,;
+			           .F.             ,;
+			           SC9->(RECNO())  ,;
+			           SC5->(RECNO())  ,;
+			           SC6->(RECNO())  ,;
+			           SE4->(RECNO())  ,;
+			           SB1->(RECNO())  ,;
+			           SB2->(RECNO())  ,;
+			           SF4->(RECNO())   ;
+			           })
+			
+				SC9->(DbSkip())
+			EndDo
+		
+		EndIf
+	
+		TMPSC5->(DbSkip())
+	EndDo
+
+	If Select("TMPSC5") > 0
+		TMPSC5->( dbCloseArea() )
+	EndIf
+
+	Begin Transaction
+		
+		//Gera documento de saida
+		Pergunte("MT460A",.F.)
+		cNFSaida := MaPvlNfs(aPvlNfs,cSerie,.F.,.F.,.F.,.F.,.F.,0,0,.F.,.F.)
+	
+		If Empty(cNFSaida)					
+			DisarmTransaction()
+		EndIf	
+	
+	End Transaction
+
+	If SF2->F2_SERIE == "RMF"
+		ATUTITPRQ()
+		ATUSD2()
+	EndIf
+
+Return
+
+/*/{Protheus.doc} ATUTITPRQ
+(long_description)
+@author j2a.luizjunior
+@since 27/09/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ATUTITPRQ
+	
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0530X")
+	Local cParcela := Space(TamSx3("E1_PARCELA")[1])
+	Local cTipo    := MVNOTAFIS 
+	Local cChave   := xFilial("SE1") + SF2->F2_SERIE + SF2->F2_DOC + cParcela + cTipo + SF2->F2_CLIENTE + SF2->F2_LOJA    
+	Local cCCC     := GetNewPar("MV_XCCCPRQ","1301090103"    )
+	Local cItemC   := GetNewPar("MV_XITEMPQ","1730403011603" )
+	Local cNaturez := GetNewPar("MV_XNATVDI","1300000024"    )
+	Local cConCRed := GetNewPar("MV_XCONCRE","41010408002"   )
+	Local aHistCob := Array(9)
+	
+	DbSelectarea("SE1")
+	DbSetOrder(1)
+	If DbSeek(cChave)
+	
+		While !SE1->(Eof()) .And. cChave == SE1->E1_FILIAL + SE1->E1_PREFIXO + SE1->E1_NUM + SE1->E1_PARCELA + SE1->E1_TIPO + SE1->E1_CLIENTE + SE1->E1_LOJA
+		
+			If Reclock("SE1",.F.)			
+				SE1->E1_CCC      := cCCC
+				SE1->E1_ITEMC    := cItemC
+				SE1->E1_NATUREZ  := cNaturez	
+				SE1->E1_CREDIT   := cConCRed
+				SE1->E1_XNUMERO  := CN9->CN9_NUMERO
+				SE1->E1_XREVISA  := CN9->CN9_REVISA
+				SE1->E1_MULTNAT  := "2"
+				SE1->(MsUnlock())				
+			EndIf
+			
+			SE1->(DbSkip())
+		EndDo
+	EndIf
+
+Return
+
+/*/{Protheus.doc} CriaSX1
+(long_description)
+@author j2a.luizjunior
+@since 22/09/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function CriaSX1
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0530X")
+	Local aHelp := {}
+	
+	//-> Texto do help em português,inglês, espanhol
+	AAdd(aHelp, {{"Codigo do contrato que sera faturado." }  ,{""},{""}})
+	AAdd(aHelp, {{"Revisao"                               }  ,{""},{""}})
+	AAdd(aHelp, {{"Periodo De"                            }  ,{""},{""}})
+	AAdd(aHelp, {{"Periodo Ate"                           }  ,{""},{""}})
+
+	u_SFPUTSX1(cPerg,"01","Contrato" ,"","","mv_ch01","C",15,00,00,"G","","CN9VEN","","","mv_par01","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")
+	u_SFPUTSX1(cPerg,"02","Revisao"  ,"","","mv_ch02","C",03,00,00,"G","",""      ,"","","mv_par02","","","","","","","","","","","","","","","","",aHelp[2,1],aHelp[2,2],aHelp[2,3],"")
+	u_SFPUTSX1(cPerg,"03","Data De"  ,"","","mv_ch03","D",08,00,00,"G","",""      ,"","","mv_par03","","","","","","","","","","","","","","","","",aHelp[3,1],aHelp[3,2],aHelp[3,3],"")
+	u_SFPUTSX1(cPerg,"04","Data Ate" ,"","","mv_ch04","D",08,00,00,"G","",""      ,"","","mv_par04","","","","","","","","","","","","","","","","",aHelp[4,1],aHelp[4,2],aHelp[4,3],"")
+	
+Return
+
+/*/{Protheus.doc} CALCVALGER
+(long_description)
+@author j2a.luizjunior
+@since 26/09/2017
+@version 1.0
+@param pQuant, ${param_type}, (Descrição do parâmetro)
+@param pNumero, ${param_type}, (Descrição do parâmetro)
+@param pRevisa, ${param_type}, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+/*
+Static Function CALMEDEVE(pProposta)
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0530X")
+	Local nQRet     := 0
+	Local nVRet     := 0
+	Local nVlTitDep := 0
+	Local cAlCal    := GetNextAlias()
+	Local cProposta := "" 
+	Local cRevisa   := ""
+	Local cSql      := ""
+	Local cProposta := pProposta
+	
+	If !Empty(MV_PAR01) 
+		cSql += " AND ZH1_NUMERO = '" + MV_PAR01 + "'"		
+		cSql += " AND ZH1_REVISA = '" + MV_PAR02 + "'"	
+	EndIf
+	
+	If !Empty(MV_PAR03) .And. !Empty(MV_PAR04) 
+		cSql += " AND ZH1_DTCAD BETWEEN '"  + DToS(MV_PAR03) + "' AND '" + DToS(MV_PAR04) + "'"
+	EndIf	
+	
+	cSql := "%"+cSql+"%"
+	
+	BeginSql Alias cAlCal
+		
+		SELECT ZH1_NUMERO, 
+		       ZH1_REVISA, 
+		       ZH1_NOME, 
+		       (SELECT COUNT(*) + 1 FROM %Table:ZH2% WHERE ZH2_COD = ZH1_COD AND %NotDel%)QUANT
+		FROM   %Table:ZH1%
+		WHERE  %NotDel%			
+		%Exp:cSql%
+		
+	EndSql
+	
+	While !(cAlCal)->(Eof())	
+		nQRet += (cAlCal)->QUANT	
+		(cAlCal)->(DbSkip())
+	EndDo
+
+	DbSelectArea("ADY")
+	cProposta := Posicione("ADY",2,xFilial("ADY") + CN9->CN9_XOPORT,"ADY_PROPOS")
+	
+	If !Empty(cProposta)					
+		cRevisa := Posicione("ADY",2,xFilial("ADY") + CN9->CN9_XOPORT,"ADY_REVISA")
+		DbSelectArea("ADZ")
+		nVRet := Posicione("ADZ",1,xFilial("ADZ") + cProposta + cRevisa,"ADZ->ADZ_TOTAL")
+	Else
+		nVRet := CNB->CNB_VLTOT	
+	EndIf
+
+Return {nQRet,nVRet}
+*/
+/*/{Protheus.doc} ATUSD2
+(long_description)
+@author j2a.luizjunior
+@since 29/01/2018
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ATUSD2
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0530X")
+	Local cCCC   := GetNewPar("MV_XCCCPRQ","1301090103")
+	Local cChave := xFilial("SD2") + SF2->F2_DOC + SF2->F2_SERIE
+	 
+	DbSelectArea("SD2")
+	DbSetOrder(3)
+	If DbSeek(xFilial("SD2") + SF2->F2_DOC + SF2->F2_SERIE)	
+		While !SF2->(Eof()) .And. cChave == SF2->F2_FILIAL + SF2->F2_DOC + SF2->F2_SERIE		
+			If RecLock("SD2",.F.)			
+				cConta         := Posicione("SB1",1,xFilial("SB1") + SD2->D2_COD, "B1_CONTA" )
+				cItemCC        := Posicione("SB1",1,xFilial("SB1") + SD2->D2_COD, "B1_ITEMCC")				
+				SD2->D2_CONTA  := cConta
+				SD2->D2_CCUSTO := cCCC
+				SD2->D2_ITEMCC := cItemCC			
+			EndIf				
+			SF2->(DbSkip())
+		EndDo	
+	EndIf
+
+Return

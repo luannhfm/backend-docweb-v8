@@ -1,0 +1,412 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH" 
+#INCLUDE "APWIZARD.CH"
+#INCLUDE "TOPCONN.CH"
+#Include 'TOTVS.CH'
+
+/*/{Protheus.doc} SF0107X
+	Tela para emissão do Relatório Termo de Emprestimo.
+
+@author	Walmir Gonçalves da Silva Junior
+@since	21/06/2016
+@version 1.0
+
+@return Nil
+
+/*/
+
+User Function SF0107X()
+Local aArea     := GetArea()
+Local aTexto    := {} 
+Local _lReceb   := .F. 
+
+Private _cValIx
+Private _oCbIX
+Private _cValFIX	:= Space(TamSX3("B1_DESC")[1])
+//Variaveis Grade
+Private _oGetFil
+
+Private _aLinhas	:= {}
+
+Private oBrowse
+Private _oOk		:= LoadBitmap( GetResources(), "LBOK")
+Private _oNo		:= LoadBitmap( GetResources(), "LBNO")
+
+// Variáveis FIEMT - Filtros
+Private _oGetFlD
+Private _cValFlD	:= Space(8)
+Private _oGetFlA
+Private _cValFlA	:= Space(8)
+Private _oGetBmD
+Private _cValBmD	:= Space(TamSX3('ZEA_CODIGO')[1])
+Private _oGetBmA
+Private _cValBmA	:= Space(TamSX3('ZEA_CODIGO')[1])
+Private _oComTpE
+Private _cValTpE	:= Space(TamSX3('ZEC_TPENTD')[1])
+Private _oGetClD
+Private _cValClD	:= Space(TamSX3('A1_COD')[1])
+Private _oGetLjD
+Private _cValLjD	:= Space(TamSX3('A1_LOJA')[1])
+Private _oGetClA
+Private _cValClA	:= Space(TamSX3('A1_COD')[1])
+Private _oGetLjA
+Private _cValLjA	:= Space(TamSX3('A1_LOJA')[1])
+Private _oGetLcD
+Private _cValLcD	:= Space(TamSX3('NL_CODIGO')[1])
+Private _oGetLcA
+Private _cValLcA	:= Space(TamSX3('NL_CODIGO')[1])
+Private _oGetDtD
+Private _cValDtD	:= CtoD("  /  /    ")
+Private _oGetDtA
+Private _cValDtA	:= CtoD("  /  /    ")
+Private _oCbx
+Private _cComTP		:= ""
+Private _oCbTpEm
+Private _cComTPEmpr	:= ""
+Private _oGetDesS
+Private _cValDesS	:= Space(60)
+
+Private aTitulo 	:= {{.T.,"","","","","",0,0,0,0,0,""}}
+Private oWizard
+
+aadd(aTexto,{})
+aTexto[1] := "Assistente para emissão do Termo de Emprestimo. "+CRLF
+
+DEFINE WIZARD oWizard ;
+	TITLE   "Termo de Responsabilidade" ;
+	HEADER  "Atenção" ;
+	MESSAGE "Siga atentamente os passos para e emissão do relatório." ; 
+	TEXT aTexto[1] ;
+	NEXT {|| pnlIn(), SetPnl(),.T.} ;
+// panel 02
+CREATE PANEL oWizard  ;
+	HEADER  "Assistente para Responsabilidade" ;
+	MESSAGE "Selecione os filtros desejados (Os filtros não informados serão ignorados)." ;
+	BACK {||.T.} ;
+	NEXT {|| GrdSMN()} ;
+	PANEL
+// panel 03
+CREATE PANEL oWizard ;
+	HEADER "Seleção de os registros desejados" ; 
+	MESSAGE "Selecione os registros a serem apresentados no relatório." ;
+	BACK {|| .T.} ;
+	FINISH {|| PrepRel()} ;
+	PANEL
+oWizard:oDlg:nRight		:= 900 
+oWizard:oDlg:nHeight	:= 580
+ACTIVATE WIZARD oWizard CENTERED
+
+Return
+
+Static Function PrepRel
+	Local _nx		:= 0
+	Local _aMovs	:= {}
+	Local _lVal		:= .T.
+	Local _aMark	:= {}
+	Local _lRet		:= .T.
+	
+	Local _cMsEnt	:= "Você não pode selecionar registros de entidades diferentes."
+	Local _cMsFor	:= "Você não pode selecionar registros de terceiros diferentes."
+	//Local _cMsMsB	:= "Você não pode selecionar registros com motivos de baixa diferentes."
+	
+	Private _nMark	:= 0
+	
+	Begin Transaction
+	
+	For _nx:= 1 to Len(_aLinhas)
+		If _aLinhas[_nx,1]
+			If Len(_aMark) >= 1 .And. _aLinhas[_nx,2] != _aMark[Len(_aMark),2]
+				_lVal := .F.
+				Aviso("Atenção", _cMsEnt, {"Ok"})
+				_lRet := .F.
+				Exit
+			ElseIf Len(_aMark) >= 1 .And. (_aLinhas[_nx,7] != _aMark[Len(_aMark),7] .Or. _aLinhas[_nx,8] != _aMark[Len(_aMark),8])
+				_lVal := .F.
+				Aviso("Atenção", _cMsFor, {"Ok"})
+				_lRet := .F.
+				Exit
+			/*ElseIf Len(_aMark) >= 1 .And. _aLinhas[_nx,7] != _aMark[Len(_aMark),7]
+				_lVal := .F.
+				Aviso("Atenção", _cMsMsB, {"Ok"})
+				_lRet := .F.
+				Exit*/
+			EndIf 
+			_nMark := _nMark + 1
+			aAdd(_aMark,_aLinhas[_nx])
+			aAdd(_aMovs, { _aLinhas[_nx,2], _aLinhas[_nx,3], _aLinhas[_nx,4], _aLinhas[_nx,5]})
+		EndIf
+	Next
+	_cTp 	:= If(_cComTP == "Empréstimo", "E", "R")
+	cTpEnt 	:= If(_cValTpE == "Cliente", "C", "F")
+	Do Case
+		Case _cComTPEmpr == "Empregados"
+			_cTpEmp := "EM"
+		Case _cComTPEmpr == "Pessoa Publica"
+			_cTpEmp := "PU"
+		Case _cComTPEmpr == "Pessoa Fisica e/ou Juridica"
+			_cTpEmp := "PP"
+		Case _cComTPEmpr == "Entre Filiais"
+			_cTpEmp := "EF"
+	EndCase
+	If _nMark > 0 .And. _lVal
+		U_SF0106X(_aMovs, _cTp, _cTpEmp, cTpEnt)
+	ElseIf _nMark == 0 .And. _lVal
+		_lRet := .F.
+		Alert("Atenção! Nenhum item foi Selecionado.")
+	EndIf
+	End Transaction
+Return _lRet
+
+Static Function SetPnl()
+	oWizard:SetPanel(1)
+Return
+
+Static Function locaSC
+Local _nLin
+Local _nCol
+
+_nCol := Iif( "1"$_cValIx, 2,Iif("2"$_cValIx, 4,5))
+
+If !Empty(_cValFIX)
+	If _nCol = 5
+		_nLin := aScan(_aLinhas,{|x|Alltrim(_cValFIX)$ Alltrim(x[_nCol])})
+	Else
+		_nLin := aScan(_aLinhas,{|x|Alltrim(x[_nCol])== Alltrim(_cValFIX)})
+	EndIf
+	If _nLin > 0
+		oBrowse:nAt := _nLin
+		oBrowse:Refresh()
+	Else
+		Alert("Não existe registro correspondente ao valor informado!")
+	EndIf
+Else
+	Alert("Para localizar é necessário informar o valor desejado!")
+EndIf
+
+Return
+
+Static Function GrdSMN
+Local _lRet := .T.
+
+If ValType(oBrowse) = "O"
+	oBrowse:FreeChildren()
+	FreeObj(oBrowse)
+EndIf
+oBrowse := NIL
+
+oBrowse := MsSelBr():New( 005,001,445,190,,,,oWizard:oMPanel[3],,,,,,,,,,,,.F.,'',.T.,,.F.,,, )    
+
+_aLinhas := ObSCGrd()
+
+If Len(_aLinhas) == 0
+	_lRet := .F.
+	Aviso("Atenção!", "Nenhum registro foi encontrado.", {"Ok"})
+	Return _lRet
+EndIf
+
+oBrowse:SetArray(_aLinhas)
+
+oBrowse:bLDblClick := {|| _aLinhas[oBrowse:nAT,1] := !_aLinhas[oBrowse:nAT,1] }
+
+oBrowse:lHasMark := .T.
+oBrowse:bAllMark := {||fMarkAll()}
+oBrowse:bHeaderClick := {|o, nCol| fOrdena(nCol) }
+
+oBrowse:AddColumn(TCColumn():New('',{|| IIf(_aLinhas[oBrowse:nAT,1],_oOk,_oNo) },,,,,,.T.,.F.,,,,.F.,))
+
+oBrowse:AddColumn(TCColumn():New('FILIAL'	,{|| _aLinhas[oBrowse:nAT,2] },,,,'LEFT',,.F.,.F.,,,,.F.,))
+oBrowse:AddColumn(TCColumn():New('COD MOV.'	,{|| _aLinhas[oBrowse:nAT,3] },,,,'LEFT',,.F.,.F.,,,,.F.,))
+oBrowse:AddColumn(TCColumn():New('ITEM'		,{|| _aLinhas[oBrowse:nAT,4] },,,,'LEFT',,.F.,.F.,,,,.F.,))
+oBrowse:AddColumn(TCColumn():New('COD BEM'	,{|| _aLinhas[oBrowse:nAT,5] },,,,'LEFT',,.F.,.F.,,,,.F.,))    
+oBrowse:AddColumn(TCColumn():New('DESCRIÇÃO',{|| _aLinhas[oBrowse:nAT,6] },,,,'LEFT',,.F.,.F.,,,,.F.,))
+oBrowse:AddColumn(TCColumn():New('CLIENTE'	,{|| _aLinhas[oBrowse:nAT,7] },,,,'LEFT',,.F.,.F.,,,,.F.,))
+oBrowse:AddColumn(TCColumn():New('LOJA'		,{|| _aLinhas[oBrowse:nAT,8] },,,,'LEFT',,.F.,.F.,,,,.F.,))
+
+Return _lRet
+
+/*/
+@author: caiocrol
+@data: 20/02/2015
+@descricao: marca todos os registros do browser
+/*/
+Static Function fMarkAll()
+
+	Local _nx := 0
+	for _nx:= 1 to Len(_aLinhas)
+		_aLinhas[_nx,1] := !_aLinhas[_nx,1]
+	next
+	
+Return nil
+
+/*/
+@author: caiocrol
+@data: 20/02/2015
+@descricao: ordena os registros do browse
+/*/
+Static Function fOrdena(_nCol)
+	
+	If _nCol > 1
+		aSort(_aLinhas,,, {|x,y| x[_nCol] < y[_nCol] } )
+	EndIf
+	
+	oBrowse:Refresh()
+	
+Return nil
+
+Static Function pnlIn()
+Local _aCmbTP	:= {"Empréstimo", "Devolução Empr."}
+Local _aCmbTPEm := {"Empregados", "Pessoa Publica", "Pessoa Fisica e/ou Juridica", "Entre Filiais"}
+Local _aCmbTPEn	:= {"Cliente", "Fornecedor"}
+
+	//@ nLinha, nColuna MSGET VARIAVEL SIZE nLargura,nAltura UNIDADE OF oObjetoRef F3 cF3 VALID validação WHEN condição PICTURE cPicture
+	
+	@ 010,008 SAY 		"Tipo de Movimento: "			PIXEL OF oWizard:oMPanel[2]
+	@ 010,060 MSCOMBOBOX _oCbx	 var _cComTP ITEMS _aCmbTP  /*ON CHANGE fSetTr()*/ Size 80,010	PIXEL OF oWizard:oMPanel[2]
+	
+	@ 010,150 SAY 		"Tipo de Empréstimo: "			PIXEL OF oWizard:oMPanel[2]
+	@ 010,205 MSCOMBOBOX _oCbTpEm	 var _cComTPEmpr ITEMS _aCmbTPEm  /*ON CHANGE fSetTr()*/ Size 80,010	PIXEL OF oWizard:oMPanel[2]
+	
+	@ 025,008 SAY 		"Filial de: "					PIXEL OF oWizard:oMPanel[2]
+	@ 025,060 MSGET		_oGetFlD var _cValFlD			Size 050,010 PIXEL OF oWizard:oMPanel[2] F3 "SM0"
+	
+	@ 025,118 SAY 		"Filial até: "					PIXEL OF oWizard:oMPanel[2]
+	@ 025,170 MSGET		_oGetFlA var _cValFlA			Size 050,010 PIXEL OF oWizard:oMPanel[2] F3 "SM0"
+	
+	@ 040,008 SAY 		"Bem de: " 						PIXEL OF oWizard:oMPanel[2]
+	@ 040,060 MSGET		_oGetBmD  var _cValBmD			Size 050,010 PIXEL OF oWizard:oMPanel[2] F3 "ZEA"
+	
+	@ 040,118 SAY 		"Bem Até: " 					PIXEL OF oWizard:oMPanel[2]
+	@ 040,170 MSGET		_oGetBmA  var _cValBmA			Size 050,010 PIXEL OF oWizard:oMPanel[2] F3 "ZEA"
+	
+	@ 055,008 SAY 		"Tipo de Entidade: "			PIXEL OF oWizard:oMPanel[2]
+	@ 055,060 MSCOMBOBOX _oComTpE	 var _cValTpE ITEMS _aCmbTPEn  ON CHANGE fSetTpEn(@_oGetClD, @_oGetClA, _cValTpE) Size 80,010	PIXEL OF oWizard:oMPanel[2]
+	
+	@ 070,008 SAY 		"Entidade De: "					PIXEL OF oWizard:oMPanel[2]
+	@ 070,060 MSGET		_oGetClD var _cValClD			Size 050,010 PIXEL OF oWizard:oMPanel[2] F3 "SA1" WHEN _cComTPEmpr != "Entre Filiais" 
+	
+	@ 070,118 SAY 		"Loja De: "						PIXEL OF oWizard:oMPanel[2]
+	@ 070,170 MSGET		_oGetLjD var _cValLjD 			Size 050,010 PIXEL OF oWizard:oMPanel[2] /* F3 */ WHEN _cComTPEmpr != "Entre Filiais"
+	
+	@ 085,008 SAY 		"Entidade Até: "					PIXEL OF oWizard:oMPanel[2]
+	@ 085,060 MSGET		_oGetClA var _cValClA			Size 050,010 PIXEL OF oWizard:oMPanel[2] F3 "SA1" WHEN _cComTPEmpr != "Entre Filiais"
+	
+	@ 085,118 SAY 		"Loja Até: "					PIXEL OF oWizard:oMPanel[2]
+	@ 085,170 MSGET		_oGetLjA var _cValLjA			Size 050,010 PIXEL OF oWizard:oMPanel[2] /* F3 */ WHEN _cComTPEmpr != "Entre Filiais"
+	
+	@ 100,008 SAY 		"Local De: "					PIXEL OF oWizard:oMPanel[2]
+	@ 100,060 MSGET		_oGetLcD var _cValLcD			Size 050,010 PIXEL OF oWizard:oMPanel[2] F3 "SNL"
+	
+	@ 100,118 SAY 		"Local Até: "					PIXEL OF oWizard:oMPanel[2]
+	@ 100,170 MSGET		_oGetLcA var _cValLcA			Size 050,010 PIXEL OF oWizard:oMPanel[2] F3 "SNL"
+	
+	@ 115,008 SAY 		"Data De: "						PIXEL OF oWizard:oMPanel[2]
+	@ 115,060 MSGET		_oGetDtD var _cValDtD			Size 050,010 PIXEL OF oWizard:oMPanel[2]
+	
+	@ 115,118 SAY 		"Data Até: "					PIXEL OF oWizard:oMPanel[2]
+	@ 115,170 MSGET		_oGetDtA var _cValDtA			Size 050,010 PIXEL OF oWizard:oMPanel[2]
+	
+	@ 130,008 SAY 		"Descrição Sintética: "			PIXEL OF oWizard:oMPanel[2]
+	@ 130,060 MSGET		_oGetDesS var _cValDesS			Size 150,010 PIXEL OF oWizard:oMPanel[2]
+
+Return
+
+Static Function ObSCGrd()
+
+Local _aReturn	:= {}
+Local _cTmp		:= GetNextAlias()
+Local _cQuery	:= ""
+
+	_cQuery := "SELECT ZEC.ZEC_MSFIL, " + CRLF 
+	_cQuery += "	ZEC.ZEC_CODIGO, " + CRLF
+	_cQuery += "	ZEC.ZEC_CODCLI, " + CRLF
+	_cQuery += "	ZEC.ZEC_LOJA, " + CRLF
+	_cQuery += "	ZED.ZED_CODBEM, " + CRLF
+	_cQuery += "	ZED.ZED_ITEM, " + CRLF
+	_cQuery += "	ZEA.ZEA_DESC " + CRLF
+	_cQuery += "FROM " + RetSQLName("ZEC") + " ZEC " + CRLF
+	_cQuery += "INNER JOIN " + RetSQLName("ZED") + " ZED ON ZED.D_E_L_E_T_ = ' ' AND ZED.ZED_FILIAL = ZEC.ZEC_FILIAL AND ZED.ZED_CODIGO = ZEC.ZEC_CODIGO  " + CRLF
+	_cQuery += "INNER JOIN " + RetSQLName("ZEA") + " ZEA ON ZEA.D_E_L_E_T_ = ' ' AND ZEA.ZEA_FILIAL = '" + xFilial('ZEA') + "' AND ZEA.ZEA_CODIGO = ZED.ZED_CODBEM " + CRLF
+	_cQuery += " WHERE " + CRLF
+	_cQuery += " 	ZEC.D_E_L_E_T_ = ' ' " + CRLF
+	
+	If _cComTP == 'Empréstimo'
+		_cQuery += "	AND ZEC.ZEC_TPMOV = 'E' " + CRLF
+	Else
+		_cQuery += "	AND ZEC.ZEC_TPMOV = 'R' " + CRLF
+	EndIf
+	
+	Do Case
+		Case _cComTPEmpr == "Empregados"
+			_cQuery += "	AND ZEC.ZEC_TPEMPR = 'EM' " + CRLF
+		Case _cComTPEmpr == "Pessoa Publica"
+			_cQuery += "	AND ZEC.ZEC_TPEMPR = 'PU' " + CRLF
+		Case _cComTPEmpr == "Pessoa Fisica e/ou Juridica"
+			_cQuery += "	AND ZEC.ZEC_TPEMPR = 'PP' " + CRLF
+		Case _cComTPEmpr == "Entre Filiais"
+			_cQuery += "	AND ZEC.ZEC_TPEMPR = 'EF' " + CRLF
+	EndCase
+	
+	If !Empty(_cValFlD) .And. !Empty(_cValFlA)
+		_cQuery += "	AND ZEC.ZEC_MSFIL Between '"+ _cValFlD +"' And '"+ _cValFlA +"' " + CRLF
+	EndIf
+	
+	If !Empty(_cValBmD) .And. !Empty(_cValBmA)
+		_cQuery += "	AND ZED.ZED_CODBEM Between '"+ _cValBmD +"' And '"+ _cValBmA +"' " + CRLF
+	EndIf
+	
+	If !_cComTPEmpr == "Entre Filiais"
+		
+		_cQuery += "	AND ZEC.ZEC_TPENTD = '" + Iif(_cValTpE == 'Cliente', 'C', 'F') + "'"
+		
+		If !Empty(_cValClD) .And. !Empty(_cValClA)
+			_cQuery += "	AND ZEC.ZEC_CODCLI  || ZEC.ZEC_LOJA Between '"+ _cValClD + _cValLjD +"' AND '"+ _cValClA + _cValLjA +"' " + CRLF
+		EndIf
+	EndIf 
+	
+	If !Empty(_cValLcD) .And. !Empty(_cValLcA)
+		_cQuery += "	AND ZEC.ZEC_LOCDES Between '"+ _cValLcD +"' And '"+ _cValLcA +"' " + CRLF
+	EndIf
+	
+	If !Empty(_cValDtD) .And. !Empty(_cValDtA)
+		_cQuery += "	AND ZEC.ZEC_DTMOVI Between '"+ DtoS(_cValDtD) +"' And '"+ DtoS(_cValDtA) +"' " + CRLF
+	EndIf
+	
+	If !Empty(_cValDesS)
+		_cQuery += "	AND ZEA.ZEA_DESC LIKE '%" + _cValDesS + "%' " + CRLF
+	EndIf
+	
+	_cQuery += " Order By	ZEC_MSFIL, ZEC_CODIGO, ZED_CODBEM "
+	
+	MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+	
+	If Select(_cTmp) > 0
+		_cTmp->(dbCloseArea())
+	Endif
+	
+	dbUseArea(.T., "TOPCONN", TCGenQry(,,_cQuery),_cTmp, .T., .T.)
+	dbSelectArea(_cTmp)
+	&(_cTmp)->(dbGoTop())
+	
+	//-------------------------------------
+	//-- Popula tabela temporária.
+	//-------------------------------------
+	While !&(_cTmp)->(EOF())
+		Aadd(_aReturn , {.F.,(_cTmp)->(ZEC_MSFIL),(_cTmp)->(ZEC_CODIGO),(_cTmp)->(ZED_ITEM),(_cTmp)->(ZED_CODBEM), (_cTmp)->(ZEA_DESC), (_cTmp)->(ZEC_CODCLI), (_cTmp)->(ZEC_LOJA)} )
+		(_cTmp)->(dbSkip()) 
+	EndDo
+
+Return _aReturn
+
+Static Function fSetTpEn(_oGetClD, _oGetClA, _cValTpE)
+
+	If _cValTpE == 'Cliente'
+		_oGetClD:cF3 := "SA1"
+		_oGetClA:cF3 := "SA1"
+	Else
+		_oGetClD:cF3 := "SA2"
+		_oGetClA:cF3 := "SA2"
+	EndIf
+
+Return (.T.)

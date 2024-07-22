@@ -1,0 +1,406 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE 'FWMVCDEF.CH'
+
+/*/{Protheus.doc} FT300GRA
+Ponto de Entrada - Executado após a gravação da Oportunidade de Vendas, 
+permitindo assim, a execução de rotinas e/ou relatórios personalizados.
+
+@See http://tdn.totvs.com/pages/releaseview.action?pageId=143655394
+@author Antonio Dantas
+@since 02/04/2015
+@type user function
+@history 02/04/2015, Antonio Dantas, Incluido Chamada a rotina fGrvVdPv(); Verifica se ouve [Aceite da Proposta de Venda] GRAVA o Codigo do Vendedor da Oportunidade no Pedido de Venda Gerado.
+@history 20/01/2016, Antonio Dantas, Implementa neste mesmo fonte logo abaixo a funcao [fMarkAD1()], que: Preenche o Campo [AD1_XOPER - OPER DN] com a data de MOVIMENTACAO no formato AAAAMMAA:hh:mm, para ser utilizado na INTEGRACAO CRM x DN.
+@history 20/01/2016, Antonio Dantas, Implementa chamada a função [fMarkAD1()]
+@history 03/02/2016, Antonio Dantas, Implementa neste mesmo fonte logo abaixo a funcao [fMarkADJ()], que: Preenche o Campo [ADJ_XOPER - OPER DN] com a data de MOVIMENTACAO no formato AAAAMMAA:hh:mm, para ser utilizado na INTEGRACAO CRM x DN.
+@history 03/02/2016, Antonio Dantas, Implementa chamada a função [fMarkADJ()]
+@history 06/07/2020, Franklin de Brito de Oliveira, Função para envio da recusa de atendimentos para o SGT no cancelamento da oportunidade.
+/*/
+User Function FT300GRA()
+Local _aArea := GetArea()
+Local oModel := PARAMIXB[1]
+Local _nOpc  := oModel:GetOperation()   	//--  1-Inclusão; 2-Alteração; 3-Exclusão
+
+If _nOpc == MODEL_OPERATION_INSERT .or. _nOpc == MODEL_OPERATION_UPDATE
+	fGrvVdPv() 					//-- Rotina descrita neste fonte logo abaixo.
+Endif 
+//+------------------------------------------------------------------+
+//| Abre interface (Tela) para Marcar a PROPOSTA Ganhadora:          |
+//|  Se STATUS estiver macado como GANHO SEM PEDIDO e o Fator de     |
+//|  Sucesso for diferente de BRANCO e a Proposta estiver com data   |
+//|  de Aceite Preenchida.                                           |                                                 
+//+------------------------------------------------------------------+
+If M->AD1_STATUS == "E" .And. !Empty(M->AD1_FCS) .And. !Empty(M->AD1_DTASSI)   
+	//+------------------------------------------------------------------+
+	//|  Não sai enquanto não marcar a Proposta Vencedora                |
+	//+------------------------------------------------------------------+
+	Do While .t.
+		If u_SS7398X()			//-- Rotina descrita no fonte SS7398X.PRW
+			Exit 		
+		Endif
+	Enddo 
+Endif
+//No cancelamento de uma oportunidade (AD1_STATUS == "2") que tenha sido integrada com o SGT, 
+//envio a recusa dos atendimentos incluidos e ainda em aberto.
+If M->AD1_STATUS == "2"
+	fRecAte()
+EndIf
+//+------------------------------------------------------------------+
+//| Marca a ocurrencia na Oportunidade - Controle do DN              |
+//+------------------------------------------------------------------+
+fMarkAD1(_nOpc)
+//+------------------------------------------------------------------+
+//| Marca a VIABILIDADE vinculada a Oportunidade como "Em uso"       |
+//+------------------------------------------------------------------+
+fGrvZCG(M->AD1_FILIAL,M->AD1_XVIABI,M->AD1_NROPOR,_nOpc)
+//+------------------------------------------------------------------+
+//| Marca a ocorrencia na PRODUTOS DA OPORTUNIDADE - Controle do DN  |
+//+------------------------------------------------------------------+
+fMarkADJ(oModel)
+//+------------------------------------------------------------------+
+//| Se for inclusão / SENAI / Diagnostico IST - Envia Workflow       |
+//+------------------------------------------------------------------+
+If "03MT" $ cFilAnt .And. .Not. Empty(M->AD1_XDIAGN) .And. M->AD1_XDIAGE <> "S"  
+	ConOut("FT600GRV: Enviando WorkFlow - IST")
+	u_SF73WF01(M->AD1_FILIAL, M->AD1_NOMCLI, M->AD1_NROPOR, M->AD1_REVISA)
+	fGrvZCL(M->AD1_FILIAL,M->AD1_XDIAGN,M->AD1_NROPOR,M->AD1_REVISA)
+EndIf
+
+//Atualização da tabela ZC3 - Proposta X Filial do cliente
+If _nOpc == MODEL_OPERATION_UPDATE
+	fUpdZC3(oModel)
+EndIf
+
+RestArea(_aArea)
+Return      
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fGrvVdPv>
+   Verifica se houve [Aceite da Proposta de Venda] GRAVA o Codigo do Vendedor 
+   da Oportunidade de Venda no Pedido de Venda Gerado no Orçamento Aprovado.
+
+@author<Antonio Dantas>
+@since<02/04/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function fGrvVdPv()
+Local _cQuery		:= "" 
+Local _aAreaSC5		:= SC5->(GetArea())
+Local _lOKGrv		:= .t.
+//+------------------------------------------------------------------+
+//|  Se STATUS estiver macado como GANHO COM PEDIDO e o Fator de     |
+//|  Sucesso for diferente de BRANCO e a Proposta estiver com data   |
+//|  de Aceite Preenchida.                                           |                                                 
+//+------------------------------------------------------------------+
+If M->AD1_STATUS == "F" .And. !Empty(M->AD1_FCS) .And. !Empty(M->AD1_DTASSI)   
+	//+------------------------------------------------------------------+
+	//|  Monta consulta no Orçamento para verificar o numero do PEDIDO   |
+	//+------------------------------------------------------------------+
+	_cQuery := ""
+	_cQuery += " Select Distinct SCK.CK_NUMPV "+CRLF
+	_cQuery += " From "+RetSqlName("SCJ")+" SCJ "+CRLF
+	_cQuery += " Inner Join "+RetSqlName("SCK")+"  SCK on SCK.CK_FILIAL = SCJ.CJ_FILIAL And SCK.CK_NUM = SCJ.CJ_NUM"+CRLF
+	_cQuery += " where SCJ.D_E_L_E_T_ = ' ' "+CRLF
+	_cQuery += " And SCJ.CJ_FILIAL = '"+FwxFilial("SCJ")+"' "+CRLF
+	_cQuery += " And SCJ.CJ_NROPOR = '"+M->AD1_NROPOR+"' "+CRLF
+	_cQuery += " And SCJ.CJ_REVISA = '"+M->AD1_REVISA+"' "+CRLF
+	_cQuery += " And SCJ.CJ_STATUS = 'B' "+CRLF
+	//+------------------------------------------------------------------+
+	//| Grava o Resultado da Query para consulta                         |
+	//+------------------------------------------------------------------+
+	MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+	If Select("TMPSCK")>0
+		TMPSCK->(DbCloseArea())
+	Endif
+	DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPSCK",.t.,.t.)
+	TMPSCK->(DbGotop())
+	//+------------------------------------------------------------------+
+	//|  Vare todos os Pedidos Gerado para a OPORTUNIDADE/ORÇAMENTO.     |
+	//+------------------------------------------------------------------+
+	Do While TMPSCK->(!Eof())
+		dbSelectArea("SC5")
+		SC5->(dbSetOrder(1))		//-- Numero do Pedido de Venda 
+		If (SC5->(dbSeek(FwxFilial("SC5")+TMPSCK->CK_NUMPV)))
+			SC5->(RecLock("SC5",.f.))
+			Replace SC5->C5_VEND1 With M->AD1_VEND
+			SC5->(MsUnLock())
+			SC5->(dbCommit()) 
+		Endif 
+		TMPSCK->(DbSkip())
+	Enddo 
+	TMPSCK->(DbCloseArea())
+Endif 
+RestArea(_aAreaSC5)
+Return
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fMarkAD1>
+   #CONTROLE_DN
+   Preenche o Campo [AD1_XOPER - OPER DN] com a data de MOVIMENTACAO no formato 
+   AAAAMMAA:hh:mm, para ser utilizado na INTEGRACAO CRM x DN.        
+
+@author<Antonio Dantas>
+@since<02/04/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function fMarkAD1(_nOpc)
+Local _lReturn		:= .t. 
+If (AD1->(RecLock("AD1",.f.)))
+	//--  1-Inclusão; 2-Alteração; 3-Exclusão
+	do Case 
+		Case _nOpc == MODEL_OPERATION_INSERT  
+			Replace AD1->AD1_XOPER With Dtos(dDataBase)+':'+Substr(Time(),1,5)
+		Case _nOpc == MODEL_OPERATION_UPDATE  
+			Replace AD1->AD1_XOPER With Substr(AD1->AD1_XOPER,1,15)+Dtos(dDataBase)+':'+Substr(Time(),1,5)
+		Case _nOpc == MODEL_OPERATION_DELETE  
+			Replace AD1->AD1_XOPER With Substr(AD1->AD1_XOPER,1,30)+Dtos(dDataBase)+':'+Substr(Time(),1,5)
+	EndCase 
+	AD1->(MsUnLock())
+	AD1->(dbCommit()) 
+Endif 
+Return _lReturn 
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fGrvZCG>
+ Marca o registro da Viabilidade [ZCG->ZCG_XEMUSO] com Codigo da Oportunidade
+ que ah esta utilizando. No caso da operacao de EXCLUSAO da oportunidade grava
+ BRANCO, liberado a viabilidade para ser utilizada em outra Oportunidade. 
+  
+@author<Antonio Dantas>
+@since<29/01/2016>
+@version<1.00>
+@receive
+<    _cFilial (c) - Codigo da Filial da Oportunidade  
+     _cViabil (c) - Codigo da Viabilidade no campo [AD1_XVIABI]
+    _cOportun (c) - Codigo da Oportunidade em Edicao 
+       _nOper (n) - Identifica a Opercao em Curso:
+                    1-Inclusao; 2-Alteracao; 3-Exclusao... 
+>
+@return
+<    _lReturn (l) - DEFAULT (.t.)
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function fGrvZCG(_cFilial,_cViabil,_cOportun,_nOper)
+Local _aArea   	:= GetArea()
+Local _lReturn		:= .t.  
+Local _cQuery 		:= ""
+//+------------------------------------------------------------------+
+//|  Quando for SENAI libera o campo para edicao.                    | 
+//+------------------------------------------------------------------+
+If (Substr(_cFilial,1,4) == "03MT")
+	If _nOper == MODEL_OPERATION_UPDATE .Or. _nOper == MODEL_OPERATION_DELETE 
+		//-- Executa o UpDate 
+		_cQuery	:= ""
+		_cQuery	:= "Update "+RetSqlName("ZCG")+" ZCG set ZCG.ZCG_XEMUSO = ' '  "+CRLF
+		_cQuery	+= "Where ZCG.D_E_L_E_T_ = ' '  "+CRLF
+		_cQuery	+= "And ZCG.ZCG_FILIAL = '"+_cFilial+"' "+CRLF
+		_cQuery	+= "And ZCG.ZCG_XEMUSO = '"+_cOportun+"' "+CRLF
+		//-- Executa o UpDate 
+		If TcSqlExec(_cQuery) < 0
+			_lReturn := .f.  
+		Endif 	
+	Endif 
+	If _lReturn
+		TcSqlExec("COMMIT")
+		//-- 
+		dbSelectArea("ZCG")
+		ZCG->(dbSetOrder(1))
+		If (ZCG->(dbSeek(_cFilial+_cViabil)))
+			ZCG->(RecLock("ZCG",.f.))
+			Replace ZCG->ZCG_XEMUSO With Iif(_nOper == MODEL_OPERATION_DELETE,"",_cOportun)  		//-- Filial
+			ZCG->(MsUnLock())
+			ZCG->(DbCommit())
+			ZCG->(ConFirmSX8())  
+		Endif 
+	Endif 
+	If !_lReturn
+		Aviso(FunName()+"/"+ProcName(),"Nãso foi possivel Atualizar a Viabilidade indicada na Oportunidade!",{"OK"})
+	Endif 
+Endif  
+RestArea(_aArea)
+Return _lReturn
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fMarkADJ>
+ #CONTROLE_DN
+ #TRATA DA EXCLUSAO DO ITENS DE PRODUTOS DA OPORTUNIDADE  	
+ Preenche o Campo [ADJ_XOPER - OPER DN] com a data de exclusao no formato 
+ AAAAMMAA:hh:mm, para ser utilizado na INTEGRACAO CRM x DN.        
+
+@author<Antonio Dantas>
+@since<02/04/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+/*/
+Franklin B. Oliveira - 11/04/2018
+	Tratamento para MVC Protheus 12
+/*/
+Static Function fMarkADJ( oModel )
+Local oMdlADJ		:= oModel:GetModel( "ADJDETAIL" )
+Local aSaveLines 	:= FWSaveRows()
+Local nI			:= 0
+Local _lReturn		:= .t.
+
+	For nI := 1 To oMdlADJ:Length()
+		oMdlADJ:GoLine(nI)
+		
+		If oMdlADJ:IsDeleted()
+			If SubStr(oMdlADJ:GetValue('ADJ_XOPER'), 31, 15) == Space(15)
+				oMdlADJ:SetValue('ADJ_XOPER', Space(30) + Dtos(dDataBase) + ":" + Substr(Time(),1,5))
+			EndIf
+		EndIf
+	Next nI
+
+	FWRestRows( aSaveLines )
+
+Return _lReturn
+/*
+Local _lTemDEL 		:= .f.   
+Local _nCtaA 		:= 0
+Local _nLast 		:= 0
+Local _nPos02		:= aScan(oGetDad5:aHeader, {|x|Alltrim(x[2])=="ADJ_NROPOR"})
+Local _nTam 		:= Len(oGetDad5:aCols)
+Local _cFilial 		:= ""
+Local _cNrOpor 		:= ""
+//-- 
+If _nTam > 0 
+	_nCtaA := 0
+	_nLast := Len(oGetDad5:aCols[1])
+	For _nCtaA := 1 to _nTam
+		If oGetDad5:aCols[1,_nLast] 
+			_lTemDEL	:= .t.
+			_cFilial 	:= AD1->AD1_FILIAL 
+			_cNrOpor 	:= oGetDad5:aCols[_nCtaA,_nPos02]
+			Exit
+		Endif  
+	Next   
+	If _lTemDEL := .t.  
+		_cQuery	:= ""
+		_cQuery := "Update "+RetSqlName("ADJ")+" ADJ Set ADJ.ADJ_XOPER = Substr(ADJ.ADJ_XOPER,1,30) || ' "+Dtos(dDataBase)+":"+Substr(Time(),1,5)+"' "+CRLF
+		_cQuery	+= "Where ADJ.D_E_L_E_T_ = '*'"+CRLF 
+		_cQuery	+= "And ADJ.ADJ_FILIAL = '"+_cFilial+"'"+CRLF
+		_cQuery	+= "And ADJ.ADJ_NROPOR = '"+_cNrOpor+"'"+CRLF
+		_cQuery	+= "And Substr(ADJ.ADJ_XOPER,31,15) = '               '"+CRLF
+		If TcSqlExec(_cQuery) > 0
+			TcSqlExec("COMMIT")
+		Endif 	
+	Endif		//-- If _lTemDEL := .t. 
+Endif		//-- If _nTam > 0
+
+
+Return _lReturn 
+*/
+
+/** {Protheus.doc} fGrvZCL
+Funcao para gravar no diagnostico a oportunidade utilizada
+
+@author: 	Jose Leite de Barros Neto
+@since: 	10/05/2017
+@Uso: 		SFIEMT
+*/
+Static Function fGrvZCL(p_cFilial, p_cDiag, p_cOpor, p_cRevOp)
+	DbSelectArea("ZCL")
+	ZCL->(DbSetOrder(1))
+	If ZCL->(DbSeek(p_cFilial + p_cDiag))
+		If Reclock("ZCL",.F.)
+			ZCL->ZCL_OPORT  := p_cOpor
+			ZCL->ZCL_REVOP  := p_cRevOp
+			ZCL->ZCL_STATUS := 'S'
+			ZCL->(MsUnlock())
+		EndIf
+	EndIf
+	ZCL->(DbCloseArea())
+Return
+
+/*/{Protheus.doc} fUpdZC3
+Atualiza dados da ZC3.
+@author franklin.oliveira
+@since 13/02/2020
+@version 1.0
+@return lRet, .T.=Atualização na tabela ZC3 com sucesso, .F.=Erro na atualização
+@param oModel, object, Modelo de dados da oportunidade de vendas
+@type function
+/*/
+Static Function fUpdZC3(oModel)
+Local lRet		:= .T.
+Local cNrOpor	:= oModel:GetValue("AD1MASTER", "AD1_NROPOR")
+Local cRevisa	:= oModel:GetValue("AD1MASTER", "AD1_REVISA")
+
+	DbSelectArea("ZC3")
+	ZC3->( DBOrderNickname("NUMOPORT") ) //ZC3_FILIAL+ZC3_OPORTU
+	//ZC3->( DbSetOrder(3) ) //ZC3_FILIAL+ZC3_OPORTU
+	
+	
+	If ZC3->( DbSeek(xFilial("ZC3")+cNrOpor) )
+		While !ZC3->( EoF() ) .And. ;
+		ZC3->ZC3_FILIAL+ZC3->ZC3_OPORTU == xFilial("ZC3")+cNrOpor
+			RecLock("ZC3",.F.)
+			ZC3->ZC3_REVISA := cRevisa
+			ZC3->(MsUnLock())
+			ZC3->( DbSkip() )
+		EndDo 
+	EndIf
+
+Return lRet
+
+/*/{Protheus.doc} fRecAte
+Função para envio da recusa de atendimentos para o SGT.
+no cancelamento da oportunidade.
+@author Franklin de Brito de Oliveira
+@since 06/08/2020
+@type static function
+/*/
+Static Function fRecAte()
+	DbSelectArea("ADY")
+	ADY->( DbSetOrder(2) )//ADY_FILIAL+ADY_OPORTU+ADY_REVISA+ADY_PROPOS
+	If ADY->( DbSeek(M->AD1_FILIAL + M->AD1_NROPOR) )
+		While !ADY->( EoF() ) .And. M->AD1_FILIAL = ADY->ADY_FILIAL .And. M->AD1_NROPOR = ADY->ADY_OPORTU
+			If ADY->ADY_XSGTIN
+				DbSelectArea("ADZ")
+				ADZ->( DbSetOrder(1) )//ADZ_FILIAL+ADZ_PROPOS+ADZ_ITEM
+				If ADZ->( DbSeek(ADY->ADY_FILIAL + ADY->ADY_PROPOS) )
+					While !ADZ->( EoF() ) .And. ADY->ADY_FILIAL = ADZ->ADZ_FILIAL .And. M->AD1_NROPOR = ADY->ADY_OPORTU
+						If ADZ->ADZ_XSGTIN .And. !ADZ->ADZ_XSGTRE
+							If ADZ->(RecLock("ADZ",.F.))
+								//Altera atendimento para recusado.
+								Replace ADZ->ADZ_XRESGT With "1" 
+								ADZ->(MsUnLock())
+								ADZ->(dbCommit())
+							EndIf 
+						EndIf
+						ADZ->( DbSkip() )
+					EndDo
+					ADZ->( DbCloseArea() )
+				EndIf
+			EndIf
+			ADY->( DbSkip() )
+		EndDo
+	EndIf
+Return Nil

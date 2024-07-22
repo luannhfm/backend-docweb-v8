@@ -1,0 +1,274 @@
+#Include 'Protheus.ch'
+#Include 'Fwmvcdef.ch'
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} SS73A02X
+@author Walmir Junior
+@since	30.08.2018
+@Obs:	Tela para manutenção de contatos da oportunidade após aceite da proposta.	
+---------------------------------------------------------------------
+Programador		Data		Motivo
+---------------------------------------------------------------------
+/*/
+User Function SS73A02X()
+	Local _cAprv := GetNewPar("MV_XATAPRV", "")
+	Local _btConfirm
+	Local _btCancel
+
+	Private _oDlg
+	Private oBrowse
+	Private _aLinhas
+
+	Private _cNrOp	:= AD1->AD1_NROPOR
+	Private _cRev	:= AD1->AD1_REVISA
+
+	Private _cChvAD1	:= AD1->AD1_FILIAL + _cNrOp + _cRev
+
+	//Walmir Junior	12/09/2018 - Alternativa para evitar erro do F# Padrão do campo de contato.
+	DBSelectArea("AD1")
+	AD1->(DBSetOrder(1))
+	If AD1->(DBSeek(_cChvAD1))
+		RegToMemory("AD1",.F.,.T.,.F.)
+		/*
+		M->AD1_CODCLI := AD1->AD1_CODCLI
+		M->AD1_LOJCLI := AD1->AD1_LOJCLI
+		M->AD1_PROSPE := AD1->AD1_PROSPE
+		M->AD1_LOJPRO := AD1->AD1_LOJPRO
+		*/
+	Else
+		Return
+	EndIf
+
+	If RetCodUsr() $ _cAprv .And. fVldAlt(xFilial("AD1"), _cNrOp, _cRev)
+
+		DEFINE MSDIALOG _oDlg TITLE 'Alteração - Contatos' FROM 000, 000 TO 350, 600 COLORS 0, 16777215 PIXEL
+
+		fGetData(_cNrOp, _cRev)
+
+		@ 155, 210 BUTTON _btConfirm	PROMPT "OK"		 	ACTION(fGrvAD9(), _oDlg:End())	SIZE 037, 012 OF _oDlg PIXEL
+		@ 155, 255 BUTTON _btCancel		PROMPT "Cancelar"	ACTION(_oDlg:End())	SIZE 037, 012 OF _oDlg PIXEL
+
+		ACTIVATE MSDIALOG _oDlg CENTERED
+	ElseIf !(RetCodUsr() $ _cAprv)
+		Aviso("ATENÇÃO", "É necessário ter acesso concedido a esta rotina [MV_XATAPRV].",{"Ok"})
+	Else
+		Aviso("ATENÇÃO", "Verifique a existencia ou situação do contrato, esta rotina só pode ser executada para contratos 'EM ELABORAÇÃO'.",{"Ok"})
+	EndIf
+
+Return
+
+
+/*
+Walmir Junior
+20/08/2018
+Validações para edição de contatos da oportunidade após aprovação da proposta.
+*/
+Static Function fVldAlt(_pFil, _pOp, _pRev)
+	Local _lRet	:= .F.
+	Local _cQry := ""
+
+	_cQry += " Select CN9.CN9_FILIAL,CN9.CN9_NUMERO, CN9.CN9_SITUAC " 
+	_cQry += " From "+RetSqlName("AD1")+" AD1 INNER JOIN "
+	_cQry += " "+RetSqlName("CN9")+" CN9 ON CN9.D_E_L_E_T_ = ' ' AND AD1.AD1_FILIAL = CN9.CN9_FILIAL AND AD1_NROPOR = CN9.CN9_XOPORT AND AD1.AD1_REVISA = CN9.CN9_XREVOP "
+	_cQry += " Where "
+	_cQry += " AD1.D_E_L_E_T_ = ' ' AND "
+	_cQry += " AD1.AD1_FILIAL = '"+ _pFil	+"' AND "
+	_cQry += " AD1.AD1_NROPOR = '"+ _pOp	+"' AND "
+	_cQry += " AD1.AD1_REVISA = '"+ _pRev	+"' "
+
+	dbUseArea(.T.,"TOPCONN",TcGenQry( ,, _cQry ),"WJRTRB",.F.,.T.)
+	MemoWrite("D:\TEMP\"+FunName()+"_"+ProcName()+".txt" , _cQry)
+
+	If WJRTRB->(!Eof())
+		If (WJRTRB->CN9_SITUAC $ "02")
+			_lRet := .T.
+		EndIf 
+	Else
+		_lRet := .F.
+	EndIf
+
+	If Select('WJRTRB') > 0
+		DbSelectArea('WJRTRB')
+		WJRTRB->( dbCloseArea() )
+	EndIf
+
+
+Return _lRet
+
+/** {Protheus.doc} fGetData
+Funcao para Montar a MsNewGetDados
+
+@author: 	Walmir Junior
+@since: 	03/09/2018
+@Uso: 		SFIEMT
+*/
+Static Function fGetData( _pOport, _pRevisO )
+	Local _nX			:= 0
+	Local _aHeadeAD9	:= {}
+	Local _aColsAD9		:= {}
+	Local _aFieldAD9 	:= {"AD9_FILIAL","AD9_NROPOR","AD9_REVISA","AD9_CODCON","AD9_NOMCON", "AD9_XREPRE"} //#002
+	Local _aAlterAD9	:= {"AD9_CODCON", "AD9_XREPRE", "RECNO"}
+	Local _cQuery		:= ''
+	Local _cLinOk		:= 'U_SS73A03X()' 
+
+	Static _oMSNewGet
+
+	// Define field properties
+	DbSelectArea("SX3")
+	SX3->(DbSetOrder(2))
+	For _nX := 1 to Len(_aFieldAD9)
+		If SX3->(DbSeek(_aFieldAD9[_nX]))
+			Aadd(_aHeadeAD9, {AllTrim(X3Titulo()),SX3->X3_CAMPO,SX3->X3_PICTURE,SX3->X3_TAMANHO,SX3->X3_DECIMAL,SX3->X3_VLDUSER,;
+			SX3->X3_USADO,SX3->X3_TIPO,/*SX3->X3_F3*/"U5CONT",SX3->X3_CONTEXT,SX3->X3_CBOX,SX3->X3_RELACAO})
+		Endif
+	Next _nX
+	aadd(_aHeadeAD9, {"Recno", "R_E_C_N_O_", "", 5, 0, "AllwaysTrue()", "", "N", "", "", "", ""}) //#003
+
+	If Select('TRA') > 0
+		dbSelectArea('TRA')
+		TRA->( dbCloseArea() )
+	EndIf
+
+	//#004
+	_cQuery := "SELECT"+CRLF
+	_cQuery += "   AD9.* "+CRLF
+	_cQuery += "FROM "+CRLF
+	_cQuery += "   "+RetSqlName('AD9')+" AD9"+CRLF
+	_cQuery += "WHERE "+CRLF
+	_cQuery += "   AD9.D_E_L_E_T_ = ' ' "+CRLF
+	_cQuery += "   AND AD9_FILIAL = '"+xFilial('AD9')+"' "+CRLF
+	_cQuery += "   AND AD9_NROPOR = '"+ _pOport +"' "+CRLF
+	_cQuery += "   AND AD9_REVISA = '"+ _pRevisO +"' "+CRLF
+	_cQuery += "Order By R_E_C_N_O_ "+CRLF
+
+	MemoWrite("D:\TEMP\"+FunName()+"_"+ProcName()+".txt" , _cQuery)
+	_cQuery := ChangeQuery(_cQuery)	
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TRA',.T.,.F.)
+
+	_aColsAD9 := {}
+
+	If .Not. TRA->(EOF())
+		While .Not. TRA->( Eof() )
+			aAdd(_aColsAD9,{TRA->AD9_FILIAL 	,;
+			TRA->AD9_NROPOR		,;
+			TRA->AD9_REVISA		,;
+			TRA->AD9_CODCON		,;
+			POSICIONE("SU5",1,xFilial("SU5")+TRA->AD9_CODCON, "U5_CONTAT") 	,; //TRA->AD9_NOMCON		,;
+			TRA->AD9_XREPRE		,;
+			TRA->R_E_C_N_O_		,;
+			.F.})
+			TRA->( DbSkip() )
+		End
+	EndIf
+
+	TRA->( dbCloseArea() )
+
+	_oMSNewGet := MsNewGetDados():New( 005,010,150,290, GD_INSERT+GD_DELETE+GD_UPDATE, _cLinOk, "AllwaysTrue", "+Field1+Field2", _aAlterAD9,, 999, "AllwaysTrue", "", "AllwaysTrue", _oDlg, _aHeadeAD9, _aColsAD9)
+
+Return( Nil )
+
+/** {Protheus.doc} SS73A03X
+Funcao para validar os dados da linha
+
+@author: Walmir Junior
+@since: 	03/09/2018
+@Uso: 		SFIEMT
+
+*/
+User Function SS73A03X()
+	Local _lRet			:= .T.
+	Local _aHeadeAD9 	:= aClone(_oMSNewGet:aHeader)
+	Local _aColsAD9		:= aClone(_oMSNewGet:aCols)
+	Local _nPosFil		:= Ascan(_aHeadeAD9, {|e| Alltrim(e[2]) = "AD9_FILIAL"} )
+	Local _nPosOpo		:= Ascan(_aHeadeAD9, {|e| Alltrim(e[2]) = "AD9_NROPOR"} )
+	Local _nPosRev		:= Ascan(_aHeadeAD9, {|e| Alltrim(e[2]) = "AD9_REVISA"} )
+	Local _nPosCon		:= Ascan(_aHeadeAD9, {|e| Alltrim(e[2]) = "AD9_CODCON"} )
+	Local _lDuplicad	:= .F.
+	Local _cCodMsg		:= ""
+
+	If _nPosOpo > 0
+
+		For i := 1 to Len(_aColsAD9)
+			// Se e_nControu um cliente/loja igual ao ja cadastrado, avisa e nao permite continuar
+			If .Not. (GdDeleted( _oMSNewGet:nAt, _aHeadeAD9, _aColsAD9)) .And. ;
+			/*_aColsAD9[i][_nPosFil]+_aColsAD9[i][_nPosOpo] +_aColsAD9[i][_nPosRev] + */_aColsAD9[i][_nPosCon] == ;
+			/*_aColsAD9[_oMSNewGet:nAt][_nPosFil]+_aColsAD9[_oMSNewGet:nAt][_nPosOpo] + _aColsAD9[_oMSNewGet:nAt][_nPosRev] +*/ _aColsAD9[_oMSNewGet:nAt][_nPosCon] .And. ;
+			i != _oMSNewGet:nAt
+				_lDuplicad := .T.
+				_cCodMsg := "01"
+				Exit
+			Endif
+			//#001
+			If .Not. (GdDeleted( _oMSNewGet:nAt, _aHeadeAD9, _aColsAD9)) .And. Empty(_aColsAD9[i][_nPosCon])
+				_lDuplicad := .T.
+				_cCodMsg := "02"
+				Exit
+			Endif
+		Next
+
+	EndIf
+
+	// Se e_nControu um registro igual ao ja cadastrado, avisa e nao permite continuar
+	//If .Not. (GdDeleted( _oMSNewGet:nAt, aHeader, aCols)) .And. _lDuplicad
+	If _lDuplicad
+		_lRet := .F.
+		//#001
+		Do Case
+			Case _cCodMsg == "01"
+			Help(" ",1, "SS73A03X","Contato já existente.","Contato já existente, verifique por favor.",1,0 )
+			Case _cCodMsg == "02"
+			Help(" ",1, "SS73A03X","Contato do Cliente.","Contato do cliente não informado, verifique por favor.",1,0 )
+		EndCase				
+	Endif
+
+Return( _lRet )
+
+/** {Protheus.doc} fGrvAD9
+Funcao para gravar os dados (inclusão, alteração e exclusão)
+
+@author: 	Jonas Nascimento J2A
+@since: 	01/10/2015
+@Uso: 		SFIEMT
+*/
+Static Function fGrvAD9(_cVal)
+	Local _aCols	:= _oMSNewGet:aCols
+	Local _lRet		:= .T.
+
+	_lRet := U_SS73A03X()
+
+	If _lRet
+		If MsgYesNo("Deseja salvar os dados?","Atenção")
+			For _nX := 1 To Len(_aCols)
+				If _aCols[_nX,7] > 0
+					AD9->(DbGoTo(_aCols[_nX,7])) //Busca o registro na AD9
+
+					If _aCols[_nX,8]	//Exclusão de registro do BD
+						RecLock("AD9",.F.)
+						AD9->(DbDelete())
+						AD9->(MsUnLock())
+					Else
+						RecLock("AD9",.F.)	//Alteração de registro do BD
+						AD9->AD9_FILIAL		:= xFilial('AD9')
+						AD9->AD9_NROPOR 	:= _aCols[_nX][2]
+						AD9->AD9_REVISA		:= _aCols[_nX][3]
+						AD9->AD9_CODCON		:= _aCols[_nX][4]
+						AD9->AD9_XREPRE		:= _aCols[_nX][6]
+
+						AD9->(MsUnLock())
+					EndIf
+				ElseIf !_aCols[_nX,8]
+					RecLock("AD9",.T.)	//Inclusão de registro do BD
+					AD9->AD9_FILIAL		:= xFilial('AD9')
+					AD9->AD9_NROPOR 	:= _cNrOp
+					AD9->AD9_REVISA		:= _cRev
+					AD9->AD9_CODCON		:= _aCols[_nX][4]
+					AD9->AD9_XREPRE		:= _aCols[_nX][6]
+
+					AD9->(MsUnLock())
+				EndIf
+			Next
+			_oDlg:End()
+		EndIf
+	EndIf
+
+Return

@@ -1,0 +1,193 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} GP180MSG
+Ponto de Entrada para apresentacao de Mensagem antes da Transferencia.
+
+@author 	Doit
+@since 		27/01/2015
+@version 	1.0
+@return 	Nil, Nulo
+/*/
+User Function GP180MSG()
+
+	Local _aArea 		:= GetArea()
+	Local _aAreaCTA	:= CTA->(GetArea()) 
+	Local lReturn 		:= .T.
+	
+	lReturn := ValRateio()
+
+	/* Jose Leite - 09-03-05
+		Verificar se existe a amarrcao entre CC x ItemC, se nao existir, 
+		nao deixar executar a transferencia
+		
+		Solicitado por: Jorge Ascencio
+	*/ 
+	If lReturn
+ 		DbSelectArea("CTA")
+		DbSetOrder(3) //CTA_FILIAL+CTA_CUSTO+CTA_ITEM
+		If .Not. DbSeek( PadR(SubStr(cFilAte,1,4),TamSX3("CTA_FILIAL")[1],' ') + cCcuAte + cItemAte )
+			MsgAlert("Não existe a amarração entre Centro de Custo x Item Contábil para os dados informados!")
+			lReturn := .F.
+		EndIf
+		CTA->(DbCloseArea())
+		
+		If .Not. lReturn
+			MsgStop("Transferência não realizada, devido a inconsistência dos dados!")
+			DisarmTransaction()
+			Break
+		EndIf
+		
+ 	EndIf
+ 	
+ 	RestArea(_aAreaCTA)
+	RestArea(_aArea) 
+	
+Return( lReturn )
+
+/** {Protheus.doc} ValRateio
+Funcao que verifica a estrutura de rateio
+
+@author: 	Doit
+@since: 	27/01/2015
+@Uso: 		SFIEMT
+*/
+Static Function ValRateio()
+	
+	Local oButtonFe
+	Local oButtonOk
+	Local oCli
+	Local oLj     
+	Local oGetCli 
+	Local oGetLj  
+	Local lReturn	:= .T.
+	Local aFields	:= {"ZD6_FILIAL","ZD6_MESANO","ZD6_CC","ZD6_ITEM","ZD6_HRMES","ZD6_HRTRAB","ZD6_PERCEN"}
+	
+	Private oTels
+	Private oMsg
+	Private _aHeader  := {}
+	Private aCols     := {}
+	Private _aTelsTmp := {}  
+	Private _cFiliais := "teste"   
+	Private cSTRMsg	:= "ATENÇÃO: Favor verificar se a estrutura de rateio do funcionário acima "+ Chr(13) + Chr(10) + "está em conformidade com a transferência realizada. "
+	Private cAliasQr1	:= GetNextAlias()
+	Private cAliasQr2	:= GetNextAlias()
+	Private cNome		:= ''
+	Private lFirst		:= .F.
+	
+	If lLote
+		lReturn := .T.
+		Return lReturn
+	EndIf
+	
+	
+	oFont1  := TFont():New( 'Arial', 0 , 16, .F., .T., 0, .F., 0, .F., .F. )
+	oFont2  := TFont():New( 'Arial', 0 , 16, .F., .F., 0, .F., 0, .F., .F. )
+	
+	cNome := POSICIONE("SRA",1,cFILATE+cMATATE,"RA_NOME")
+	
+	//CFILDE	-> filial anterior
+	//CFILATE	-> filial destino
+	//CCCDE	-> centro de custo anterior
+	//CCCUATE	-> centro de custo destino
+	//CITEMDE	-> item anterior
+	//CITEMATE -> item destino
+	
+	IF (SUBSTR(cCCDE,1,6) <> '130104' .AND. substr(cfilde,1,2) <> '05')
+		DbSelectArea("SX3")
+		SX3->(DbSetOrder(2))
+		For nX := 1 to Len(aFields)
+		 If SX3->(DbSeek(aFields[nX]))
+		  Aadd(_aHeader, { AllTrim(X3Titulo()),SX3->X3_CAMPO,SX3->X3_PICTURE,SX3->X3_TAMANHO,SX3->X3_DECIMAL,SX3->X3_VALID,;
+		      SX3->X3_USADO,SX3->X3_TIPO,SX3->X3_ARQUIVO,SX3->X3_CONTEXT,SX3->X3_RELACAO})
+		 Endif
+		Next nX
+		
+		GeraAcols()
+		 
+		DEFINE MSDIALOG oDlgZD6 TITLE "Estrutura de Rateio" FROM 000, 000  TO 300, 830 COLORS 0, 16777215 PIXEL
+		 
+		 @ 015, 011 SAY oCli	PROMPT		"Matricula: " 			FONT oFont2		SIZE 035, 007 OF oDlgZD6 COLORS 0, 16777215 PIXEL
+		 @ 015, 039 SAY oCli 	VAR			cMatAte  				FONT oFont1		SIZE 040, 020 OF oDlgZD6 COLORS 0, 16777215 PIXEL
+		 @ 015, 070 SAY oCli 	PROMPT		"Centro de Custo:" 	FONT oFont2		SIZE 055, 007 OF oDlgZD6 COLORS 0, 16777215 PIXEL
+		 @ 015, 118 SAY oCli 	VAR 		CCCUATE					FONT oFont1  		SIZE 040, 010 OF oDlgZD6 COLORS 0, 16777215 PIXEL
+		 @ 015, 170 SAY oCli 	PROMPT 		"Item Contábil:" 		FONT oFont2		SIZE 045, 007 OF oDlgZD6 COLORS 0, 16777215 PIXEL
+		 @ 015, 210 SAY oCli 	PROMPT 		CITEMATE 				FONT oFont1		SIZE 150, 018 OF oDlgZD6 COLORS 0, 16777215 PIXEL
+		 @ 120, 011 SAY oCli 	VAR 		cSTRMsg 				FONT oFont1		SIZE 300, 050 OF oDlgZD6 COLORS 0, 16777215 PIXEL
+		 
+		 oMSNewGe1 := MsNewGetDados():New( 029, 007, 110, 410, 0, "AllwaysTrue", "AllwaysTrue", "", "",, 999, "AllwaysTrue", "", "AllwaysTrue", oDlgZD6, _aHeader, aCols)
+		
+		 CarregaZD6()
+		
+		 @ 120, 370 BUTTON oButtonFe PROMPT "OK"   	SIZE 037, 012 OF oDlgZD6 ACTION (oDlgZD6:End(),, nOpc := 2) PIXEL
+		 @ 120, 330 BUTTON oButtonFe PROMPT "Cancela"	SIZE 037, 012 OF oDlgZD6 ACTION (oDlgZD6:End(),lReturn:=.F., nOpc := 2) PIXEL
+		 
+		ACTIVATE MSDIALOG oDlgZD6 CENTERED
+	EndIf
+
+
+Return( lReturn )
+
+/** {Protheus.doc} CarregaZD6
+Funcao que carrega os dados da ZD6 - Base de Rateio
+
+@author: 	Doit
+@since: 	27/01/2015
+@Uso: 		SFIEMT
+*/
+Static Function CarregaZD6() 
+
+Local cAliasTMP := GetNextAlias()                      
+
+//SELECIONA O REGISTRO MAIS ATUAL NA ZD6
+cQuery := "SELECT MAX(ZD6_MESANO) PERIODO FROM "+RetSqlName("ZD6")+" "
+cQuery += "WHERE ZD6_MAT = '"+CMATDE+"' AND ZD6_FILIMP = '"+SUBSTR(CFILDE,1,4)+"' "
+
+
+cQuery := ChangeQuery( cQuery )
+dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery), cAliasQr1, .T., .T. )
+
+cPer :=  ( cAliasQr1 )->PERIODO
+(cAliasQr1)->(DbCloseArea())
+
+//ARMAZENA OS DADOS DO REGISTRO MAIS ATUAL
+cQuery := "SELECT ZD6_FILIAL,ZD6_MESANO,ZD6_MAT,ZD6_CC,ZD6_ITEM,ZD6_HRMES,ZD6_HRTRAB,ZD6_PERCEN FROM "+RetSqlName("ZD6")+" "
+cQuery += "WHERE ZD6_MAT = '"+CMATDE+"' AND ZD6_MESANO = '"+cPER+"' AND ZD6_FILIMP = '"+SUBSTR(CFILDE,1,4)+"' "
+
+cQuery := ChangeQuery( cQuery )
+dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery), cAliasQr2, .T., .T. )
+
+If !Eof(cAliasQr2)
+ 
+	aCols := {}  
+	_cFiliais := ""
+
+	While !Eof(cAliasQr2) 
+		Aadd(aCols, {(cAliasQr2)->ZD6_FILIAL,(cAliasQr2)->ZD6_MESANO,(cAliasQr2)->ZD6_CC,(cAliasQr2)->ZD6_ITEM,(cAliasQr2)->ZD6_HRMES,(cAliasQr2)->ZD6_HRTRAB,(cAliasQr2)->ZD6_PERCEN,.F.})
+		(cAliasQr2)->(DbSkip())
+	EndDo
+	(cAliasQr2)->(dbCloseArea())  
+
+Endif
+ 
+oMSNewGe1:aCols := aClone(aCols)
+oMSNewGe1:oBrowse:Refresh(.T.)
+
+Return
+
+/** {Protheus.doc} GeraAcols
+Funcao que monta a Grid com os dados da ZD6
+
+@author: 	Doit
+@since: 	27/01/2015
+@Uso: 		SFIEMT
+*/
+Static Function GeraAcols()
+
+	aCols := Array(1,Len(_aHeader) + 1)
+	aCols[1,Len(_aHeader) + 1] := .F.
+	
+	For nX := 1 to Len(_aHeader)
+	  aCols[1,nX] :=  CriaVar(_aHeader[nX,2],.T.)
+	Next nX
+
+Return

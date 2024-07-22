@@ -1,0 +1,300 @@
+#INCLUDE "PROTHEUS.CH"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIESBA05  ºAutor  ³Microsiga           º Data ³  03/04/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Receptor de EAI - Título a Receber                         º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ MP 11.5 - Sistema Industria                                º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function SIESBA05(_cXML)
+Local _cError    := ""
+Local _cWarning  := ""
+Local _cDelimit  := "_"
+Local aStru      := {}
+Local _lInput    := GetRemoteType() == -1 //-1 = sem remote/ 0 = delphi/ 1 = QT windows/ 2 = QT Linux
+Local _lRatCC	 := .F.
+Default _cXML    := ""
+Private	_aTotRNat:= {}
+Private	_aTotRCC := {}
+
+Conout(_cXML)
+IF !_lInput // Chamada via ESB/EAI
+	Return()
+ENDIF
+
+//Gera o Objeto XML com a estrutura recebida
+oXml := XmlParser(_cXML, _cDelimit, @_cError, @_cWarning)
+
+//Verifica se a estrutura foi criada
+IF !(Empty(_cError) .and. Empty(_cWarning))
+	Return()
+ENDIF
+
+_nOperac := Val(oXml:_FINA040:_OPERATION:TEXT)
+_cIDESB  := IIF(Type("oXml:_FINA040:_SE1MASTER:_E1_XIDESB:REALNAME") <> "U",&("oXml:_FINA040:_SE1MASTER:_E1_XIDESB:_VALUE:TEXT"),"")
+
+// Verifica se mensagem trata-se de títulos a pagar
+IF Type('oXml:_FINA040:_SE1MASTER') == "U"
+	_cMotivo := "Mensagem invalida para a rotina FINA040 - Titulos a Receber"
+	cXMLError := _cError
+	// Gera XML de retorno
+	U_SIXMLMSG("FINA040","Contas a Receber",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+	
+	Return()
+ENDIF
+
+IF Type("oXml:_FINA040:_SE1MASTER:_E1_NUM:REALNAME") == "U" .or. Type("oXml:_FINA040:_SE1MASTER:_E1_TIPO:REALNAME") == "U" .or.;
+	 Type("oXml:_FINA040:_SE1MASTER:_E1_CLIENTE:REALNAME") == "U" .or. Type("oXml:_FINA040:_SE1MASTER:_E1_LOJA:REALNAME") == "U" .Or.;
+	Type("oXml:_FINA040:_SE1MASTER:_E1_NATUREZ:REALNAME") == "U"
+	_cMotivo := "Campos obrigatórios não preechidos (E1_NUM, E1_TIPO, E1_CLIENTE, E1_LOJA, E1_NATUREZ). Verifique!"
+	// Gera XML de retorno
+	U_SIXMLMSG("FINA040","Contas a Receber",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+	Return()
+ENDIF
+
+SX3->(dbSetOrder(1))
+SX3->(dbGoTop())
+SX3->(dbSeek("SE1"))
+
+// Carrega vetor com os campos
+While SX3->(!Eof()) .and. SX3->X3_ARQUIVO == "SE1"
+	IF Type("oXml:_FINA040:_SE1MASTER:_"+Alltrim(SX3->X3_CAMPO)+":REALNAME") <> "U"
+		// Carrega conteudo do variavel
+		_cCampo := &("oXml:_FINA040:_SE1MASTER:_"+Alltrim(SX3->X3_CAMPO)+":_VALUE:TEXT")
+		
+		// Faz tratamento do dado
+		IF SX3->X3_TIPO == "C"
+			_cCampo := PadR(_cCampo,SX3->X3_TAMANHO)
+		ELSEIF SX3->X3_TIPO == "N"
+			_cCampo := Val(_cCampo)
+		ELSEIF SX3->X3_TIPO == "D"
+			_cCampo := Stod(_cCampo)
+		ENDIF
+		IF SX3->X3_CONTEXT == "V"
+			Loop
+			SX3->(dbSkip())
+		ENDIF
+		
+		// Carrega vetor para rotina automatica
+		aAdd( aStru, {Alltrim(SX3->X3_CAMPO),_cCampo, NIL } )
+	ENDIF
+	SX3->(dbSkip())
+Enddo
+
+// Nenhum campo localizado
+IF Len(aStru) == 0
+	Return()
+ENDIF
+
+// Verifica se tem Multiplas Naturezas
+IF Type('oXml:_FINA040:_SE1MASTER:_SEVDETAIL') <> "U"
+	
+	//Adiciona o campo E1_NATUREZ=SIM
+	aAdd( aStru, {"E1_MULTNAT","1", NIL } )
+	
+	_nItNat:= IIF(Type("oXml:_FINA040:_SE1MASTER:_SEVDETAIL:_ITEMS") <> "U",Len(oXml:_FINA040:_SE1MASTER:_SEVDETAIL:_ITEMS:_ITEM),1)
+	
+	_aStruSEV := SEV->(DbStruct())
+	_aStruSEZ := SEZ->(DbStruct())
+	_nPerc := 0   //Percentual da tabela SEV
+
+	For x := 1 to _nItNat
+		_cNaturez := ""
+		_aRatNat := {}
+		
+		//Verifica se possui rateio de Centro de Custo para a Natureza
+		_lRatCC:=Type("oXml:_FINA040:_SE1MASTER:_SEVDETAIL:_ITEMS:_ITEM["+Alltrim(Str(x))+"]:_SEZDETAIL") <> "U"
+	
+		For y := 1 to Len(_aStruSEV)
+			
+			If Type("oXml:_FINA040:_SE1MASTER:_SEVDETAIL:_ITEMS:_ITEM["+Alltrim(Str(x))+"]:_"+Alltrim(_aStruSEV[y,1])+":REALNAME") <> "U"
+				
+				// Carrega conteudo do variavel
+				_cCpoRat := &("oXml:_FINA040:_SE1MASTER:_SEVDETAIL:_ITEMS:_ITEM["+Alltrim(Str(x))+"]:_"+Alltrim(_aStruSEV[y,1])+":TEXT")
+				
+				// Faz tratamento do dado
+				IF _aStruSEV[y][2] == "C"
+					_cCpoRat := PadR(_cCpoRat,_aStruSEV[y][3])
+				ELSEIF _aStruSEV[y][2] == "N"
+					_cCpoRat := Val(_cCpoRat)
+				ELSEIF _aStruSEV[y][2] == "D"
+					_cCpoRat := Stod(_cCpoRat)
+				ENDIF
+				
+				If Alltrim(_aStruSEV[y,1]) == 'EV_NATUREZ'
+					_cNaturez:= _cCpoRat
+					//Validação para nao permitir a inclusão da mesma Natureza em mais de um item.
+				    If !Empty(_aRatNat) .And. (nPosNat := aScan(_aRatNat,{|x| Alltrim(x[1]) == "EV_NATUREZ"}) ) > 0
+						If aScan(_aRatNat,{|x| Alltrim(x[nPosNat]) == Alltrim(_cNaturez)}) > 0
+							_cMotivo := "A Natureza "+_cNaturez+" já está cadastrada em outro item da Tabela SEV). Verifique!"
+							// Gera XML de retorno
+							U_SIXMLMSG("FINA040","Contas a Receber",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+							Return()
+		                Endif                                                                                   
+	                Endif    
+					//Fim validar
+					
+					SED->(dbSetOrder(1))				                            				                            
+					If !(SED->(dbSeek(xFilial("SED")+_cNaturez))  )
+						_cMotivo := "Natureza informada para o campo EV_NATUREZ invalida ("+_cNaturez+"). Verifique!"
+						// Gera XML de retorno
+						U_SIXMLMSG("FINA040","Contas a Receber",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+						Return()
+					Endif	                           
+				Endif    
+				
+				If Alltrim(_aStruSEV[y,1]) == 'EV_PERC'
+					_nPerc += _cCpoRat //Soma Percentuais                           
+				Endif                 
+				
+				// Carrega vetor do rateio para rotina automatica
+				Aadd(_aRatNat,{Alltrim(_aStruSEV[y][1]),_cCpoRat,_lRatCC})
+
+			Endif
+		Next
+		Aadd(_aTotRNat,_aRatNat)
+		
+		If _lRatCC
+			_aRatCC := {}
+			
+			_nItCC:= IF(Type("oXml:_FINA040:_SE1MASTER:_SEVDETAIL:_ITEMS:_ITEM["+Alltrim(Str(x))+"]:_SEZDETAIL") <> "U",Len(oXml:_FINA040:_SE1MASTER:_SEVDETAIL:_ITEMS:_ITEM),1)
+			_nPerc2 := 0
+			For z := 1 to _nItCC
+				_aRatCC	:= {}
+				For b := 1 to Len(_aStruSEZ)
+					
+					//Adiciona no Array de Rateio de C.Custo a Natureza
+					If Alltrim(_aStruSEZ[b,1]) == 'EZ_NATUREZ'
+						Aadd(_aRatCC,{'EZ_NATUREZ',Alltrim(_cNaturez),NIL})
+					Endif
+					
+					If Type("oXml:_FINA040:_SE1MASTER:_SEVDETAIL:_ITEMS:_ITEM["+Alltrim(Str(x))+"]:_SEZDETAIL:_ITEMS:_ITEM["+Alltrim(Str(z))+"]:_"+Alltrim(_aStruSEZ[b,1])+":REALNAME") <> "U"
+						
+						// Carrega conteudo do variavel
+						_cCpoCC := &("oXml:_FINA040:_SE1MASTER:_SEVDETAIL:_ITEMS:_ITEM["+Alltrim(Str(x))+"]:_SEZDETAIL:_ITEMS:_ITEM["+Alltrim(Str(z))+"]:_"+Alltrim(_aStruSEZ[b,1])+":TEXT")
+						
+						// Faz tratamento do dado
+						IF _aStruSEZ[b][2] == "C"
+							_cCpoCC := PadR(_cCpoCC,_aStruSEZ[b][3])
+						ELSEIF _aStruSEZ[b][2] == "N"
+							_cCpoCC := Val(_cCpoCC)
+						ELSEIF _aStruSEZ[b][2] == "D"
+							_cCpoCC := Stod(_cCpoCC)
+						ENDIF
+												
+						If Alltrim(_aStruSEZ[B,1]) == 'EZ_PERC'
+							_nPerc2 += _cCpoCC //Soma Percentuais tabela SEZ
+							_cCpoCC := _cCpoCC/100
+						Endif                                               
+						
+						//Inicio validação do Centro de Custo da tabela SEZ
+						If Alltrim(_aStruSEZ[B,1]) == 'EZ_CCUSTO'
+							_cCustoEZ := _cCpoCC						
+							//Inicio valida a existencia do C Custo
+							If !Empty(_aRatCC) .And. (nPosCC := aScan(_aRatCC,{|x| Alltrim(x[1]) == "EZ_CCUSTO"})) > 0
+								If aScan(_aRatCC,{|x| Alltrim(x[nPosCC]) == Alltrim(_cCustoEZ)}) >  0
+									_cMotivo := "O Centro de Custo "+_cCustoEZ+" já está cadastrado em outro item da Tabela SEZ). Verifique!"
+									// Gera XML de retorno
+									U_SIXMLMSG("FINA040","Contas a Receber",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+									Return()
+			                    Endif
+							Endif										
+							//Fim valida a existencia do C Custo
+							
+							CTT->(dbSetOrder(1))				                            				                            
+							If !(CTT->(dbSeek(xFilial("CTT")+_cCustoEZ))  )
+								_cMotivo := "Centro de Custo informado para o campo EZ_CCUSTO inválido ("+Alltrim(_cCustoEZ)+"). Verifique!"
+								// Gera XML de retorno
+								U_SIXMLMSG("FINA040","Contas a Receber",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+								Return()            
+							Elseif CTT->CTT_CLASSE == "1"
+								_cMotivo := "Centro de Custo inválido. O Centro de Custo não pode ser sintético ("+Alltrim(_cCustoEZ)+"). Verifique!"
+								// Gera XML de retorno
+								U_SIXMLMSG("FINA040","Contas a Receber",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+								Return()            							
+							Elseif CTT->CTT_BLOQ == "1"
+								_cMotivo := "Centro de Custo inválido. o Centro de Custo está bloqueado para uso ("+Alltrim(_cCustoEZ)+"). Verifique!"
+								// Gera XML de retorno
+								U_SIXMLMSG("FINA040","Contas a Receber",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+								Return()            							
+							Endif	                           
+						Endif          
+						//Fim validação do Centro de Custo da tabela SEZ    
+						
+						// Carrega vetor do rateio para rotina automatica
+						Aadd(_aRatCC,{Alltrim(_aStruSEZ[b][1]),_cCpoCC,NIL})						
+					Endif
+				Next
+				Aadd(_aTotRCC,_aRatCC)
+			Next                       
+			//VALIDAR O PERCENTUAL SEZ
+			If _nPerc2 <> 100
+				_cMotivo := "A soma do campo EZ_PERC não está igual a 100% ou os itens do SEZ possuem dados iguais. Verifique!"
+				// Gera XML de retorno
+				U_SIXMLMSG("FINA040","Contas a Receber",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+				Return()            							
+			Endif
+		Endif
+		
+	Next
+	//VALIDAR PERCENTUAL SEV
+	If _nPerc <> 100
+		_cMotivo := "Soma do Percentual da tabela SEV. A soma do campo EV_PERC não está igual a 100%. Verifique!"
+		// Gera XML de retorno
+		U_SIXMLMSG("FINA040","Contas a Receber",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+		Return()            							
+	Endif
+Endif
+
+INCLUI         := .T.
+lMsErroAuto    := .F.
+lMsHelpAuto    := .T.
+lAutoErrNoFile := .T.
+
+SE1->( dbSetOrder( 1 ) )
+
+Begin Transaction
+
+MSExecAuto( { | x, y | FINA040( x, y ) }, aStru, _nOperac )
+
+If lMsErroAuto
+	If (__lSX8)
+		RollBackSX8()
+	EndIf
+	
+	DisarmTransaction()
+	
+//	Mostraerro()
+	
+	// Tratamento da Mensagem de erro do MSExecAuto
+	aLogErr  := GetAutoGRLog()
+	aLogErr2 := U_SIESBID(aLogErr)
+	_cMotivo := ""
+	
+	For i := 1 to Len(aLogErr2)
+		_cMotivo += aLogErr2[i]
+	Next
+	
+	// Gera XML de retorno
+	U_SIXMLMSG("FINA040","Contas a Receber",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)	
+	Break
+Else
+	If (__lSX8)
+		ConfirmSX8()
+	EndIf
+	
+	// Gera XML de retorno
+	U_SIXMLMSG("FINA040","Contas a Receber",Alltrim(Str(_nOperac)),_cIDESB,"0","")
+EndIf
+End Transaction
+
+Return()

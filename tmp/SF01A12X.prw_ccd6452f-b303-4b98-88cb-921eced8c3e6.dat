@@ -1,0 +1,138 @@
+#Include 'Protheus.ch'
+//Variável para retorno do local selecionado na consulta específica.
+Static _cSNL 	:= Space(TamSX3("NL_CODIGO")[1])
+Static _cDesSNL := Space(TamSX3("NL_DESCRIC")[1])
+
+/*/{Protheus.doc} SF01A12X
+	Rotina utilizada em consulta especifica de locais.
+@author Walmir Junior
+@since 07/12/2017
+@return _lRet, Retorno para consulta
+@type user function
+/*/
+User Function SF01A12X()
+
+
+Private _aSNL		:= {{"","",""}}
+Private _oBrowPd	
+Private _oDlg
+Private _lRet		:= .F.
+
+fwBrowse()
+
+Return _lRet
+
+User Function SF01A12Z()
+
+Return ({_cSNL,_cDesSNL})
+
+Static Function fObtVlr()
+_cSNL	 := _aSNL[_oBrowPd:nAt,2]
+_cDesSNL := _aSNL[_oBrowPd:nAt,3]
+_lRet	 := .T.
+_oDlg:End()
+Return _lRet
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fTurmaOk>
+  Objetivo;
+   Cria grid na MSDIALOG (fSeekSIGE).
+
+@author<Walmir Junior>
+@since<07/12/2017>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function fwBrowse()
+Local _btConfirm
+Local _btCancel
+Local _oGetFil
+Local _cValFil	:= Space(100)
+Local _oCmbFil
+Local _cVlCmFl
+Local _aFilt	:= { "Descrição", "Código", "Filial"}
+
+Local _oCmbTFl
+Local _cVlTpFl
+Local _aTpFil	:= {"Contém", "Igual a"}
+
+DEFINE MSDIALOG _oDlg TITLE 'Consulta Locais' FROM 000, 000 TO 365, 800 COLORS 0, 16777215 PIXEL
+	@ 005, 004 MsGet 		_oGetFil Var _cValFil 								SIZE 195, 012 OF _oDlg PIXEL
+	@ 005, 200 MsComboBox	_oCmbTFl Var _cVlTpFl Items _aTpFil					SIZE 055, 012 OF _oDlg PIXEL
+	@ 005, 260 MsComboBox	_oCmbFil Var _cVlCmFl Items _aFilt					SIZE 055, 012 OF _oDlg PIXEL
+	@ 005, 320 BUTTON		_btConfirm	PROMPT "Pesquisar" ;	
+	ACTION(FWMsgRun(, {|| fSelSNL(SubStr(_cVlTpFl, 1,1), SubStr(_cVlCmFl, 1,1), Alltrim(_cValFil)) }, "Efetuando Consulta...", "Aguarde..."));	
+																				SIZE 037, 012 OF _oDlg PIXEL
+	
+	/* Cria a GRID */																																																			   //Cod. |Curso|Cod.|Turma|Abertura|Encerramento|Aula Ini|Aula Fim|Vagas Abertas|Vagas Disponiveis|Status Turma|														
+	@ 020, 004 LISTBOX _oBrowPd Fields HEADER "Filial","Codigo", "Descrição" SIZE 390, 142 OF _oDlg PIXEL //ColSizes 25,  100						
+	_oBrowPd:SetArray(_aSNL)
+	_oBrowPd:bLDblClick := { || fObtVlr() }
+	_oBrowPd:bLine := {|| {	_aSNL[_oBrowPd:nAt,1],;
+							_aSNL[_oBrowPd:nAt,2],;
+							_aSNL[_oBrowPd:nAt,3]}}
+							
+	@ 168, 005 BUTTON _btConfirm	PROMPT "OK"		 	ACTION(fObtVlr())	SIZE 037, 012 OF _oDlg PIXEL
+	@ 168, 050 BUTTON _btCancel		PROMPT "Cancelar"	ACTION(_oDlg:End())	SIZE 037, 012 OF _oDlg PIXEL
+	FWMsgRun(,{|| fSelSNL() }, "Efetuando Consulta...", "Aguarde...")
+ACTIVATE MSDIALOG _oDlg CENTERED
+
+Return
+
+Static Function fSelSNL(_cTpCon,_cTpFl, _cFil)
+Local _cQuery	:= ""
+
+/* Limpa array para preencher com novo resultado. */
+If Len(_aSNL) > 0
+	aSize(_aSNL,0)
+EndIf
+
+_cQuery	:= " Select NL_FILIAL, NL_CODIGO, NL_DESCRIC From "+RetSqlName("SNL")
+_cQuery	+= " Where D_E_L_E_T_ = ' ' AND NL_FILIAL != ' ' "
+
+If isInCallStack('ATFA126Apr')
+	_cQuery += " AND NL_FILIAL = '" + SNM->NM_FILDEST + "' "
+EndIf
+
+If !Empty(_cFil)
+	If _cTpFl == "C"
+		_cQuery	+= Iif ( _cTpCon == "I", " AND NL_CODIGO = '"+_cFil+"'", " AND NL_CODIGO Like '%"+_cFil+"%'")
+		_cQuery	+= " Order By  NL_CODIGO "
+	ElseIf _cTpFl == "D"
+		_cQuery	+= Iif ( _cTpCon == "I",  " AND NL_DESCRIC Like '"+_cFil+"%'"," AND NL_DESCRIC Like '%"+_cFil+"%'")
+		_cQuery	+= " Order By  NL_DESCRIC "
+	Else 
+		_cQuery	+= Iif ( _cTpCon == "I",  " AND NL_FILIAL = '"+_cFil+"'"," AND NL_FILIAL Like '%"+_cFil+"%'")
+		_cQuery	+= " Order By  NL_FILIAL "
+	EndIf
+Else 
+	_cQuery	+= " Order By  NL_FILIAL, NL_CODIGO "
+EndIf
+
+If Select("TMPSNL")>0
+	TMPSNL->(DbCloseArea())
+Endif  
+
+//-- ********************************************************************
+//--    Retorna {TMPSNL} Tabela temporaria com o resultado da Query 
+//-- ********************************************************************
+dbUseArea(.t.,"TOPCONN",TCGENQRY(,,_cQuery),"TMPSNL",.t.,.t.)
+dbSelectArea("TMPSNL")
+TMPSNL->(dbGoTop())
+
+/* Popula Array da GRID */
+While !TMPSNL->(EOF())
+	AADD(_aSNL, {TMPSNL->NL_FILIAL,TMPSNL->NL_CODIGO,TMPSNL->NL_DESCRIC})
+	TMPSNL->(dbSkip())
+EndDo
+
+If Len(_aSNL) == 0 .And. Empty(_cTpCon) .And. Empty(_cTpFl) .And. Empty(_cFil)
+		_aSNL		:= {{"","",""}}
+EndIf
+
+Return

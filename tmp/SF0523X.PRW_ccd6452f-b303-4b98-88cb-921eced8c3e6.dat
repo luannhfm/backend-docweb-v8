@@ -1,0 +1,211 @@
+#INCLUDE "PROTHEUS.CH" 
+
+/*/{Protheus.doc} SF0523X
+(long_description)
+@author j2a.luizjunior
+@since 28/08/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+User Function SF0523X()
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0523X")
+	Local   oReport
+	Private cPerg   := "SF0523X"
+	Private cAlVen  := GetNextAlias()
+	
+	CriaSX1(cPerg)
+	If !Pergunte(cPerg,.T.)
+		Return(Nil)
+	EndIf
+
+	oReport := ReportDef()
+	oReport:PrintDialog()	
+
+Return
+
+/*/{Protheus.doc} ReportDef
+(long_description)
+@author j2a.luizjunior
+@since 28/08/2017
+@version 1.0
+@param cPerg, character, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ReportDef(cPerg)
+	
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0523X")
+	Local oReport
+	Local cIDCelula	:= ""	
+	Local cNomeRel	:= "SF0523X"
+	
+	Local cTitRel	:= "Relatorio de Ingressos Vendidos"
+	Local cDescRel	:= "Relatorio de Ingressos Vendidos"
+
+	oReport := TReport():New( cNomeRel, cTitRel, cPerg, { |oReport| ReportPrint(oReport) }, cDescRel )
+	
+	oReport:SetPortrait() 
+	oReport:SetTotalInLine(.F.) 
+	oReport:Page()
+	
+	//-> Ingressos
+	oIngressos  := TRSection():New(oReport, "Ingressos" ,{"ZH0"})	
+	
+	oCaixa      := TRCell():New(oIngressos,"ZH0_CAIXA"  ,"ZH0"          )
+	
+	If MV_PAR05 = 1		
+		oNumOrc := TRCell():New(oIngressos,"ZH0_NUMORC" ,"ZH0"          )
+		oCodBar := TRCell():New(oIngressos,"ZH0_CODBAR" ,"ZH0"          )
+		oDesPro := TRCell():New(oIngressos,"ZH0_DESC"   ,"ZH0"          )	
+		oDesPro:SetSize(70)
+		oData   := TRCell():New(oIngressos,"ZH0_DATA"   ,"ZH0"          )
+		oNumNot := TRCell():New(oIngressos,"ZH0_NUMNOT" ,"ZH0"          )		
+	Else
+		oDesPro := TRCell():New(oIngressos,"ZH0_DESC"   ,"ZH0"          )
+		oDesPro:SetSize(70)
+		oQTDE   := TRCell():New(oIngressos,"QUANT"      ,cAlVen,"Quantidade" ,"@E 99999999" )
+	EndIf
+	
+	oValor  := TRCell():New(oIngressos,"ZH0_VRUNIT"     ,"ZH0"          )
+	
+	TRFunction():New(oIngressos:Cell("ZH0_VRUNIT"),,"SUM",/*oBrFor*/,,,,.F.,.T.,.F.)
+
+Return(oReport)	
+
+/*/{Protheus.doc} ReportPrint
+(long_description)
+@author j2a.luizjunior
+@since 28/08/2017
+@version 1.0
+@param oReport, objeto, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ReportPrint(oReport)
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0523X")		 
+	Local cSql   := ""
+	Local oSec1  := oReport:Section(1)	
+	Local cCaixa := xNumCaixa()   
+	 
+	If !Empty(MV_PAR01) .And. !Empty(MV_PAR02) 
+		cSql += " AND ZH0_DATA BETWEEN '"  + DToS(MV_PAR01) + "' AND '" + DToS(MV_PAR02) + "'"
+	EndIf
+
+	If !Empty(MV_PAR03) .And. !Empty(MV_PAR04) 
+		cSql += " AND ZH0_CAIXA BETWEEN '"  + MV_PAR03 + "' AND '" + MV_PAR04 + "'"
+	EndIf
+
+	cSql := "%"+cSql+"%"
+	
+	If MV_PAR05 = 1
+	
+		BeginSql Alias cAlVen
+		
+			SELECT ZH0_CAIXA,
+		           ZH0_NUMORC,
+		           ZH0_CODBAR,
+		           ZH0_DESC,
+		           ZH0_DATA,
+		           ZH0_NUMNOT, 
+		           ZH0_VRUNIT
+		    FROM   %Table:ZH0%
+		    WHERE  %NotDel%
+		    AND    ZH0_FILIAL =  %xFilial:ZH0%
+		    %Exp:cSql%
+		           
+		EndSql
+	
+	Else
+	
+		BeginSql Alias cAlVen
+		
+			SELECT COUNT(*) QUANT,
+			       ZH0_DESC,
+			       SUM(ZH0_VRUNIT) ZH0_VRUNIT,
+			       ZH0_CAIXA
+			FROM   ZH0010 
+			WHERE  %NotDel% 
+			AND    ZH0_FILIAL =  %xFilial:ZH0% 
+			%Exp:cSql%
+			GROUP BY ZH0_COD,ZH0_DESC,ZH0_VRUNIT,ZH0_CAIXA	
+		
+		EndSql
+		
+	EndIf	
+	
+	While !(cAlVen)->(Eof())
+		
+		oReport:IncMeter()
+		
+		oSec1:Init()
+		
+		oSec1:Cell("ZH0_CAIXA")     :SetValue(AllTrim((cAlVen)->ZH0_CAIXA    ))
+		
+		If MV_PAR05 = 1
+			oSec1:Cell("ZH0_NUMORC"):SetValue(AllTrim((cAlVen)->ZH0_NUMORC   ))
+			oSec1:Cell("ZH0_CODBAR"):SetValue(AllTrim((cAlVen)->ZH0_CODBAR   ))
+			oSec1:Cell("ZH0_DESC")  :SetValue(AllTrim((cAlVen)->ZH0_DESC     ))
+			oSec1:Cell("ZH0_DATA")  :SetValue(DToC(SToD((cAlVen)->ZH0_DATA  )))
+			oSec1:Cell("ZH0_NUMNOT"):SetValue(AllTrim(((cAlVen)->ZH0_NUMNOT )))
+		Else
+			oSec1:Cell("ZH0_DESC")  :SetValue(AllTrim((cAlVen)->ZH0_DESC     ))
+			oSec1:Cell("QUANT")  :SetValue(cValTochar((cAlVen)->QUANT        ))	
+		EndIf
+		
+		oSec1:Cell("ZH0_VRUNIT") :SetValue((cAlVen)->ZH0_VRUNIT)
+		
+		oSec1:Printline()
+		
+		If oReport:Cancel()
+			Return(Nil)
+		EndIf		
+	
+		(cAlVen)->(DbSkip())
+	EndDo
+
+	(cAlVen)->(DbCloseArea())
+	
+	oSec1:Finish()
+		
+Return
+
+/*/{Protheus.doc} CriaSX1
+(long_description)
+@author j2a.luizjunior
+@since 28/08/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function CriaSX1
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0523X")
+	Local aHelp := {}
+	
+	//-> Texto do help em português,inglês, espanhol
+	AAdd(aHelp, {{"Venda De"                           }  ,{""},{""}})//1
+	AAdd(aHelp, {{"Venda Ate"                          }  ,{""},{""}})//2
+	AAdd(aHelp, {{"Do  Caixa"                          }  ,{""},{""}})//3
+	AAdd(aHelp, {{"Ate Caixa"                          }  ,{""},{""}})//4
+	AAdd(aHelp, {{"Tipo relatorio Analitico/Sintetico" }  ,{""},{""}})//5
+
+	u_SFPUTSX1(cPerg,"01","Venda De"  ,"","","mv_ch01" ,"D",08,00,00,"G","",""    ,"","","mv_par01",""         ,"","","",""         ,"","","","","","","","","","","" ,aHelp[1,1] ,aHelp[1,2] ,aHelp[1,3] ,"")
+	u_SFPUTSX1(cPerg,"02","Venda Ate" ,"","","mv_ch02" ,"D",08,00,00,"G","",""    ,"","","mv_par02",""         ,"","","",""         ,"","","","","","","","","","","" ,aHelp[2,1] ,aHelp[2,2] ,aHelp[2,3] ,"")
+	u_SFPUTSX1(cPerg,"03","Do Caixa"  ,"","","mv_ch03" ,"C",03,00,00,"G","","23"  ,"","","mv_par03",""         ,"","","",""         ,"","","","","","","","","","","" ,aHelp[3,1] ,aHelp[3,2] ,aHelp[3,3] ,"")
+	u_SFPUTSX1(cPerg,"04","Ate Caixa" ,"","","mv_ch04" ,"C",03,00,00,"G","","23"  ,"","","mv_par04",""         ,"","","",""         ,"","","","","","","","","","","" ,aHelp[4,1] ,aHelp[4,2] ,aHelp[4,3] ,"")
+	u_SFPUTSX1(cPerg,"05","Tipo"      ,"","","mv_ch05" ,"C",01,00,00,"C","",""    ,"","","mv_par05","Analitico","","","","Sintetico","","","","","","","","","","","" ,aHelp[5,1] ,aHelp[5,2] ,aHelp[5,3] ,"")
+	
+Return

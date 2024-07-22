@@ -1,0 +1,1677 @@
+#include "totvs.ch"
+#include "restful.ch"
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} Estornos Contabeis
+Declaracao do GET de Estornos Contabeis
+@type class
+@author Walmir Junior
+@since 06/01/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+WSRESTFUL estornocontabil DESCRIPTION 'endpoint Estornos Contabeis - VENUS ' FORMAT "application/json,text/html"
+    WSDATA Page              AS INTEGER OPTIONAL
+    WSDATA aQueryString      AS ARRAY    OPTIONAL
+    
+    WSMETHOD GET DESCRIPTION "Sincronização de dados via GET";
+        	WsSyntax "/GET/{method}"
+ 	WSMETHOD POST DESCRIPTION "Inclui Estornos Contabeis";
+ 			WsSyntax "/POST/{method}"
+ 	WSMETHOD PUT DESCRIPTION "Altera Estornos Contabeis";
+ 			WsSyntax "/PUT/{method}"
+	    
+END WSRESTFUL
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} GET Estornos Contábeis
+Metodo GET
+@type method
+@author Walmir Junior
+@since 08/01/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+WSMETHOD GET WSSERVICE estornocontabil
+Local _lRet := .T.
+
+Local _cFilter	:= ""
+Local _aFilters := {}
+Local _nPosTipo := 0
+    
+::SetContentType( 'application/json' )
+
+oEst := EstornoContabilAdapter():new( 'GET' )
+oEst:setPage(::page)
+oEst:setPageSize(200)
+oEst:setUrlFilter(::aQueryString)
+
+_cFilter	:= ::aQueryString[1,2]
+_aFilters	:= getFilters(_cFilter, "and")
+_nPosTipo	:= AScan(_aFilters, {|x| AllTrim(x[1]) == "tipo"})
+
+If Empty(_aFilters)
+	oEst:GetListEstornoContabil("C")
+Else
+	if _nPosTipo > 0
+		oEst:GetListEstornoContabil(_aFilters[_nPosTipo,2])
+	else
+		oEst:GetListEstornoContabil()
+	endIf
+Endif
+
+//Se tudo ocorreu bem, retorna os dados via Json
+If oEst:lOk
+	//::SetResponse(EncodeUTF8(oEst:getJSONResponse(), "cp1252"))
+	::SetResponse(oEst:getJSONResponse())
+Else
+	//Ou retorna o erro encontrado durante o processamento
+	SetRestFault(oEst:GetCode(),oEst:GetMessage())
+	lRet := .F.
+EndIf
+
+//faz a desalocacao de objetos e arrays utilizados
+oEst:DeActivate()
+oEst := nil
+
+Return _lRet
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} POST Estornos Contábeis
+Metodo POST estornocontabil
+@type method
+@author Walmir Junior
+@since 06/01/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+WSMETHOD POST WSRECEIVE RECEIVE WSSERVICE estornocontabil
+
+Local lRet		:= .T.
+Local oParseJSON:= Nil
+Local cJsonRet	:= ""
+Local cErro		:= ""
+Local cJSON		:= Self:GetContent() // Pega a string do JSON
+Local _cChvCT2	:= ""
+Local _cPercDsp	:= ""
+Local _aInfZAR	:= {}
+Local _nValEst	:= 0
+local oJsonRet := JsonObject():New()
+
+//Proteção para requisição sem conteúdo
+if ValType(cJson)=="U" .Or. Empty(cJson)
+	cErro := "ERRO: O conteudo (body) não foi encontrado"
+	SetRestFault(400, EncodeUTF8(cErro))
+	lRet := .F.
+	Return lRet
+endif
+
+//Deserializa a string JSON
+FWJsonDeserialize(cJson, @oParseJSON)
+
+If (Valtype(oParseJSON:estorno:tipo_estorno) == 'C' .AND. oParseJSON:estorno:tipo_estorno == 'F')
+
+	lRet := fIncFolha(oParseJSON:estorno, oJsonRet)
+	
+	If lRet 
+		cJSONRet := '{"msg":"'  + "Sucesso!"          + '"';
+		+ '}'
+		::SetResponse( cJSONRet )
+	Else
+		if oJsonRet:hasProperty("code")
+			SetRestFault(oJsonRet["code"], EncodeUTF8(oJsonRet["message"]))
+		else
+			SetRestFault(405, "ERRO: Não foi possível executar a inclusão na Tabela de Estornos.")
+		endIf
+		lRet := .F.
+		Return lRet
+	EndIf
+
+	Return lRet
+EndIf
+
+if Val(StrTran(StrTran(oParseJSON:estorno:valor_estorno,'.',''),',', '.')) <= 0
+	cErro := "ERRO: Não foi possível executar a inclusão na Tabela de Estornos."
+	SetRestFault(405, cErro,,,cErro)
+	lRet := .F.
+	Return lRet
+endIf
+
+DBSelectArea("ZAR")
+ZAR->(DbSetOrder(1)) //ZAR_FILIAL+ZAR_RECORI+ZAR_SEQEST
+
+_cChvCT2 :=	PADR(oParseJSON:estorno:lanctoPai:filial		,TamSX3( 'CT2_FILIAL'	)[1])+;
+			PADR(oParseJSON:estorno:lanctoPai:data			,TamSX3( 'CT2_DATA'		)[1])+;
+			PADR(oParseJSON:estorno:lanctoPai:lote			,TamSX3( 'CT2_LOTE'		)[1])+;
+			PADR(oParseJSON:estorno:lanctoPai:subLote		,TamSX3( 'CT2_SBLOTE'	)[1])+;
+			PADR(oParseJSON:estorno:lanctoPai:documento		,TamSX3( 'CT2_DOC'  	)[1])+;
+			PADR(oParseJSON:estorno:lanctoPai:linha			,TamSX3( 'CT2_LINHA'	)[1])+;
+			PADR(oParseJSON:estorno:lanctoPai:tipoSaldo		,TamSX3( 'CT2_TPSALD'	)[1])+;
+			PADR(oParseJSON:estorno:lanctoPai:empOriginal	,TamSX3( 'CT2_EMPORI'	)[1])+;
+			PADR(oParseJSON:estorno:lanctoPai:filial_original,TamSX3( 'CT2_FILORI'	)[1])+;
+			PADR(oParseJSON:estorno:lanctoPai:moeda			,TamSX3( 'CT2_MOEDLC'	)[1])
+
+ 
+_aInfZAR := GetNewSeq(oParseJSON:estorno:filial, _cChvCT2)
+
+_nValEst := Val(StrTran(StrTran(oParseJSON:estorno:valor_estorno,'.',''),',', '.'))
+
+if (_aInfZAR[2] + _nValEst) > POSICIONE("CT2",1,_cChvCT2,"CT2_VALOR")
+	cErro := "ERRO: Não foi possível executar a inclusão na Tabela de Estornos, verifique o valor informado!"
+	SetRestFault(405, cErro)
+	lRet := .F.
+	Return lRet
+endIf
+
+If !(ZAR->( DbSeek( oParseJSON:estorno:filial + _cChvCT2 + StrZero(_aInfZAR[1],3))))
+
+	If Reclock("ZAR", .T.)
+		REPLACE ZAR->ZAR_FILIAL WITH oParseJSON:estorno:filial
+		REPLACE ZAR->ZAR_TIPO	WITH oParseJSON:estorno:tipo_estorno
+		//CT2_FILIAL+DTOS(CT2_DATA)+CT2_LOTE+CT2_SBLOTE+CT2_DOC+CT2_LINHA+CT2_TPSALD+CT2_EMPORI+CT2_FILORI+CT2_MOEDLC --> //CT2_SEQLAN, CT2_SEQHIS
+		REPLACE ZAR->ZAR_CHVCT2 WITH _cChvCT2
+		REPLACE ZAR->ZAR_SEQEST	WITH StrZero(_aInfZAR[1],3)
+		REPLACE ZAR->ZAR_FILORI	WITH oParseJSON:estorno:lanctoPai:filial_original
+		REPLACE ZAR->ZAR_DTEST	WITH STOD(oParseJSON:estorno:lanctoPai:data)
+		REPLACE ZAR->ZAR_VLRORI WITH oParseJSON:estorno:lanctoPai:valor
+		REPLACE ZAR->ZAR_VLREST WITH _nValEst
+		REPLACE ZAR->ZAR_JUSTIF WITH oParseJSON:estorno:justificativa
+		REPLACE ZAR->ZAR_SITUAC WITH oParseJSON:estorno:situacao
+		//REPLACE ZAR->ZAR_ENTORI WITH oParseJSON:estorno:entidade_origem
+		//REPLACE ZAR->ZAR_ENTDES WITH oParseJSON:estorno:entidade_destino
+		REPLACE ZAR->ZAR_CTDORI WITH oParseJSON:estorno:lanctoPai:conta_debito
+		REPLACE ZAR->ZAR_CTDDES WITH oParseJSON:estorno:conta_debito_destino
+		REPLACE ZAR->ZAR_CTCORI WITH oParseJSON:estorno:lanctoPai:conta_credito
+		REPLACE ZAR->ZAR_CTCDES WITH oParseJSON:estorno:conta_credito_destino
+		REPLACE ZAR->ZAR_CCDORI	WITH oParseJSON:estorno:lanctoPai:centro_custo_debito
+		REPLACE ZAR->ZAR_CCDDES	WITH oParseJSON:estorno:cc_debito_destino
+		REPLACE ZAR->ZAR_CCCORI WITH oParseJSON:estorno:lanctoPai:centro_custo_credito
+		REPLACE ZAR->ZAR_CCCDES WITH oParseJSON:estorno:cc_credito_destino
+		REPLACE ZAR->ZAR_ITDORI WITH oParseJSON:estorno:lanctoPai:item_contabil_debito
+		REPLACE ZAR->ZAR_ITDDES WITH oParseJSON:estorno:itemCtbl_debito_destino
+		REPLACE ZAR->ZAR_ITCORI WITH oParseJSON:estorno:lanctoPai:item_contabil_credito
+		REPLACE ZAR->ZAR_ITCDES WITH oParseJSON:estorno:itemCtbl_credito_destino
+		REPLACE ZAR->ZAR_CVLDBO WITH oParseJSON:estorno:lanctoPai:classe_valor_debito
+		REPLACE ZAR->ZAR_CVLDBD WITH oParseJSON:estorno:lanctoPai:classe_valor_debito
+		REPLACE ZAR->ZAR_CVLCRO WITH oParseJSON:estorno:lanctoPai:classe_valor_credito
+		REPLACE ZAR->ZAR_CVLCRD WITH oParseJSON:estorno:lanctoPai:classe_valor_credito
+		REPLACE ZAR->ZAR_USREGI WITH oParseJSON:estorno:usuario_registro
+		REPLACE ZAR->ZAR_DTHREG WITH FWTimeStamp(1, DATE(), TIME())
+
+		ZAR->(MSUnLock())
+		
+		//Garantir o desbloqueio da tabela
+		Sleep( 1000 )
+
+		_cPercDsp := AllTrim(Str(Round(GetPercDisp(oParseJSON:estorno:filial, _cChvCT2),4)))
+
+		DbSelectArea("CT2")
+		CT2->(DbSetOrder(1)) //CT2_FILIAL+DTOS(CT2_DATA)+CT2_LOTE+CT2_SBLOTE+CT2_DOC+CT2_LINHA+CT2_TPSALD+CT2_EMPORI+CT2_FILORI+CT2_MOEDLC
+		CT2->(DbGotop())
+
+		If CT2->(DbSeek(_cChvCT2))
+			If RecLock("CT2",.F.)
+				CT2->CT2_XPERDS := SubStr(_cPercDsp,1,6)
+				CT2->(MSUnLock())
+			EndIf
+		EndIf
+
+	Else
+
+		cErro := "ERRO: Não foi possível executar a inclusão na Tabela de Estornos."
+		SetRestFault(405, cErro)
+		lRet := .F.
+		Return lRet
+
+	EndIf
+
+	cJSONRet := '{"msg":"'  + "Sucesso!"          + '"';
+	+ '}'
+	::SetResponse( cJSONRet )
+	
+Else
+	SetRestFault(405, "Estorno ja cadastrado: " + ZAR->ZAR_FILIAL + " - " + ZAR->ZAR_RECORI + " - " + ZAR->ZAR_SEQEST)
+	lRet := .F.
+EndIf
+
+Return(lRet)
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} fIncFolha
+Inclui reclassificação - Folha
+@type function
+@author Walmir Junior
+@since 30/03/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static Function fIncFolha(_oEstFo, oJsonRet)
+Local _lRet 	:= .T.
+Local cErro		:= ""
+Local _cChvZD7	:= ""
+Local _cChvZAU	:= ""
+Local _aInfZAR	:= {}
+Local _nValEst	:= 0
+
+Local _cAlLan	:= GetNextAlias()
+Local _cQryLan	:= ""
+
+if Val(StrTran(StrTran(_oEstFo:percentual_reclass,'.',''),',', '.')) <= 0
+	cErro := "ERRO: Não foi possível executar a inclusão na Tabela de Estornos."
+	SetRestFault(400, cErro,,,cErro)
+	lRet := .F.
+	Return lRet
+endIf
+
+If Select(_cAlLan) > 0
+	(_cAlLan)->(DbCloseArea())
+EndIf
+
+_cQryLan := " SELECT " + CRLF
+_cQryLan += " 	ZD7_MESANO, " + CRLF
+_cQryLan += "	ZD7_MAT, " + CRLF
+_cQryLan += "   ZD7_CTADEB, " + CRLF
+_cQryLan += "   CONTA_DEB, " + CRLF
+_cQryLan += "   ZD7_CC, " + CRLF
+_cQryLan += "   ZD7_ITEM, " + CRLF
+_cQryLan += "   SUM(ZD7_VALRAT) AS VALRAT " + CRLF
+_cQryLan += " FROM " + CRLF
+_cQryLan += "     (Select  " + CRLF
+_cQryLan += "         ZD7.ZD7_MAT, " + CRLF
+_cQryLan += "         CTT.CTT_DESC01 AS CENTRO_CUSTO, " + CRLF
+_cQryLan += "         CTD.CTD_DESC01 AS ITEM_CONTABIL, " + CRLF
+_cQryLan += "         ZD7_CTADEB, " + CRLF
+_cQryLan += "         CT1DEB.CT1_DESC01 AS CONTA_DEB, " + CRLF
+_cQryLan += "         ZD7_FILIAL, " + CRLF
+_cQryLan += "         ZD7_MESANO, " + CRLF
+_cQryLan += "         ZD7_VERBA, " + CRLF
+_cQryLan += "         ZD7_CC, " + CRLF
+_cQryLan += "         ZD7_ITEM, " + CRLF
+_cQryLan += "         ZD7_VALOR, " + CRLF
+_cQryLan += "         ZD7_PERC, " + CRLF
+_cQryLan += "         ZD7_VALRAT " + CRLF
+_cQryLan += "     From  " + CRLF
+_cQryLan += "         " + RetSqlName("ZD7") + " ZD7 INNER JOIN " + CRLF
+_cQryLan += "         " + RetSqlName("CTT") + " CTT ON CTT.D_E_L_E_T_ = ' ' AND SUBSTR(ZD7_FILIAL,1,4) = RTRIM(CTT_FILIAL) AND ZD7_CC = CTT_CUSTO INNER JOIN " + CRLF
+_cQryLan += "         " + RetSqlName("CTD") + " CTD ON CTD.D_E_L_E_T_ = ' ' AND SUBSTR(ZD7_FILIAL,1,4) = RTRIM(CTD_FILIAL) AND ZD7_ITEM = CTD_ITEM INNER JOIN " + CRLF
+_cQryLan += "         " + RetSqlName("CT1") + " CT1DEB ON CT1DEB.D_E_L_E_T_ = ' ' AND SUBSTR(ZD7_FILIAL,1,4) = RTRIM(CT1DEB.CT1_FILIAL) AND ZD7_CTADEB = CT1DEB.CT1_CONTA  " + CRLF
+_cQryLan += "         							AND CT1DEB.CT1_ACITEM = '1' AND CT1DEB.CT1_ACCUST = '1' " + CRLF
+_cQryLan += "     Where " + CRLF
+_cQryLan += "         ZD7.D_E_L_E_T_ = ' ' AND " + CRLF
+_cQryLan += "         SUBSTR(ZD7_FILRAT,1,4) = '" + SubStr(_oEstFo:filial,1,4) + "' AND " + CRLF
+_cQryLan += "         ZD7_MAT = '" + _oEstFo:lanctoPai:matricula + "' AND " + CRLF
+_cQryLan += "         ZD7_CC = '" + SubStr(_oEstFo:lanctoPai:centro_custo,1,at('-',_oEstFo:lanctoPai:centro_custo) - 1) + "' AND " + CRLF
+_cQryLan += "         ZD7_ITEM = '" + _oEstFo:ITEMCTBL_DEBITO_ORIGEM + "' AND " + CRLF
+_cQryLan += "         ZD7_MESANO = '" + _oEstFo:lanctoPai:periodo + "') " + CRLF
+_cQryLan += " GROUP BY ZD7_MESANO, ZD7_MAT, ZD7_CTADEB, CONTA_DEB, ZD7_CC, ZD7_ITEM " + CRLF
+_cQryLan += " HAVING SUM(ZD7_VALRAT) > 0 " + CRLF
+_cQryLan := ChangeQuery(_cQryLan)
+
+dbUseArea(.T., "TOPCONN", TcGenQry(,,_cQryLan), _cAlLan, .F., .T.)
+
+DbSelectArea(_cAlLan)
+(_cAlLan)->(DbGoTop())
+
+Begin Transaction
+
+If (_cAlLan)->(!Eof())
+	_cChvZD7 :=	"ZD7-" + FWTimeStamp(1, DATE(), TIME()) + "-" + (_cAlLan)->ZD7_MESANO + "-" + (_cAlLan)->ZD7_MAT 
+
+	_aInfZAR := GetNewSeq(_oEstFo:filial, _cChvZD7)
+EndIf
+
+While (_cAlLan)->(!Eof())
+
+	_cChvZAU := PADR(SubStr(_oEstFo:filial,1,4)		,TamSX3( 'ZAU_FILIAL'	)[1])+;
+							PADR(_oEstFo:filial					,TamSX3( 'ZAU_FILORI'	)[1])+;
+							PADR(_oEstFo:lanctoPai:matricula	,TamSX3( 'ZAU_MATRIC'	)[1])+;
+							PADR(_oEstFo:lanctoPai:periodo		,TamSX3( 'ZAU_PERIOD'	)[1])+;
+							PADR((_cAlLan)->ZD7_CTADEB			,TamSX3( 'ZAU_CONDOR'	)[1])+;
+							PADR(SubStr(_oEstFo:lanctoPai:centro_custo,1,at('-',_oEstFo:lanctoPai:centro_custo) - 1),TamSX3( 'ZAU_CCDORI'	)[1])+;
+							PADR(_oEstFo:itemctbl_debito_origem	,TamSX3( 'ZAU_ITMDOR'	)[1])
+	
+	DBSelectArea("ZAR")
+	ZAR->(DbSetOrder(1)) //ZAR_FILIAL+ZAR_RECORI+ZAR_SEQEST
+
+	_nValEst := NoRound(NoRound((_cAlLan)->VALRAT,5) * Val(_oEstFo:PERCENTUAL_RECLASS),5) / 100
+
+	_cPercDsp := AllTrim(Str(NoRound(GetPrcFol(_oEstFo:filial, _cChvZAU, _nValEst,(_cAlLan)->VALRAT),5)))
+	If Val(_cPercDsp) > 0
+		If !(ZAR->( DbSeek( _oEstFo:filial + _cChvZD7 + StrZero(_aInfZAR[1],3))))
+
+			If Reclock("ZAR", .T.)
+				REPLACE ZAR->ZAR_FILIAL WITH SubStr(_oEstFo:filial,1,4)
+				REPLACE ZAR->ZAR_TIPO	WITH _oEstFo:tipo_estorno
+				//CT2_FILIAL+DTOS(CT2_DATA)+CT2_LOTE+CT2_SBLOTE+CT2_DOC+CT2_LINHA+CT2_TPSALD+CT2_EMPORI+CT2_FILORI+CT2_MOEDLC
+				REPLACE ZAR->ZAR_CHVCT2 WITH _cChvZD7
+				REPLACE ZAR->ZAR_SEQEST	WITH StrZero(_aInfZAR[1],3)
+				REPLACE ZAR->ZAR_FILORI	WITH _oEstFo:filial
+				REPLACE ZAR->ZAR_VLRORI WITH (_cAlLan)->VALRAT
+				REPLACE ZAR->ZAR_VLREST WITH NoRound(_nValEst,2)
+				REPLACE ZAR->ZAR_JUSTIF WITH "RECLAS.FPG-" + (_cAlLan)->ZD7_MESANO + "-" + (_cAlLan)->ZD7_MAT + "-" +;
+											_oEstFo:PERCENTUAL_RECLASS + "% - " + AllTrim((_cAlLan)->CONTA_DEB)
+				REPLACE ZAR->ZAR_SITUAC WITH _oEstFo:situacao
+				REPLACE ZAR->ZAR_CTDORI WITH (_cAlLan)->ZD7_CTADEB
+				REPLACE ZAR->ZAR_CTDDES WITH (_cAlLan)->ZD7_CTADEB
+				REPLACE ZAR->ZAR_CCDORI	WITH SubStr(_oEstFo:lanctoPai:centro_custo,1,at('-',_oEstFo:lanctoPai:centro_custo) - 1)
+				REPLACE ZAR->ZAR_CCDDES	WITH _oEstFo:cc_debito_destino
+				REPLACE ZAR->ZAR_ITDORI WITH _oEstFo:itemctbl_debito_origem
+				REPLACE ZAR->ZAR_ITDDES WITH _oEstFo:itemCtbl_debito_destino
+				REPLACE ZAR->ZAR_USREGI WITH _oEstFo:usuario_registro
+				REPLACE ZAR->ZAR_DTHREG WITH FWTimeStamp(1, DATE(), TIME())
+				REPLACE ZAR->ZAR_CHVZAU WITH	PADR(SubStr(_oEstFo:filial,1,4)		,TamSX3( 'ZAU_FILIAL'	)[1])+;
+												PADR(_oEstFo:filial					,TamSX3( 'ZAU_FILORI'	)[1])+;
+												PADR(_oEstFo:lanctoPai:matricula	,TamSX3( 'ZAU_MATRIC'	)[1])+;
+												PADR(_oEstFo:lanctoPai:periodo		,TamSX3( 'ZAU_PERIOD'	)[1])+;
+												PADR((_cAlLan)->ZD7_CTADEB			,TamSX3( 'ZAU_CONDOR'	)[1])+;
+												PADR(SubStr(_oEstFo:lanctoPai:centro_custo,1,at('-',_oEstFo:lanctoPai:centro_custo) - 1),TamSX3( 'ZAU_CCDORI'	)[1])+;
+												PADR(_oEstFo:itemctbl_debito_origem	,TamSX3( 'ZAU_ITMDOR'	)[1])
+
+				ZAR->(MSUnLock())
+
+				_aInfZAR[1]++
+				
+				//Garantir o desbloqueio da tabela
+				Sleep( 1000 )
+				
+				_cChvZAU := PADR(SubStr(_oEstFo:filial,1,4)		,TamSX3( 'ZAU_FILIAL'	)[1])+;
+							PADR(_oEstFo:filial					,TamSX3( 'ZAU_FILORI'	)[1])+;
+							PADR(_oEstFo:lanctoPai:matricula	,TamSX3( 'ZAU_MATRIC'	)[1])+;
+							PADR(_oEstFo:lanctoPai:periodo		,TamSX3( 'ZAU_PERIOD'	)[1])+;
+							PADR((_cAlLan)->ZD7_CTADEB			,TamSX3( 'ZAU_CONDOR'	)[1])+;
+							PADR(SubStr(_oEstFo:lanctoPai:centro_custo,1,at('-',_oEstFo:lanctoPai:centro_custo) - 1),TamSX3( 'ZAU_CCDORI'	)[1])+;
+							PADR(_oEstFo:itemctbl_debito_origem	,TamSX3( 'ZAU_ITMDOR'	)[1])
+
+				DbSelectArea("ZAU")
+				ZAU->(DbSetOrder(1))
+				ZAU->(DbGotop())
+
+				If !ZAU->(DbSeek(_cChvZAU))
+					If RecLock("ZAU",.T.)
+						ZAU->ZAU_FILIAL := SubStr(_oEstFo:filial,1,4)
+						ZAU->ZAU_FILORI := _oEstFo:filial
+						ZAU->ZAU_MATRIC := _oEstFo:lanctoPai:matricula
+						ZAU->ZAU_PERIOD := _oEstFo:lanctoPai:periodo
+						ZAU->ZAU_CONDOR := (_cAlLan)->ZD7_CTADEB
+						ZAU->ZAU_CCDORI := SubStr(_oEstFo:lanctoPai:centro_custo,1,at('-',_oEstFo:lanctoPai:centro_custo) - 1)
+						ZAU->ZAU_ITMDOR := _oEstFo:itemctbl_debito_origem
+						ZAU->ZAU_PERCDS := If(Val(_cPercDsp) == 100, _cPercDsp, AllTrim(Str(Round(Val(_cPercDsp),0))))
+						ZAU->ZAU_VALOR	:= (_cAlLan)->VALRAT
+						ZAU->(MSUnLock())
+					EndIf
+				Else
+					If RecLock("ZAU",.F.)
+						ZAU->ZAU_PERCDS := AllTrim(Str(Round(Val(_cPercDsp),0)))
+						ZAU->(MSUnLock())
+					EndIf
+				EndIf
+
+			Else
+				cErro := "ERRO: Não foi possível executar a inclusão na Tabela de Estornos."
+				conout(cErro)
+				SetRestFault(400, cErro)
+				lRet := .F.
+				Return lRet
+			EndIf
+		Else
+			conout("Estorno ja cadastrado: " + ZAR->ZAR_FILIAL + " - " + ZAR->ZAR_RECORI + " - " + ZAR->ZAR_SEQEST)
+			SetRestFault(400, "Estorno ja cadastrado: " + ZAR->ZAR_FILIAL + " - " + ZAR->ZAR_RECORI + " - " + ZAR->ZAR_SEQEST)
+			DisarmTransaction()
+			lRet := .F.
+			Return lRet
+		EndIf
+	else
+		oJsonRet["code"] := 400
+		oJsonRet["message"] := "Não há percentual disponível para incluir o estorno."
+		conout("Não há percentual disponível para incluir o estorno.")
+		//SetRestFault(400, EncodeUTF8("Não há percentual disponível para incluir o estorno."))
+		DisarmTransaction()
+		lRet := .F.
+		Return lRet
+	endif
+
+	(_cAlLan)->(DBSkip())
+EndDo
+
+End Transaction
+
+Return _lRet
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} Estornos Contabeis
+Declaracao do PUT de Estornos Contabeis
+@type method
+@author Walmir Junior
+@since 06/01/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+WSMETHOD PUT WSRECEIVE RECEIVE WSSERVICE estornocontabil
+Local cJSON 		:= Self:GetContent() // –> Pega a string do JSON
+Local lRet  		:= .T.
+Local oParseJSON	:= Nil
+Local cJsonRet		:= ""
+Local cArqLog     	:= ""
+Local cErro       	:= "" 
+Local _cChvZAR		:= ""
+Local _cPerm		:= SuperGetMv( "MV_XVNAPRO", .F., "YYYYYY" )
+Local _cMsg			:= ""
+Local _cSitu		:= ""
+Local _cFilCt		:= ""
+Local _cFilAux		:= ""
+
+Local _aCab			:= {}
+Local _aItens		:= {}
+Local _nCont		:= 0
+Local _nLinha		:= 0
+local nSeq := 0
+Local _cAux			:= ""
+Local _cHist		:= ""
+
+Local _cPercDsp		:= ""
+
+Local _aHist		:= {}
+
+Local _lErroEE 		:= .F.
+
+Local _cDOC			:= STRZERO( seconds() ,6)
+
+Local _aFolPg		:= {}
+Local _nB			:= 0
+Local _nLnFol		:= 0
+Local _nF			:= 0
+
+Private lMsErroAuto := .F.
+
+Private _aItensContra := {}
+
+Private _aLancFol := {}
+
+
+If !ExistDir("\log_cli")
+	MakeDir("\log_cli")
+EndIf
+
+::SetContentType("application/json")
+
+// –> Deserializa a string JSON
+
+FWJsonDeserialize(cJson, @oParseJSON)
+
+If Empty(Len(oParseJSON))
+	SetRestFault(405, EncodeUTF8("Registros não encontrados!"), "cp1252")
+	Return .F.
+EndIf
+
+_cSitu 			:= AllTrim(oParseJSON[1]:situacao)
+_cTipoEstorno	:= AllTrim(oParseJSON[1]:tipo)
+
+If _cSitu == "A"
+
+	_aCab			:= {{'DDATALANC'	,stod(oParseJSON[1]:data_base)	,NIL},;
+						{'CLOTE' 		,'VENUS' 						,NIL},;
+						{'CSUBLOTE' 	,'001' 							,NIL},;
+						{'CPADRAO' 		,''								,NIL},;
+						{'NTOTINF' 		,0 								,NIL},;
+						{'NTOTINFLOT' 	,0 								,NIL}}
+
+	//Walmir Junior	- Controla a ultima posição do lote por entidade.
+	Do Case
+
+		Case SubStr(oParseJSON[1]:filial,2,1) == '1'
+			_aCab[2][2] += "F"
+
+		Case SubStr(oParseJSON[1]:filial,2,1) == '2'
+			_aCab[2][2] += "S"
+
+		Case SubStr(oParseJSON[1]:filial,2,1) == '3'
+			_aCab[2][2] += "N"
+			
+		Case SubStr(oParseJSON[1]:filial,2,1) == '4'
+			_aCab[2][2] += "I"		
+
+		Case SubStr(oParseJSON[1]:filial,2,1) == '5'
+			_aCab[2][2] += "C"
+
+		OtherWise
+			_aCab[2][2] += "X"
+			
+	EndCase
+
+EndIf
+
+//Verifica se o usuário tem permissão para aprovação do estorno.
+If !(AllTrim(oParseJSON[1]:usuario_aprovacao) $ _cPerm) .and. _cSitu <> "E"
+	_cMsg := Iif(	_cSitu == "A",;
+					"Usuário sem permissão para APROVAR estornos contábeis.",;
+					"Usuário sem permissão para REPROVAR estornos contábeis.")
+
+	cJSONRet := '{	"msg":"'   		+ EncodeUTF8(_cMsg, "cp1252")  + '"';
+					+ Iif(_cSitu == "A",;
+							',"status_aprovacao":"'	+ EncodeUTF8("Não Aprovado"	, "cp1252")+'"',;
+							',"status_reprovacao":"'+ EncodeUTF8("Não Reprovado", "cp1252")+'"');
+				+'}'
+	::SetResponse( cJSONRet )
+	
+	Return lRet
+EndIf
+
+//Se for aprovação, valida registros da mesma filial.
+For _nCont := 1 To Len(oParseJSON)
+	if _cSitu $ "E/R"
+		exit
+	elseif Empty(_cAux) .And. _cSitu == "A"
+		_cAux := SubStr(oParseJSON[_nCont]:filial_original,1,4)
+	elseIf _cAux != SubStr(oParseJSON[_nCont]:filial_original,1,4) .And. _cSitu == "A"
+		cJSONRet :=	'{	  "msg":"'				+ EncodeUTF8("Você só pode aprovar estornos de uma mesma 'entidade' por vez.", "cp1252")  + '"' +;
+						',"status_aprovacao":"'	+ EncodeUTF8("Não Aprovado"	, "cp1252")+'"' +;
+					'}'
+		::SetResponse( cJSONRet )
+	
+		Return lRet
+	endIf
+Next _nCont
+
+_nCont = 0
+
+DBSelectArea("ZAR")
+ZAR->(DbSetOrder(1)) //ZAR_FILIAL+ZAR_TIPO+ZAR_CHVCT2+ZAR_SEQEST
+
+Begin Transaction
+
+	For _nCont := 1 To Len(oParseJSON)
+
+		_cFilCt := oParseJSON[_nCont]:filial_original
+		_cSitu 	:= AllTrim(oParseJSON[_nCont]:situacao)
+
+		//Se Aprovação, monta histórico do lançamento
+		If _cSitu == "A" 
+			
+			If AllTrim(oParseJSON[_nCont]:tipo) != 'F'
+
+				_cHist := "RECLAS/VENUS-"
+
+				DbSelectArea("CT2")
+				DbSetOrder(1) //CT2_FILIAL+DTOS(CT2_DATA)+CT2_LOTE+CT2_SBLOTE+CT2_DOC+CT2_LINHA+CT2_TPSALD+CT2_EMPORI+CT2_FILORI+CT2_MOEDLC
+				DbGotop()
+			
+				If CT2->(DbSeek(AllTrim(oParseJSON[_nCont]:chave_ct2)))
+					While .Not. CT2->(EOF()) .And. CT2->(CT2_FILIAL)+DTOS(CT2->(CT2_DATA))+CT2->(CT2_LOTE)+CT2->(CT2_SBLOTE)+CT2->(CT2_DOC)+CT2->(CT2_LINHA) ==;
+							SubStr(AllTrim(oParseJSON[_nCont]:chave_ct2),1,34)
+
+							_cHist += AllTrim(CT2->(CT2_HIST))
+							
+							CT2->(DBSkip())
+					EndDo
+				EndIf
+
+				_cChvZAR := PADR(oParseJSON[_nCont]:filial		,TamSX3( 'ZAR_FILIAL'	)[1])+;
+						PADR(oParseJSON[_nCont]:tipo		,TamSX3( 'ZAR_TIPO'		)[1])+;
+						PADR(oParseJSON[_nCont]:chave_ct2	,TamSX3( 'ZAR_CHVCT2'	)[1])+;
+						PADR(oParseJSON[_nCont]:sequencia	,TamSX3( 'ZAR_SEQEST'	)[1])
+
+			ElseIf AllTrim(oParseJSON[_nCont]:tipo) == 'F'
+				_cHist := oParseJSON[_nCont]:justificativa // Adicionar regra de reclassificação 
+
+				//Carrega array de objetos de Folha de Pagamentos
+				_aFolPg := getFolPg(oParseJSON[_nCont]:chave_ct2,oParseJSON[_nCont]:usuario_aprovacao,'A')
+
+				_cChvZAR := Iif( Len(_aFolPg) >= 1, PADR(_aFolPg[1]:filial		,TamSX3( 'ZAR_FILIAL'	)[1])+;
+													PADR(_aFolPg[1]:tipo		,TamSX3( 'ZAR_TIPO'		)[1])+;
+													PADR(_aFolPg[1]:chave_ct2	,TamSX3( 'ZAR_CHVCT2'	)[1])+;
+													PADR(_aFolPg[1]:sequencia	,TamSX3( 'ZAR_SEQEST'	)[1]), "")
+			Else
+				_cMsg := "Existe um erro na lista de reclassificações recebidas!"
+				cJSONRet := '{		"filial":"' 	+ oParseJSON[_nCont]:filial + '"';
+								+ ',"msg":"'   		+  EncodeUTF8(_cMsg, "cp1252")  + '"';
+								+ ',"status_aprovacao":"Não Aprovado/Reprovado"';
+								+'}'
+				::SetResponse( cJSONRet )
+
+				lRet := .F.
+
+				DisarmTransaction()
+
+				Return lRet
+			EndIf
+		ElseIf _cSitu $ "E/R" 
+			if AllTrim(oParseJSON[_nCont]:tipo) == 'F'
+				//Carrega array de objetos de Folha de Pagamentos
+				_aFolPg := getFolPg(oParseJSON[_nCont]:chave_ct2,oParseJSON[_nCont]:usuario_aprovacao, _cSitu)
+
+				_cChvZAR := Iif( Len(_aFolPg) >= 1, PADR(_aFolPg[1]:filial		,TamSX3( 'ZAR_FILIAL'	)[1])+;
+													PADR(_aFolPg[1]:tipo		,TamSX3( 'ZAR_TIPO'		)[1])+;
+													PADR(_aFolPg[1]:chave_ct2	,TamSX3( 'ZAR_CHVCT2'	)[1])+;
+													PADR(_aFolPg[1]:sequencia	,TamSX3( 'ZAR_SEQEST'	)[1]), "")
+			else
+				_cChvZAR := PADR(oParseJSON[_nCont]:filial		,TamSX3( 'ZAR_FILIAL'	)[1])+;
+						PADR(oParseJSON[_nCont]:tipo		,TamSX3( 'ZAR_TIPO'		)[1])+;
+						PADR(oParseJSON[_nCont]:chave_ct2	,TamSX3( 'ZAR_CHVCT2'	)[1])+;
+						PADR(oParseJSON[_nCont]:sequencia	,TamSX3( 'ZAR_SEQEST'	)[1])
+			endif
+		EndIf
+
+		_nLinha++
+		_nLnFol := 1
+					
+		If ZAR->( DbSeek( _cChvZAR ))
+				
+			//Chama rotina de lançamento contábil de estorno.
+			If _cSitu == "A" .AND. ZAR->ZAR_SITUAC == 'P'
+				
+				_aHist	:= GetArrayHist(_cHist)
+
+				//Se estorno de Produtos e Serviços
+				if oParseJSON[_nCont]:tipo == 'P'
+					_nLinha := getEstPS(oParseJSON[_nCont], @_aItens, _nLinha, _aHist)
+				//Se estorno de P&S Entre Empresas
+				elseIf oParseJSON[_nCont]:tipo == 'E'
+					_nLinha := getEstEE(oParseJSON[_nCont], @_aItens, _nLinha, _aHist)
+				//Se estorno de Folha de Pagamentos
+				elseIf _aFolPg[_nCont]:tipo == 'F'
+					For _nB := 1 To Len(_aFolPg)
+
+						// Trata numero da linha para haver coerencia entre as linhas do aItem e os itens
+						// da reclassificação de acordo com o rateio contábil da folha de pagamentos.
+						_nLinha := Iif(_nLnFol == 1, _nLinha, _nLinha + 1)
+						_nLnFol++ 
+
+						//Gera item no aItem de acordo com os lançamentos do rateio da folha.
+						_nLinha := getEstFOL(_aFolPg[_nB], @_aItens, _nLinha, _aHist)
+
+					Next _nB
+				endIf
+
+			ElseIf _cSitu == "R" .AND. ZAR->ZAR_SITUAC == 'P' .AND. oParseJSON[_nCont]:tipo != 'F'
+				
+				If Reclock("ZAR", .F.)
+					REPLACE ZAR->ZAR_SITUAC WITH oParseJSON[_nCont]:situacao
+					REPLACE ZAR->ZAR_USAPRO WITH oParseJSON[_nCont]:usuario_aprovacao
+					REPLACE ZAR->ZAR_DTHAPR WITH FWTimeStamp(1, DATE(), TIME())
+					MSUnLock("ZAR")
+				Else
+					cArqLog := oParseJSON[_nCont]:chave_ct2 + " – " + SubStr( Time(),1,5 ) + ".log"
+					cErro := "Não foi possível atualizar o registro."
+					SetRestFault(405, cErro)
+											
+					lRet := .F.
+
+					DisarmTransaction()
+
+				EndIf
+				
+				//Garantir o desbloqueio da tabela
+				Sleep( 1000 )
+
+				//Obtem percentual disponível para apresentação no Vênus
+				_cPercDsp := AllTrim(Str(Round(GetPercDisp(oParseJSON[_nCont]:filial, AllTrim(oParseJSON[_nCont]:chave_ct2)),4)))
+
+				DbSelectArea("CT2")
+				CT2->(DbSetOrder(1)) //CT2_FILIAL+DTOS(CT2_DATA)+CT2_LOTE+CT2_SBLOTE+CT2_DOC+CT2_LINHA+CT2_TPSALD+CT2_EMPORI+CT2_FILORI+CT2_MOEDLC
+				CT2->(DbGotop())
+
+				If CT2->(DbSeek(AllTrim(oParseJSON[_nCont]:chave_ct2)))
+					If RecLock("CT2",.F.)
+						CT2->CT2_XPERDS := SubStr(_cPercDsp,1,6)
+						CT2->(MSUnLock())
+					EndIf
+				EndIf
+
+			ElseIf _cSitu == "R" .AND. ZAR->ZAR_SITUAC == 'P' .AND. oParseJSON[_nCont]:tipo == 'F'
+				if !AtualizaEstornos(_aFolPg, 'REPROV')
+					cArqLog := _aFolPg[_nB]:chave_ct2 + " – " + SubStr( Time(),1,5 ) + ".log"
+					cErro := "Não foi possível atualizar o registro."
+					SetRestFault(405, cErro)
+											
+					lRet := .F.
+
+					DisarmTransaction()
+					
+					exit
+
+				endIf
+			ElseIf _cSitu == "E"
+				if oParseJSON[_nCont]:tipo == 'F'
+					For nSeq := 1 To Len(_aFolPg)
+						_cChZAR := PADR(_aFolPg[nSeq]:filial		,TamSX3( 'ZAR_FILIAL'	)[1])+;
+									PADR(_aFolPg[nSeq]:tipo		,TamSX3( 'ZAR_TIPO'		)[1])+;
+									PADR(_aFolPg[nSeq]:chave_ct2	,TamSX3( 'ZAR_CHVCT2'	)[1])+;
+									PADR(_aFolPg[nSeq]:sequencia	,TamSX3( 'ZAR_SEQEST'	)[1])
+
+						DBSelectArea("ZAR")
+						ZAR->(DbSetOrder(1))
+						ZAR->(DbGoTop())					
+						
+						if ZAR->( DbSeek( _cChZAR ))
+							if Reclock("ZAR", .F.)
+								dbDelete()
+								MSUnLock("ZAR")
+							else
+								cArqLog := _aFolPg[nSeq]:chave_ct2 + " – " + SubStr( Time(),1,5 ) + ".log"
+								cErro := "Não foi possível atualizar o registro."
+								SetRestFault(405, cErro, , , cErro)
+								_lRet := .F.
+								Return _lRet
+							endIf
+						endIf
+					Next nSeq
+				else
+					If Reclock("ZAR", .F.)
+						dbDelete()
+						MSUnLock("ZAR")
+					Else
+						cArqLog := oParseJSON[_nCont]:chave_ct2 + " – " + SubStr( Time(),1,5 ) + ".log"
+						cErro := "Não foi possível atualizar o registro."
+						SetRestFault(405, cErro)
+						lRet := .F.
+						DisarmTransaction()
+					EndIf
+					//Garantir o desbloqueio da tabela
+					Sleep( 1000 )
+					//Obtem percentual disponível para apresentação no Vênus
+					_cPercDsp := AllTrim(Str(Round(GetPercDisp(oParseJSON[_nCont]:filial, AllTrim(oParseJSON[_nCont]:chave_ct2)),4)))
+					DbSelectArea("CT2")
+					CT2->(DbSetOrder(1)) //CT2_FILIAL+DTOS(CT2_DATA)+CT2_LOTE+CT2_SBLOTE+CT2_DOC+CT2_LINHA+CT2_TPSALD+CT2_EMPORI+CT2_FILORI+CT2_MOEDLC
+					CT2->(DbGotop())
+					If CT2->(DbSeek(AllTrim(oParseJSON[_nCont]:chave_ct2)))
+						If RecLock("CT2",.F.)
+							CT2->CT2_XPERDS := SubStr(_cPercDsp,1,6)
+							CT2->(MSUnLock())
+						EndIf
+					EndIf
+				endif
+			Else
+				conout('>>>> else [' + Str(_nCont) + "] "	+ ZAR->ZAR_FILIAL + '"';
+															+ ',"chave_ct2":"'  + ZAR->ZAR_CHVCT2 + '"';
+															+ ',"sequencia":"'  + ZAR->ZAR_SEQEST + "")
+
+				_cMsg := "Não foi possível efetuar o lançamento de contabil de estorno."
+				cJSONRet := '{		"filial":"' 	+ ZAR->ZAR_FILIAL + '"';
+								+ ',"chave_ct2":"'  + ZAR->ZAR_CHVCT2 + '"';
+								+ ',"sequencia":"'  + ZAR->ZAR_SEQEST + '"';
+								+ ',"msg":"'   		+  EncodeUTF8(_cMsg, "cp1252")  + '"';
+								+ ',"status_aprovacao":"Não Aprovado/Reprovado"';
+								+'}'
+				::SetResponse( cJSONRet )
+				lRet := .F.
+				DisarmTransaction()
+				Return lRet
+			EndIf
+		EndIf
+		conout('>>>> proc [' + Str(_nCont) + "] next")
+	Next _nCont
+
+	if _cSitu == "A" .AND. LEN(_aItens) > 0
+		//Walmir Junior 18/02/2021 - Controle de Filial para execução da rotina automática.
+		if _cTipoEstorno $ "E#P#F"
+			_cFilAux := cFilAnt
+			//Para estorno entre empresas, altera filial para DR (Apenais SESI e SENAI)
+			U_SF0205X(cEmpAnt, Iif(SubStr(_cFilCt,1,4) == '02MT','02MT0001','03MT0001'))
+		else
+			//Limpa variável pra não executar rotina voltando a filial.
+			_cFilCt := ""
+		endIf
+		_lErroEE := .F.
+		
+		//Contabiliza reclassificação
+		MSExecAuto( {|X,Y,Z| CTBA102(X,Y,Z)} ,_aCab ,_aItens, 3)
+
+		if !lMsErroAuto	
+			if _cTipoEstorno == "E"
+				_aCab[2][2] := Iif(SubStr(_cFilCt,1,4) == '02MT','VENUSN','VENUSS')
+				//Para estorno entre empresas, altera para o DR contra do lançamento (Apenais SESI e SENAI)
+				U_SF0205X(cEmpAnt, Iif(SubStr(_cFilCt,1,4) == '02MT','03MT0001','02MT0001'))	
+				//Contabiliza contra no caso de entre empresas
+				MSExecAuto( {|X,Y,Z| CTBA102(X,Y,Z)} ,_aCab ,_aItensContra, 3)
+				If lMsErroAuto
+					//Sinaliza erro na segundo lote do entre empresas
+					_lErroEE := .T.
+				EndIf
+			endIf
+		endIf
+
+		if lMsErroAuto
+			lRet := .T.
+			private _aMsgErr := {}
+			_aMsgErr := GetErroExecAuto()
+			cJSONRet :=		'{	"status_aprovacao":"ERRO"';
+						+	', "msg":"'+ EncodeUTF8(AllTrim(_aMsgErr[2]), "cp1252") +'"' + ',"msgerp": { "content": "'+ EncodeUTF8(AllTrim(_aMsgErr[1]), "cp1252") +'" } ';
+						+	'}'
+			::SetResponse( cJSONRet )
+			DisarmTransaction()	
+			Return lRet
+		elseIf !_lErroEE	
+			_cDOC := fGetDoc(xFilial("CTF"), _aCab[1][2], _aCab[2][2], _aCab[3][2])
+			//Chama função para atualização da situação dos registros de estorno
+			if oParseJSON[1]:tipo != 'F'
+				AtualizaEstornos(oParseJSON, _cDOC)
+			else
+				For _nF := 1 to Len(oParseJSON)
+					//Carrega array de objetos de Folha de Pagamentos
+					_aFolPg := {}
+					_aFolPg := getFolPg(oParseJSON[_nF]:chave_ct2,oParseJSON[_nF]:usuario_aprovacao,'A')		
+					AtualizaEstornos(_aFolPg, _cDOC)
+				Next _nF
+			endIf
+			lRet := .T.
+			cJSONRet := '{ "status_aprovacao":"OK"';
+						+' }'
+			::SetResponse( cJSONRet )
+		endIf
+	elseif _cSitu == "R"
+			lRet := .T.
+			cJSONRet := '{ "status_reprovacao":"OK"';
+						+' }'
+			::SetResponse( cJSONRet )
+	elseif _cSitu == "E"
+			lRet := .T.
+			cJSONRet := '{ "status_exclusão":"OK"';
+						+' }'
+			::SetResponse( cJSONRet )
+	endIf
+
+End Transaction
+
+//Walmir Junior 18/02/2021 - Retorna a Filial anterior.
+If !Empty(_cFilCt)
+	U_SF0205X(cEmpAnt, _cFilAux)
+EndIf
+
+Return lRet
+
+/*/{Protheus.doc} fGetDoc
+Função para buscar o numero do documento utilizado no lançamento contábil.
+Atualmente, busca o ultimo registro utilizado na tabela CTF -Numeração de Documento
+seguindo a chave CTF_FILIAL+DTOS(CTF_DATA)+CTF_LOTE+CTF_SBLOTE
+@type  Static Function
+@author Franklin de Brito de Oliveira
+@since 11/10/2022
+@version version
+@param cFilPes, charactere, Filial a ser pesquisada
+@param dDataPes, date, data a ser pesquisada
+@param cLotePes, charactere, Lote a ser pesquisado
+@param cSbLoPes, charactere, SubLote a ser pesquisado
+@return charactere, Numero do documento
+/*/
+Static Function fGetDoc(cFilPes, dDataPes, cLotePes, cSbLoPes)
+	Local cNumDoc := ""
+	Local cCTFTemp := GetNextAlias()
+	BeginSql alias cCTFTemp
+		SELECT
+			MAX(CTF_DOC) AS CTF_DOC
+		FROM
+			%table:CTF% CTF
+		WHERE
+			CTF.CTF_FILIAL= %exp:cFilPes% AND
+			CTF.CTF_DATA = %exp:dDataPes% AND
+			CTF.CTF_LOTE = %exp:cLotePes% AND
+			CTF.CTF_SBLOTE = %exp:cSbLoPes% AND
+			CTF.CTF_USADO = 'S' AND
+			CTF.%notDel% 
+	EndSql
+	if !(cCTFTemp)->(EoF())
+		cNumDoc := (cCTFTemp)->CTF_DOC
+	endif
+	(cCTFTemp)->(DbCloseArea())
+Return cNumDoc
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} AtualizaEstornos
+Atualiza os estornos contábeis
+@type function
+@author Walmir Junior
+@since 12/03/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static Function AtualizaEstornos(pAEst, pDoc)
+Local _lRet		:=	.T.
+Local _nCnt		:=	0
+Local _cChZAR	:=	""
+
+For _nCnt := 1 To Len(pAEst)
+
+	_cChZAR := PADR(pAEst[_nCnt]:filial		,TamSX3( 'ZAR_FILIAL'	)[1])+;
+				PADR(pAEst[_nCnt]:tipo		,TamSX3( 'ZAR_TIPO'		)[1])+;
+				PADR(pAEst[_nCnt]:chave_ct2	,TamSX3( 'ZAR_CHVCT2'	)[1])+;
+				PADR(pAEst[_nCnt]:sequencia	,TamSX3( 'ZAR_SEQEST'	)[1])
+
+	DBSelectArea("ZAR")
+	ZAR->(DbSetOrder(1))
+	ZAR->(DbGoTop())					
+	
+	if ZAR->( DbSeek( _cChZAR ))
+		if Reclock("ZAR", .F.)
+			
+			REPLACE ZAR->ZAR_SITUAC WITH pAEst[_nCnt]:situacao
+			REPLACE ZAR->ZAR_USAPRO WITH pAEst[_nCnt]:usuario_aprovacao
+			REPLACE ZAR->ZAR_DTHAPR WITH FWTimeStamp(1, DATE(), TIME())
+			REPLACE ZAR->ZAR_DOCAPR WITH pDoc
+			MSUnLock("ZAR")
+
+			If pDoc == 'REPROV'
+				Sleep( 1000 )
+			EndIf
+
+		else
+			cArqLog := pAEst[_nCnt]:chave_ct2 + " – " + SubStr( Time(),1,5 ) + ".log"
+			cErro := "Não foi possível atualizar o registro."
+			SetRestFault(405, cErro,,,cErro)
+			
+			_lRet := .F.
+			Return _lRet
+		endIf
+	endIf
+
+Next _nCnt
+
+Return _lRet
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} GetArrayHist
+Retorna array do histórico para cadastro dos lançamentos de sequencial de histórico
+@type function
+@author Walmir Junior
+@since 11/03/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static Function GetArrayHist(pHist)
+Local _aRet		:= {}
+Local _cHist	:= AllTrim(pHist)
+Local _nLinhas	:= (Len(_cHist)/40)
+Local _nx		:= 0
+Local _ny		:= At('.',AllTrim(str(_nLinhas)),1)
+
+_nLinhas := Iif(Val(SubStr(AllTrim(str(_nLinhas)),_ny + 1,1)) > 0,;
+				Val(SubStr(AllTrim(str(_nLinhas)),1,_ny-1))+1,;
+				_nLinhas)
+
+if _nLinhas > 0
+	for _nx := 1 to _nLinhas
+		aAdd(_aRet, SubStr(_cHist, Iif(_nx == 1,1,((_nx-1)*40+1)), 40))
+	next _nx
+else
+	aAdd(_aRet, SubStr(_cHist, 1, 80))
+endIf
+
+Return _aRet
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} getEstPS
+Monta Estrutura do Lançamento Contábil (Produtos & Serviços) para Rotina Automatica
+@type function
+@author Walmir Junior
+@since 11/03/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static Function getEstPS(oObjEst, pItens, pLinha, pHist)
+Local _nRet			:= pLinha
+Local _nAxHt		:= 0
+
+// Se estornando apenas debito
+If	(!Empty(oObjEst:conta_debito_destino) .And. !Empty(oObjEst:centro_custo_debito_destino) ;
+	.And. !Empty(oObjEst:item_contabil_debito_destino)) .And. ;
+	(Empty(oObjEst:conta_credito_destino) .And. Empty(oObjEst:centro_custo_credito_destino) ;
+	.And. Empty(oObjEst:item_contabil_credito_destino))
+
+	aAdd(pItens,{	{'CT2_FILIAL'	, oObjEst:filial 								, NIL},;
+					{'CT2_FILORI'	, SubStr(oObjEst:filial_original,1,4) + "0001"	, NIL},;
+					{'CT2_LINHA'	, STRZERO(_nRet,3,0)							, NIL},;
+					{'CT2_MOEDLC'	,'01'											, NIL},;
+					{'CT2_DC'		,'3'											, NIL},;
+					{'CT2_TPSALD'	,'9'											, NIL},;
+					{'CT2_DEBITO'	, oObjEst:conta_debito_destino			, NIL},;
+					{'CT2_CREDIT'	, oObjEst:conta_debito_origem			, NIL},;
+					{'CT2_CCD'		, oObjEst:centro_custo_debito_destino	, NIL},;
+					{'CT2_CCC'		, oObjEst:centro_custo_debito_origem		, NIL},;
+					{'CT2_ITEMD'	, oObjEst:item_contabil_debito_destino	, NIL},;
+					{'CT2_ITEMC'	, oObjEst:item_contabil_debito_origem	, NIL},;
+					{'CT2_CLVLDB'	, oObjEst:classe_valor_debito_destino	, NIL},;
+					{'CT2_CLVLCR'	, oObjEst:classe_valor_debito_origem		, NIL},;
+					{'CT2_VALOR'	, GetdToVal(AllTrim(StrTran(StrTran(StrTran(oObjEst:valor,'R$',''),'.',''),',', '.')))				, NIL},;
+					{'CT2_ORIGEM'	, 'API-RECLAS-' + 	Upper(UsrRetName(AllTrim(oObjEst:usuario_aprovacao))), NIL},;
+					{'CT2_HP'		, '' 												, NIL},;
+					{'CT2_HIST'		, pHist[1]											, NIL} } )
+	
+	//Se tiver continuação de histórico...
+	if Len(pHist) > 1
+		_nAxHt := 0
+
+		for _nAxHt := 2 to Len(pHist)
+			_nRet++
+			
+			aAdd(pItens,{	{'CT2_FILIAL'	, oObjEst:filial 									, NIL},;
+							{'CT2_FILORI'	, SubStr(oObjEst:filial_original,1,4) + "0001"		, NIL},;
+							{'CT2_LINHA'	, STRZERO(_nRet,3,0)								, NIL},;
+							{'CT2_MOEDLC'	,'01'												, NIL},;
+							{'CT2_DC'		,'4'												, NIL},;
+							{'CT2_TPSALD'	,'9'												, NIL},;
+							{'CT2_ORIGEM'	, 'API-RECLAS-' + 	Upper(UsrRetName(AllTrim(oObjEst:usuario_aprovacao))), NIL},;
+							{'CT2_HIST'		, pHist[_nAxHt]									, NIL} } )
+
+		next _nAxHt
+	endIf
+
+// Se estornando apenas credito
+ElseIf (Empty(oObjEst:conta_debito_destino) .And. Empty(oObjEst:centro_custo_debito_destino) ;
+		.And. Empty(oObjEst:item_contabil_debito_destino)) .And. ;
+		(!Empty(oObjEst:conta_credito_destino) .And. !Empty(oObjEst:centro_custo_credito_destino) ;
+		.And. !Empty(oObjEst:item_contabil_credito_destino))
+
+	aAdd(pItens,{	{'CT2_FILIAL'	, oObjEst:filial 									, NIL},;
+					{'CT2_FILORI'	, SubStr(oObjEst:filial_original,1,4) + "0001"		, NIL},;
+					{'CT2_LINHA'	, STRZERO(_nRet,3,0)								, NIL},;
+					{'CT2_MOEDLC'	,'01'												, NIL},;
+					{'CT2_DC'		,'3'												, NIL},;
+					{'CT2_TPSALD'	,'9'												, NIL},;
+					{'CT2_DEBITO'	, oObjEst:conta_credito_origem			, NIL},;
+					{'CT2_CREDIT'	, oObjEst:conta_credito_destino			, NIL},;
+					{'CT2_CCD'		, oObjEst:centro_custo_credito_origem	, NIL},;
+					{'CT2_CCC'		, oObjEst:centro_custo_credito_destino	, NIL},;
+					{'CT2_ITEMD'	, oObjEst:item_contabil_credito_origem	, NIL},;
+					{'CT2_ITEMC'	, oObjEst:item_contabil_credito_destino	, NIL},;
+					{'CT2_CLVLDB'	, oObjEst:classe_valor_credito_origem	, NIL},;
+					{'CT2_CLVLCR'	, oObjEst:classe_valor_credito_destino	, NIL},;
+					{'CT2_VALOR'	, GetdToVal(AllTrim(StrTran(StrTran(StrTran(oObjEst:valor,'R$',''),'.',''),',', '.')))				, NIL},;
+					{'CT2_ORIGEM'	, 'API-RECLAS-' + 	Upper(UsrRetName(AllTrim(oObjEst:usuario_aprovacao))), NIL},;
+					{'CT2_HP'		, '' 												, NIL},;
+					{'CT2_HIST'		, pHist[1]											, NIL} } )
+	
+	//Se tiver continuação de histórico...
+	if Len(pHist) > 1
+		_nAxHt := 0
+
+		for _nAxHt := 2 to Len(pHist)
+			_nRet++
+			
+			aAdd(pItens,{	{'CT2_FILIAL'	, oObjEst:filial 									, NIL},;
+							{'CT2_FILORI'	, SubStr(oObjEst:filial_original,1,4) + "0001"		, NIL},;
+							{'CT2_LINHA'	, STRZERO(_nRet,3,0)								, NIL},;
+							{'CT2_MOEDLC'	,'01'												, NIL},;
+							{'CT2_DC'		,'4'												, NIL},;
+							{'CT2_TPSALD'	,'9'												, NIL},;
+							{'CT2_ORIGEM'	, 'API-RECLAS-' + 	Upper(UsrRetName(AllTrim(oObjEst:usuario_aprovacao))), NIL},;
+							{'CT2_HIST'		, pHist[_nAxHt]									, NIL} } )
+					
+		next _nAxHt
+	endIf
+Else
+
+	aAdd(pItens,{	{'CT2_FILIAL'	, oObjEst:filial 									, NIL},;
+					{'CT2_FILORI'	, SubStr(oObjEst:filial_original,1,4) + "0001"		, NIL},;
+					{'CT2_LINHA'	, STRZERO(_nRet,3,0)								, NIL},;
+					{'CT2_MOEDLC'	,'01'												, NIL},;
+					{'CT2_DC'		,'3'												, NIL},;
+					{'CT2_TPSALD'	,'9'												, NIL},;
+					{'CT2_DEBITO'	, oObjEst:conta_credito_origem			, NIL},;
+					{'CT2_CREDIT'	, oObjEst:conta_debito_origem			, NIL},;
+					{'CT2_CCD'		, oObjEst:centro_custo_credito_origem	, NIL},;
+					{'CT2_CCC'		, oObjEst:centro_custo_debito_origem		, NIL},;
+					{'CT2_ITEMD'	, oObjEst:item_contabil_credito_origem	, NIL},;
+					{'CT2_ITEMC'	, oObjEst:item_contabil_debito_origem	, NIL},;
+					{'CT2_CLVLDB'	, oObjEst:classe_valor_credito_origem	, NIL},;
+					{'CT2_CLVLCR'	, oObjEst:classe_valor_debito_origem		, NIL},;
+					{'CT2_VALOR'	, GetdToVal(AllTrim(StrTran(StrTran(StrTran(oObjEst:valor,'R$',''),'.',''),',', '.')))				, NIL},;
+					{'CT2_ORIGEM'	, 'API-RECLAS-' + 	Upper(UsrRetName(AllTrim(oObjEst:usuario_aprovacao))), NIL},;
+					{'CT2_HP'		, '' 												, NIL},;
+					{'CT2_HIST'		, pHist[1]											, NIL} } )
+	
+	//Se tiver continuação de histórico...
+	if Len(pHist) > 1
+		_nAxHt := 0
+
+		for _nAxHt := 2 to Len(pHist)
+			_nRet++
+			
+			aAdd(pItens,{	{'CT2_FILIAL'	, oObjEst:filial 									, NIL},;
+							{'CT2_FILORI'	, SubStr(oObjEst:filial_original,1,4) + "0001"		, NIL},;
+							{'CT2_LINHA'	, STRZERO(_nRet,3,0)								, NIL},;
+							{'CT2_MOEDLC'	,'01'												, NIL},;
+							{'CT2_DC'		,'4'												, NIL},;
+							{'CT2_TPSALD'	,'9'												, NIL},;
+							{'CT2_ORIGEM'	, 'API-RECLAS-' + 	Upper(UsrRetName(AllTrim(oObjEst:usuario_aprovacao))), NIL},;
+							{'CT2_HIST'		, pHist[_nAxHt]									, NIL} } )
+							
+		next _nAxHt
+	endIf
+
+	_nRet++
+
+	aAdd(pItens,{	{'CT2_FILIAL'	, oObjEst:filial 									, NIL},;
+					{'CT2_FILORI'	, SubStr(oObjEst:filial_original,1,4) + "0001"		, NIL},;
+					{'CT2_LINHA'	, STRZERO(_nRet,3,0)								, NIL},;
+					{'CT2_MOEDLC'	,'01'												, NIL},;
+					{'CT2_DC'		,'3'												, NIL},;
+					{'CT2_TPSALD'	,'9'												, NIL},;
+					{'CT2_DEBITO'	, oObjEst:conta_debito_destino			, NIL},;
+					{'CT2_CREDIT'	, oObjEst:conta_credito_destino			, NIL},;
+					{'CT2_CCD'		, oObjEst:centro_custo_debito_destino	, NIL},;
+					{'CT2_CCC'		, oObjEst:centro_custo_credito_destino	, NIL},;
+					{'CT2_ITEMD'	, oObjEst:item_contabil_debito_destino	, NIL},;
+					{'CT2_ITEMC'	, oObjEst:item_contabil_credito_destino	, NIL},;
+					{'CT2_CLVLDB'	, oObjEst:classe_valor_debito_destino	, NIL},;
+					{'CT2_CLVLCR'	, oObjEst:classe_valor_credito_destino	, NIL},;
+					{'CT2_VALOR'	, GetdToVal(AllTrim(StrTran(StrTran(StrTran(oObjEst:valor,'R$',''),'.',''),',', '.')))				, NIL},;
+					{'CT2_ORIGEM'	, 'API-RECLAS-' + 	Upper(UsrRetName(AllTrim(oObjEst:usuario_aprovacao))), NIL},;
+					{'CT2_HP'		, '' 												, NIL},;
+					{'CT2_HIST'		, pHist[1]											, NIL} } )
+	
+	//Se tiver continuação de histórico...
+	if Len(pHist) > 1
+		_nAxHt := 0
+
+		for _nAxHt := 2 to Len(pHist)
+			_nRet++
+			
+			aAdd(pItens,{	{'CT2_FILIAL'	, oObjEst:filial 									, NIL},;
+							{'CT2_FILORI'	, SubStr(oObjEst:filial_original,1,4) + "0001"		, NIL},;
+							{'CT2_LINHA'	, STRZERO(_nRet,3,0)								, NIL},;
+							{'CT2_MOEDLC'	,'01'												, NIL},;
+							{'CT2_DC'		,'4'												, NIL},;
+							{'CT2_TPSALD'	,'9'												, NIL},;
+							{'CT2_ORIGEM'	, 'API-RECLAS-' + 	Upper(UsrRetName(AllTrim(oObjEst:usuario_aprovacao))), NIL},;
+							{'CT2_HIST'		, pHist[_nAxHt]									, NIL} } )
+							
+		next _nAxHt
+	endIf
+
+EndIf
+
+Return _nRet
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} getEstEE
+Monta Estrutura do Lançamento Contábil (Entre Empresas) para Rotina Automatica
+@type function
+@author Walmir Junior
+@since 11/03/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static Function getEstEE(oObjEst, pItens, pLinha, pHist)
+Local _nRet			:= pLinha
+Local _nAxHt		:= 0
+Local _cFilEE		:= AllTrim(oObjEst:filial)
+Local _cFilContraEE	:= Iif(AllTrim(_cFilEE) == '02MT','03MT','02MT')
+
+Local _cReceberTransitoria	:= SUPERGETMV( "MV_XRECTRS",, 'XXXXXXXXXXX', _cFilEE) //'11031001015'
+Local _cPagarTransitoria	:= SUPERGETMV( "MV_XPAGTRS",, 'YYYYYYYYYYY', _cFilContraEE) //'21011001014'
+
+if _cFilEE $ '02MT#03MT'
+	aAdd(pItens,{	{'CT2_FILIAL'	, _cFilEE 												, NIL},;
+					{'CT2_FILORI'	, Iif(AllTrim(_cFilEE) == '02MT','02MT0001','03MT0001')	, NIL},;
+					{'CT2_LINHA'	, STRZERO(_nRet,3,0)									, NIL},;
+					{'CT2_MOEDLC'	,'01'													, NIL},;
+					{'CT2_DC'		,'3'													, NIL},;
+					{'CT2_TPSALD'	,'9'													, NIL},;
+					{'CT2_DEBITO'	, _cReceberTransitoria									, NIL},;
+					{'CT2_CREDIT'	, oObjEst:conta_debito_origem							, NIL},;
+					{'CT2_CCD'		, ''													, NIL},;
+					{'CT2_CCC'		, oObjEst:centro_custo_debito_origem					, NIL},;
+					{'CT2_ITEMD'	, ''													, NIL},;
+					{'CT2_ITEMC'	, oObjEst:item_contabil_debito_origem					, NIL},;
+					{'CT2_CLVLDB'	, ''													, NIL},;
+					{'CT2_CLVLCR'	, ''													, NIL},;
+					{'CT2_VALOR'	, GetdToVal(AllTrim(StrTran(StrTran(StrTran(oObjEst:valor,'R$',''),'.',''),',', '.'))), NIL},;
+					{'CT2_ORIGEM'	, 'API-RECLAS-' + 	Upper(UsrRetName(AllTrim(oObjEst:usuario_aprovacao))), NIL},;
+					{'CT2_HP'		, '' 													, NIL},;
+					{'CT2_HIST'		, pHist[1]												, NIL} } )
+
+	aAdd(_aItensContra,	{	{'CT2_FILIAL'	, _cFilContraEE 									, NIL},;
+							{'CT2_FILORI'	, Iif(_cFilContraEE == '02MT','02MT0001','03MT0001'), NIL},;
+							{'CT2_LINHA'	, STRZERO(_nRet,3,0)								, NIL},;
+							{'CT2_MOEDLC'	,'01'												, NIL},;
+							{'CT2_DC'		,'3'												, NIL},;
+							{'CT2_TPSALD'	,'9'												, NIL},;
+							{'CT2_DEBITO'	, oObjEst:conta_debito_destino						, NIL},;
+							{'CT2_CREDIT'	, _cPagarTransitoria								, NIL},;
+							{'CT2_CCD'		, oObjEst:centro_custo_debito_destino				, NIL},;
+							{'CT2_CCC'		, ''												, NIL},;
+							{'CT2_ITEMD'	, oObjEst:item_contabil_debito_destino				, NIL},;
+							{'CT2_ITEMC'	, ''												, NIL},;
+							{'CT2_CLVLDB'	, ''												, NIL},;
+							{'CT2_CLVLCR'	, ''												, NIL},;
+							{'CT2_VALOR'	, GetdToVal(AllTrim(StrTran(StrTran(StrTran(oObjEst:valor,'R$',''),'.',''),',', '.'))), NIL},;
+							{'CT2_ORIGEM'	, 'API-RECLAS-' + 	Upper(UsrRetName(AllTrim(oObjEst:usuario_aprovacao))), NIL},;
+							{'CT2_HP'		, '' 												, NIL},;
+							{'CT2_HIST'		, pHist[1]											, NIL} } )
+		
+	//Se tiver continuação de histórico...
+	if Len(pHist) > 1
+		_nAxHt := 0
+
+		for _nAxHt := 2 to Len(pHist)
+			_nRet++
+			
+			aAdd(pItens,{	{'CT2_FILIAL'	, _cFilEE 												, NIL},;
+							{'CT2_FILORI'	, Iif(AllTrim(_cFilEE) == '02MT','02MT0001','03MT0001')	, NIL},;
+							{'CT2_LINHA'	, STRZERO(_nRet,3,0)									, NIL},;
+							{'CT2_MOEDLC'	,'01'													, NIL},;
+							{'CT2_DC'		,'4'													, NIL},;
+							{'CT2_TPSALD'	,'9'													, NIL},;
+							{'CT2_ORIGEM'	, 'API-RECLAS-' + 	Upper(UsrRetName(AllTrim(oObjEst:usuario_aprovacao))), NIL},;
+							{'CT2_HIST'		, pHist[_nAxHt]											, NIL} } )
+
+			aAdd(_aItensContra,{	{'CT2_FILIAL'	, _cFilContraEE 								, NIL},;
+							{'CT2_FILORI'	, Iif(_cFilContraEE == '02MT','02MT0001','03MT0001')	, NIL},;
+							{'CT2_LINHA'	, STRZERO(_nRet,3,0)									, NIL},;
+							{'CT2_MOEDLC'	,'01'													, NIL},;
+							{'CT2_DC'		,'4'													, NIL},;
+							{'CT2_TPSALD'	,'9'													, NIL},;
+							{'CT2_ORIGEM'	, 'API-RECLAS-' + 	Upper(UsrRetName(AllTrim(oObjEst:usuario_aprovacao))), NIL},;
+							{'CT2_HIST'		, pHist[_nAxHt]											, NIL} } )
+
+		next _nAxHt
+	endIf
+endIf
+
+Return _nRet
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} getEstFOL
+Monta Estrutura do Lançamento Contábil (Folha de Pagamentos).
+@type function
+@author Walmir Junior
+@since 14/04/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static Function getEstFOL(oObjEst, pItens, pLinha, pHist)
+Local _nRet			:= 0
+Local _nAxHt		:= 0
+Local _cInfoCtbl	:= ""
+Local _nPosInfCt	:= 0
+Local _lNewItem		:= .F.
+Local _nLastItem	:= 0
+
+//Cria chave para controlar agrupamento de lançamentos
+_cInfoCtbl :=	Alltrim(oObjEst:conta_debito_destino) + '-' +;
+				AllTrim(oObjEst:centro_custo_debito_destino) + '-' +;
+				AllTrim(oObjEst:item_contabil_debito_destino) + '#' +;
+				Alltrim(oObjEst:conta_debito_origem) + '-' +;
+				AllTrim(oObjEst:centro_custo_debito_origem) + '-' +;
+				AllTrim(oObjEst:item_contabil_debito_origem)
+
+if pLinha == 1
+	_lNewItem	:= .T.
+	_nRet		:= pLinha
+	_aLancFol	:= {}
+	aAdd(_aLancFol, _cInfoCtbl)
+else
+	//Controla sequencial dos itens - diferente dos demais tipos de estorno, por conta do agrupamento por entidades contábeis.
+	_nLastItem	:= Len(pItens)
+
+	_nRet 		:= Val(pItens[_nLastItem,3,2])
+
+	_nRet++
+					
+	//Busca posição das entidades contábeis no array de controle
+	_nPosInfCt := AScan(_aLancFol, { |x| RTrim(x) == _cInfoCtbl }  )
+
+	//Verifica se já foi criado lançamento para as mesmas entidades contábeis
+	if !(_nPosInfCt > 0)
+		aAdd(_aLancFol, _cInfoCtbl)
+		_lNewItem := .T.
+	endIf
+
+endIf
+
+// Se estornando apenas debito
+if	(!Empty(oObjEst:conta_debito_destino) .And. !Empty(oObjEst:centro_custo_debito_destino) ;
+	.And. !Empty(oObjEst:item_contabil_debito_destino)) .And. _lNewItem
+
+	aAdd(pItens,{	{'CT2_FILIAL'	, oObjEst:filial 								, NIL},;
+					{'CT2_FILORI'	, SubStr(oObjEst:filial_original,1,4) + "0001"	, NIL},;
+					{'CT2_LINHA'	, STRZERO(_nRet,3,0)							, NIL},;
+					{'CT2_MOEDLC'	,'01'											, NIL},;
+					{'CT2_DC'		,'3'											, NIL},;
+					{'CT2_TPSALD'	,'9'											, NIL},;
+					{'CT2_DEBITO'	, oObjEst:conta_debito_destino					, NIL},;
+					{'CT2_CREDIT'	, oObjEst:conta_debito_origem					, NIL},;
+					{'CT2_CCD'		, oObjEst:centro_custo_debito_destino			, NIL},;
+					{'CT2_CCC'		, oObjEst:centro_custo_debito_origem			, NIL},;
+					{'CT2_ITEMD'	, oObjEst:item_contabil_debito_destino			, NIL},;
+					{'CT2_ITEMC'	, oObjEst:item_contabil_debito_origem			, NIL},;
+					{'CT2_VALOR'	, oObjEst:valor									, NIL},;
+					{'CT2_ORIGEM'	, 'API-RECLAS-' + 	Upper(UsrRetName(AllTrim(oObjEst:usuario_aprovacao))), NIL},;
+					{'CT2_HP'		, '' 											, NIL},;
+					{'CT2_HIST'		, pHist[1]										, NIL} } )
+	
+	//Se tiver continuação de histórico...
+	if Len(pHist) > 1
+		_nAxHt := 0
+
+		for _nAxHt := 2 to Len(pHist)
+			_nRet++
+			
+			aAdd(pItens,{	{'CT2_FILIAL'	, oObjEst:filial 														, NIL},;
+							{'CT2_FILORI'	, SubStr(oObjEst:filial_original,1,4) + "0001"							, NIL},;
+							{'CT2_LINHA'	, STRZERO(_nRet,3,0)													, NIL},;
+							{'CT2_MOEDLC'	, '01'																	, NIL},;
+							{'CT2_DC'		, '4'																	, NIL},;
+							{'CT2_TPSALD'	, '9'																	, NIL},;
+							{'CT2_ORIGEM'	, 'API-RECLAS-' + Upper(UsrRetName(AllTrim(oObjEst:usuario_aprovacao)))	, NIL},;
+							{'CT2_HIST'		, pHist[_nAxHt]															, NIL} } )
+			
+			//Alimenta o controle de lançamento por entidades contábeis
+			aAdd(_aLancFol, _cInfoCtbl)
+
+		next _nAxHt
+	endIf
+
+elseIf _nPosInfCt > 0 .And. !_lNewItem
+	//Se não for continuação de histórico
+	if pItens[_nPosInfCt, 5, 2] != '4'
+		pItens[_nPosInfCt, 13,2] := (pItens[_nPosInfCt, 13,2] + oObjEst:valor)
+	endIf
+endIf
+
+Return _nRet
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} Estornos Contabeis
+GetErroExecAuto
+@type function
+@author Walmir Junior
+@since 06/01/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static function GetErroExecAuto()
+Local _aErro	:= {}
+Local _cErro	:= ""
+Local _nLin		:= 0
+Local _cBuff	:= ""
+Local _cCampo	:= ""
+Local _nErrLin	:= 1
+
+_cErro	:= Mostraerro("\log\venus\", STRZERO( seconds() ,6) + ".log")
+
+aAdd(_aErro, trataErro(_cErro))
+
+_nLin	:= MLCount(_cErro)
+
+_cBuff	:= RTrim(MemoLine(_cErro,,_nErrLin))
+
+//Carrega o nome do campo
+While (_nErrLin <= _nLin)
+	_nErrLin++
+
+    _cBuff:=RTrim(MemoLine(_cErro,,_nErrLin))
+	
+	If (Upper(SubStr(_cBuff,Len(_cBuff)-7,Len(_cBuff))) == "INVALIDO")
+		xTemp	:= AT("-",_cBuff)
+		_cCampo	:= AllTrim(SubStr(_cBuff,xTemp+1,AT(":",_cBuff)-xTemp-2))
+		aAdd(_aErro, "Veja só, o valor do campo [" + _cCampo + "] é inválido, verifique!")
+		Exit
+	EndIf
+
+EndDo
+
+If Len(_aErro) == 1
+	aAdd(_aErro, "ATENÇÃO, erro ao efetuar o lançamento de estorno no ERP!")
+EndIf
+
+Return _aErro
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} GetNewSeq
+Metodo para retornar a sequencia dos estornos
+@type function
+@author Walmir Junior
+@since 06/01/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static Function GetNewSeq(pFilial, pChvCT2)
+
+Local _aRet		:= {0,0}
+Local _cAlias	:= GetNextAlias()
+Local _cQuery	:= ""
+
+If Select(_cAlias) > 0
+	(_cAlias)->(DbCloseArea())
+EndIf
+	
+_cQuery := " SELECT ZAR_FILIAL, ZAR_CHVCT2, " + CRLF
+_cQuery += " MAX(ZAR_SEQEST) AS ZAR_SEQEST, " + CRLF
+_cQuery += " (	SELECT SUM(Z.ZAR_VLREST) FROM " + RetSqlName("ZAR") + " Z " + CRLF
+_cQuery += "	WHERE Z.D_E_L_E_T_ = ' ' AND Z.ZAR_FILIAL = ZZ.ZAR_FILIAL " + CRLF
+_cQuery += "	AND Z.ZAR_CHVCT2 = ZZ.ZAR_CHVCT2 AND Z.ZAR_SITUAC IN ('P','A') ) AS VLR_ESTORNOS" + CRLF
+_cQuery += " FROM " + RetSqlName("ZAR") + " ZZ " + CRLF
+_cQuery += " WHERE D_E_L_E_T_ = ' ' " + CRLF
+_cQuery += " AND ZAR_FILIAL = '" + AllTrim(pFilial) + "' " + CRLF
+_cQuery += " AND RTRIM(LTRIM(ZAR_CHVCT2)) = '" + AllTrim(pChvCT2) + "' " + CRLF
+_cQuery += " GROUP BY ZAR_FILIAL,ZAR_CHVCT2 " + CRLF
+
+_cQuery := ChangeQuery(_cQuery)
+
+dbUseArea(.T., "TOPCONN", TcGenQry(,,_cQuery), _cAlias, .F., .T.)
+
+DbSelectArea(_cALias)
+(_cALias)->(DbGoTop())
+
+If !(_cALias)->(Eof()) .And. !Empty((_cAlias)->ZAR_SEQEST)
+	_aRet[1] := Val((_cAlias)->ZAR_SEQEST)
+	_aRet[2] := (_cAlias)->VLR_ESTORNOS
+EndIf
+
+(_cALias)->(dbClosearea())
+
+_aRet[1] := _aRet[1] + 1
+
+Return _aRet
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} GetPrcFol
+Metodo para retornar o percentual disponível para estorno de folha de pagamentos
+@type function
+@author Walmir Junior
+@since 04/05/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static Function GetPrcFol(pFilial, pChvZAU, nValEst, nValRat)
+
+Local _nRet		:= 0
+Local _cAlias	:= GetNextAlias()
+Local _cQuery	:= ""
+
+If Select(_cAlias) > 0
+	(_cAlias)->(DbCloseArea())
+EndIf
+	
+_cQuery :=	" SELECT "
+_cQuery +=	"	( ( ( NVL( ( "
+_cQuery +=	" 		SELECT "
+_cQuery +=	"			SUM(ZAR.ZAR_VLREST) "
+_cQuery +=	" 		FROM "
+_cQuery +=	" 			" + RetSqlName("ZAR") + " ZAR "
+_cQuery +=	"		WHERE 
+_cQuery +=	" 			ZAR.D_E_L_E_T_ = ' ' 
+_cQuery +=	" 			AND ZAR.ZAR_SITUAC IN ('P','A') 
+_cQuery +=	" 			AND ZAR.ZAR_FILIAL = '" + SubStr(pFilial,1,4) + "' 
+_cQuery +=	" 			AND RTRIM(LTRIM(ZAR.ZAR_CHVZAU)) = LTRIM(RTRIM(ZAU_FILIAL || ZAU_FILORI || ZAU_MATRIC || ZAU_PERIOD || ZAU_CONDOR || ZAU_CCDORI || ZAU_ITMDOR))
+_cQuery +=	" 	),0) ) * 100) / ZAU_VALOR) AS PERC_ESTORNO "
+_cQuery +=	" FROM " 
+_cQuery +=	" " + RetSqlName("ZAU") + " ZAU "
+_cQuery +=	" WHERE "
+_cQuery +=	" 	ZAU.D_E_L_E_T_ = ' ' "
+_cQuery +=	"	AND ZAU_FILIAL = '" + SubStr(pFilial,1,4) + "' "
+_cQuery +=	"	AND LTRIM(RTRIM(ZAU_FILIAL || ZAU_FILORI || ZAU_MATRIC || ZAU_PERIOD || ZAU_CONDOR || ZAU_CCDORI || ZAU_ITMDOR)) = '" + AllTrim(pChvZAU) + "' "
+
+_cQuery := ChangeQuery(_cQuery)
+
+dbUseArea(.T., "TOPCONN", TcGenQry(,,_cQuery), _cAlias, .F., .T.)
+
+DbSelectArea(_cALias)
+(_cALias)->(DbGoTop())
+
+If !(_cALias)->(Eof())
+	_nRet := (100 - Iif(Empty((_cAlias)->PERC_ESTORNO),0,(_cAlias)->PERC_ESTORNO))
+Else
+	_nRet := ((nValEst*100) / nValRat)
+EndIf
+
+(_cALias)->(dbClosearea())
+
+Return _nRet
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} GetPercDisp
+Metodo para retornar o percentual disponível para estorno
+@type function
+@author Walmir Junior
+@since 04/02/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static Function GetPercDisp(pFilial, pChvCT2)
+
+Local _nRet		:= 0
+Local _cAlias	:= GetNextAlias()
+Local _cQuery	:= ""
+
+If Select(_cAlias) > 0
+	(_cAlias)->(DbCloseArea())
+EndIf
+	
+_cQuery := " SELECT (   (	SELECT SUM(ZAR_VLREST) FROM " + RetSqlName("ZAR") + " ZAR " + CRLF
+_cQuery += " 				WHERE ZAR.D_E_L_E_T_ = ' ' AND ZAR_SITUAC IN ('P','A') AND ZAR_FILIAL = '" + AllTrim(pFilial) + "' AND " + CRLF
+_cQuery += " 				RTRIM(LTRIM(ZAR_CHVCT2)) = LTRIM(RTRIM(CT2_FILIAL || CT2_DATA "+;
+								"|| CT2_LOTE || CT2_SBLOTE || CT2_DOC || CT2_LINHA "+;
+								"|| CT2_TPSALD || CT2_EMPORI || CT2_FILORI || CT2_MOEDLC)))*100) "+;
+								"/ CT2_VALOR AS PERC_ESTORNO " + CRLF
+_cQuery += " FROM " + RetSqlName("CT2") + " CT2 "+ CRLF
+_cQuery += " WHERE CT2.D_E_L_E_T_ = ' ' " + CRLF
+_cQuery += " AND CT2_FILIAL = '" + AllTrim(pFilial) + "' " + CRLF
+_cQuery += " AND LTRIM(RTRIM(CT2_FILIAL || CT2_DATA || CT2_LOTE || CT2_SBLOTE || CT2_DOC || CT2_LINHA || CT2_TPSALD || CT2_EMPORI || CT2_FILORI || CT2_MOEDLC)) = '" + AllTrim(pChvCT2) + "' "
+
+_cQuery := ChangeQuery(_cQuery)
+
+dbUseArea(.T., "TOPCONN", TcGenQry(,,_cQuery), _cAlias, .F., .T.)
+
+DbSelectArea(_cALias)
+(_cALias)->(DbGoTop())
+
+If !(_cALias)->(Eof())
+	_nRet := (100 - Iif(Empty((_cAlias)->PERC_ESTORNO),0,(_cAlias)->PERC_ESTORNO))
+EndIf
+
+(_cALias)->(dbClosearea())
+
+Return _nRet
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} TrataErro
+Metodo para retornar o erro em caracter
+@type function
+@author Walmir Junior
+@since 04/02/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static Function TrataErro(pErroAuto)
+Local _cNErro	:= ""
+Local _cAux		:= ""
+Local _nErr		:= 0
+Local _nLine	:= MLCount(pErroAuto)
+
+For _nErr := 1 To _nLine
+	_cAux	:= ""
+	_cAux	:= MemoLine( pErroAuto, , _nErr )
+    _cNErro += AllTrim( _cAux ) + "\n"//"\r\n"
+Next _nErr
+
+Return(_cNErro)
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} getFolPg
+Metodo para carregar objeto de lançamentos de folha de pagamentos.
+@type function
+@author Walmir Junior
+@since 17/05/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static Function getFolPg(pChvCT2, pUsApr, pSitAt)
+Local _aRet := {}
+Local objFol := Nil
+Local _cAlias	:= GetNextAlias()
+Local _cQuery	:= ""
+
+If Select(_cAlias) > 0
+	(_cAlias)->(DbCloseArea())
+EndIf
+	
+_cQuery := " SELECT ZAR_FILIAL, ZAR_FILORI, ZAR_TIPO, ZAR_CHVCT2, ZAR_SEQEST, ZAR_CTDDES, ZAR_CCDDES, ZAR_ITDDES," + CRLF
+_cQuery += " ZAR_CTDORI, ZAR_CCDORI, ZAR_ITDORI, ZAR_VLREST, ZAR_SITUAC " + CRLF
+_cQuery += " FROM " + RetSqlName("ZAR") + " ZAR "+ CRLF
+_cQuery += " WHERE ZAR.D_E_L_E_T_ = ' ' " + CRLF
+_cQuery += " AND LTRIM(RTRIM(ZAR_CHVCT2)) = '" + AllTrim(pChvCT2) + "' "
+_cQuery += " ORDER BY ZAR_FILIAL, ZAR_FILORI, ZAR_TIPO, ZAR_CHVCT2, ZAR_SEQEST "
+
+_cQuery := ChangeQuery(_cQuery)
+
+dbUseArea(.T., "TOPCONN", TcGenQry(,,_cQuery), _cAlias, .F., .T.)
+
+DbSelectArea(_cALias)
+(_cALias)->(DbGoTop())
+
+While !(_cALias)->(Eof())
+	//FolhaPag:Create(pfilial, pfilOriginal, pCDebDes, pCCDbDes, pItDbDes, pCDebOri, pCCDbOri, pItDbOri, pUsuApr, nValor, pSit)
+	objFol := FolhaPag():Create((_cALias)->ZAR_FILIAL, (_cALias)->ZAR_FILORI, (_cALias)->ZAR_TIPO, (_cALias)->ZAR_CHVCT2, (_cALias)->ZAR_SEQEST,;
+								(_cALias)->ZAR_CTDDES, (_cALias)->ZAR_CCDDES, (_cALias)->ZAR_ITDDES, (_cALias)->ZAR_CTDORI,; 
+								(_cALias)->ZAR_CCDORI, (_cALias)->ZAR_ITDORI, pUsApr, (_cALias)->ZAR_VLREST, pSitAt)
+
+	aAdd(_aRet, objFol)
+
+	(_cALias)->(DBSkip())
+	objFol := Nil
+EndDo
+
+(_cALias)->(dbClosearea())
+
+Return _aRet
+
+/*/{Protheus.doc} getFilters
+Obter os filtros passados no aQueryString
+@type function
+@author Walmir Junior
+@since 17/03/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static Function getFilters(_pFilter, pSepara)
+Local _aRet 	:= {}
+Local _aFil		:= {}
+Local _aAux		:= {}
+Local _cFilter	:= AllTrim(subStr(_pFilter, 2, Len(_pFilter)))
+Local _nPosCtr	:= 1
+Local _nQtd		:= 0
+Local _nx		:= 0
+
+_cFilter	:= AllTrim(subStr(_cFilter, 1, Len(_cFilter)-1))
+_aFil 		:= StrTokArr2( _cFilter , pSepara )
+
+
+for _nx := 1 to Len(_aFil)
+
+	_aAux 		:= {}
+	_nPosCtr	:= 1
+	_nQtd		:= 0
+	
+	_aFil[_nx]	:= Alltrim(_aFil[_nx])
+	aAdd(_aAux, SubStr(_aFil[_nx],1,at(' ', _aFil[_nx],1)-1))
+
+	_nPosCtr	:= at("'",_aFil[_nx],(_nPosCtr + _nQtd + 1)) + 1
+	_nQtd		:= at("'",_aFil[_nx],_nPosCtr) - _nPosCtr
+	aAdd(_aAux,SubStr(_aFil[_nx],_nPosCtr, _nQtd))	
+	
+	aAdd(_aRet, _aAux)
+
+next _nx
+
+Return _aRet

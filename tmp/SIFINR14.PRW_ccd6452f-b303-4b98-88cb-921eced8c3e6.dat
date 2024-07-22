@@ -1,0 +1,634 @@
+#include "protheus.ch"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±ºPrograma  ³SIFINR14  ºAutor  ³Do.It Sistemas - ET º Data ³  Jul/2014   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³Relatório Indice de Inadimplencia - SISTEMA FIEMT           º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³TREPORT COM DOIS LAYOUTS - Vertical e Horizontal            º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+//Definições de constantes
+#Define REVISAO 	"Revisão 1.2 - 08/2014"
+#Define PERGUNTA 	"SIFINR14"
+#Define LOGOTIPO 	"LG300X90.BMP"
+
+User Function SIFINR14()
+Private oRep, oSec, oFnt
+Private cNomFil := ""
+Private cTitle := OemToAnsi("Índice de Inadimplência")
+Private cLogo  := GetSrvProfString("Startpath","")+LOGOTIPO
+
+DbSelectArea("SE1")
+
+If ! SetPergSX1(.F.)
+	Return(Nil)
+ElseIf ! File(cLogo)
+	MsgStop("Arquivo de Logo não Encontrado:"+CRLF+cLogo,"STOP")
+	Return(Nil)
+Endif
+
+//TREPORT Class
+oRep:=TReport():New(FunName(), cTitle, {|| SetPergSX1(.T.)}, {|| PrintReport()}, "Layouts: Vertical e Horizontal"+CRLF+REVISAO, .F.)
+oRep:nDevice := 1                //Envia para Disco
+oRep:nEnvironment := 2           //Cliente
+oRep:HideHeader()                //Nao Imprime Header
+oRep:HideFooter()                //Nao Imprime Rodape
+oRep:HideParamPage()             //Não imprime Pagina de Parametros
+oRep:SetPxLeftMargin(0)          //Margem
+oRep:oPage:SetPaperSize(9)       //Pagina Padrão 9=A4 - 8=A3 - 2=Letter
+oRep:cPrinterName := "PDF" 		//Impressora Padrão
+oRep:SetEdit(.F.)       		   //Personalizar
+//Cabelçalho
+oRep:bOnPageBreak := {|| ReportCab() }
+//Section Report
+oSec:=TRSection():New(oRep,cTitle,Nil,{"Padrao"})
+//Dialogo do TReport
+oRep:PrintDialog()
+
+Return(Nil)
+
+
+
+Static Function PrintReport()
+Local nX, aFil, aTip, aMot, cFil, cFile
+
+If Empty(MV_PAR01+MV_PAR02) .Or. MV_PAR03 < 1900
+	Return(.F.)
+Endif
+
+oRep:SetMeter(0)
+oRep:IncMeter()
+
+//Cria arquivo de dados temporario do report
+cFile := InitDBF("REPORT")
+
+aFil := GetFil() //Obter as filiais
+
+If MV_PAR06 == 2 .And. MV_PAR01 != MV_PAR02
+	GetRows("", "CONSOLIDADO")
+Else
+	For nX := 1 To Len(aFil)
+		If Upper(MV_PAR01) <= Trim(aFil[nX,1]) .And. Upper(MV_PAR02) >= Trim(aFil[nX,1])
+			GetRows(Trim(aFil[nX,1]), aFil[nX,2])
+		Endif
+	Next
+Endif
+
+DbSelectArea("REPORT")
+oRep:SetMeter(RecCount())
+oRep:SetMsgPrint("Imprimindo...")
+DbGoTop()
+
+If oRep:oPage:lLandscape
+	PrintHor()
+Else
+	PrintVer()
+Endif
+
+//Deletar aqruivos temporarios
+If ! Empty(cFile)
+	REPORT->(DbCloseArea())
+	aEval(Directory(cFile+".*"), {|x| Ferase(x[1])})
+Endif
+
+Return(.T.)
+
+
+
+//Obter Dados do realatorio
+Static Function GetRows(cCod, cFil)
+Local cQry, cAux, nVal, nMes, dPer, aLin, aX, nY, cX
+Local cAtu := StrZero(MV_PAR03,4)
+Local cAnt := StrZero(MV_PAR03-1,4)
+Local cTip := FormatIn(AllTrim(Upper(MV_PAR04)),",")
+Local cMot := FormatIn(AllTrim(Upper(MV_PAR05)),",")
+
+oRep:SetMsgPrint("Consultando: "+cFil)
+
+//Ajusta Parametro das filiais
+If Empty(cCod) //Todas a Filiais
+	cAux := " BETWEEN '"+Upper(MV_PAR01)+"' AND '"+Upper(MV_PAR02)+"'"
+Else //Filial Corrente
+	cAux := " = '"+cCod+"'"
+Endif
+
+aLin := {}
+For nX := 1 To 4
+	aAdd(aLin, {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}) //Array dos Meses e Totais
+Next
+
+//1 = RECEBER ANTERIOR
+cQry := " SELECT SUM(E1_SALDO) AS VALOR"
+cQry += " FROM "+RetSqlName("SE1")
+cQry += " WHERE D_E_L_E_T_ = ' '"
+cQry += " AND E1_SALDO > 0"
+cQry += " AND E1_FILIAL "+cAux
+If ! Empty(MV_PAR04)
+	cQry += " AND E1_TIPO IN "+cTip
+Endif
+cQry += " AND E1_VENCREA <= '"+cAnt+"1231'"
+cQry := ChangeQuery(cQry)
+dbUseArea(.T., "TOPCONN", TCGenQry(,,cQry), 'TMPQRY', .F., .F.)
+aLin[1,13] := TMPQRY->VALOR
+TMPQRY->(DbCloseArea())
+
+//1 = RECEBER EXERCICIO MESES
+cQry := " SELECT E1_VENCREA, SUM(E1_SALDO) AS VALOR"
+cQry += " FROM "+RetSqlName("SE1")
+cQry += " WHERE D_E_L_E_T_ = ' '"
+cQry += " AND E1_SALDO > 0"
+cQry += " AND E1_FILIAL "+cAux
+If ! Empty(MV_PAR04)
+	cQry += " AND E1_TIPO IN "+cTip
+Endif
+cQry += " AND E1_VENCREA BETWEEN '"+cAtu+"0101' AND '"+cAtu+"1231'"
+cQry += " GROUP BY E1_VENCREA ORDER BY E1_VENCREA"
+cQry := ChangeQuery(cQry)
+dbUseArea(.T., "TOPCONN", TCGenQry(,,cQry), 'TMPQRY', .F., .F.)
+While ! TMPQRY->(Eof())
+	nVal := TMPQRY->VALOR
+	dPer := STOD(TMPQRY->E1_VENCREA)
+	nMes := Month(dPer)
+	If nMes > 0
+		aLin[1,nMes] += nVal
+		aLin[1,14]   += nVal
+	Endif
+	TMPQRY->(DbSkip())
+End
+TMPQRY->(DbCloseArea())
+
+//2 = RECEBIDO ANTERIOR
+cQry := " SELECT SUM(E5_VALOR) AS VALOR"
+cQry += " FROM "+RetSqlName("SE5")
+cQry += " WHERE D_E_L_E_T_ = ' '"
+cQry += " AND E5_RECPAG = 'R'"
+cQry += " AND E5_SITUACA NOT IN ('C','E','X')"
+cQry += " AND E5_FILIAL "+cAux
+cQry += " AND E5_DATA <= '"+cAnt+"1231'"
+If ! Empty(MV_PAR04)
+	cQry += " AND E5_TIPO IN "+cTip
+Endif
+If ! Empty(MV_PAR05)
+	cQry += " AND E5_MOTBX IN "+cMot
+Else
+	cQry += " AND E5_MOTBX NOT IN ('CMP','DAC')"
+	cQry += " AND E5_TIPODOC NOT IN ('DC','D2','JR','J2','TL','MT','M2','CM','C2','TR','TE','BA','CP','V2','ES')"
+Endif
+cQry := ChangeQuery(cQry)
+dbUseArea(.T., "TOPCONN", TCGenQry(,,cQry), 'TMPQRY', .F., .F.)
+aLin[2,13] := TMPQRY->VALOR
+TMPQRY->(DbCloseArea())
+
+//RECEBIDO EXERCICIO MESES
+cQry := " SELECT E5_DATA, SUM(E5_VALOR) AS VALOR"
+cQry += " FROM "+RetSqlName("SE5")
+cQry += " WHERE D_E_L_E_T_ = ' '"
+cQry += " AND E5_RECPAG = 'R'"
+cQry += " AND E5_SITUACA NOT IN ('C','E','X')"
+cQry += " AND E5_FILIAL "+cAux
+cQry += " AND E5_DATA BETWEEN '"+cAtu+"0101' AND '"+cAtu+"1231'"
+If ! Empty(MV_PAR04)
+	cQry += " AND E5_TIPO IN "+cTip
+Endif
+If ! Empty(MV_PAR05)
+	cQry += " AND E5_MOTBX IN "+cMot
+Else
+	cQry += " AND E5_MOTBX NOT IN ('CMP','DAC')"
+	cQry += " AND E5_TIPODOC NOT IN ('DC','D2','JR','J2','TL','MT','M2','CM','C2','TR','TE','BA','CP','V2','ES')"
+Endif
+cQry += " GROUP BY E5_DATA ORDER BY E5_DATA"
+cQry := ChangeQuery(cQry)
+dbUseArea(.T., "TOPCONN", TCGenQry(,,cQry), 'TMPQRY', .F., .F.)
+While ! TMPQRY->(Eof())
+	nVal := TMPQRY->VALOR
+	dPer := STOD(TMPQRY->E5_DATA)
+	nMes := Month(dPer)
+	If nMes > 0
+		aLin[2,nMes] += nVal
+		aLin[2,14]   += nVal
+	Endif
+	TMPQRY->(DbSkip())
+End
+TMPQRY->(DbCloseArea())
+
+//Calculos
+aLin[1,15] := aLin[1,13] + aLin[1,14]
+aLin[2,15] := aLin[2,13] + aLin[2,14]
+For nX := 1 To 15
+	aLin[3,nX] := aLin[1,nX] + aLin[2,nX] //Linha 3  = TOTAL
+	aLin[4,nX] := iif(aLin[3,nX] == 0, 0, (100 - NoRound((aLin[2,nX] / aLin[3,nX]) * 100, 2))) //Linha 4 = INDICE
+Next
+
+aX := {}
+If oRep:oPage:lLandscape //Horizontal
+	For nX := 1 To 4
+		//Monta Array para gravar Horizontal
+		cX := {"Receber","Recebido","Total","Indice %"}[nX]
+		aAdd(aX, {	cCod, cFil, cX,	aLin[nX,13], ;
+		aLin[nX,1], aLin[nX,2], aLin[nX,3], aLin[nX,4], aLin[nX,5], aLin[nX,6], aLin[nX,7], aLin[nX,8], aLin[nX,9], aLin[nX,10], aLin[nX,11], aLin[nX,12], ;
+		aLin[nX,14], aLin[nX,15], StrZero(nX,2) })
+	Next
+Else //Vertical
+	For nX := 1 To 15
+		//Monta Array para gravar Vertical
+		cX := {"Até "+cAnt,"Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Nobembro","Dezembro","Total "+cAtu,"Total Geral"}[nX]
+		aAdd(aX, {	cCod, cFil, cX, 0, 0, 0, 0, StrZero(nX,2) })
+		//Converte para Vertical
+		If nX == 1 //Anterior
+			For nY := 1 To 4
+				aX[1, nY+3] := aLin[nY,13]
+			Next
+		ElseIf nX == 14 //Atual
+			For nY := 1 To 4
+				aX[14, nY+3] := aLin[nY,14]
+			Next
+		ElseIf nX == 15 //Total
+			For nY := 1 To 4
+				aX[15, nY+3] := aLin[nY,15]
+			Next
+		ElseIf nX > 1 .And. nX < 14 //Meses
+			For nY := 1 To 4
+				aX[nX, nY+3] := aLin[nY,nX-1]
+			Next
+		Endif
+	Next
+Endif
+
+//Grava Dados no Arquivo do Report
+DbSelectArea("REPORT")
+For nY := 1 To Len(aX)
+	DbAppend()
+	For nX := 1 To fCount()
+		FieldPut(nX, aX[nY,nX])
+	Next
+Next
+
+Return()
+
+
+
+//Cria arquivo temporario + indice e mantem 'cAlias' aberto
+Static Function InitDBF(cAlias)
+Local cFile  := ""
+Local aField := {}
+If oRep:oPage:lLandscape //Horizontal
+	AADD(aField, { "_COD", "C", Len(xFilial("SE1")), 0 })
+	AADD(aField, { "_FIL", "C", 15, 0 })
+	AADD(aField, { "_LIN", "C", 12, 0 })
+	AADD(aField, { "_ANT", "N", 14, 2 })
+	AADD(aField, { "_JAN", "N", 14, 2 })
+	AADD(aField, { "_FEV", "N", 14, 2 })
+	AADD(aField, { "_MAR", "N", 14, 2 })
+	AADD(aField, { "_ABR", "N", 14, 2 })
+	AADD(aField, { "_MAI", "N", 14, 2 })
+	AADD(aField, { "_JUN", "N", 14, 2 })
+	AADD(aField, { "_JUL", "N", 14, 2 })
+	AADD(aField, { "_AGO", "N", 14, 2 })
+	AADD(aField, { "_SET", "N", 14, 2 })
+	AADD(aField, { "_OUT", "N", 14, 2 })
+	AADD(aField, { "_NOV", "N", 14, 2 })
+	AADD(aField, { "_DEZ", "N", 14, 2 })
+	AADD(aField, { "_ATU", "N", 14, 2 })
+	AADD(aField, { "_TTL", "N", 14, 2 })
+	AADD(aField, { "_POS", "C",  2, 0 })
+Else //Vertical
+	AADD(aField, { "_COD",   		"C", Len(xFilial("SE1")), 0 })
+	AADD(aField, { "_FIL",   		"C", 15, 0 })
+	AADD(aField, { "_TOTAL",   	"C", 12, 0 })
+	AADD(aField, { "_RECEBER", 	"N", 14, 2 })
+	AADD(aField, { "_RECEBIDO",	"N", 14, 2 })
+	AADD(aField, { "_GERAL",   	"N", 14, 2 })
+	AADD(aField, { "_INDICE",  	"N", 14, 2 })
+	AADD(aField, { "_POS",  		"C",  2, 0 })
+Endif
+cFile := CriaTrab(aField, .T.)
+dbUseArea(.T.,"",cFile,cAlias,.F.,.F.)
+INDEX ON _COD+_POS TO &(cFile)
+Return(cFile)
+
+
+
+//Array com codigo e nome das filias
+Static Function GetFil()
+Local aRet  := {}
+Local nRec  := SM0->( RecNo() )
+SM0->( DbGoTop() )
+While SM0->( !Eof() )
+	aAdd( aRet,{ SM0->M0_CODFIL, SM0->M0_FILIAL })
+	SM0->( DbSkip() )
+End
+SM0->( DbGoto(nRec) )
+Return(aRet)
+
+
+
+//Imprime Report Horizontal
+Static Function PrintHor()
+Local cCod, oInd
+
+oFnt := TFont():New("Courier New",6,8,,.F.,,,,.T.,.F.)    //Fonte das Linhas Normal
+
+oSec:SetTotalInLine(.F.)
+oSec:SetLineStyle(.F.)
+oSec:SetColSpace(1)
+oSec:SetCols(0)
+oSec:SetHeaderSection(.F.)
+oSec:SetHeaderPage(.F.)
+oSec:SetHeaderBreak(.F.)
+oSec:SetLineBreak(.F.)
+oSec:SetAutoSize(.F.)
+oSec:SetPageBreak(.F.)
+oSec:SetBorder('',,,.T.)
+oSec:aTable := {}
+oSec:SetLinesBefore(0)
+
+SetFont(oFnt)
+TRCell():New(oSec,"_LIN","REPORT","Total"								,""						,12,.T.,Nil,"LEFT" ,.F.,"LEFT" )
+TRCell():New(oSec,"_ANT","REPORT","Até "+StrZero(MV_PAR03-1,4) ,"@E 9,999,999,999"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+TRCell():New(oSec,"_JAN","REPORT","Janeiro"							,"@E 9,999,999,999"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+TRCell():New(oSec,"_FEV","REPORT","Fevereiro"						,"@E 9,999,999,999"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+TRCell():New(oSec,"_MAR","REPORT","Março"								,"@E 9,999,999,999"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+TRCell():New(oSec,"_ABR","REPORT","Abril"								,"@E 9,999,999,999"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+TRCell():New(oSec,"_MAI","REPORT","Maio"								,"@E 9,999,999,999"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+TRCell():New(oSec,"_JUN","REPORT","Junho"								,"@E 9,999,999,999"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+TRCell():New(oSec,"_JUL","REPORT","Julho"								,"@E 9,999,999,999"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+TRCell():New(oSec,"_AGO","REPORT","Agosto"							,"@E 9,999,999,999"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+TRCell():New(oSec,"_SET","REPORT","Setembro"							,"@E 9,999,999,999"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+TRCell():New(oSec,"_OUT","REPORT","Outubro"							,"@E 9,999,999,999"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+TRCell():New(oSec,"_NOV","REPORT","Novembro"							,"@E 9,999,999,999"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+TRCell():New(oSec,"_DEZ","REPORT","Dezembro"							,"@E 9,999,999,999"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+TRCell():New(oSec,"_ATU","REPORT","Total "+StrZero(MV_PAR03,4)	,"@E 9,999,999,999"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+TRCell():New(oSec,"_TTL","REPORT","Total Geral"						,"@E 9,999,999,999"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+
+//Linha do Indice
+oInd:=TRSection():New(oRep,"INDICE")
+oInd:SetTotalInLine(.F.)
+oInd:SetLineStyle(.F.)
+oInd:SetColSpace(1)
+oInd:SetCols(0)
+oInd:SetHeaderSection(.F.)
+oInd:SetHeaderPage(.F.)
+oInd:SetHeaderBreak(.F.)
+oInd:SetLineBreak(.F.)
+oInd:SetAutoSize(.F.)
+oInd:SetPageBreak(.F.)
+oInd:SetBorder('',,,.T.)
+oInd:aTable := {}
+oInd:SetLinesBefore(0)
+
+//Indice em negrito com duas casas decimais
+SetFont(oFnt)
+TRCell():New(oInd,"_LIN","REPORT","","" 						,12,.T.,Nil,"LEFT" ,.F.,"LEFT",,,,,,.T. )
+TRCell():New(oInd,"_ANT","REPORT","","@E 99,999,999.99"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT",,,,,,.T. )
+TRCell():New(oInd,"_JAN","REPORT","","@E 99,999,999.99"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT",,,,,,.T. )
+TRCell():New(oInd,"_FEV","REPORT","","@E 99,999,999.99"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT",,,,,,.T. )
+TRCell():New(oInd,"_MAR","REPORT","","@E 99,999,999.99"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT",,,,,,.T. )
+TRCell():New(oInd,"_ABR","REPORT","","@E 99,999,999.99"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT",,,,,,.T. )
+TRCell():New(oInd,"_MAI","REPORT","","@E 99,999,999.99"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT",,,,,,.T. )
+TRCell():New(oInd,"_JUN","REPORT","","@E 99,999,999.99"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT",,,,,,.T. )
+TRCell():New(oInd,"_JUL","REPORT","","@E 99,999,999.99"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT",,,,,,.T. )
+TRCell():New(oInd,"_AGO","REPORT","","@E 99,999,999.99"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT",,,,,,.T. )
+TRCell():New(oInd,"_SET","REPORT","","@E 99,999,999.99"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT",,,,,,.T. )
+TRCell():New(oInd,"_OUT","REPORT","","@E 99,999,999.99"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT",,,,,,.T. )
+TRCell():New(oInd,"_NOV","REPORT","","@E 99,999,999.99"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT",,,,,,.T. )
+TRCell():New(oInd,"_DEZ","REPORT","","@E 99,999,999.99"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT",,,,,,.T. )
+TRCell():New(oInd,"_ATU","REPORT","","@E 99,999,999.99"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT",,,,,,.T. )
+TRCell():New(oInd,"_TTL","REPORT","","@E 99,999,999.99"	,13,.T.,Nil,"RIGHT",.F.,"RIGHT",,,,,,.T. )
+
+oSec:Init()
+oInd:Init()
+
+cNomFil := _FIL
+cCod    := _COD
+
+//Imprime
+While ! Eof()
+	oRep:IncMeter()
+	If cCod != _COD
+		Parametros()
+		cNomFil := _FIL
+		cCod    := _COD
+		oRep:EndPage(.F.)
+	Endif
+	If "%" $(_LIN)
+		oInd:PrintLine()
+	Else
+		oSec:PrintLine()
+	Endif
+	DbSkip()
+End
+Parametros()
+
+Return(Nil)
+
+
+
+//Imprime Report Vertical
+Static Function PrintVer()
+Local cCod
+
+oFnt := TFont():New("Courier New",10,12,,.F.,,,,.T.,.F.) //Fonte das Linhas Normal
+
+oSec:SetTotalInLine(.F.)
+oSec:SetLineStyle(.F.)
+oSec:SetColSpace(1)
+oSec:SetCols(0)
+oSec:SetHeaderSection(.F.)
+oSec:SetHeaderPage(.F.)
+oSec:SetHeaderBreak(.F.)
+oSec:SetLineBreak(.F.)
+oSec:SetAutoSize(.F.)
+oSec:SetPageBreak(.F.)
+oSec:SetBorder('',,,.T.)
+oSec:aTable := {}
+oSec:SetLinesBefore(0)
+
+SetFont(oFnt)
+TRCell():New(oSec,	"_TOTAL"		,"REPORT","Total"		,"" 			   			,12,.T.,Nil,"LEFT" ,.F.,"LEFT" )
+TRCell():New(oSec,	"_RECEBER"	,"REPORT","Receber"	,"@E 9,999,999,999.99"	,16,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+TRCell():New(oSec,	"_RECEBIDO"	,"REPORT","Recebido"	,"@E 9,999,999,999.99"	,16,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+TRCell():New(oSec,	"_GERAL"		,"REPORT","Geral"		,"@E 9,999,999,999.99"	,16,.T.,Nil,"RIGHT",.F.,"RIGHT" )
+TRCell():New(oSec,	"_INDICE"	,"REPORT","Indice %"	,"@E 9,999,999,999.99"	,16,.T.,Nil,"RIGHT",.F.,"RIGHT",,,,,,.T. ) //Negrito
+
+oSec:Init()
+
+cNomFil := _FIL
+cCod    := _COD
+
+//Imprime
+While ! Eof()
+	oRep:IncMeter()
+	If cCod != _COD
+		Parametros()
+		cNomFil := _FIL
+		cCod    := _COD
+		oRep:EndPage(.F.)
+	Endif
+	oSec:PrintLine()
+	DbSkip()
+End
+Parametros()
+
+Return(Nil)
+
+
+
+//Imprimir Cabacalho
+Static Function ReportCab()
+Local oFntTit := TFont():New("Arial",10,12,,.F.,,,,.T.,.F.)       //Titulo
+Local oFntCab := TFont():New("Courier New",9,11,,.T.,,,,.T.,.F.)  //Folha e Data
+//Cabec. Excel
+oRep:XlsNewRow(.T.)
+oRep:XlsNewCell(oRep:cTitle + " - " + cNomFil,.F.,,,1,,'C')
+//LogoTipo
+oRep:SayBitmap(100,10,cLogo,750,250)
+//Dados do Report
+SetFont(oFntCab)
+oRep:SetRow(100)
+oRep:PrtRight(iif(Len(DTOC(DDATABASE))==8, "Pag: ", "Folha: ")+Str(oRep:Page(),3)+Space(10))
+oRep:SetRow(150)
+oRep:PrtRight("Data: "+DTOC(DDATABASE)+Space(10))
+oRep:SetRow(200)
+oRep:PrtRight("Horas: "+Time()+Space(10))
+oRep:SetRow(250)
+oRep:PrtRight("Report: "+FunName()+Space(10))
+oRep:SetRow(300)
+oRep:PrtRight("Usuário: "+AllTrim(CUSERNAME)+Space(10))
+//Titulo do Relatorio
+SetFont(oFntTit)
+oRep:SetRow(390)
+oRep:PrtRight("EXERCÍCIO DE "+StrZero(MV_PAR03,4)+Space(10))
+oRep:SetRow(390)
+oRep:PrtLeft(Upper(AllTrim(cNomFil)))
+oRep:SetRow(500)
+oRep:PrtCenter(Upper(AllTrim(oRep:cTitle)))
+//Header
+SetFont(oFnt)
+oRep:SetRow(600)
+oRep:FatLine()
+oSec:SetHeaderSection(.T.)
+oSec:PrintHeader()
+oSec:SetHeaderSection(.F.)
+oRep:FatLine()
+oRep:SetRow(oRep:Row()+15)
+Return(Nil)
+
+
+
+//Mudar fonte do relatorio e ajustar corpo e salto de linha
+Static Function SetFont(oFont, lBold)
+oRep:oFontBody 	:= oFont
+oRep:nFontBody 	:= iif(oFont:nWidth != 0, oFont:nWidth, oFont:nHeight)
+oRep:cFontBody 	:= oFont:Name
+oRep:lBold 			:= iif(Empty(lBold), oFont:Bold, .T.)
+oRep:lItalic 		:= oFont:Italic
+oRep:lUnderLine 	:= oFont:Underline
+oRep:nLineHeight	:= oRep:nFontBody * 5
+Return(Nil)
+
+
+
+//Imprimir parametros
+Static Function Parametros()
+Local aX, nX
+aX := {}
+SX1->(DbSetOrder(1))
+SX1->(DbSeek(PERGUNTA))
+While ! SX1->(Eof()) .And. AllTrim(SX1->X1_GRUPO) == PERGUNTA
+	aAdd(aX, SX1->X1_PERGUNT)
+	SX1->(DbSkip())
+End
+oRep:SetRow(oRep:Row()+15)
+oRep:FatLine()
+oRep:PrtLeft(aX[1] + " (" + Upper(MV_PAR01)+")")
+oRep:SkipLine()
+oRep:PrtLeft(aX[2] + " (" + Upper(MV_PAR02)+")")
+oRep:SkipLine()
+oRep:PrtLeft(aX[3] + " (" + StrZero(MV_PAR03,4)+")")
+oRep:SkipLine()
+oRep:PrtLeft(aX[4] + " "  + iif(Empty(MV_PAR04), "(TODOS)", FormatIn(AllTrim(Upper(MV_PAR04)),",")))
+oRep:SkipLine()
+oRep:PrtLeft(aX[5] + " "  + iif(Empty(MV_PAR05), "(TODOS)", FormatIn(AllTrim(Upper(MV_PAR05)),",")))
+oRep:SkipLine()
+oRep:PrtLeft(aX[6] + " (" + iif(MV_PAR06==1,"SIM","NAO")+")")
+oRep:SkipLine()
+oRep:FatLine()
+Return(Nil)
+
+
+
+//Mostra Movivo de Baixas e Tipo Disponivel
+Static Function ShowParam()
+Local cQry, cTip, cMot
+//Tipo de Titulos
+cQry := " SELECT DISTINCT E5_TIPO"
+cQry += " FROM "+RetSqlName("SE5")
+cQry += " WHERE D_E_L_E_T_ = ' ' AND E5_RECPAG = 'R' AND E5_VALOR > 0 ORDER BY E5_TIPO"
+cQry := ChangeQuery(cQry)
+dbUseArea(.T., "TOPCONN", TCGenQry(,,cQry), 'TMPQRY', .F., .F.)
+cTip := ""
+While ! TMPQRY->(Eof())
+	cTip += "'"+TMPQRY->E5_TIPO+"', "
+	TMPQRY->(DbSkip())
+End
+TMPQRY->(DbCloseArea())
+//Motivo de Baixas
+cQry := " SELECT DISTINCT E5_MOTBX"
+cQry += " FROM "+RetSqlName("SE5")
+cQry += " WHERE D_E_L_E_T_ = ' ' AND E5_RECPAG = 'R' AND E5_VALOR > 0 ORDER BY E5_MOTBX"
+cQry := ChangeQuery(cQry)
+dbUseArea(.T., "TOPCONN", TCGenQry(,,cQry), 'TMPQRY', .F., .F.)
+cMot := ""
+While ! TMPQRY->(Eof())
+	cMot += "'"+TMPQRY->E5_MOTBX+"', "
+	TMPQRY->(DbSkip())
+End
+TMPQRY->(DbCloseArea())
+SetKey(VK_F10,Nil)
+Aviso("", "Tipos de titulos:"+CRLF+cTip+CRLF+CRLF+"Motivos de baixas:"+CRLF+cMot, {"OK"}, 3, "Dados Disponiveis")
+SetKey(VK_F10,{|| ShowParam()})
+Return(Nil)
+
+
+
+//Ajustar Perguntas
+Static Function SetPergSX1(lPer)
+Local aHelp := {}
+Local lRet  := .T.
+DbSelectArea("SX1")
+DbSetOrder(1)
+If ! DbSeek(PERGUNTA)
+	lPer := .T.
+	aHelp := {"Informe Filial de De Até","Obrigatorio"}
+	u_SFPUTSX1(PERGUNTA,"01","Filial De ?", "Filial De ?", "Filial De ?", "mv_ch1","C",Len(xFilial("SE1")),0,0,"G","","SM0","","",;
+	"MV_PAR01","","","","", "","","","", "","","","", "","","","",aHelp)
+	u_SFPUTSX1(PERGUNTA,"02","Filial Até ?","Filial Até ?","Filial Até ?","mv_ch2","C",Len(xFilial("SE1")),0,0,"G","","SM0","","",;
+	"MV_PAR02","","","","", "","","","", "","","","", "","","","",aHelp)
+	aHelp := {"Informe o Ano do Exercicio","Obrigatorio"}
+	u_SFPUTSX1(PERGUNTA,"03","Exercicio ?","Exercicio ?","Exercicio ?","mv_ch3","N",4,0,0,"G","","","","",;
+	"MV_PAR03","","","","", "","","","", "","","","", "","","","",aHelp)
+	aHelp := {"Informe os Tipos de Titulos","lista separados por ','","Exemplo: 'BOL,NF,...'","Vazio = Todos"}
+	u_SFPUTSX1(PERGUNTA,"04","Tipos de Titulos ?","Tipos de Titulos ?","Tipos de Titulos ?","mv_ch4","C",50,0,0,"G","","","","",;
+	"MV_PAR04","","","","", "","","","", "","","","", "","","","",aHelp)
+	aHelp := {"Informe os Motivos das Baixas","lista separados por ','","Exemplo: 'NOR,DAC,...'","Vazio = Todos"}
+	u_SFPUTSX1(PERGUNTA,"05","Motivos da Baixa ?","Motivos da Baixa ?","Motivos da Baixa ?","mv_ch5","C",50,0,0,"G","","","","",;
+	"MV_PAR05","","","","", "","","","", "","","","", "","","","",aHelp)
+	aHelp := {"Informe Salto de Paginas Filiais","SIM = Uma pagina para cada filial","NAO = Uma pagina consolidada"}
+	u_SFPUTSX1(PERGUNTA,"06","Salta Pagina Filial ?","Salta Pagina Filial ?","Salta Pagina Filial ?","mv_ch6","N",1,0,0,"C","","","","",;
+	"MV_PAR06","SIM","SIM","SIM","", "NAO","NAO","NAO","","","","","","","","","",aHelp)
+Endif
+SetKey(VK_F10,{|| ShowParam()})
+Pergunte(PERGUNTA, lPer)
+While lRet .And. (Empty(MV_PAR01+MV_PAR02) .Or. MV_PAR03 < 1900)
+	lRet := Pergunte(PERGUNTA, .T.)
+End
+SetKey(VK_F10, Nil)
+Return(lRet)
+                          

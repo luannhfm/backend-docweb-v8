@@ -1,0 +1,406 @@
+#Include 'Protheus.ch'
+#Include 'parmtype.ch'
+#Include 'RwMake.ch'
+
+#DEFINE NMAXPAGE	40
+
+Static _cEntd 	:= Space(TamSX3("ZEC_CODCLI")[1])
+Static _cLjEntd := Space(TamSX3("ZEC_LOJA")[1])
+
+/*/{Protheus.doc} SF0104F
+	Consulta específica para cliente ou fornecedor.
+	
+@author Franklin B. Oliveira
+@since 29/11/2016
+@param cTpEnt, characters, 'C' = cliente; 'F' = fornecedor;
+/*/
+User Function SF0104F(cTpEnt)
+
+Local aArea			:= GetArea()
+Local aCmbTInd		:= {"CODIGO", "NOME", "CNPJ/CPF"}
+Local aDados 		:= {}
+Local aHeaders		:= {}
+Local bBlockAdd		:= Nil
+Local bBlockLine	:= Nil
+Local cAliasEn		:= ""
+Local cComInd		:= ""
+Local cCposList		:= ""
+Local cCpoPesq		:= ""
+Local cJoin			:= ""
+Local cIteAtu		:= &(ReadVar())
+Local cOrder		:= ""
+Local cPesquisa		:= Space(TamSX3("ZEC_CODCLI")[1])
+Local cPrefx		:= ""
+Local cRetCod		:= ""
+Local cRetLja		:= ""
+Local cSep			:= ""
+Local cTabName		:= "TMP"
+Local cTable		:= ""
+Local cTitulo		:= 'Consulta de '
+Local cWhere		:= ""
+Local lRet			:= .F.
+Local nTotReg		:= 0
+Local nOcorrencia   := 0
+Local oDlg			:= Nil
+Local oLbx			:= Nil
+Local oOcorr		:= Nil
+Local oCbxInd		:= Nil
+Local aCposLst		:= {}
+
+	//Defino as variáveis conforme a entidade selecionada
+	If(cTpEnt == 'C') .Or. (cTpEnt == 'Cliente')
+		cTitulo		+= "clientes"
+		cAliasEn	:= "SA1"
+		cPrefx		:= PrefixoCpo(cAliasEn)
+		aCposLst	:= {"A1_COD", "A1_CGC","A1_LOJA", "A1_NOME"}
+		cCpoPesq	:= "A1_COD"
+		cRetCod		:= "A1_COD"
+		cRetLja		:= "A1_LOJA"
+	Else
+		cTitulo		+= "fornecedores"
+		cAliasEn 	:= "SA2"
+		cPrefx		:= PrefixoCpo(cAliasEn)
+		aCposLst	:= {"A2_COD", "A2_CGC", "A2_LOJA", "A2_NOME"}
+		cCpoPesq	:= "A2_COD"
+		cRetCod		:= "A2_COD"
+		cRetLja		:= "A2_LOJA"
+	EndIf
+	
+	//Monta lista de campos
+	SX3->(DbSetOrder(2))  
+	
+	cTmp	:= "{||AAdd(aDados,{"
+	cTmp2	:= "{||oLbx:bLine :={|| {"
+	For nX := 1 to Len(aCposLst)
+		SX3->(DbSeek(aCposLst[nX]))
+		
+		AAdd(aHeaders,AllTrim(Capital(SX3->X3_TITULO)))
+	
+		cCposList	+= cSep+aCposLst[nX] 
+		cTmp	+= cSep + cTabName+"->"+aCposLst[nX]
+		cTmp2	+= cSep + "oLbx:aArray[oLbx:nAt]["+AllTrim(Str(nX))+"]"
+		cSep	:= ","
+	Next nX 
+	
+	cTmp	+= cSep+cTabName+"->"+"RECNUM})}"
+	cTmp2	+= "}}}" 
+	
+	bBlockAdd	:= &(cTmp)
+	bBlockLine	:= &(cTmp2)
+	
+	//Ordem utilizada no SQL
+	DbSelectArea(cAliasEn)
+	(cAliasEn)->(DbSetOrder(1))
+	
+	cOrder	:= SqlOrder((cAliasEn)->(IndexKey()))
+	
+	DbSelectArea(cAliasEn)
+	(cAliasEn)->(DbGoTop())
+	
+	//Conta registros da tabela
+	While !(cAliasEn)->(Eof()) .And. nTotReg <= NMAXPAGE
+		nTotReg++
+		(cAliasEn)->(DbSkip())
+	EndDo
+	
+	(cAliasEn)->(DbGoTop())
+	
+	//Pesquisa inicial
+	If !f0104FPesq(	cPesquisa	, @nOcorrencia	, @aDados	, @oLbx	,;
+				@oOcorr		, cAliasEn		, cPrefx	, cCposList	,;
+				cWhere		, cOrder		, cCpoPesq	, bBlockAdd	,;
+				bBlockLine	, cJoin			, cTable	)
+		RestArea(aArea)
+		Return .F.
+	EndIf
+	
+	//Localiza a posição do campo de retorno
+	nPRetCd := aScan(aCposLst,{|x|AllTrim(x) == AllTrim(cRetCod)})
+	nPRetLj := aScan(aCposLst,{|x|AllTrim(x) == AllTrim(cRetLja)})
+	
+	//Montagem da tela de pesquisa
+	DEFINE MSDIALOG oDlg TITLE cTitulo FROM 000, 000 TO 400, 600 PIXEL
+	
+		bRet	:= {||_cEntd := oLbx:aArray[oLbx:nAt][nPRetCd], ;
+					  _cLjEntd := oLbx:aArray[oLbx:nAt][nPRetLj], ;
+						(oDlg:End());
+					}
+		
+		oLbx := TWBrowse():New(030, 003, 298, 140, Nil, aHeaders, , oDlg,,,,,,,,,,,,,, .T.)
+		oLbx:bLDblClick := bRet
+		oLbx:SetArray(aDados) 
+		Eval(bBlockLine)
+		
+		oLbx:GoTop()
+		oLbx:Refresh()
+		
+		If (nTotReg > NMAXPAGE)
+			CfgPagLbx(@oLbx, cTabName, aCposLst, cAliasEn)
+		EndIf
+		
+		If (cIteAtu <> Nil) .And. !Empty(cIteAtu) .And. ((nPos := aScan(aDados,{|x| AllTrim(x[nPRetCd])==AllTrim(cIteAtu)}))>0)
+			oLbx:nAt	:= nPos   
+			oLbx:Refresh()
+		EndIf
+		
+		@ 180, 150 Say Space(30) OBJECT oOcorr //Ocorrencias
+		
+		@ 180,005 Button "Confirmar" Size 040, 010 Action Eval(bRet)
+		@ 180,050 Button "Retonar"   Size 040, 010 Action (Close(oDlg), (cAliasEn)->(DbCloseArea()))
+		
+		If !Empty(cCpoPesq)
+			@ 003, 005 MSCOMBOBOX oCbxInd Var cComInd ITEMS aCmbTInd  ON CHANGE (cCpoPesq := fAltIndx(@cPesquisa, cComInd, cPrefx, cCpoPesq)) Size 240,010 OF oDlg PIXEL
+			@ 015, 005 Get cPesquisa Picture "@!" Size 240, 010 Of oDlg Pixel 
+			@ 003, 250 Button "Pesquisar" Size 50,12 Action (oLbx:nAt := 1,;
+				f0104FPesq(	cPesquisa	, @nOcorrencia	, @aDados, @oLbx	,;
+							@oOcorr		, cAliasEn		, cPrefx		, cCposList	,;
+							cWhere		, cOrder		, cCpoPesq		, bBlockAdd	,;
+							bBlockLine	, cJoin			, cTable		),;
+				Iif( (nTotReg > NMAXPAGE), CfgPagLbx(@oLbx, cTabName, aCposLst, cAliasEn), .F. ))
+		EndIf  
+	
+	ACTIVATE DIALOG oDlg CENTER
+	
+	If .Not. Empty(_cEntd) .And. .Not. Empty(_cLjEntd)
+		lRet := .T.
+	EndIf
+	
+	RestArea(aArea) 
+
+Return (lRet)
+
+/*/{Protheus.doc} f0104FPesq
+	Função para realizar pesquisa conforme parâmetros
+	
+@author Franklin B. Oliveira
+@since 29/11/2016
+@param cPesquisa, characters, Expressão a ser pesquisada
+@param nOcorrencia, numeric, Número de ocorrências encontradas
+@param aDados, array, Dados a serem exibidos
+@param oLbx, object, Objeto TWBrowse
+@param oOcorr, object, Texto de ocorrências
+@param cAlias, characters, Alias a ser pesquisado
+@param cPrefx, characters, Prefixo da tabela a ser pesquisada
+@param cCposList, characters, Lista de campos exibidos na pesquisa
+@param cWhere, characters, condição para consulta
+@param cOrder, characters, ordem da consulta
+@param cCpoPesq, characters, campo a ser pesquisado
+@param bBlockAdd, block, bloco para adição do resultado da pesquisa no TWBrowse
+@param bBlockLine, block, bloco para posicionamento no TWBrowse
+@param cJoin, characters, condição de junção
+@param cTable, characters, Tabela utilizada
+/*/
+Static Function f0104FPesq(	cPesquisa	, nOcorrencia	, aDados	, oLbx	,;
+							oOcorr		, cAlias		, cPrefx	, cCposList	,;
+							cWhere		, cOrder		, cCpoPesq	, bBlockAdd	,;
+							bBlockLine	, cJoin			, cTable	)
+
+Local aArea		:= GetArea()
+Local aCposInd	:= {}
+Local cTabela	:= "TMP"
+Local cFiltro	:= ""
+Local nRecAdic	:= 0
+Local nX		:= 0
+Local lPaginar	:= (cTable <> Nil) .AND. (cTable <> "")
+
+	If lPaginar
+		If !Empty(cCpoPesq) .AND. !Empty(cPesquisa)
+				cFiltro += " AND UPPER("+cCpoPesq+") LIKE '%"+AllTrim(Upper(cPesquisa))+"%' "
+		EndIf
+		
+		cTabela := cTable 
+		
+		Ft320FilTb(Nil,cAlias,cFiltro,cTabela)  
+	
+		DbSelectArea(cTabela)
+		DbGoTop()
+		
+		If (cTabela)->(Eof())
+		    MsgAlert("Nenhuma Ocorrêcia encontrada com a palavra digitada.", "Atenção")
+		    Return(.F.)
+		Endif 
+		
+		//Limpa listbox
+		If oLstBx <> Nil
+			oLstBx:aArray := {}
+		EndIf
+	
+		//Carrega a listbox
+		aDados := Ft530Pag(@oLbx, cTabela, StrToKArr(cCposList,","), NMAXPAGE)
+	Else
+		aCposInd := StrToKArr((cAlias)->(IndexKey()),"+")
+		
+		For nX := 1 to Len(aCposInd)
+			If !(AllTrim(aCposInd[nX]) $ cCposList)
+				cCposList += "," + aCposInd[nX]
+			EndIf
+		Next nX
+		
+		If Select(cTabela) > 0
+			(cTabela)->(DbCloseArea())
+		EndIf
+		
+		cQuery := "SELECT " + cCposList + " , " + cAlias + ".R_E_C_N_O_ as RECNUM "
+		cQuery += " FROM " + RetSqlName(cAlias) + " " + cAlias
+		cQuery += " WHERE "
+		cQuery += cPrefx + "_FILIAL = '" + xFilial(cAlias)	+ "'"
+		
+		If !Empty(cWhere)
+			cQuery += " AND " + cWhere
+		EndIf
+		
+		cQuery	+= " AND " + cAlias + ".D_E_L_E_T_ = '' "
+		
+		If !Empty(cCpoPesq) .AND. !Empty(cPesquisa)
+			cQuery += " AND UPPER(" + cCpoPesq + ") LIKE '%" + AllTrim(Upper(cPesquisa)) + "%'"
+		EndIf
+		
+		cQuery	+= " ORDER BY " + cOrder
+		
+		cQuery := ChangeQuery( cQuery )
+		
+		DbUseArea(.T., "TOPCONN", TCGenQry(,,cQuery), cTabela,.T.,.T.)
+		
+		DbSelectArea(cTabela)
+		DbGoTop()
+		
+		If (cTabela)->(Eof())
+			MsgAlert("Nenhuma Ocorrência encontrada com a palavra digitada.", "Atenção")
+		    Return(.F.)
+		EndIf
+		
+		aDados		:= {}
+		nOcorrencia	:= 0
+		
+		While !(cTabela)->(Eof()) .AND. (nRecAdic <= NMAXPAGE)
+			Eval(bBlockAdd)
+			nOcorrencia++
+			nRecAdic++
+			(cTabela)->(DbSkip())
+		EndDo
+	EndIf
+		
+	If oLbx <> Nil
+		oLbx:nAt	:= 1
+		oLbx:SetArray(aDados)
+		Eval(bBlockLine)
+	   	oLbx:Refresh()
+	   	If lPaginar                                                                 
+	   		oOcorr:cTitle := ""
+	   	Else
+		  	oOcorr:cTitle := Strzero(nOcorrencia,6) + " ocorrêcia(s) encontrada(s)"
+		EndIf
+	   	oOcorr:Refresh()
+	EndIf
+
+	RestArea(aArea)
+
+Return (.T.)
+
+/*/{Protheus.doc} f0104FPag
+	Função para paginação da consulta
+	
+@author Franklin B. Oliveira
+@since 29/11/2016
+@param oLbx, object, Objeto TWBrowse
+@param cAlias, characters, Alias de pesquisa
+@param aCampos, array, Lista de colunas
+@param nLimite, numeric, Limite de registros
+@param cAliasOri, characters, Alias de origem
+/*/
+Static Function f0104FPag(oLbx, cAlias, aCampos, nLimite, cAliasOri)
+
+Local aLinha	:= {}
+Local nX		:= 0
+Local nRegs		:= 0 
+Local aDados	:= {}  
+Local cChaveInd	:= ""
+Local cSep		:= "" 
+Local cChave	:= ""
+
+	(cAliasOri)->(DbSetOrder(1))
+	
+	For nX := 1 to (cAlias)->(FCount())
+		If Type((cAlias)->(FieldName(nX))) == "C"
+			cChaveInd	+= cSep + (cAlias)->(FieldName(nX))
+			cSep	:= "+"
+		EndIf
+	Next nX
+	
+	While !(cAlias)->(Eof()) .AND. nRegs <= nLimite
+		
+		aLinha := {}
+		cChave	:= (cAlias)->&(cChaveInd)
+	
+		(cAliasOri)->(DbSeek(xFilial(cAliasOri)+cChave))
+	
+		For nX := 1 to Len(aCampos)
+			AAdd(aLinha,(cAliasOri)->&(aCampos[nX]))
+		Next nX
+		
+		AAdd(aLinha,(cAliasOri)->(Recno()))
+		
+		If oLbx <> Nil
+			AAdd(oLbx:aArray,aClone(aLinha))
+		Else
+			Aadd(aDados,aClone(aLinha))
+		EndIf
+	
+		nRegs++ 
+		
+		(cAlias)->(DbSkip())
+		
+	EndDo
+	
+	If oLbx <> Nil
+		aDados:= aClone(oLbx:aArray)
+	EndIf
+
+Return aDados
+
+/*/{Protheus.doc} CfgPagLbx
+	Alias para configuração da paginação do TWBrowse
+
+@author Franklin B. Oliveira
+@since 29/11/2016
+@param oLbx, object, Objeto da TWBrowse
+@param cTabName, characters, Nome da tabela
+@param aCposLst, array, Lista de colunas
+@param cAliasOri, characters, Alias utilizado
+/*/
+Static Function CfgPagLbx(oLbx, cTabName, aCposLst, cAliasOri)
+
+Local bNextReg	:= Nil
+
+bNextReg			:= {|a,b,c,d,e|f0104FPag(@a,b,c,d,e)}
+oLbx:bGoBottom	:= {||Eval(bNextReg,oLbx,cTabName,aCposLst,NMAXPAGE),oLbx:NAT := EVAL( oLbx:BLOGICLEN ) }    
+oLbx:bSkip		:= {|NSKIP, NOLD, nMax|nMax:=EVAL( oLbx:BLOGICLEN ),NOLD := oLbx:NAT, oLbx:NAT += NSKIP,;
+						oLbx:NAT := MIN( MAX( oLbx:NAT, 1 ), nMax ),If(oLbx:nAt==nMax,Eval(bNextReg,oLbx,cTabName,aCposLst,NMAXPAGE,cAliasOri),.F.),;
+						oLbx:NAT - NOLD}
+Return Nil
+
+Static Function fAltIndx(cPesquisa, cComInd, cPrefx, cCpoPesq)
+
+	If cComInd == "CNPJ/CPF"
+		cCpoPesq  := cPrefx + '_CGC'
+		cPesquisa := Space(TamSX3(cPrefx + '_CGC')[1])
+	ElseIf cComInd == "NOME"
+		cCpoPesq  := cPrefx + '_NOME'
+		cPesquisa := Space(TamSX3(cPrefx + '_NOME')[1])
+	Else
+		cCpoPesq  := cPrefx + '_COD'
+		cPesquisa := Space(TamSX3(cPrefx + '_COD')[1])
+	EndIf
+
+Return cCpoPesq
+
+/*/{Protheus.doc} SF0104Z
+	Função para retorno da consulta específica
+
+@author Franklin B. Oliveira
+@since 29/11/2016
+@param cTipo, characters, Identificação do retorno; Se 'código' o retorno será o código da entidade
+/*/
+User Function SF0104Z(cTipo)
+
+Return (Iif( cTipo == 'CODIGO',_cEntd, _cLjEntd))

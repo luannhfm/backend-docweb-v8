@@ -1,0 +1,1056 @@
+#Include 'Protheus.ch'
+#Include 'TOTVS.ch'
+#Include 'FwMVCDef.ch'
+
+/*/{Protheus.doc} SFFN462A
+Rotina responsável por liquidar títulos e gerar novos contra a administradora financeira.
+@type Function
+@author Alan Teles de Oliveira
+@since 27/12/2018
+@version 12.1.17
+@history 26/02/2019, Alan Teles de Oliveira, corrigido regra que da permissão a alterar o valor a receber com cartão.
+@history 01/03/2019, Alan Teles de Oliveira, posiciono no titulo que será baixado.
+@history 06/03/2019, Alan Teles de Oliveira, adicionado campo com numero da liquidação na tela de confirmação do titulo a ser gerado.
+@history 04/06/2019, Franklin de Brito de Oliveira, ajustado o valor da variável nVlrDigt na função fGetTit.
+@history 04/06/2019, Franklin de Brito de Oliveira, removido recálculo do juros e da multa na função fGerLiq.
+@history 18/10/2019, Franklin de Brito de Oliveira, ajustado o histórico do titulo gerado conforme solicitado no suporte 335687
+/*/
+User Function SFFN462A()
+
+    Local cMsg      := ''
+    Local cCliente  := ''
+    Local cVlTotal  := ''
+    Local nVlTotal  := 0
+    Local aTitulos	:= {}
+    Local aCols     := {}
+    Local aArea     := {}
+    Local oSize		:= Nil
+    Local oDlg      := Nil
+    Local oBrw		:= Nil
+    LOCAL oOk 		:= Nil
+    LOCAL oNo 		:= Nil
+    Local bChOk     := Nil
+
+    aArea       := GetArea()
+    cMsg        := 'Selecione os títulos que serão baixados com cartão de credito ou debito.'
+    cCliente    := AllTrim(SE1->E1_CLIENTE) + '-' + AllTrim(SE1->E1_LOJA) + ' ' + AllTrim(SE1->E1_NOMCLI)
+    aTitulos    := fTitulos()
+    aCols       := fCols()
+    bChOk       := {|| If(aScan(aTitulos, {|x| x[1]}) > 0,; 
+                            If(fAdmFin(oSize, aTitulos), (MsgInfo('Titulo gerado com sucesso.', 'Atenção - SFFN462A'), oDlg:End()), Nil), Nil)}
+
+    If Len(aTitulos) = 0
+        MsgInfo('Não existem títulos disponíveis para baixa com cartão de credito/debito para o cliente posicionado.', 'Atenção - SFFN462A')
+        Return
+    EndIf
+
+    oSize       := FwDefSize():New()      
+    oSize:AddObject("INFO", 100, 25, .T., .T.)
+    oSize:AddObject("GRID", 100, 75, .T., .T.)    
+    oSize:lProp := .T.
+    oSize:aMargins  := {3, 3, 0, 0}
+    oSize:Process()
+    
+    oOk         := LoadBitmap( GetResources(), "LBOK")
+    oNo         := LoadBitmap( GetResources(), "LBNO")
+
+    oDlg        := MsDialog():New(oSize:aWindSize[1] * 0.8, oSize:aWindSize[2] * 0.8, oSize:aWindSize[3] * 0.8, oSize:aWindSize[4] * 0.8, 'Titulos', , , , DS_MODALFRAME, CLR_BLACK, CLR_WHITE, , , .T.) 
+    
+    oPnlInfo    := TPanel():New(oSize:GetDimension("INFO", "LININI"),       oSize:GetDimension("INFO", "COLINI"), cMsg,   oDlg,, .F., .F.,,, oSize:GetDimension("INFO", "XSIZE"),       oSize:GetDimension("INFO", "YSIZE"))
+    oPnlGrid    := TPanel():New(oSize:GetDimension("GRID", "LININI") - 30,  oSize:GetDimension("GRID", "COLINI"),,        oDlg,, .T., .T.,,, oSize:GetDimension("GRID", "XSIZE") - 140, oSize:GetDimension("GRID", "YSIZE") - 50)
+    
+    TSay():New(oSize:GetDimension("INFO", "LININI"),         oSize:GetDimension("INFO", "COLINI") + 05, {||"Cliente:"},  oPnlInfo,,, .F., .F., .F., .T., CLR_BLACK, CLR_WHITE, 032, 008)
+    TSay():New(oSize:GetDimension("INFO", "LININI"),         oSize:GetDimension("INFO", "COLINI") + 320, {||"Total:"},    oPnlInfo,,, .F., .F., .F., .T., CLR_BLACK, CLR_WHITE, 032, 008)
+
+    TGet():New(oSize:GetDimension("INFO", "LININI"),         oSize:GetDimension("INFO", "COLINI") + 045, {|u| If(PCount()>0, cCliente := u, cCliente)},   oPnlInfo, 240, 008, '',, CLR_BLACK, CLR_WHITE,,,, .T., "",,, .F., .F.,, .T., .F., "SA1",   "cCliente",,)
+    oVlTotal    := TGet():New(oSize:GetDimension("INFO", "LININI"),         oSize:GetDimension("INFO", "COLINI") + 360, {|u| If(PCount()>0, cVlTotal := u, cVlTotal)},   oPnlInfo, 080, 008, '',, CLR_BLACK, CLR_WHITE,,,, .T., "",,, .F., .F.,, .T., .F., "",      "cVlTotal",,)
+
+    oBrw        := TCBrowse():New(0, 0, 10, 10,,,, oPnlGrid,,,,,,,,,,,,,, .T.,,,, .T., .T.)
+
+    oBrw:Align := CONTROL_ALIGN_ALLCLIENT
+    oBrw:SetArray(aTitulos)
+    oBrw:AddColumn(TCColumn():New(aCols[01, 1], {|| If(aTitulos[oBrw:nAt, 01], oOk, oNo)},,,,, aCols[01, 3], .T., .F.,,,,,))
+	oBrw:AddColumn(TCColumn():New(aCols[05, 1], {|| aTitulos[oBrw:nAt, 02]},,,,, aCols[05, 3]))
+    oBrw:AddColumn(TCColumn():New(aCols[06, 1], {|| aTitulos[oBrw:nAt, 03]},,,,, aCols[06, 3]))
+    oBrw:AddColumn(TCColumn():New(aCols[07, 1], {|| aTitulos[oBrw:nAt, 04]},,,,, aCols[07, 3]))
+    oBrw:AddColumn(TCColumn():New(aCols[08, 1], {|| aTitulos[oBrw:nAt, 05]},,,,, aCols[08, 3]))
+    oBrw:AddColumn(TCColumn():New(aCols[09, 1], {|| aTitulos[oBrw:nAt, 06]},,,,, aCols[09, 3]))
+    oBrw:AddColumn(TCColumn():New(aCols[10, 1], {|| aTitulos[oBrw:nAt, 07]},,,,, aCols[10, 3]))
+    oBrw:AddColumn(TCColumn():New(aCols[11, 1], {|| aTitulos[oBrw:nAt, 08]},,,,, aCols[11, 3]))
+    oBrw:AddColumn(TCColumn():New(aCols[17, 1], {|| aTitulos[oBrw:nAt, 26]},,,,, aCols[17, 3]))
+    oBrw:AddColumn(TCColumn():New(aCols[03, 1], {|| aTitulos[oBrw:nAt, 11]},,,,, aCols[03, 3]))
+    oBrw:AddColumn(TCColumn():New(aCols[02, 1], {|| aTitulos[oBrw:nAt, 12]},,,,, aCols[02, 3]))
+    oBrw:AddColumn(TCColumn():New(aCols[15, 1], {|| aTitulos[oBrw:nAt, 16]},,,,, aCols[15, 3]))
+	oBrw:AddColumn(TCColumn():New(aCols[16, 1], {|| aTitulos[oBrw:nAt, 17]},,,,, aCols[16, 3]))
+    
+    //Sempre como ultima coluna
+	oBrw:AddColumn(TCColumn():New(aCols[04, 1], {|| aTitulos[oBrw:nAt, 13]},,,,, aCols[04, 3]))
+
+    oBrw:bLDblClick := {|| fAltTitulos(@aTitulos, @oBrw, @nVlTotal, @cVlTotal)}
+
+    oDlg:Activate(EnchoiceBar(oDlg, bChOk, {|| oDlg:End()},,,,, .F., .F., .F.), oBrw:Refresh())
+
+    RestArea(aArea)
+
+Return 
+
+
+/*/{Protheus.doc} fAltTitulos
+Limpo seleção anterior de titulo e executo ultima ação do usuário.
+@type Function
+@author Alan Teles de Oliveira
+@since 29/01/2019
+@version 12.1.17
+@param p_aTitulos, array, todos os titulos 
+@param p_oBrw, object, objeto do browse
+
+/*/
+Static Function fAltTitulos(p_aTitulos, p_oBrw, p_nVlTotal, p_cVlTotal)
+
+    Local nPos      := 0
+    Local nVlr      := 0
+    Local lStatus   := .F.
+
+    nPos                := p_oBrw:nAt
+    lStatus             := .not. p_aTitulos[nPos, 1]
+    nVlr                := (p_aTitulos[nPos, 19] + p_aTitulos[nPos, 22] + p_aTitulos[nPos, 23] - p_aTitulos[nPos, 25]) 
+    p_aTitulos[nPos, 1] := lStatus
+    
+    If lStatus
+        p_nVlTotal += nVlr
+    Else
+        p_nVlTotal -= nVlr
+    EndIf
+
+    p_cVlTotal := AllTrim(Transform(p_nVlTotal, X3Picture('E1_VALOR')))
+    
+    p_oBrw:nAt := 1
+    p_oBrw:Refresh()
+    oVlTotal:Refresh()
+
+Return 
+
+
+/*/{Protheus.doc} fAdmFin
+Função utilizada para informar os dados da administradora financeira.
+@type Function
+@author Alan Teles de Oliveira
+@since 27/12/2018
+@version 12.1.17
+@param p_cForm, characters, forma de pagamento
+@param p_oSize, object, objeto DefSize
+@param p_cParcelas, characters, numero de parcelas
+@param p_aTitulos, array, relação de títulos encontrados para o cliente selecionado
+@return logical, verdadeiro se liquidado com sucesso
+/*/
+Static Function fAdmFin(p_oSize, p_aTitulos)
+
+    Local cTitSpc   := ''
+    Local cHistor   := ''
+    Local nVlrFin   := 0    
+    Local nSalTit   := 0
+    Local nJurMul   := 0
+    Local nDescont  := 0
+    local nX := 1
+    Local lRet      := .T.
+    Local lPBxParc  := .T.
+    Local aRetAdm   := {}
+        
+    dbSelectArea('SE1')
+    
+    For nX := 1 To Len(p_aTitulos)
+	
+    	If p_aTitulos[nX, 1]
+
+            If p_aTitulos[nX, 16] == 'S' .or. p_aTitulos[nX, 17] == 'S' 
+
+                cTitSpc := p_aTitulos[nX, 14] +"|"+ p_aTitulos[nX, 04] + "|" + p_aTitulos[nX, 02] + "|" + p_aTitulos[nX, 05] + "|" + p_aTitulos[nX, 03]
+
+                If p_aTitulos[nX, 16] == 'S' .and. p_aTitulos[nX, 17] == 'S' 
+                    Alert("O Título "+ cTitSpc +" são de SPC/SERASA e Cobrança Judicial, logo, não é possível realizar a negociação, favor verificar!")
+                ElseIf p_aTitulos[nX, 16] == 'S'
+                    Alert("O Título "+ cTitSpc +" é de SPC/SERASA, logo, não é possível realizar a negociação, favor verificar!")
+                ElseIf p_aTitulos[nX, 17] == 'S'
+                    Alert("O Título "+ cTitSpc +" é de Cobrança Judicial, logo, não é possível realizar a negociação, favor verificar!")
+                EndIf
+
+                lRet := .F.
+
+                Exit
+
+            EndIf
+
+            SE1->(dbGoTo(p_aTitulos[nX, 15]))
+
+            nSalTit     += p_aTitulos[nX, 19]
+            nDescont    += p_aTitulos[nX, 25]
+            nJurMul     += (p_aTitulos[nX, 22] + p_aTitulos[nX, 23])
+            cHistor     := p_aTitulos[nX, 4] + ' ' + p_aTitulos[nX, 2] + ' ' + p_aTitulos[nX, 5] + ' ' + p_aTitulos[nX, 3] + ' ' + AllTrim(Posicione('SA1', 1, xFilial('SA1') + SE1->E1_CLIENTE + SE1->E1_LOJA, 'A1_NREDUZ'))
+            
+            If lPBxParc
+                lPBxParc := p_aTitulos[nX, 06] > dDataBase
+            EndIf              
+
+		EndIf
+	
+    Next
+
+    If lRet
+
+        nVlrFin := nSalTit + nJurMul - nDescont
+        
+        aRetAdm := fTAdmFin(nVlrFin)
+
+        If aRetAdm[1]       
+           BEGIN TRANSACTION
+            FWMsgRun(, {|| lRet := fGetTit(aRetAdm[2, 2], aRetAdm[2, 3], aRetAdm[2, 4], aRetAdm[2, 5], aRetAdm[2, 1], p_aTitulos, aRetAdm[2, 6], cHistor, nVlrFin, lPBxParc)}, 'Aguarde', 'Processando dados...')
+            IF !lRet
+                DisarmTransaction()
+            EndIf
+            End TRANSACTION   
+        Else
+            lRet := .F.
+        EndIf
+
+    EndIf
+
+Return lRet
+
+
+/*/{Protheus.doc} fTAdmFin
+Tela Adm. Financeira
+@since 17/11/2021
+@type Function
+@author user
+/*/
+Static Function fTAdmFin(p_nVlrFin, p_lSair)
+
+    Local cNCart    := Space(4)
+    Local cAdmFin   := Space(3)    
+    Local cFormPag  := ''
+    Local cParcelas := '1  '
+    Local nVParc    := p_nVlrFin
+    Local cValTotal := AllTrim(Transform(p_nVlrFin, X3Picture('E1_SALDO')))
+    Local nLinha    := 0
+    Local aRet      := {.T.}
+    Local aAdminist := {}
+    Local aItens    := {}
+    Local aPosObj   := {}
+    Local aPosGet   := {}
+    Local oSize     := Nil
+    Local oDlg      := Nil
+    Local oGrpAdm   := Nil
+    Local oTFonTit  := TFont():New('Arial',,,,.T.)
+    Local bChOk     := {|| If(nVParc > 0 .and. If(nVParc <= p_nVlrFin, .T., (MsgInfo('Valor a baixar não pode ser superior ao valor do titulo', 'Atenção - SFFN462A'), .F.)), (aRet := {.T., {nVParc, cAdmFin, cFormPag, Val(cParcelas), aAdminist, cNCart}}, oDlg:End()), aRet := {.F.})}
+    Local bChNCart  := {|| If(.not. Empty(cAdmFin) .and. .not. Empty(cNCart), (oBtnOk:lReadOnly := .F., oBtnOk:Refresh()), (oBtnOk:lReadOnly := .T., oBtnOk:Refresh()))}
+    Local bChForm := {|| If(cFormPag == 'CC', (oParcelas:lReadOnly := .F., oParcelas:CtrlRefresh()), (cParcelas := '1  ', oParcelas:lReadOnly := .T., oParcelas:CtrlRefresh())), If(.not. Empty(cFormPag), fRetAdm(cFormPag, @aAdminist, @aItens), Nil)}
+    
+    Default p_lSair := .T.
+
+    oDlg    := MsDialog():New(092, 232, 390, 650, 'Adm. Financeira',,,, DS_MODALFRAME, CLR_BLACK, CLR_WHITE,,, .T.) 
+    oSize   := FwDefSize():New(.T.,,, oDlg)
+
+    oSize:AddObject('MASTER', 100, 60, .T., .F.)
+    oSize:AddObject('DETAIL', 100, 10, .T., .T.)
+
+    oSize:aMargins := {3, 3, 3, 3}
+
+    oSize:Process()	
+
+    aAdd(aPosObj, {oSize:GetDimension('MASTER', 'LININI'), oSize:GetDimension('MASTER', 'COLINI'), oSize:GetDimension('MASTER', 'LINEND'), oSize:GetDimension('MASTER', 'COLEND')})
+    aAdd(aPosObj, {oSize:GetDimension('DETAIL', 'LININI'), oSize:GetDimension('DETAIL', 'COLINI'), oSize:GetDimension('DETAIL', 'LINEND'), oSize:GetDimension('DETAIL', 'COLEND')})
+
+    aPosGet     := MsObjGetPos(232, 390, {{27, 103, 111, 147, 194, 246, 296}, {220, 289}})
+    oGrpAdm     := TGroup():New(aPosObj[1, 1] - 20, aPosObj[1, 2], aPosObj[1, 3] + 25, aPosObj[1, 4] - 119,, oDlg, CLR_BLACK, CLR_WHITE, .T., .F.)    
+
+    TSay():New(aPosObj[1, 1] + nLinha, aPosGet[1, 1],    {||"Valor do título:"}, oGrpAdm,, oTFonTit, .F., .F., .F., .T., CLR_BLACK, CLR_WHITE, 040, 008)
+    TSay():New(aPosObj[1, 1] + nLinha, aPosGet[1, 2],    {||cValTotal},          oGrpAdm,,,          .F., .F., .F., .T., CLR_BLACK, CLR_WHITE, 040, 008)
+    TSay():New(aPosObj[1, 1] + nLinha, aPosGet[1, 4],    {||"Dt. Venc.:"},       oGrpAdm,, oTFonTit, .F., .F., .F., .T., CLR_BLACK, CLR_WHITE, 100, 008)
+    TSay():New(aPosObj[1, 1] + nLinha, aPosGet[1, 5],    {||DtoC(dDataBase)},    oGrpAdm,,,          .F., .F., .F., .T., CLR_BLACK, CLR_WHITE, 040, 008)
+    
+    nLinha      += 12
+
+    TSay():New(aPosObj[1, 1] + nLinha, aPosGet[1, 1],    {||"F. Pag.:"},        oGrpAdm,, oTFonTit, .F., .F., .F., .T., CLR_BLACK, CLR_WHITE, 040, 008)   
+    TComboBox():New(aPosObj[1, 1] + nLinha, aPosGet[1, 3], {|u| If(PCount() > 0, cFormPag := u, cFormPag)}, {' ', 'CD=Cartão de Debito', 'CC=Cartão de Credito'}, 120, 008, oGrpAdm,,, bChForm, CLR_BLACK, CLR_WHITE, .T.,, "",,,,,,, cFormPag)
+
+    nLinha      += 12
+
+    TSay():New(aPosObj[1, 1] + nLinha, aPosGet[1, 1],    {||"Parcelas:"},        oGrpAdm,, oTFonTit, .F., .F., .F., .T., CLR_BLACK, CLR_WHITE, 040, 008)   
+    oParcelas   := TGet():New(aPosObj[1, 1] + nLinha, aPosGet[1, 3], {|u| If(PCount()>0, cParcelas := u, cParcelas)}, oGrpAdm, 016, 008, '',, CLR_BLACK, CLR_WHITE,,,, .T., "",,, .F., .F.,, .T., .F., "",      "cParcelas",,)
+
+    nLinha      += 12
+
+    TSay():New(aPosObj[1, 1] + nLinha, aPosGet[1, 1],    {||"Adm. Fin.:"},       oGrpAdm,, oTFonTit, .F., .F., .F., .T., CLR_BLACK, CLR_WHITE, 040, 008)
+    
+    oCBoxAdmFi  := TComboBox():New(aPosObj[1, 1] + nLinha, aPosGet[1, 3], {|u| If(PCount() > 0, cAdmFin := u, cAdmFin)}, aItens, 120, 010, oGrpAdm,,,, CLR_BLACK, CLR_WHITE, .T.,, "",,,,,,, cAdmFin)
+    nLinha      += 12
+
+    TSay():New(aPosObj[1, 1] + nLinha, aPosGet[1, 1],    {||"Número:"},          oGrpAdm,, oTFonTit, .F., .F., .F., .T., CLR_BLACK, CLR_WHITE, 040, 008)   
+
+    oGetNCart   := TGet():New(aPosObj[1, 1] + nLinha, aPosGet[1, 3], {|u| If(PCount() > 0, cNCart := u, cNCart)}, oGrpAdm, 108, 008, '',, CLR_BLACK, CLR_WHITE,,,, .T., "",,, .F., .F., bChNCart, .F., .F., "", "cNCart",,)    
+    nLinha      += 12
+
+    TSay():New(aPosObj[1, 1] + nLinha, aPosGet[1, 1],    {||"A baixar:"},        oGrpAdm,, oTFonTit, .F., .F., .F., .T., CLR_BLACK, CLR_WHITE, 040, 008)   
+    TGet():New(aPosObj[1, 1] + nLinha, aPosGet[1, 3], {|u| If(PCount() > 0, nVParc := u, nVParc)}, oGrpAdm, 108, 008, X3Picture('E1_VALOR'),, CLR_BLACK, CLR_WHITE,,,, .T., "",,, .F., .F.,, .F., .F., "", "nVParc",,)    
+
+    nLinha := 30
+
+    If p_lSair
+        
+        oBtnOk := TButton():New(aPosObj[2, 1] + nLinha, aPosGet[2, 1], "Ok",        oDlg, bChOk,           037, 012,,,, .T.,, "",,,, .F.)    
+
+        TButton():New(aPosObj[2, 1] + nLinha, aPosGet[2, 2], "Sair",  oDlg, {||aRet := {.F.}, oDlg:End()},  037, 012,,,, .T.,, "",,,, .F.)    
+    Else      
+        oBtnOk := TButton():New(aPosObj[2, 1] + nLinha, aPosGet[2, 2], "Ok",        oDlg, bChOk,           037, 012,,,, .T.,, "",,,, .F.)    
+    EndIf
+
+    oGetNCart:bHelp := {|| ShowHelpCpo("cNCart", {'Informe os quatro últimos números do cartão de credito/debito.'}, 2)}    
+    oCBoxAdmFi:bHelp := {|| ShowHelpCpo("cAdmFin", {GetHlpSoluc("L4_ADMINIS")[1]}, 2, {GetHlpSoluc("L4_ADMINIS")[2]}, 2)}    
+    oBtnOk:lReadOnly := .T.
+
+    oDlg:Activate(,,, .T.)
+
+Return aRet
+
+
+/*/{Protheus.doc} fGetTit
+Apresentação dos novos títulos que serão gerados.
+@type Function
+@author Alan Teles de Oliveira
+@since 27/12/2018
+@version 12.1.17
+@param p_cAdm,      characters, código do cliente/administradora financeira.
+@param p_cFormPag,  characters, forma de pagamento CC ou CD.
+@param p_nVezes,    numeric,    total de parcelas.
+@param p_aAdmFin,   array,      relação de administradoras financeiras.
+@param p_nVlDig,   numeric,    valor total com valores adicionais.
+@param p_aTitulos,  array,      relação de títulos em aberto do cliente posicionado.
+@param p_cNCart,    characters, os quatro primeiros dígitos do cartão de credito ou debito.
+@return logical, retorna verdadeiro se o novo titulo foi gerado com sucesso. 
+/*/
+Static Function fGetTit(p_cAdm, p_cFormPag, p_nVezes, p_aAdmFin, p_nVlDig, p_aTitulos, p_cNCart, p_cHistor, p_nVlrFin, p_lPBxParc)
+
+    Local cNumTit       := ''
+    Local cMsg          := ''
+    Local cNumLiq       := ''
+    Local nNumRes       := GetSX8Len()
+    Local nVlRec        := 0 
+    Local nVlrDigt      := 0   
+    Local nI            := 0
+    Local lRet          := .T.    
+    Local aTitulos	    := {}
+    Local aCols         := {}
+    Local aRetInfTit    := {} 
+    Local aTitInclui    := {}    
+    Local oSize		    := Nil
+    Local oDlg          := Nil
+    Local oBrw		    := Nil
+    Local bChOk         := Nil
+    Local bAcRun        := Nil
+    
+    cNumTit := fPxNum('SE1')
+    cNumLiq := fPxNum('Z05')
+    aRetInfTit := fValidTit(p_cAdm, p_nVezes, p_aAdmFin, p_nVlDig, p_cNCart, p_cHistor, cNumTit, cNumLiq)
+    lRet := aRetInfTit[1]
+    
+    If lRet
+
+        nVlRec      := p_nVlDig
+        aTitulos    := aRetInfTit[3]
+        aTitInclui  := aRetInfTit[4]
+        nVlrDigt    := p_nVlDig
+
+        cMsg    := 'Demonstrativo dos novos títulos a serem gerados a partir da seleção anterior.'
+        aCols   := fCols()
+        bAcRun  := {||(lRet := fGerLiq(aTitInclui, p_aTitulos, nVlrDigt, cNumLiq))}
+        bChOk   := {|| (FWMsgRun(, bAcRun, 'Aguarde', 'Processando dados...'), If(lRet, oDlg:End(), Nil))}        
+        oSize       := FwDefSize():New()      
+        
+        oSize:AddObject("INFO", 100, 25, .T., .T.)
+        oSize:AddObject("GRID", 100, 75, .T., .T.)    
+        oSize:lProp := .T.
+        oSize:aMargins  := {3, 3, 0, 0}
+        oSize:Process()
+     
+        oDlg        := MsDialog():New(oSize:aWindSize[1] * 0.8, oSize:aWindSize[2] * 0.8, oSize:aWindSize[3] * 0.8, oSize:aWindSize[4] * 0.8, 'Novos titulos', , , , DS_MODALFRAME, CLR_BLACK, CLR_WHITE, , , .T.) 
+        
+        oPnlInfo    := TPanel():New(oSize:GetDimension("INFO", "LININI"), oSize:GetDimension("INFO", "COLINI"), cMsg,   oDlg,, .F., .F.,,, oSize:GetDimension("INFO", "XSIZE"), oSize:GetDimension("INFO", "YSIZE"))
+        oPnlGrid    := TPanel():New(oSize:GetDimension("GRID", "LININI"), oSize:GetDimension("GRID", "COLINI"),,        oDlg,, .T., .T.,,, oSize:GetDimension("GRID", "XSIZE"), oSize:GetDimension("GRID", "YSIZE"))
+                
+        TSay():New(oSize:GetDimension("INFO", "LININI") + 15,    oSize:GetDimension("INFO", "COLINI") + 05, {||"N° Liquidação:"},  oPnlInfo,,, .F., .F., .F., .T., CLR_BLACK, CLR_WHITE, 200, 008)
+        TGet():New(oSize:GetDimension("INFO", "LININI") + 15,    oSize:GetDimension("INFO", "COLINI") + 045, {|u| If(PCount()>0, cNumLiq := u, cNumLiq)},    oPnlInfo, 240, 008, '',, CLR_BLACK, CLR_WHITE,,,, .T., "",,, .F., .F.,, .T., .F.,,   "cNumLiq",,)
+
+        oBrw        := TCBrowse():New(0, 0, 10, 10,,,, oPnlGrid,,,,,,,,,,,,,, .T.,,,, .T.,)
+
+        oBrw:Align := CONTROL_ALIGN_ALLCLIENT
+        oBrw:SetArray(aTitulos)
+        oBrw:AddColumn(TCColumn():New('Adm. Cartão', {|| aTitulos[oBrw:nAt, 06]},,,,, 80))
+        oBrw:AddColumn(TCColumn():New(aCols[05, 1], {|| aTitulos[oBrw:nAt, 01]},,,,, aCols[05, 3]))
+        oBrw:AddColumn(TCColumn():New(aCols[07, 1], {|| aTitulos[oBrw:nAt, 02]},,,,, aCols[07, 3]))
+        oBrw:AddColumn(TCColumn():New(aCols[08, 1], {|| aTitulos[oBrw:nAt, 03]},,,,, aCols[08, 3]))
+        oBrw:AddColumn(TCColumn():New(aCols[10, 1], {|| aTitulos[oBrw:nAt, 04]},,,,, aCols[10, 3]))
+        oBrw:AddColumn(TCColumn():New(aCols[14, 1], {|| aTitulos[oBrw:nAt, 05]},,,,, aCols[14, 3]))
+
+        While nVlRec < p_nVlrFin
+            
+            cNumTit := fPxNum('SE1')
+            aRetAdm := fTAdmFin(p_nVlrFin - nVlRec, p_lPBxParc)
+
+            If .not. aRetAdm[1]
+                Exit
+            EndIf
+            
+            nVlRec +=  aRetAdm[2, 1]            
+            aRetInfTit := fValidTit(aRetAdm[2, 2], aRetAdm[2, 4], aRetAdm[2, 5], aRetAdm[2, 1], aRetAdm[2, 6], p_cHistor, cNumTit, cNumLiq)
+            
+            If .not. aRetInfTit[1]
+                Exit
+            EndIf
+
+            nVlrDigt += aRetAdm[2, 1]
+
+            For nI := 1 to Len(aRetInfTit[4])
+
+                aAdd(aTitulos,      aRetInfTit[3, nI])
+                aAdd(aTitInclui,    aRetInfTit[4, nI])
+
+            Next
+            
+        End
+
+        oDlg:Activate(EnchoiceBar(oDlg, bChOk, {||lRet := .F., oDlg:End()},,,,, .F., .F., .F.), oBrw:Refresh())
+         
+    EndIf
+
+    While GetSX8Len() > nNumRes
+
+        If lRet
+            ConfirmSx8()
+        Else
+            RollbackSx8()
+        EndIf
+
+    End
+
+Return lRet
+
+
+Static Function fValidTit(p_cAdm, p_nVezes, p_aAdmFin, p_nVTotal, p_cNCart, p_cHistor, p_cNumTit, p_cNumLiq)
+ 
+    Local cCondPg       := ''
+    LOCAL cCond         := ''
+    Local cNatureza     := SuperGetMv("MV_NATUREZ", .T., "1000000000")
+    Local cAlTMP        := GetNextAlia()
+    Local nI            := 0
+    Local nPosAdm       := 0
+    Local nTxAdm        := 0
+    Local nVezAdm       := 0
+    Local aRet          := {.F.}
+    Local aTitulos	    := {}
+    Local aItens        := {}
+    Local aAutoItens    := {} 
+    
+    nPosAdm := aScan(p_aAdmFin, {|x| x[4] == p_cAdm})
+    nVezAdm := p_aAdmFin[nPosAdm, 5]
+
+    For nI := 1 to p_nVezes
+        
+        If nI = p_nVezes
+            cCond += cValToChar(nVezAdm * nI)
+        Else
+            cCond += cValToChar(nVezAdm * nI) + ','
+        EndIf
+
+    Next
+
+    If Select(cAlTMP) > 0 
+        (cAlTMP)->(DbCloseArea())
+    EndIf
+
+    BeginSQL Alias cAlTMP
+
+        SELECT 
+            SE4.E4_CODIGO,
+            SE4.E4_XTIPO
+        FROM %Table:SE4% SE4
+        WHERE 
+            SE4.E4_COND = %Exp:cCond% AND
+            SE4.E4_FILIAL = %Exp:xFilial('SE4')% AND
+            SE4.%NotDel%
+
+    EndSQL
+
+    While .not. (cAlTMP)->(Eof())
+        
+        If Empty(cCondPg) .or. (cAlTMP)->E4_XTIPO == '1'
+            cCondPg := (cAlTMP)->E4_CODIGO
+        EndIf
+
+        (cAlTMP)->(dbSkip())
+
+    EndDo
+
+    If Empty(cCondPg)
+        
+        aRet := {.F.}
+        MsgInfo('Por gentileza acionar o COFIN e solicitar o cadastro da condição de pagamento: ' + cCond + '.', 'Atenção - SFFN462A')
+
+    Else
+
+        aVenc   := Condicao(p_nVTotal, cCondPg)
+
+        For nI := 1 to Len(aVenc)
+            
+            aAdd(aItens, {'E1_PREFIXO', 'CRT',                  			Nil})
+            aAdd(aItens, {'E1_NUM', 	p_cNumTit,                			Nil})
+            aAdd(aItens, {'E1_TIPO',    p_aAdmFin[nPosAdm, 1],  			Nil})
+            aAdd(aItens, {'E1_NATUREZ', cNatureza,              			Nil})
+            aAdd(aItens, {'E1_CLIENTE', p_cAdm+(Space(Len(SA1->A1_COD)-Len(p_cAdm))),Nil})
+            aAdd(aItens, {'E1_LOJA',    '01',                   			Nil})
+            aAdd(aItens, {'E1_EMISSAO', dDataBase,              			Nil})
+            aAdd(aItens, {'E1_VENCTO', 	aVenc[nI, 1],           			Nil})
+            aAdd(aItens, {'E1_VENCREA',	aVenc[nI, 1],           			Nil})
+            aAdd(aItens, {'E1_PARCELA', cValToChar(nI),         			Nil})
+            aAdd(aItens, {'E1_VLCRUZ', 	aVenc[nI, 2],           			Nil})
+            aAdd(aItens, {'E1_VALOR', 	aVenc[nI, 2] - nTxAdm,              Nil})
+            aAdd(aItens, {'E1_VLRREAL', aVenc[nI, 2],                       Nil})
+            aAdd(aItens, {'E1_ACRESC', 	0,          						Nil})
+            aAdd(aItens, {'E1_DECRESC', 0,          						Nil})
+            aAdd(aItens, {'E1_NUMCART', p_cNCart,                           Nil})
+            aAdd(aItens, {'E1_BASCOM1', aVenc[nI, 2],                       Nil})
+            aAdd(aItens, {'E1_XNLIQ',   p_cNumLiq,                          Nil})
+            aAdd(aItens, {'E1_HIST',    p_cHistor + ' ' + p_cNCart,         Nil})
+            aAdd(aItens, {'CBCOAUTO', 	'',         						Nil})
+            aAdd(aItens, {'CAGEAUTO', 	'',         						Nil})
+            aAdd(aItens, {'CCTAAUTO', 	'',         						Nil})        
+            
+            aAdd(aTitulos, {;
+                                aItens[02, 2],; 
+                                aItens[01, 2],; 
+                                aItens[10, 2],; 
+                                AllTrim(Transform(aItens[12, 2], X3Picture(aItens[12, 1]))),; 
+                                AllTrim(Transform(aItens[13, 2], X3Picture(aItens[13, 1]))),;
+                                p_cAdm + '-01 ' + p_aAdmFin[nPosAdm, 3];
+                            })
+
+            aAdd(aAutoItens, aItens)
+            
+            aItens      := {}
+
+        Next
+
+        aRet := {.T., {}, aTitulos, aAutoItens}
+
+    EndIf    
+
+Return aRet
+
+
+/*/{Protheus.doc} fPxNum
+Valida se o numero já foi utilizado.
+@type Function
+@author Alan Teles de Oliveira
+@since 26/02/2019
+@version 12.1.17
+@param p_cAlias, characters, alias para consulta de numeração.
+@returncharacter, numero não utilizado.
+/*/
+Static Function fPxNum(p_cAlias)
+
+    Local aArea := GetArea()
+    Local cRet := '' 
+    
+    If p_cAlias == 'SE1'
+
+        cRet := GetSXENum('SE1', 'E1_NUM'); SE1->( ConfirmSx8() )
+
+        dbSelectArea('SE1')
+        SE1->(dbGoTop())
+        SE1->(dbSetOrder(1)) //E1_FILIAL+E1_PREFIXO+E1_NUM+E1_PARCELA+E1_TIPO
+        While dbSeek(xFilial('SE1') + 'CRT' + cRet)
+            
+            cRet := GetSXENum('SE1', 'E1_NUM'); SE1->( ConfirmSx8() )
+
+        EndDo
+
+    ElseIf p_cAlias = 'Z05'
+
+        cRet := GetSXENum('Z05', 'Z05_CODIGO'); Z05->( ConfirmSx8() )
+
+        dbSelectArea('Z05')
+        Z05->(dbGoTop())
+        Z05->(dbSetOrder(1)) //Z05_FILIAL+Z05_CODIGO+Z05_TITULO+Z05_PREFIX+Z05_PARCEL+Z05_CLIENT+Z05_LOJA
+        While dbSeek(xFilial('Z05') + cRet)
+
+            cRet := GetSXENum('Z05', 'Z05_CODIGO'); Z05->( ConfirmSx8() )
+
+        EndDo
+
+    EndIf
+
+    RestArea(aArea)
+
+Return cRet
+
+
+/*/{Protheus.doc} fGerLiq
+Responsável por preparar os dados para a chamada da rotina automática.
+@type Function
+@author Alan Teles de Oliveira
+@since 27/12/2018
+@version 12.1.17
+@param p_cAdm, characters, código do cliente/administradora financeira
+@param p_cFormPag, characters, código da forma de pagamento 
+@param p_nVezes, numeric, numero de parcelas
+@param p_aAdmFin, array, relação de administradoras financeiras cadastradas para a filial corrente
+@param p_nVTotal, numeric, valor acumulado dos títulos selecionados
+@param p_aTitulos, array, relação de títulos encontrados para o cliente selecionado
+@param p_cNCart, characters, numero do cartão informado pelo atendente
+@return logical, verdadeiro se liquidado com sucesso.
+/*/
+Static Function fGerLiq(p_aAutoNovo, p_aTitulos, p_nVRec, p_cNumLiq)
+
+    Local nVlTit    := 0
+    Local nSaldo    := p_nVRec
+    Local nVlrJr    := 0
+    Local nVlrMul   := 0
+    Local nBx       := 0    
+    Local nI        := 0
+    Local lRet      := .T.
+    Local aBaixar   := {}
+    Local aLiqAnt   := {}
+    
+    //Walmir 27/04/2020 - Variáveis para tratativa de isenção de juros e multa
+    Private nMulta := 0, nJuros := 0
+    Private _dVReal := SToD("")
+    
+    dbSelectArea('SE1')
+    
+    For nI := 1 To Len(p_aTitulos)
+
+        If p_aTitulos[nI, 1]
+            
+            nVlTit := p_aTitulos[nI, 19] + p_aTitulos[nI, 23] + p_aTitulos[nI, 22] - p_aTitulos[nI, 25]
+
+            If nSaldo  > 0 .and. nSaldo <= nVlTit
+
+                nBx := nSaldo
+                nSaldo := 0
+
+            ElseIf nSaldo  > 0
+
+                nBx := nVlTit
+                nSaldo -= nVlTit
+
+            ElseIf nSaldo = 0 .and. Len(aBaixar) = 0
+                
+                lRet := .F. 
+
+                Aviso('Atenção - SFFN462A', 'Não foi informado o valor a ser baixado.', {'Ok'}, 03)
+
+                Exit
+
+            Else
+
+                Exit
+
+            EndIf
+
+            /*
+            If (p_aTitulos[nI, 22] + p_aTitulos[nI, 23] > 0) .and. nBx < (p_aTitulos[nI, 19] + p_aTitulos[nI, 22] + p_aTitulos[nI, 23])
+                nVlrJr  := Round((p_aTitulos[nI, 23] * nBx) / p_aTitulos[nI, 19], 2)
+                nVlrMul := Round((p_aTitulos[nI, 22] * nBx) / p_aTitulos[nI, 19], 2)
+            Else
+                nVlrJr  := p_aTitulos[nI, 23]
+                nVlrMul := p_aTitulos[nI, 22]
+            EndIf
+            */
+            
+            nVlrJr  := p_aTitulos[nI, 23]
+            nVlrMul := p_aTitulos[nI, 22]
+            
+            SE1->(dbGoTo(p_aTitulos[nI, 15]))
+
+            If .not. SE1->(Eof())
+            
+              //  If .not. Empty(SE1->E1_XNLIQ)
+                    aAdd(aLiqAnt, SE1->E1_XNLIQ)
+              //  EndIf
+
+                RecLock('SE1', .F.)
+                    SE1->E1_XNLIQ := p_cNumLiq
+                SE1->(MsUnLock())
+
+            EndIf
+            
+            _dVReal := POSICIONE("SE1",1,p_aTitulos[nI,14]+p_aTitulos[nI,04]+p_aTitulos[nI,02]+p_aTitulos[nI,05]+p_aTitulos[nI,03], "E1_VENCREA")
+            
+           //Walmir Junior 27/04/2020 - Tratar isenção de juros e multa.
+           //Verifica se é isento de juros e multa, calcula e adiciona desconto
+           //If _dVReal < dDataBase .And. U_SF06A01W(_dVReal, p_aTitulos[nI, 04])          	
+	       //     fa070Juros()
+		   // 	p_aTitulos[nI, 25] += nMulta + nJuros
+		   //EndIf
+            
+            aAdd(aBaixar, {;
+                            {"E1_FILIAL",       p_aTitulos[nI, 14], Nil},;
+                            {"E1_PREFIXO",      p_aTitulos[nI, 04], Nil},;
+                            {"E1_NUM",          p_aTitulos[nI, 02], Nil},;
+                            {"E1_PARCELA",      p_aTitulos[nI, 05], Nil},;
+                            {"E1_TIPO",         p_aTitulos[nI, 03], Nil},;
+                            {"E1_CLIENTE",      SE1->E1_CLIENTE,    Nil},;
+                            {"E1_LOJA",         SE1->E1_LOJA,       Nil},;
+                            {'E1_XNLIQ',        p_cNumLiq,          Nil},;
+                            {'E5_ORIGEM',       'SFFN462A',         Nil},;
+                            Iif( nVlrJr != 0	,{"AUTJUROS",        nVlrJr,             Nil}, {"AUTJUROS",        nVlrJr,             Nil, .T.}),;
+                            Iif( nVlrMul != 0	,{"AUTMULTA",        nVlrMul,            Nil}, {"AUTMULTA",        nVlrMul,            Nil, .T.}),;
+                            {"AUTDESCONT",      p_aTitulos[nI, 25], Nil},;
+                            {"AUTMOTBX",        'CRT',              Nil},;
+                            {"AUTBANCO",        '',                 Nil},;
+                            {"AUTAGENCIA",      '',                 Nil},;
+                            {"AUTCONTA",        '',                 Nil},;
+                            {"AUTDTBAIXA",      dDataBase,          Nil},;                            
+                            {"AUTDTCREDITO",    dDataBase,          Nil},;                            
+                            {"AUTHIST",         '',                 Nil},;
+                            {"AUTVALREC",       nBx,                Nil};
+                        })
+
+        EndIf
+
+    Next 
+
+    lRet := u_SFFNBX1A(p_aAutoNovo, 3, aBaixar, 3, 'SFFN462A', aLiqAnt)
+
+Return lRet
+
+
+/*/{Protheus.doc} fTitulos
+Filtra os títulos que serão apresentados ao atendente.
+@type Function
+@author Alan Teles de Oliveira
+@since 27/12/2018
+@version 12.1.17
+@return array, relação de títulos e informações complementares.
+@history 22/04/2019, Rafael Karczevski, Tratativa para o desconto considerar 
+até o proximo dia util caso o vencimento seja feriado ou fim de semana
+/*/
+Static Function fTitulos()
+
+    Local aRet          := {}
+    Local cAlTMP        := GetNextAlia()
+    Local cAlTMP2       := GetNextAlia()
+    Local cAlTMP3       := GetNextAlia()
+    local cMesDia := ""
+    Local nValor        := 0
+    Local nSaldo        := 0
+    Local nJuros        := 0
+    Local nMulta        := 0
+    Local nVlrMulta     := 0
+    Local nVlrJuros     := 0
+    Local nVlrDesc      := 0
+    Local nPerDesc      := 0
+    Local aMulJur       := Array(2)
+    Local dDataTmp      := dDataBase
+    Local lFeriad       := .t.
+
+    If Select(cAlTMP) > 0 
+        (cAlTMP)->(DbCloseArea())
+    EndIf
+    If Select(cAlTMP2) > 0 
+        (cAlTMP2)->(DbCloseArea())
+    EndIf
+    If Select(cAlTMP3) > 0 
+        (cAlTMP3)->(DbCloseArea())
+    EndIf
+    
+    BeginSQL Alias cAlTMP
+
+        Column E1_VENCTO as Date
+        Column E1_VENCREA as Date
+        Column E1_EMISSAO as Date
+        Column E1_BAIXA as Date
+
+        SELECT 
+            SE1.E1_FILIAL,        
+            SE1.E1_NUM,
+            SE1.E1_TIPO,
+            SE1.E1_PREFIXO,
+            SE1.E1_PARCELA,
+            SE1.E1_VENCTO,
+            SE1.E1_VALOR,
+            SE1.E1_SALDO,
+            SE1.E1_JUROS, 
+            SE1.E1_MULTA,
+            SE1.E1_ACRESC,
+            SE1.E1_VENCREA,
+            SE1.E1_EMISSAO,
+            SE1.E1_BAIXA,
+            SE1.E1_XSPC,
+            SE1.E1_XCOBJ,
+            SE1.E1_HIST,
+            SE1.E1_DESCFIN,
+            SE1.R_E_C_N_O_ AS SE1REC
+        FROM %Table:SE1% SE1
+        WHERE 
+            SE1.E1_FILIAL   = %Exp:xFilial('SE1')% AND
+            SE1.E1_CLIENTE  = %Exp:SE1->E1_CLIENTE% AND
+            SE1.E1_LOJA     = %Exp:SE1->E1_LOJA% AND
+            SE1.E1_TIPO     NOT IN ('CC', 'CD') AND
+            SE1.E1_SALDO    > 0 AND
+            SE1.%NotDel%
+        ORDER BY  
+            SE1.E1_PREFIXO, 
+            SE1.E1_NUM, 
+            SE1.E1_PARCELA
+
+    EndSQL
+
+    //MemoWrite('C:\TEMP\SFFN462A.sql', GetLastQuery()[2])
+
+    dbSelectArea(cAlTMP)
+
+	(cAlTMP)->(dbGoTop())
+
+    While .not. (cAlTMP)->(Eof())
+
+        nVlrDesc    := 0
+        nValor      := (cAlTMP)->E1_VALOR
+        nSaldo      := (cAlTMP)->E1_SALDO
+        nJuros      := (cAlTMP)->E1_JUROS
+        nMulta      := (cAlTMP)->E1_MULTA
+        aMulJur     := fClJuMul((cAlTMP)->SE1REC)
+        nVlrMulta   := Round(aMulJur[1], 2)
+        nVlrJuros   := Round(aMulJur[2], 2)
+        nPerDesc    := (cAlTMP)->E1_DESCFIN
+        dDataTmp    := (cAlTMP)->E1_VENCTO
+        lFeriad     := .t.
+
+        If Dow((cAlTMP)->E1_VENCTO) = 7 //Sabado
+            dDataTmp := DaySum(dDataTmp,2)
+        ElseIf Dow((cAlTMP)->E1_VENCTO) = 1 //Domingo
+            dDataTmp := DaySum(dDataTmp,1)
+        EndIf
+
+        While (lFeriad)
+            lFeriad := .t.
+            cMesDia := SubStr(DtoS(dDataTmp), 5, 4)
+            BeginSql Alias cAlTMP2
+                SELECT
+                    P3_DATA, P3_DESC
+                FROM SP3010
+                WHERE 
+                    %NotDel% AND
+                    P3_FILIAL = %Exp:xFilial("SP3")% AND
+                    (
+                        (P3_DATA = %Exp:dDataTmp%) OR
+                        (P3_MESDIA = %Exp:cMesDia% AND
+                        P3_FIXO = 'S')
+                    )
+                     
+            EndSql
+            (cAlTMP2)->(dbGoTop())
+            If (cAlTMP2)->(Eof())
+                lFeriad := .f.
+            Else
+                dDataTmp := DaySum(dDataTmp,1)
+            EndIf
+
+            If lFeriad
+                If Dow(dDataTmp) = 7 //Sabado
+                    dDataTmp := DaySum(dDataTmp,2)
+                ElseIf Dow(dDataTmp) = 1 //Domingo
+                    dDataTmp := DaySum(dDataTmp,1)
+                EndIf
+            EndIf
+
+            If Select(cAlTMP2) > 0 
+                (cAlTMP2)->(DbCloseArea())
+            EndIf
+        End
+
+        If dDataTmp >= dDataBase
+            BeginSql Alias cAlTMP3
+                SELECT
+                    SUM(E5_VALOR) AS VALOR
+                FROM
+                    SE5010
+                WHERE
+                    E5_FILIAL = %Exp:(cAlTMP)->E1_FILIAL%
+                    AND E5_NUMERO = %Exp:(cAlTMP)->E1_NUM%
+                    AND E5_PARCELA = %Exp:(cAlTMP)->E1_PARCELA%
+                    AND E5_PREFIXO = %Exp:(cAlTMP)->E1_PREFIXO%
+                    AND E5_TIPODOC = 'DC'
+                    AND E5_SITUACA <> 'C' 
+                    AND %NotDel%
+            EndSql
+            (cAlTMP3)->(dbGoTop())
+            If (cAlTMP3)->(!Eof())
+                nVlrDesc := Round(nSaldo * ((cAlTMP)->E1_DESCFIN / 100), 2) - (cAlTMP3)->(VALOR)
+                nVlrDesc := Iif( nVlrDesc < 0, 0, nVlrDesc)
+            Else
+                nVlrDesc := Round(nSaldo * ((cAlTMP)->E1_DESCFIN / 100), 2)
+            EndIf
+
+            If Select(cAlTMP3) > 0 
+                (cAlTMP3)->(DbCloseArea())
+            EndIf
+        EndIf
+        
+        aAdd(aRet, {.F.,; //01
+                        (cAlTMP)->E1_NUM,; //02
+                        (cAlTMP)->E1_TIPO,; //03
+                        (cAlTMP)->E1_PREFIXO,; //04
+                        (cAlTMP)->E1_PARCELA,; //05
+                        (cAlTMP)->E1_VENCTO,; //06
+                        AllTrim(Transform(nValor, X3Picture('E1_VALOR'))),; //07
+                        AllTrim(Transform(nSaldo, X3Picture('E1_SALDO'))),; //08 
+                        AllTrim(Transform(nJuros, X3Picture('E1_JUROS'))),; //09 
+                        AllTrim(Transform(nMulta, X3Picture('E1_MULTA'))),; //10  
+                        AllTrim(Transform(nVlrMulta, X3Picture('E1_SALDO'))),; //11
+                        AllTrim(Transform(nVlrJuros, X3Picture('E1_SALDO'))),; //12
+                        'SE1',; //13
+                        AllTrim((cAlTMP)->E1_FILIAL),; //14
+                        (cAlTMP)->SE1REC,; //15
+                        AllTrim((cAlTMP)->E1_XSPC),; //16
+                        AllTrim((cAlTMP)->E1_XCOBJ),; //17
+                        nValor,; //18
+                        nSaldo,; //19
+                        nJuros,; //20
+                        nMulta,; //21
+                        nVlrMulta,; //22
+                        nVlrJuros,; //23
+                        AllTrim((cAlTMP)->E1_HIST),; //24
+                        nVlrDesc,; //25
+                        AllTrim(Transform(nVlrDesc, X3Picture('E1_VALOR'))),; //26
+                        (cAlTMP)->E1_DESCFIN; //27
+                    })
+
+        (cAlTMP)->(dbSkip())
+
+    EndDo
+
+    If Select(cAlTMP) > 0 
+        (cAlTMP)->(DbCloseArea())
+    EndIf
+
+Return aRet
+
+
+/*/{Protheus.doc} fCols
+Coleta informações dos campos para montar o browse.
+@type Function
+@author Alan Teles de Oliveira
+@since 27/12/2018
+@version 12.1.17
+@return array, titulo, picture e tamanho dos campos.
+/*/
+Static Function fCols()
+    
+    Local nX        := 0
+    Local nCols     := 3
+    Local aRet      := {}
+    Local aCampos   := {}
+    Local aArea     := GetArea()
+
+    aCampos := {{'E1_NUM'}, {'E1_TIPO'}, {'E1_PREFIXO'}, {'E1_PARCELA'}, {'E1_VENCTO'}, {'E1_VALOR'}, {'E1_SALDO'}, {'E1_JUROS'}, {'E1_MULTA'}, {'E1_VLRREAL'}, {'E1_XSPC'}, {'E1_XCOBJ'}, {'E1_DESCFIN'}} 
+    
+    aAdd(aRet, {"  Ok", "@!", 35})
+    aAdd(aRet, {"Vl. Juros", X3Picture('E1_VALOR'), (TamSX3('E1_VALOR')[1] + TamSX3('E1_VALOR')[2]) * nCols})
+    aAdd(aRet, {"Vl. Multa", X3Picture('E1_VALOR'), (TamSX3('E1_VALOR')[1] + TamSX3('E1_VALOR')[2]) * nCols})
+    aAdd(aRet, {"Alias", "@!", 50})
+
+    dbSelectArea('SX3')
+    SX3->(dbSetOrder(2))
+    
+    For nX := 1 to Len(aCampos)
+        If SX3->(dbSeek(aCampos[nX, 1]))
+            aAdd(aRet, {X3Titulo(), If(Empty(SX3->X3_PICTURE), '@!', SX3->X3_PICTURE), (SX3->X3_TAMANHO + SX3->X3_DECIMAL) * nCols})
+        EndIf
+    Next
+
+    RestArea(aArea)
+
+Return aRet
+
+
+/*/{Protheus.doc} fRetAdm
+Relação de administradoras financeiras que poderão ser utilizadas pelo atendente.
+@type Function
+@author Alan Teles de Oliveira
+@since 27/12/2018
+@version 12.1.17
+@param p_cForm, characters, forma de pagamento
+@return array, informações relevantes para liquidação do titulo com taxa e numero de dias para o vencimento.
+/*/
+Static Function fRetAdm(p_cForm, p_aAdm, p_aItens)
+
+    Local aArea     := GetArea()
+
+    p_aAdm      := {} 
+    p_aItens    := {}
+
+    aAdd(p_aItens, ' ')
+
+    dbSelectArea('SAE')
+    SAE->(dbGoTop())
+    SAE->(dbSetOrder(1))
+  
+    If SAE->(DbSeek(xFilial('SAE')))
+ 
+        While SAE->AE_FILIAL == xFilial("SAE") .and. .not. SAE->(Eof())
+
+            If AllTrim(SAE->AE_TIPO) $ p_cForm
+                If SX5->(DbSeek(xFilial("SX5") + "24" + AllTrim(SAE->AE_TIPO)))
+
+                    aAdd(p_aAdm, {AllTrim(SAE->AE_TIPO), X5Descri(), SAE->AE_DESC, SAE->AE_COD, SAE->AE_DIAS, SAE->AE_TAXA})
+                    aAdd(p_aItens, SAE->AE_COD + '=' + AllTrim(SAE->AE_DESC))
+                
+                EndIf
+            EndIf
+
+            SAE->(DbSkip())
+
+        End
+
+        oCBoxAdmFi:SetItems(p_aItens)
+
+    EndIf
+
+    RestArea(aArea)
+
+Return
+
+/*/{Protheus.doc} fClJuMul
+Calculo de juros e multa por titulo
+@type Function
+@author Alan Teles de Oliveira
+@since 12/03/2019
+@version 12.1.17
+@param p_nRec, numeric, Recno do titulo na tabela SE1
+@return array, na primeira posição o valor da multa na segunda o valor de juros.
+/*/
+Static Function fClJuMul(p_nRec)
+
+    Local aArea     := GetArea()
+    Local aRet      := Array(2)
+
+    Private nJuros := 0
+    Private nMulta := 0
+
+    dbSelectArea('SE1')
+
+    SE1->(dbGoTo(p_nRec))
+    //Walmir Junior 27/04/2020 - Tratar isenção de juros e multa.
+    //Verifica se é isento de juros e multa
+    If (U_SF06A01W(SE1->E1_VENCREA, SE1->E1_PREFIXO))
+    	aRet[1] := nMulta
+    	aRet[2] := nJuros
+    Else
+    	fa070Juros()
+    	aRet[1] := nMulta
+    	aRet[2] := nJuros
+    EndIf
+    
+    RestArea(aArea)
+
+Return aRet

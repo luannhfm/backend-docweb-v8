@@ -1,0 +1,162 @@
+#INCLUDE "PROTHEUS.CH"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma    MT120FIM ºAutor  ³Microsiga           º Data ³  10/13/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Ponto de entrada após gravacao do pedido de compra         º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function MT120FIM()
+Local aArea := GetArea()
+Local aAreaSC1 := GetArea("SC1")
+Local cCot
+Local lPrjCni    := FindFunction("PRJCNI") .Or. GetRpoRelease("R6")
+
+If lPrjCni
+	cCot := GetMv("MV_PCEXCOT",,"0")
+	BeginSQL Alias "SC7TMP"
+		SELECT C7_NUM, C7_NUMSC, C7_ITEMSC
+		FROM %Table:SC7% SC7
+		WHERE C7_FILIAL = %xFilial:SC7% AND C7_NUM = %Exp:SC7->C7_NUM% AND SC7.D_E_L_E_T_ = '*'
+	EndSQL
+	
+	SC7TMP->(dbGoTop())
+	SC1->(dbSetOrder(1))
+	
+	While !SC7TMP->(EOF())
+		
+		If SC1->(dbSeek(xFilial("SC1")+SC7TMP->C7_NUMSC+SC7TMP->C7_ITEMSC))
+			
+			COMA080(SC7TMP->C7_NUMSC,SC7TMP->C7_ITEMSC,"COI",{},"COI_DTHPED","COI_UPED",.T.,/*cUser*/,"COI_DOCPED") //estorna inclusao pedido
+			COMA080(SC7TMP->C7_NUMSC,SC7TMP->C7_ITEMSC,"COI",{},"COI_DTHLIB","COI_ULIB",.T.,/*cUser*/,"COI_DOCLIB") //estorna liberacao do pedido
+			
+			If COI->(dbSeek(xFilial("COI")+SC7TMP->C7_NUMSC+SC7TMP->C7_ITEMSC))
+				
+				If (!Empty(COI->COI_DOCCTR) .Or. !Empty(COI->COI_DOCEDT)) //Se o PC veio de medicao de contrato ou edital
+					
+					RecLock("SC1",.F.)
+					SC1->C1_QUJE := SC1->C1_QUANT //Nao reabre SC
+					MsUnlock()
+					
+				ElseIf !Empty(COI->COI_DOCCOT) //Se o PC veio de cotacao e nao passou por medicao de contrato nem edital
+					
+					If cCot == "1" //Se restaura cotacao, so estorna log da analise da cotacao
+						COMA080(SC7TMP->C7_NUMSC,SC7TMP->C7_ITEMSC,"COI",{},"COI_DTHANL","COI_UANL",.T.,/*cUser*/,"COI_DOCANL") //estorna analise cotacao
+					Else //Se nao restaura cotacao ou se parametro nao existir, estorna todos os logs relacionados a cotacao
+						COMA080(SC7TMP->C7_NUMSC,SC7TMP->C7_ITEMSC,"COI",{},"COI_DTHANL","COI_UANL",.T.,/*cUser*/,"COI_DOCANL") //estorna analise cotacao
+						COMA080(SC7TMP->C7_NUMSC,SC7TMP->C7_ITEMSC,"COI",{},"COI_DTHATL","COI_UATL",.T.,/*cUser*/,"COI_DOCATL") //estorna atualizacao cotacao
+						COMA080(SC7TMP->C7_NUMSC,SC7TMP->C7_ITEMSC,"COI",{},"COI_DTHCOT","COI_UCOT",.T.,/*cUser*/,"COI_DOCCOT") //estorna geracao cotacao
+					EndIf
+					
+				EndIf
+				
+			EndIf
+			
+		EndIf
+		
+		SC7TMP->(dbSkip())
+		
+	EndDo
+	
+	SC7TMP->(dbCloseArea())
+	
+	SC1->(dbSetOrder(aAreaSC1[2]))
+EndIf
+
+// Lançamento dos movimentos orçamentarios - GAP091
+IF (ParamIXB[1] == 3 .or. ParamIXB[1] == 4) .and. ParamIXB[3] == 1
+	MsgRun("Atualizando Movimentos do PC "+SC7->C7_NUM,"",{|| U_SICOMA11(ParamIXB) })
+ENDIF
+
+// Tratamento Compras Compartilhadas
+IF ParamIXB[1] == 3 .and. !IsInCallStack("A120Copia") .and. SC7->(FieldPos("C7_XMODOC")) <> 0 .and. SC1->(FieldPos("C1_XMODOC")) <> 0 .and. SC7->C7_TIPO == 1
+	_cNumPC   := SC7->C7_NUM
+	_cAreaSC7 := SC7->(GetArea())
+	
+	SC7->(dbSetOrder(1))
+	SC7->(dbSeek(XFilial("SC7")+_cNumPC))
+	
+	dbselectarea("SC1")
+	
+	While SC7->(!Eof()) .and. SC7->(C7_FILIAL+C7_NUM) == XFilial("SC7")+_cNumPC
+		
+		SC1->(dbSetOrder(1))
+		IF SC1->(dbSeek(XFilial("SC1")+SC7->(C7_NUMSC+C7_ITEMSC)))
+			
+			IF SC1->C1_XMODOC == "2"
+				RecLock("SC7",.f.)
+				SC7->C7_XMODOC := "1" // 0=Nao Utiliza;1=A Distribuir;2=Distribuido
+				SC7->(msUnlock())
+			ENDIF
+			
+		ENDIF
+		
+		SC7->(dbSkip())
+	Enddo
+	
+	RestArea(_cAreaSC7)
+	
+ENDIF
+
+
+// Tratamento Compras Compartilhadas - Inserido por Carlos Queiroz em 18/09/2014
+IF ParamIXB[1] == 3 .and. !IsInCallStack("A120Copia") .and. SC7->C7_TIPO == 1
+	_cNumPC   := SC7->C7_NUM
+	_cAreaSC7 := SC7->(GetArea())
+	
+	//Walmir Junior 04/03/2016 
+	//Finalidade: Tratativa para adição de campos importantes para Pedidos de Compras, vinculados a Ata de Registro de Preços.
+	SC7->(dbSetOrder(1))
+	SC7->(dbSeek(XFilial("SC7")+_cNumPC))
+	
+	dbselectarea("SC1")
+	
+	While SC7->(!Eof()) .and. SC7->(C7_FILIAL+C7_NUM) == XFilial("SC7")+_cNumPC
+		
+		SC1->(dbSetOrder(1))
+		IF SC1->(dbSeek(SC7->(C7_FISCORI+C7_NUMSC+C7_ITEMSC)))
+			RecLock("SC7",.F.)
+			SC7->C7_XFISCOR := SC1->C1_FISCORI
+			SC7->C7_XNSCOR  := SC1->C1_SCORI
+			If Empty(SC7->C7_CONTRA)
+				SC7->C7_XFILCN9	:= SC1->C1_XCONTFI //Iif(!Empty(CND->CND_FILIAL),CND->CND_FILIAL,Space(8))
+				SC7->C7_CONTRA	:= SC1->C1_XCONTPR
+				SC7->C7_PLANILH	:= SC1->C1_XCONTPL
+				SC7->C7_MEDICAO	:= POSICIONE("CNE",,SC1->C1_FILIAL+SC1->C1_NUM+SC1->C1_ITEM,"CNE_NUMMED","CNESC1")
+				SC7->C7_ITEMED	:= POSICIONE("CNE",,SC1->C1_FILIAL+SC1->C1_NUM+SC1->C1_ITEM,"CNE_ITEM","CNESC1")
+			EndIf
+			SC7->(msUnlock())
+		ENDIF
+		
+		SC7->(dbSkip())
+	Enddo
+	
+	RestArea(_cAreaSC7)
+	
+ENDIF
+
+//+------------------------------------------------------------------+
+//| Walmir Junior                                         16/12/2015 |
+//| Adicionado o tratamento com parâmetro MV_XPCEM, para controle    |
+//| do envio de email para fornecedor.                               |
+//+------------------------------------------------------------------+
+IF ISINCALLSTACK("U_/CNI109AL") // PC gerado via medição de contratos RP após aprovação alçada
+	IF GetMv("MV_XPCEM", .F.)
+		//	MsgRun('Enviando pedido para fornecedor...',, {|| U_CWKFA005(SC7->C7_NUM,.T.) } )
+		CONOUT("WF FORNECEDOR - EXECUCAO MT120FIM U_CWKFA005("+SC7->C7_NUM+",.T.,"+SC7->C7_FILIAL+")")
+		MsgRun('Enviando pedido para fornecedor...',, {|| U_CWKFA005(SC7->C7_NUM,.T.,SC7->C7_FILIAL) } ) //Alterado por Carlos Queiroz em 21/07/14
+	ENDIF
+ENDIF
+
+RestArea(aArea)
+
+Return

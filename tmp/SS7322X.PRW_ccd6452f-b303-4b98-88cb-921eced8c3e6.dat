@@ -1,0 +1,245 @@
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TBICONN.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "TBICODE.CH"
+#INCLUDE "AP5MAIL.CH"   
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <SS7322X>
+   Funcao que PREPARA o ambiente para execução da rotina [ fSMaiCRM() ]:
+   Rotinas de Wf para envio de E-mail a operador do CRM Com informações 
+   relativos Clientes sem atendimento em periodo e condições definidos 
+   conforme parametros. 
+      MV_XCRMS01 - Caminho do Arquivo de Remessa  CRM 
+      MV_XCRMS02 - Periodo a Considerar [Em Dias]  CRM
+      MV_XCRMS03 - Tipos de Clientes [F=Fisica/J=Juridica]  CRM
+      MV_XCRMS04 - Considera Bloqueados [S=Sim/N=Não]  CRM
+      MV_XCRMS05 - E-mail dos responsavel pelo  CRM
+ 
+@author<Antonio Dantas>
+@since<15/05/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function SS7322X(_aParans)
+//+-----------------------------------------------------------------------+
+//|  Trata a execução via SCHEDULE ou CHAMADA via menu.                   |
+//+-----------------------------------------------------------------------+
+If Valtype(_aParans) != "U"
+	//+-----------------------------------------------------------------------+
+	//| Se for SCHEDULE prepara o ambiente e Ecoa mensagem no console         |
+	//+-----------------------------------------------------------------------+
+	PREPARE ENVIRONMENT EMPRESA _aParans[1] FILIAL _aParans[2]
+	u_fSMaiCRM()
+	RESET ENVIRONMENT    
+Else
+	FWMsgRun(, {|| u_fSMaiCRM() }, "Processando Clientes", "Aguarde..." )
+	Aviso(FunName()+"/"+ProcName(),"E-mail SINALIZADOR: Cliente sem Atendimento.",{"OK"})
+Endif     
+Return 
+
+/* 
+-------------------------------------------------------------------------------
+{Protheus.doc}<fSMaiCRM>
+   Funções que utiliza as rotinas de Wf para envio de E-mail a operador do 
+   CRM Com informações relativos Clientes sem atendimento em periodo e 
+   condições definidos conforme parametros. 
+      MV_XCRMS01 - Caminho do Arquivo de Remessa  CRM 
+      MV_XCRMS02 - Periodo a Considerar [Em Dias]  CRM
+      MV_XCRMS03 - Tipos de Clientes [F=Fisica/J=Juridica]  CRM
+      MV_XCRMS04 - Considera Bloqueados [S=Sim/N=Não]  CRM
+      MV_XCRMS05 - E-mail dos responsavel pelo  CRM
+
+@Parametros<Nil> 
+@author<Antonio Dantas> 
+@since<18/05/2015> 
+@version<Nil> 
+@receive <Nil> 
+@return <Nil> 
+@example<Nil> 
+@see<Nil> 
+-------------------------------------------------------------------------------
+*/
+User Function fSMaiCRM()
+Local _cPathRoot 	:= GetMV('MV_XCRMS01')		//-- Caminho do Arquivo de Remessa  CRM 
+Local _nDias 		:= GetMV('MV_XCRMS02')		//-- Periodo a Considerar [Em Dias]  CRM
+Local _cTpPessoa	:= GetMV('MV_XCRMS03')		//-- Tipos de Clientes [F=Fisica/J=Juridica]  CRM
+Local _cBloquead	:= GetMV('MV_XCRMS04')		//-- Considera Bloqueados [S=Sim/N=Não]  CRM
+Local _cEMail		:= GetMV('MV_XCRMS05')		//-- E-mail dos responsavel pelo  CRM
+//-- 
+Local _nCtaA 		:= 0  
+Local _cCNPJ		:= ""
+//-- 
+Local _cFileLog	:= "SINAL"+dtos(dDataBase)+StrTran(Time(),":","")+".TXT"
+Local _nHdl_log	:= fCreate(_cPathRoot+_cFileLog)  
+Local _cTextMail 	:= "" 
+Local _cMensagem	:= ""  
+//-- 
+If Empty(Alltrim(_cEmail))
+	Return 
+Endif 
+If Empty(Alltrim(_cBloquead))
+	Return 
+Endif 
+If Empty(Alltrim(_cTpPessoa))
+	Return 
+Endif 
+If _nDias <= 0
+	Return 
+Endif 
+If Empty(Alltrim(_cPathRoot))
+	Return 
+Endif 
+//+--------------------------------------------------------------------+
+//|    Gera o Cabecalho do Relatorio de LOG                            |
+//+--------------------------------------------------------------------+
+_cTextMail :=	PadR("Codigo"			,TamSX3("A1_COD")[1]		)+Space(3)+; 
+				PadR("Loja"			,TamSX3("A1_LOJA")[1]	)+Space(3)+; 
+				PadR("CGC/CPF"		,TamSX3("A1_CGC")[1]		)+Space(3)+; 
+				PadR("Nome"			,TamSX3("A1_NOME")[1]	)+Space(3)+; 
+				PadR("Telefone"		,TamSX3("A1_TEL")[1]		)+Space(3)+;
+				PadR("Contato"		,TamSX3("A1_CONTATO")[1]	)+Space(3)+; 
+				PadR("Endereço"		,TamSX3("A1_END")[1]		)+Space(3)+; 
+				PadR("Cidade"			,TamSX3("A1_MUN")[1]		)+Space(3)+; 
+				PadR("UF"				,TamSX3("A1_EST")[1]		)+Space(3)+; 
+				PadR("CEP"				,TamSX3("A1_CEP")[1]		)+Space(3)+;
+				PadR("Unid Venda"		,TamSX3("A1_UNIDVEN")[1]	)+CHR(13)+CHR(10) 
+//-- 
+fWrite(_nHdl_Log,_cTextMail,Len(_cTextMail)) != Len(_cTextMail)
+//+--------------------------------------------------------------------+
+//|    Gera Linha de seracao do Cabecalho                              |
+//+--------------------------------------------------------------------+
+_cTextMail :=	PadR(Replicate("-",TamSX3("A1_COD")[1])		,TamSX3("A1_COD")[1]		)+Space(3)+;
+				PadR(Replicate("-",TamSX3("A1_LOJA")[1])		,TamSX3("A1_LOJA")[1]	)+Space(3)+;
+				PadR(Replicate("-",TamSX3("A1_CGC")[1])		,TamSX3("A1_CGC")[1]		)+Space(3)+;
+				PadR(Replicate("-",TamSX3("A1_NOME")[1])		,TamSX3("A1_NOME")[1]	)+Space(3)+;
+				PadR(Replicate("-",TamSX3("A1_TEL")[1])		,TamSX3("A1_TEL")[1]		)+Space(3)+;
+				PadR(Replicate("-",TamSX3("A1_CONTATO")[1])	,TamSX3("A1_CONTATO")[1]	)+Space(3)+;
+				PadR(Replicate("-",TamSX3("A1_END")[1])		,TamSX3("A1_END")[1]		)+Space(3)+;
+				PadR(Replicate("-",TamSX3("A1_MUN")[1])		,TamSX3("A1_MUN")[1]		)+Space(3)+;
+				PadR(Replicate("-",TamSX3("A1_EST")[1])		,TamSX3("A1_EST")[1]		)+Space(3)+;
+				PadR(Replicate("-",TamSX3("A1_CEP")[1])		,TamSX3("A1_CEP")[1]		)+Space(3)+;
+				PadR(Replicate("-",TamSX3("A1_UNIDVEN")[1])	,TamSX3("A1_UNIDVEN")[1]	)+CHR(13)+CHR(10)
+//-- 
+fWrite(_nHdl_Log,_cTextMail,Len(_cTextMail)) != Len(_cTextMail)
+//+---------------------------------------------------------------------+
+//|  Monta a Data Inicio para considera o atendimento                   |
+//+---------------------------------------------------------------------+
+_dDataINI	:= dDataBase - _nDias
+_cDataINI	:= Dtos(_dDataINI) 
+//-- 
+_lBloquead	:= Iif(_cBloquead=="S",.t.,.f.)
+fLerAD5(_cDataINI,_lBloquead,_cTpPessoa)
+//--
+TMPAD5->(dbgotop())  
+//--
+//+---------------------------------------------------------------------+
+//| Inicia Laco para impressao do Relatorio                             |
+//+---------------------------------------------------------------------+
+Do While TMPAD5->(!eof())   
+	_nCtaA++
+	_cCNPJ		:= Transform(TMPAD5->A1_CGC,Iif(Len(AllTrim(TMPAD5->A1_CGC))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+	//+---------------------------------------------------------------------+
+	//|  Imprime as lihas do Apontamento                                    |
+	//+---------------------------------------------------------------------+
+	_cTextMail :=		PadR(TMPAD5->A1_COD 		,TamSX3("A1_COD")[1]		)+Space(3)+;
+						PadR(TMPAD5->A1_LOJA 	,TamSX3("A1_LOJA")[1]	)+Space(3)+;
+						PadR(_cCNPJ				,TamSX3("A1_CGC")[1]		)+Space(3)+;
+						PadR(TMPAD5->A1_NOME 	,TamSX3("A1_NOME")[1]	)+Space(3)+;
+						PadR(TMPAD5->A1_TEL 		,TamSX3("A1_TEL")[1]		)+Space(3)+;
+						PadR(TMPAD5->A1_CONTATO 	,TamSX3("A1_CONTATO")[1]	)+Space(3)+;
+						PadR(TMPAD5->A1_END 		,TamSX3("A1_END")[1]		)+Space(3)+;
+						PadR(TMPAD5->A1_MUN 		,TamSX3("A1_MUN")[1]		)+Space(3)+;
+						PadR(TMPAD5->A1_EST 		,TamSX3("A1_EST")[1]		)+Space(3)+;
+						PadR(TMPAD5->A1_CEP 		,TamSX3("A1_CEP")[1]		)+Space(3)+;
+						PadR(TMPAD5->A1_UNIDVEN 	,TamSX3("A1_UNIDVEN")[1]	)+CHR(13)+CHR(10)
+	//-- 
+	fWrite(_nHdl_Log,_cTextMail,Len(_cTextMail)) != Len(_cTextMail)
+	//+---------------------------------------------------------------------+
+	//|    Vai para o Proximo Registro da ZCA                               |
+	//+---------------------------------------------------------------------+
+	TMPAD5->(dbskip()) 	    
+Enddo    
+//+---------------------------------------------------------------------+
+//|  Fecha tabela temporaria criada pela consulta SQL na função fLerAD5 |
+//+---------------------------------------------------------------------+
+TMPAD5->(DbCloseArea())
+//+---------------------------------------------------------------------+
+//|  Monta a mensagem do Corpo do E-mail                                |
+//+---------------------------------------------------------------------+
+_cMensagem	:= " "+CHR(13)+CHR(10)
+_cMensagem	+= "Relação dos cliente sem atendimento desde "+dtoc(_dDataINI)+CHR(13)+CHR(10)
+_cMensagem	+= "Total de cliente sem atendimento "+Alltrim(Transform(_nCtaA,"@E 9,999,999"))+"."  
+//+---------------------------------------------------------------------+
+//|    Fecha o Arquivo de Log                                           |
+//+---------------------------------------------------------------------+
+fClose(_nHdl_Log) 
+//+---------------------------------------------------------------------+
+//|    Executa a funcao de Geracao e remessa do E-mail                  |
+//+---------------------------------------------------------------------+
+//ACSendMail(,,,,_cEMail,"Cliente sem atendimento no periodo.",_cMensagem,_cPathRoot+_cFileLog)
+U_SFEnvEmail( , _cEMail, , , "Cliente sem atendimento no periodo.", _cMensagem, _cPathRoot + _cFileLog)
+//+---------------------------------------------------------------------+
+//|    Apaga o Arquivo de LOG                                           |
+//+---------------------------------------------------------------------+
+FErase(_cPathRoot+_cFileLog)	        	
+Return
+
+
+/* 
+-------------------------------------------------------------------------------
+{Protheus.doc}<fLerAD5>
+   Gera consulta SQL a tabela [AD5 - Apontamentos], para verificar quais os
+   [SA1- cliente] tiveram visitas apontadas dentro de um determinado periodo
+   informado por parametro. 
+   ----------
+   ATENÇÃO:  A Tabela GERADA na consulta fica aberta para ser utilizada pela
+             rotina que chamou, deve ser fechada ou final de sua utilização. 
+   
+@Parametros<Nil> 
+@author<Antonio Dantas> 
+@since<18/05/2015> 
+@version<Nil> 
+@receive 
+<
+    _cDataINI (c) - Data de inicio do Perido no formado (AAAMMDD)
+   _lBloquead (l) - (.t.) Considera SOMENTE os Cliente DEBLOQUEADOS 
+                    (.f.) Considera TODOS os Cliente, não importa a situação. 
+     _cTpsPes (c) - Tipo de Pessoa [F=Fisica;J=Juridica]
+> 
+@return <Nil> 
+@example<Nil> 
+@see<Nil> 
+-------------------------------------------------------------------------------
+*/
+Static Function fLerAD5(_cDataINI,_lBloquead,_cTpsPes)
+Local _cQuery		:= "" 
+_cQuery := ""
+_cQuery += " Select * From  ( "+CRLF
+_cQuery += "     Select  SA1.A1_COD, SA1.A1_LOJA, SA1.A1_CGC, SA1.A1_NOME, SA1.A1_TEL, "+CRLF
+_cQuery += "             SA1.A1_CONTATO, SA1.A1_END, SA1.A1_MUN, SA1.A1_EST, SA1.A1_CEP, "+CRLF
+_cQuery += "             SA1.A1_UNIDVEN, "+CRLF
+_cQuery += "     AD5.AD5_FILIAL, AD5.AD5_DATA, AD5.AD5_XRHINI, AD5.AD5_XRHFIM, AD5.AD5_VEND, "+CRLF 
+_cQuery += "     AD5.AD5_SEQUEN, AD5.AD5_NROPOR "+CRLF
+_cQuery += "     From "+RetSqlName("SA1")+" SA1 "+CRLF
+_cQuery += "     Left Join "+RetSqlName("AD5")+" AD5 on Substr(AD5.AD5_FILIAL,1,4) = '"+Substr(cFilAnt,1,4)+"' And AD5.AD5_CODCLI = SA1.A1_COD And AD5.AD5_LOJA = SA1.A1_LOJA And AD5.AD5_DATA >= '"+_cDataINI+"' "+CRLF
+_cQuery += "     Where SA1.D_E_L_E_T_ = ' ' "+CRLF 
+If _lBloquead
+	_cQuery += "     And SA1.A1_MSBLQL <> '1' "+CRLF
+Endif
+_cQuery += "     And SA1.A1_PESSOA in ("+_cTpsPes+") ) TAB "+CRLF 
+_cQuery += " Where TAB.AD5_DATA is Null "+CRLF
+_cQuery += " Order By TAB.A1_NOME "+CRLF
+If Select("TMPAD5")>0
+	TMPAD5->(DbCloseArea())
+Endif
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPAD5",.t.,.t.)
+//--
+TCSETFIELD( "TMPAD5", "AD5_DATA"	,"D",8,0 )
+
+Return  

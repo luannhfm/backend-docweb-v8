@@ -1,0 +1,1232 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "APWIZARD.CH"
+#INCLUDE "TBICONN.CH"
+#INCLUDE "TOPCONN.CH"
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<SN062FX>                                                   |
+|Rotinas Input/Carga do Numero do Cartao Pre-Pago.                         |
+|@Author<Antonio Dantas>                                                   |
+|@since<04/06/2014>                                                        |
+|@version                                                                  |
+|	<                                                                      |
+|    -------------------------------------------------------------------   |
+|     Antonio Dantas                                         29/07/2014    |
+|     Remodelado quase que por completo para permitir o controle e uso     |
+|     de REFERENCIAS DE CARTÕES,jÁ previamente existentes na tabela ZP3    |
+|     decorrentes da Leitura do Arquivo de Retorno da Solicitação de       |
+|     Cartões VPIK940, Permite ao operador selecionar Referencia           |
+|     disponiveis.                                                         |
+|    -------------------------------------------------------------------   |
+|	>                                                                      |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<Nil>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function SN062FX()  
+//-- **********************************************************************
+//--    Variavies de controle do MsNewGetDados 
+//-- **********************************************************************
+Local _nOpcA		:= GD_INSERT + GD_UPDATE  				//-- Define o modo de edicao da MsNewGetDados (Soma dos Modos) 
+Local _cIniCposA	:= ""									//-- Nome dos campos do tipo caracter que utilizarao incremento automatico.
+Local _cLinOkA		:= "AllwaysTrue"						//-- Funcao de usuario na saida da edicao da linha
+Local _cTudoOkA		:= "AllwaysTrue"						//-- Funcao de usuario para validado de toda a grid
+Local _cFieldOkA	:= "AllwaysTrue"						//-- Funcao de usuario para validacao do campo e foco de edicao 
+Local _cDelOkA		:= "AllwaysTrue"						//-- Funcao de usuario para validavao do DEL
+Local _nFreezeA		:= 000									//-- Campos estaticos na GetDados.
+Local _nMaxA		:= 999									//-- Numero Maximo de Elementos na Grid
+Local _cSupDelA		:= NIL                             		//-- Funcao executada quando pressionada as teclas <Ctrl>+<Delete>
+Private _aAlterA	:= {"ZP7_XNRREF"}						//-- Array dos campos que podem ser editados MsNewGetDados
+Private _aHeaderA	:= {}									//-- Array com os Elementos da Grid
+Private _aColsA		:= {}									//-- Array (Descricao) Cabecalho dos campos da Grid  
+Private _oOpcoes	:={	"Pesquisar" 	,;
+						"Visualizar"	,;
+						"Cadastrar"   	}				//-- Array (Descricao) das Opcoes de Operacao 
+//--
+//-- **********************************************************************
+//--    Variaveis de controle da Operacao
+//-- **********************************************************************
+Private _nVlrTotal	:= 0.00
+Private _nQtdeMat	:= 0
+Private _nTotLiber	:= 0.00
+Private _nQtdeLib	:= 0     
+Private _nRecZP6 	:= 0        
+Private _aColsORIG	:= {}
+//-- **********************************************************************
+//--    Variavies de controle do MsNewGetDados dos Itens da Carga
+//-- **********************************************************************
+Private _aTELA 		:= {}
+Private _aGETS 		:= {}
+Private _nUsado 	:= 0
+Private _bCpo 		:= {|nField| Field(nField)}
+//--
+Private _aSize 		:= MsAdvSize()
+Private _aInfo 		:= {_aSize[1],_aSize[2],_aSize[3],_aSize[4],3,3}
+Private _aObjects 	:= {{100,035,.T.,.T.},{100,075,.T.,.T.},{100,015,.T.,.T.}}
+Private _APosObj 	:= MsObjSize(_aInfo,_aObjects,.T.)
+Private _APosGet 	:= MsObjGetPos((_aSize[3]-_aSize[1]),315,{{004,024,240,270}})
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Antonio Dantas                                          22/07/2014 |
+//| Removido para Permitir o acesso a opcao a partir do Menu           |
+//| [Sessao x Matriculas] .                                            |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+Private _nOpc		:= 3    
+Private _cTitulo 	:= "Carga do Numero dos Cartoes Pré Pagos"
+&&-- fim
+//-- **********************************************************************
+//--    Declaração de Variaveis Private dos Objetos
+//-- **********************************************************************
+SetPrvt("_oBrwMatr","_oDlgMatr","_oQtdeMat","_oVlrTot","_oTotlib","_oQtdeLib")
+SetPrvt("_oBtnSalv","_oBtnFIL","_oBtnESC","_oBtnLMP","_oBtnAUT")   
+//-- *******************************************************************
+//--    Seleciona a Tabela de Cargas e Garante o Posicionamento no 
+//--    Registro selecionado
+//-- *******************************************************************
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Antonio Dantas                                          22/07/2014 |
+//| Removido para Permitir o acesso a opcao a partir do Menu           |
+//| [Sessao x Matriculas] .                                            |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+&&-- dbSelectArea("ZP6")
+&&-- ZP6->(dbSetOrder(1))
+&&-- ZP6->(dbGoTo(_nRec))  
+_nRecZP6 := ZP6->(Recno())
+If _nOpc == 3 .and. !(ZP6->ZP6_XSTATU $ "A#L")     
+	Aviso(FunName()+"/"+ProcName(),"Matriculas fora das Codições para Cadastro do Cartão Pré Pago", {"OK"})
+	Return .t.	
+Endif
+//-- *******************************************************************
+//--    Cria e Inicializa as Variaves PRIVATES que seram Utilizadas 
+//--    pela Funcao [EnChoice]
+//-- *******************************************************************
+_nCtaA := 0
+For _nCtaA := 1 To ZP6->(FCount())
+	//-- *******************************************************************
+	//--    Inicializa Variaveis c/Conteudo encontrado no Registro Atual 
+	//-- *******************************************************************
+	M->&(Eval(_bCpo,_nCtaA)) := ZP6->(FieldGet( _nCtaA))
+Next _nCtaA
+//-- *******************************************************************
+//--    Funcao que Cria a aHeader que sera utilizada pela MsNewGetDados
+//-- *******************************************************************
+fCriaHeard()   
+//-- *******************************************************************
+//--    Funcao que Cria a aCols que sera utilizada pela MsNewGetDados
+//-- *******************************************************************
+FWMsgRun(, {|| fCriaCols(_nOpc) }, "Carga das Matriculas","Matriculas do Periodo: "+Alltrim(ZP6->ZP6_XPERIO)+", Calendário: "+Alltrim(ZP6->ZP6_XSEG)+" e Sessão:"+Alltrim(ZP6->ZP6_XCOD))
+//-- *******************************************************************
+//--    Monta a Interfase (Tela) que sera apresentada ao usuario 
+//-- *******************************************************************
+DEFINE MSDIALOG _oDlgMatr TITLE _cTitulo+" - "+_oOpcoes[_nOpc] FROM _aSize[7],_aSize[1] TO _aSize[6],_aSize[5] OF oMainWnd PIXEL
+EnChoice("ZP6",_nRecZP6,_nOpc,,,,,_APosObj[1],,3)
+//-- **********************************************************************
+//--    Grid das Matriculas a Serem liberadas 
+//-- **********************************************************************
+_oBrwMatr	:= MsNewGetDados():New(_APosObj[2,1],_APosObj[2,2],_APosObj[2,3],_APosObj[2,4],_nOpcA,_cLinOkA,_cTudoOkA,_cIniCposA,_aAlterA,_nFreezeA,_nMaxA,_cFieldOkA,_cSupDelA,_cDelOkA,_oDlgMatr,_aHeaderA,_aColsA)
+_oBrwMatr:oBrowse:SetFocus()
+//-- **********************************************************************
+//--   Informacoes de Rodape: Valor toral e Quantidade de Matriculas 
+//-- **********************************************************************
+@ _APosObj[3,1],_APosGet[1,1] SAY "Valor Total (R$): " SIZE 70,7 OF _oDlgMatr PIXEL
+@ _APosObj[3,1],_APosGet[1,2] SAY _oVlrTot VAR _nVlrTotal PICTURE _aHeaderA[aScan(_aHeaderA, {|x| Trim (x[2]) == "ZP7_XVALOR" }),3] 	SIZE 70,7 OF _oDlgMatr PIXEL
+//--
+@ _APosObj[3,1]+08,_APosGet[1,1] SAY "Tot Liberado(R$): " SIZE 70,7 OF _oDlgMatr PIXEL
+@ _APosObj[3,1]+08,_APosGet[1,2] SAY _oTotlib VAR _nTotLiber PICTURE _aHeaderA[aScan(_aHeaderA, {|x| Trim (x[2]) == "ZP7_XVALOR" }),3] 	SIZE 70,7 OF _oDlgMatr PIXEL
+//--
+@ _APosObj[3,1],_APosGet[1,3] SAY "Qtde Matriculas: " SIZE 70,7 OF _oDlgMatr PIXEL
+@ _APosObj[3,1],_APosGet[1,4] SAY _oQtdeMat VAR _nQtdeMat PICTURE "E@ 999,999,999"	SIZE 70,7 OF _oDlgMatr PIXEL
+//--
+@ _APosObj[3,1]+08,_APosGet[1,3] SAY "  Qtde Liberada: " SIZE 70,7 OF _oDlgMatr PIXEL
+@ _APosObj[3,1]+08,_APosGet[1,4] SAY _oQtdeLib VAR _nQtdeLib PICTURE "E@ 999,999,999"	SIZE 70,7 OF _oDlgMatr PIXEL
+//-- **********************************************************************
+//--    Objeto de controle do falso Marca/Desmarca
+//-- **********************************************************************
+_oBtnSalv   := TButton():New( _APosObj[3,1]+10,_APosGet[1,4]+20,"(Salva)"				,_oDlgMatr	,{|| Processa({|| u_fGrvCard(_nOpc) } ,"Cadastro de Cartões...") }		,050,008,,,,.T.,,"",,,,.F. )
+_oBtnFIL	:= TButton():New( _APosObj[3,1]+20,_APosGet[1,4]+20,"<<Filtrar>>"			,_oDlgMatr	,{|| u_fFil62FX(_nOpc) 	}	,050,008,,,,.T.,,"",,,,.F. )
+_oBtnESC	:= TButton():New( _APosObj[3,1]+30,_APosGet[1,4]+20,"(Sair)"				,_oDlgMatr	,{|| _oDlgMatr:End() 	}	,050,008,,,,.T.,,"",,,,.F. )
+//--
+_oBtnLMP	:= TButton():New( _APosObj[3,1]+20,_APosGet[1,4]-40,"<<Excluir Nrs>>"		,_oDlgMatr	,{|| u_fZeraNum(_nOpc) 	}	,050,008,,,,.T.,,"",,,,.F. )
+_oBtnAUT	:= TButton():New( _APosObj[3,1]+30,_APosGet[1,4]-40,"<<Nr Automatico>>"	,_oDlgMatr	,{|| u_fNrAutom(_nOpc) 	}	,050,008,,,,.T.,,"",,,,.F. )
+//-- **********************************************************************
+//--    Botoeira da Interface
+//-- **********************************************************************
+If _nOpc != 3 .or. !(ZP6->ZP6_XSTATU $ "A#L") 
+	_oBtnAUT:Disable()
+	_oBtnSalv:Disable()
+Endif 
+_oDlgMatr:Activate(,,,.T.)
+Return
+ 
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCriaHeard>                                                |
+|Funcao de contrucao do aHearder que sera utilizado pelo MsNewGetDados.    |
+|ATENCAO: Considera criada PRIVATE pela funcao que chamnaou o array        |
+|         [_aHeaderA]                                                      |
+|@Author<Antonio Dantas>                                                   |
+|@since<28/04/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<Nil>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fCriaHeard()          
+Aadd(_aHeaderA 	,{"Filial"			,"ZP7_FILIAL"	,TRIM(X3PICTURE("ZP7_FILIAL"))	,TamSX3("ZP7_FILIAL")[1]	,TamSX3("ZP7_FILIAL")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Nr Ref Cartão"	,"ZP7_XNRREF"	,TRIM(X3PICTURE("ZP7_XNRREF"))	,TamSX3("ZP7_XNRREF")[1]	,TamSX3("ZP7_XNRREF")[2]	,"u_fVldRef()" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Id do Cartao"	,"ZP7_XCARTA"	,TRIM(X3PICTURE("ZP7_XCARTA"))	,TamSX3("ZP7_XCARTA")[1]	,TamSX3("ZP7_XCARTA")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Cod Aluno"		,"ZP7_XALUNO"	,TRIM(X3PICTURE("ZP7_XALUNO"))	,TamSX3("ZP7_XALUNO")[1]	,TamSX3("ZP7_XALUNO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Matricula"		,"ZP7_XMATRI"	,TRIM(X3PICTURE("ZP7_XMATRI"))	,TamSX3("ZP7_XMATRI")[1]	,TamSX3("ZP7_XMATRI")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"CPF"				,"ZP7_XCPF"		,TRIM(X3PICTURE("ZP7_XCPF"))	,TamSX3("ZP7_XCPF")[1]		,TamSX3("ZP7_XCPF")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Nome"			,"ZP7_XNOME"	,TRIM(X3PICTURE("ZP7_XNOME"))	,TamSX3("ZP7_XNOME")[1]		,TamSX3("ZP7_XNOME")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Periodo"			,"ZP7_XPERIO"	,TRIM(X3PICTURE("ZP7_XPERIO"))	,TamSX3("ZP7_XPERIO")[1]	,TamSX3("ZP7_XPERIO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Seg Calendar"	,"ZP7_XSEG"		,TRIM(X3PICTURE("ZP7_XSEG"))	,TamSX3("ZP7_XSEG")[1]		,TamSX3("ZP7_XSEG")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Sessao"			,"ZP7_XSESSA"	,TRIM(X3PICTURE("ZP7_XSESSA"))	,TamSX3("ZP7_XSESSA")[1]	,TamSX3("ZP7_XSESSA")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Data Geracao"	,"ZP7_XDATAG"	,TRIM(X3PICTURE("ZP7_XDATAG"))	,TamSX3("ZP7_XDATAG")[1]	,TamSX3("ZP7_XDATAG")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Evento"			,"ZP7_XEVENT"	,TRIM(X3PICTURE("ZP7_XEVENT"))	,TamSX3("ZP7_XEVENT")[1]	,TamSX3("ZP7_XEVENT")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Descr Curso"		,"ZP7_XDESCS"	,TRIM(X3PICTURE("ZP7_XDESCS"))	,TamSX3("ZP7_XDESCS")[1]	,TamSX3("ZP7_XDESCS")[2]	,"" ,"","C",""  ,""})
+&&-- Aadd(_aHeaderA 	,{"Descricao"		,"ZP7_XDESEV"	,TRIM(X3PICTURE("ZP7_XDESEV"))	,TamSX3("ZP7_XDESEV")[1]	,TamSX3("ZP7_XDESEV")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Modalidade"		,"ZP7_XMODAL"	,TRIM(X3PICTURE("ZP7_XMODAL"))	,TamSX3("ZP7_XMODAL")[1]	,TamSX3("ZP7_XMODAL")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Descr Modali"	,"ZP7_XDESMO"	,TRIM(X3PICTURE("ZP7_XDESMO"))	,TamSX3("ZP7_XDESMO")[1]	,TamSX3("ZP7_XDESMO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Area Tecnolo"	,"ZP7_XATECN"	,TRIM(X3PICTURE("ZP7_XATECN"))	,TamSX3("ZP7_XATECN")[1]	,TamSX3("ZP7_XATECN")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Descr A Tecn"	,"ZP7_XDESAT"	,TRIM(X3PICTURE("ZP7_XDESAT"))	,TamSX3("ZP7_XDESAT")[1]	,TamSX3("ZP7_XDESAT")[2]	,"" ,"","C",""  ,""})
+&&-- Aadd(_aHeaderA 	,{"Curso"			,"ZP7_XCURSO"	,TRIM(X3PICTURE("ZP7_XCURSO"))	,TamSX3("ZP7_XCURSO")[1]	,TamSX3("ZP7_XCURSO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Turno"			,"ZP7_XTURNO"	,TRIM(X3PICTURE("ZP7_XTURNO"))	,TamSX3("ZP7_XTURNO")[1]	,TamSX3("ZP7_XTURNO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Tp Convenio"		,"ZP7_XTIPO"	,TRIM(X3PICTURE("ZP7_XTIPO"))	,TamSX3("ZP7_XTIPO")[1]		,TamSX3("ZP7_XTIPO")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Convenio"		,"ZP7_XCONVE"	,TRIM(X3PICTURE("ZP7_XCONVE"))	,TamSX3("ZP7_XCONVE")[1]	,TamSX3("ZP7_XCONVE")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Desc Conv"		,"ZP7_XDESCO"	,TRIM(X3PICTURE("ZP7_XDESCO"))	,TamSX3("ZP7_XDESCO")[1]	,TamSX3("ZP7_XDESCO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Unid Ref"		,"ZP7_XUNREF"	,TRIM(X3PICTURE("ZP7_XUNREF"))	,TamSX3("ZP7_XUNREF")[1]	,TamSX3("ZP7_XUNREF")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Quantidade"		,"ZP7_XQTDE"	,TRIM(X3PICTURE("ZP7_XQTDE"))	,TamSX3("ZP7_XQTDE")[1]		,TamSX3("ZP7_XQTDE")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Vlr Benefic"		,"ZP7_XVALOR"	,TRIM(X3PICTURE("ZP7_XVALOR"))	,TamSX3("ZP7_XVALOR")[1]	,TamSX3("ZP7_XVALOR")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Sit. Matricu"	,"ZP7_XSITMA"	,TRIM(X3PICTURE("ZP7_XSITMA"))	,TamSX3("ZP7_XSITMA")[1]	,TamSX3("ZP7_XSITMA")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Situacao"		,"ZP3XSTATU"	,"@!"							,15							,0							,"" ,"","C",""  ,""})
+Return .t.    	
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCriaCols>                                                 |
+|Funcao de contrucao do aCols que sera utilizado pelo MsNewGetDados.       |
+|ATENCAO: Considera criado PRIVATE pela funcao que chamnaou o array        |
+|         [_aColsA]                                                        |
+|@Author<Antonio Dantas>                                                   |
+|@since<28/04/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<     _nOpc (n) - Opcao de operacao                                       |
+|>                                                                         |
+|@return                                                                   |
+|< _aNewCols (a) - Espelho da acols                                        |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fCriaCols(_nOpc)
+Local _nCOLS		:= 0  
+Local _cStatus 		:= ""
+Local _aNewCols		:= {}    
+//-- ****************************************************************
+//--    Garante que aCols estara vazia, zera os totalizadores 
+//-- ****************************************************************
+_aColsA		:= {}
+_nVlrTotal	:= 0.00
+_nQtdeMat 	:= 0
+_nTotLiber	:= 0.00
+_nQtdeLib	:= 0           
+//--
+dbSelectArea("ZP3")
+ZP3->(dbSetOrder(6)) 		//-- Numero de Referencia do CARTAO 
+//-- Localiza as Matriculas 
+dbSelectArea("ZP7")
+ZP7->(dbSetOrder(11)) 		//-- Cod Periodo+Seg Calendar+Cod Sessao  
+ZP7->(dbgotop())
+ZP7->(dbSeek(ZP6->ZP6_FILIAL+ZP6->ZP6_XPERIO+ZP6->ZP6_XSEG+ZP6->ZP6_XCOD))
+Do While ZP7->(!Eof()) .and. ZP7->ZP7_FILIAL == ZP6->ZP6_FILIAL .and. ZP7->ZP7_XPERIO == ZP6->ZP6_XPERIO .and.;
+	ZP7->ZP7_XSEG == ZP6->ZP6_XSEG .and. ZP7->ZP7_XSESSA == ZP6->ZP6_XCOD
+	//-- Verifica se a Matricula esta em codicoes de ser modificada
+     If !(ZP7->ZP7_XSTATU $ "BTL")
+		ZP7->(dbskip())     	      
+		Loop
+     Endif        
+	//-- Verifica se o CONVENIO Preve Cadastro de Cartao Pre Pago 
+	dbSelectArea("ZP1")
+	ZP1->(dbSetOrder(1))		//-- Codigo do Convenio 
+	ZP1->(dbSeek(FwxFilial("ZP1")+ZP7->ZP7_XCONVE))
+	If ZP1->ZP1_XSCARD != "S"
+		ZP7->(dbskip())     	      
+		Loop
+	Endif 
+	_nCOLS++
+	//-- Calcula a Quantidade e o valor total a Pagar das Matriculas
+	_nQtdeMat 	:= _nCOLS
+	_nVlrTotal	+= ZP7->ZP7_XVALOR
+	//-- Totaliza os Marcados para Liberacao 
+	If Alltrim(ZP7->ZP7_XMARK) !=""	
+		_nTotLiber	+= ZP7->ZP7_XVALOR
+		_nQtdeLib++
+	Endif 
+	_cStatus 	:= u_fGetSat(ZP7->ZP7_XNRREF)
+	//-- Preenche aCols 
+	aAdd(_aColsA, {	ZP7->ZP7_FILIAL		,;
+					ZP7->ZP7_XNRREF		,;
+					ZP7->ZP7_XCARTA		,;
+					ZP7->ZP7_XALUNO		,;
+					ZP7->ZP7_XMATRI		,;
+					ZP7->ZP7_XCPF		,;
+					ZP7->ZP7_XNOME		,;
+					ZP7->ZP7_XPERIO		,;
+					ZP7->ZP7_XSEG		,;
+					ZP7->ZP7_XSESSA		,;
+					ZP7->ZP7_XDATAG		,;
+					ZP7->ZP7_XEVENT		,;
+					ZP7->ZP7_XDESCS		,;
+					ZP7->ZP7_XMODAL		,;
+					ZP7->ZP7_XDESMO		,;
+					ZP7->ZP7_XATECN		,;
+					ZP7->ZP7_XDESAT		,;
+					ZP7->ZP7_XTURNO		,;
+					ZP7->ZP7_XTIPO		,;
+					ZP7->ZP7_XCONVE		,;
+					ZP7->ZP7_XDESCO		,;
+					ZP7->ZP7_XUNREF		,;
+					ZP7->ZP7_XQTDE		,;
+					ZP7->ZP7_XVALOR		,;
+					ZP7->ZP7_XSITMA		,;
+					_cStatus			,;
+					.f.					} )					
+	ZP7->(dbSkip())    
+Enddo
+_aNewCols	:= aClone(_aColsA)   
+_aColsORIG	:= aClone(_aColsA)   
+Return _aNewCols
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGrvCard>                                                  |
+|Efetivamente Grava os Numeros dos Cartoes imputados as Matriculas nas     |
+|Tabelas [ZP7 - Matriculas A Pagar] e [ZP0 - Alunos]                       |
+|                                                                          |
+|@since<28/04/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<      _nOpc (n) - Numero da Opcao Selecionada no Menu pelo operado       |
+|>                                                                         |
+|@return                                                                   |
+|<  _lReturn  (L) - (.t.) Acao concluida, (.f.) Acao nao concluida         |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fGrvCard(_nOpc) 
+Local _aArea		:= GetArea() 
+Local _lReturn 		:= .T.       
+Local _lCartaoOK 	:= .t. 
+Local _lFindZP7 	:= .f.
+Local _lFindZP0 	:= .f. 
+Local _lFindZP3		:= .f.
+Local _aNewCols		:= aClone(_oBrwMatr:aCols)
+Local _aNewHead		:= aClone(_oBrwMatr:aHeader)   
+Local _nRegs 		:= Len(_aNewCols)    
+Local _nCtaREG		:= 0
+Local _nCtaA 		:= 0      
+Local _cChave 		:= "" 
+Local _cNrCatao		:= ""  
+Local _cNrRefer		:= ""   
+Local _cConvenio	:= ""         
+Local _cChave	 	:= ""
+Local _cChaveOLD 	:= ""
+Local _nPosF 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_FILIAL"})
+Local _nPosP 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XPERIO"})
+Local _nPosS 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XSEG"})
+Local _nPosE 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XSESSA"})
+Local _nPosM 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XMATRI"})
+Local _nPDg 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XDATAG"})  
+Local _nPosT 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XTIPO"})
+Local _nPosC 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XCONVE"})
+Local _nPosH 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XCPF"})
+Local _nPosD 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XDESCO"})
+Local _nPosR 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XNRREF"})
+Local _nPosX 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XCARTA"})  
+
+//--
+//-- **********************************************************************
+//--    Esta verificação esta sendo realizada na entrada, redundancia
+//--    aqui por seguranca 
+//-- ********************************************************************** 
+dbSelectArea("ZP6")
+ZP6->(dbSetOrder(1))
+ZP6->(dbGoTo(_nRecZP6))   
+If _nOpc == 3 .and. !(ZP6->ZP6_XSTATU $ "A#L")
+	Aviso(FunName()+"/"+ProcName(),"Sessao sem codicoes para realizar Cadastro de Cartões Pré Pagos!", {"OK"})
+	_lReturn := .F.
+Endif   
+If Aviso(FunName()+"/"+ProcName(),"Tem certeza que deseja Salvar o Cadastro dos Cartões Pré Pagos?", {"Sim","Não"}) == 2
+	_lReturn := .F.
+Endif   
+If _lReturn
+	_nCtaA := 0
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Loop na aCols das Matriculas para Gravar as informacoes relativos  |
+	//| as LIBERACOES realizadas pelo Aprovador.                           |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	ProcRegua(_nRegs)    
+	Begin Transaction
+		For _nCtaA := 1 to Len(_aNewCols)    
+			_lCartaoOK := .t.
+			//-- Implementa Contador 
+			_nCtaREG++    
+			//-- Implementa Termometro
+			IncProc("Total de Registros:"+Alltrim(Transform(_nRegs,"@E 999,999,999"))+"|  Lidos:"+Alltrim(Transform(_nCtaREG,"@E 999,999,999")))   
+			//-- **********************************************************************
+			//--    Monta a Chave de pesquisa da Matricula, Identifica o:
+ 			//--    [Numero do Cartao], [Numero de Referencia do Cartao] e 
+ 			//--    [Codigo do Convenio]
+			//-- **********************************************************************
+			//-- Chave:     ZP7_FILIAL              +ZP7_XPERIO              +ZP7_XSEG                 +ZP7_XSESSA              +ZP7_XMATRI              +ZP7_XDATAG
+			_cChave 	:= _aNewCols[_nCtaA,_nPosF]+_aNewCols[_nCtaA,_nPosP]+_aNewCols[_nCtaA,_nPosS]+_aNewCols[_nCtaA,_nPosE]+_aNewCols[_nCtaA,_nPosM]+dtos(_aNewCols[_nCtaA,_nPDg])
+			_cNrCatao	:= _aNewCols[_nCtaA,_nPosX]
+			_cNrRefer	:= _aNewCols[_nCtaA,_nPosR] 
+			_cConvenio 	:= _aNewCols[_nCtaA,_nPosC]
+			//-- **********************************************************************
+			//--     Localiza O CARTAO e Posiciona o Cadastro de Beneficiarios 
+			//-- **********************************************************************
+			dbSelectArea("ZP3")
+			ZP3->(dbSetOrder(6)) 		//-- Numero de Referencia do CARTAO 
+			_lFindZP3 := (ZP3->(dbSeek(_cNrRefer)))                     
+			If !Empty(Alltrim(_cNrRefer)) .and. _lFindZP3
+				//-- **********************************************************************
+				//--     Localiza e Posiciona a Matricula 
+				//-- **********************************************************************
+				dbSelectArea("ZP7")
+				ZP7->(dbSetOrder(1))			//-- Cod Periodo+Seg Calendar+Cod Sessao+Matricula+Data Geração
+		  		_lFindZP7 := (ZP7->(dbseek(_cChave)))
+				//-- **********************************************************************
+				//--     Localiza e Posiciona o Cadastro de Alunos 
+				//-- **********************************************************************
+				dbSelectArea("ZP0")
+				ZP0->(dbSetOrder(1)) 		//-- CPF
+				_lFindZP0 := (ZP0->(dbSeek(FwxFilial("ZP0")+ZP7->ZP7_XCPF)))
+				//-- **********************************************************************
+				//--    Nao Permite a Utilizacao de Cartoes EXTRAVIADOS.
+				//-- **********************************************************************
+				If ZP3->ZP3_XSTATU == "X"
+				 	Aviso(FunName()+"/"+ProcName(),"Cartão Extraviado, não pode ser utilizado!", {"OK"})
+					_lCartaoOK := .f. 
+					DisarmTransaction()      
+					//-- Aborta o Processamento para Tratamento. 
+					Exit 
+				Endif 
+				//-- **********************************************************************
+				//--    Se foi trocando o Numero de Referencia do Cartao.
+				//-- **********************************************************************
+				If _lFindZP3 .and. Alltrim(ZP3->ZP3_XCPF) != Alltrim(_aNewCols[_nCtaA,_nPosH])  
+					//-- **********************************************************************
+					//-- 	Verifica se existe Movimentacao para o Numero de Referencia 
+					//--   	Informado. 
+					//--	_aUserCart[1] - Matricula
+					//--	_aUserCart[2] - CPF
+					//--	_aUserCart[3] - Nome do Aluno 
+					//-- **********************************************************************
+					_aUserCart := u_fUserCart(_cNrRefer,_cConvenio)   
+					If _aUserCart[1] != ""
+						If u_fCartMov(_cNrRefer,_cConvenio)
+							_cMensag := "O Cartão de referência Nr.: ["+Alltrim(_aNewCols[_nCtaA,_nPosR])+"] não pode ser atribuido ao CPF.: "+;
+										Alltrim(_aNewCols[_nCtaA,_nPosH])+", pois já foi utilizado para na Matricula: "+Alltrim(_aUserCart[1])+;
+										", do Aluno:"+Alltrim(_aUserCart[3])+" de CPF "+Transform(Alltrim(_aUserCart[2]),"@R 999.999.999-99")+"."+;
+										" Processamento CANCELADO. "
+						 	Aviso(FunName()+"/"+ProcName(),_cMensag, {"OK"})
+							_lCartaoOK := .f. 
+							DisarmTransaction()      
+							//-- Aborta o Processamento para Tratamento. 
+							Exit 
+						Endif 
+					Endif      
+				Endif      
+				If _lCartaoOK   
+					If !Empty(Alltrim(_cNrRefer))
+						//-- **********************************************************************
+						//--     Imput do NR de Referencia do Cartao Na ZP3 - Conveniados 
+						//-- **********************************************************************
+						RecLock("ZP3",!_lFindZP3) 
+						Replace ZP3->ZP3_FILIAL	With FwxFilial("ZP3") 	//-- Filial
+						Replace ZP3->ZP3_XMATRI	With ZP7->ZP7_XMATRI	//-- Matricula
+						Replace ZP3->ZP3_XALUNO	With ZP0->ZP0_XCOD		//-- Aluno
+						Replace ZP3->ZP3_XCPF	With ZP7->ZP7_XCPF		//-- CPF Aluno
+						Replace ZP3->ZP3_XNOME	With ZP7->ZP7_XNOME	   	//-- Nome
+						Replace ZP3->ZP3_XEVENT	With ZP7->ZP7_XEVENT	//-- Evento
+						Replace ZP3->ZP3_XDESEV	With ZP7->ZP7_XDESEV	//-- Descricao
+						Replace ZP3->ZP3_XMODAL	With ZP7->ZP7_XMODAL	//-- Modalidade
+						Replace ZP3->ZP3_XDESMO	With ZP7->ZP7_XDESMO	//-- Descr Modali
+						Replace ZP3->ZP3_XATECN	With ZP7->ZP7_XATECN	//-- Area Tecnolo
+						Replace ZP3->ZP3_XDESAT	With ZP7->ZP7_XDESAT	//-- Descr A Tecn
+						Replace ZP3->ZP3_XCURSO	With ZP7->ZP7_XCURSO	//-- Curso
+						Replace ZP3->ZP3_XDESCS	With ZP7->ZP7_XDESCS	//-- Descr Curso
+						Replace ZP3->ZP3_XTURNO	With ZP7->ZP7_XTURNO	//-- Turno   
+						Replace ZP3->ZP3_XSESSA	With ZP7->ZP7_XSESSA	//-- Sessao INICIAO ou incorporado
+						//-- Esta sendo incluido pela Primeira: Aguarda a Liberacao
+						ZP3->(MsUnLock())
+						ZP3->(dbCommit())    
+						//-- **********************************************************************
+						//--     Imput do NR de Referencia do Cartao Na ZP7 - Matricula a Pagar 
+						//-- **********************************************************************
+				  		If _lFindZP7
+							RecLock("ZP7",.f.)
+							Replace ZP7->ZP7_XCARTA With _cNrCatao
+							Replace ZP7->ZP7_XNRREF With _cNrRefer
+							ZP7->(MsUnLock())
+							ZP7->(dbCommit())
+							//-- **********************************************************************
+							//--     Imput do NR de Referencia do Cartao Na ZP0 - Cadastro do Aluno 
+							//-- **********************************************************************
+							If _lFindZP0
+								RecLock("ZP0",.f.)
+								Replace ZP0->ZP0_XCARTA With _cNrCatao
+								Replace ZP0->ZP0_XNRREF With _cNrRefer     
+								Replace ZP0->ZP0_XDTCAR With dDataBase
+								ZP0->(MsUnLock())
+								ZP0->(dbCommit())
+							Endif	//-- If _lFindZP0 
+						Endif	//-- If _lFindZP7 		
+					Endif	//-- !Empty(Alltrim(_cNrRefer)) 
+					//-- Guarda a Possição do Registro Atual 
+					_nRecno := ZP3->(Recno())
+					//+-----------------------------------------------------------------------+
+					//| Se trocou o Numero do Cartão, LIBERA o numero anteriormente utilizado |
+					//+-----------------------------------------------------------------------+
+					_cNrRefOLD	:= _aColsORIG[_nCtaA,_nPosR] 
+     				If !Empty(_cNrRefOLD)
+						If Alltrim(_cNrRefOLD) != Alltrim(_cNrRefer)
+							dbSelectArea("ZP3")
+							ZP3->(dbSetOrder(6)) 		//-- Numero de Referencia do CARTAO 
+							If (ZP3->(dbSeek(_cNrRefOLD)))
+								ZP3->(RecLock("ZP3",.f.))
+								Replace ZP3->ZP3_FILIAL	With " " 	//-- Filial
+								Replace ZP3->ZP3_XMATRI	With " "	//-- Matricula
+								Replace ZP3->ZP3_XALUNO	With " "	//-- Aluno
+								Replace ZP3->ZP3_XCPF	With " "	//-- CPF Aluno
+								Replace ZP3->ZP3_XNOME	With " "	//-- Nome
+								Replace ZP3->ZP3_XEVENT	With " "	//-- Evento
+								Replace ZP3->ZP3_XDESEV	With " "	//-- Descricao
+								Replace ZP3->ZP3_XMODAL	With " "	//-- Modalidade
+								Replace ZP3->ZP3_XDESMO	With " "	//-- Descr Modali
+								Replace ZP3->ZP3_XATECN	With " "	//-- Area Tecnolo
+								Replace ZP3->ZP3_XDESAT	With " "	//-- Descr A Tecn
+								Replace ZP3->ZP3_XCURSO	With " "	//-- Curso
+								Replace ZP3->ZP3_XDESCS	With " "	//-- Descr Curso
+								Replace ZP3->ZP3_XTURNO	With " "	//-- Turno   
+								Replace ZP3->ZP3_XSESSA	With " "	//-- Sessao INICIAO ou incorporado
+								ZP3->(MsUnLock())
+								ZP3->(dbCommit())
+							Endif
+						Endif
+     				Endif	//-- !Empty(_cNrRefOLD)
+					//-- Retorna a Possição do Registro ORIGINAL 
+					ZP3->(dbGoto(_nRecno))
+				Endif	//-- _lCartaoOK 
+            Else		//-- Não encontrou o CARTÃO
+				//+-----------------------------------------------------------------------+
+				//| OPERADOR Limpou o campo do NUMERO DE REFERENCIA,                      |
+				//+-----------------------------------------------------------------------+
+				If Empty(Alltrim(_cNrRefer))
+					_cNrRefOLD	:= _aColsORIG[_nCtaA,_nPosR]
+					If !Empty(_cNrRefOLD)
+						If Alltrim(_cNrRefOLD) != Alltrim(_cNrRefer)
+							_cChaveOLD 	:= _aColsORIG[_nCtaA,_nPosF]+_aColsORIG[_nCtaA,_nPosP]+_aColsORIG[_nCtaA,_nPosS]+_aColsORIG[_nCtaA,_nPosE]+_aColsORIG[_nCtaA,_nPosM]+dtos(_aColsORIG[_nCtaA,_nPDg])
+							//-- **********************************************************************
+							//--     Localiza e Posiciona a Matricula 
+							//-- **********************************************************************
+							dbSelectArea("ZP7")
+							ZP7->(dbSetOrder(1))			//-- Cod Periodo+Seg Calendar+Cod Sessao
+					  		_lFindZP7 := (ZP7->(dbseek(_cChaveOLD)))
+							//-- **********************************************************************
+							//--     Localiza e Posiciona o Cadastro de Alunos 
+							//-- **********************************************************************
+							dbSelectArea("ZP0")
+							ZP0->(dbSetOrder(1)) 		//-- CPF
+							_lFindZP0 := (ZP0->(dbSeek(FwxFilial("ZP0")+ZP7->ZP7_XCPF)))
+							//-- **********************************************************************
+							//--   Remove o numero de refencia da MATRICULA A PAGAR 
+							//-- **********************************************************************
+					  		If _lFindZP7
+								RecLock("ZP7",.f.)
+								Replace ZP7->ZP7_XCARTA With ""
+								Replace ZP7->ZP7_XNRREF With ""
+								ZP7->(MsUnLock())
+								ZP7->(dbCommit())
+								//-- **********************************************************************
+								//--   Remove o Numero do Cartão do Aluno 
+								//-- **********************************************************************
+								If _lFindZP0
+									RecLock("ZP0",.f.)
+									Replace ZP0->ZP0_XCARTA With ""
+									Replace ZP0->ZP0_XNRREF With ""
+									Replace ZP0->ZP0_XDTCAR With CTOD("  /  /  ")
+									ZP0->(MsUnLock())
+									ZP0->(dbCommit())
+								Endif	//-- If _lFindZP0 
+							Endif	//-- If _lFindZP7 		
+							//--
+							dbSelectArea("ZP3")
+							ZP3->(dbSetOrder(6)) 		//-- Numero de Referencia do CARTAO
+							If (ZP3->(dbSeek(_cNrRefOLD)))
+								ZP3->(RecLock("ZP3",.f.))
+								Replace ZP3->ZP3_FILIAL	With " " 	//-- Filial
+								Replace ZP3->ZP3_XMATRI	With " "	//-- Matricula
+								Replace ZP3->ZP3_XALUNO	With " "	//-- Aluno
+								Replace ZP3->ZP3_XCPF	With " "	//-- CPF Aluno
+								Replace ZP3->ZP3_XNOME	With " "	//-- Nome
+								Replace ZP3->ZP3_XEVENT	With " "	//-- Evento
+								Replace ZP3->ZP3_XDESEV	With " "	//-- Descricao
+								Replace ZP3->ZP3_XMODAL	With " "	//-- Modalidade
+								Replace ZP3->ZP3_XDESMO	With " "	//-- Descr Modali
+								Replace ZP3->ZP3_XATECN	With " "	//-- Area Tecnolo
+								Replace ZP3->ZP3_XDESAT	With " "	//-- Descr A Tecn
+								Replace ZP3->ZP3_XCURSO	With " "	//-- Curso
+								Replace ZP3->ZP3_XDESCS	With " "	//-- Descr Curso
+								Replace ZP3->ZP3_XTURNO	With " "	//-- Turno
+								Replace ZP3->ZP3_XSESSA	With " "	//-- Sessao INICIAO ou incorporado
+								ZP3->(MsUnLock())
+								ZP3->(dbCommit())
+							Endif
+						Endif
+					Endif	//-- !Empty(_cNrRefOLD)
+				Endif		//-- !Empty(Alltrim(_cNrRefer)) 			
+			Endif	//-- If _lFindZP3	
+		Next //-- _nCtaA
+		//+-----------------------------------------------------------------------+
+		//| Ao encerrar torna o array [_aColsORIG], igual ao que foi SALVO        |
+		//| [_oBrwMatr:aCols] , pois o operador pode PERMANECER na interface      |
+		//| (tela) e realizar novas modificações.                                 |
+		//+-----------------------------------------------------------------------+
+		_aColsORIG	:= aClone(_oBrwMatr:aCols)
+	End Transaction
+Endif 
+RestArea(_aArea)
+Return _lReturn
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fFil62FX>                                                  |
+|Apresenta interface ao operador para formar e aplicar filtros na tabela   |
+|matriculas, refaz a acols a partir da nova selecao.                       |
+|@Author<Antonio Dantas>                                                   |
+|@since<30/04/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<   _nOpc (n) - Numero da Opcao Selecionada no Menu pelo operado          |
+|>                                                                         |
+|@return                                                                   |
+|<  _lReturn  (L) - (.t.) Acao concluida, (.f.) Acao nao concluida         |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fFil62FX(_nOpc)    
+Local _aArea		:= GetArea() 
+Local _lReturn 		:= .T.
+Local _aNewCols		:= {}
+Local _cMensag 		:= ""
+Private cFiltroRet 	:= ""
+Private aIndexZP7 	:= {}  
+Private bFiltraBrw	:= {}  
+//-- ****************************************************************
+//--    Mensagem (Alerta) para uso do Filtro.
+//-- ****************************************************************
+_cMensag := "ATENÇÃO! "+Chr(13)+Chr(10)
+_cMensag += " "+Chr(13)+Chr(10)
+_cMensag += "Ao Aplicar FILTRO, você perde todas as marcações e ações realizadas "
+_cMensag += "até este momento. É importante salvar seu trabalho até agora, antes "
+_cMensag += "de realizar filtro."+Chr(13)+Chr(10)
+_cMensag += "Você deseja continuar assim mesmo? "
+If	Aviso(FunName()+"/"+ProcName(),_cMensag, {"Continua","Retorna"}) == 2
+	Return .t.
+Endif 
+//-- ****************************************************************
+//--    Apresenta ao operador interfase padrao para filtro
+//-- ****************************************************************
+cFiltroRet	:= BuildExpr("ZP7",,@cFiltroRet)
+//-- ****************************************************************
+//--    Monta bloco de codigo com o filtro do operador
+//-- ****************************************************************
+bFiltraBrw 	:= {|| FilBrowse("ZP7",@aIndexZP7,@cFiltroRet) }
+//-- ****************************************************************
+//--    Seleciona a tabela que sera afetada pelo filtro
+//-- ****************************************************************
+dbSelectArea("ZP7")
+ZP7->(dbSetOrder(1))
+ZP7->(dbGoTop())
+Eval(bFiltraBrw)
+//-- ****************************************************************
+//--    Cria nova aCols com o reflexo dos Filtros aplicadso
+//-- ****************************************************************
+FWMsgRun(, {|| _aNewCols := fCriaCols(_nOpc) }, "Filtro das Matriculas", "Aguarde...")
+_oBrwMatr:aCols	:= _aNewCols
+_oBrwMatr:Refresh()
+//-- ****************************************************************
+//--    Deleta o filtro aplicado
+//-- ****************************************************************
+EndFilBrw("ZP7",aIndexZP7)
+RestArea(_aArea)
+Return _lReturn   
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fNrAutom>                                                  |
+|Apresenta interface ao operador para INFORMAR o Numero inicial para       |
+|numerar automaticamente as matriculas no campo [Id do Cartao].            |     
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<05/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<                                                                         |
+|>                                                                         |
+|@return                                                                   |
+|<  .t.                                                                    |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fNrAutom()
+Private _cTitle  	:= "Numeração Automatica para Cartão Pré Pago"
+Private _cNrInicial	:= Space(20)				//-- Quantidade de Cartoes que seram solicitada    
+//-- **********************************************************************
+//--    Declaração de Variaveis Private dos Objetos
+//-- **********************************************************************
+SetPrvt("_oDlgNRA","_oSayNR","_oGetNR","_oBtnNROK","_oBtnNRESC")
+//-- **********************************************************************
+//--    Declaração de Variaveis Private dos Objetos
+//-- **********************************************************************
+SetPrvt("_oDlgNRA","_oSayNR","_oGetNR","_oBtnNROK","_oBtnNRESC")
+//-- **********************************************************************
+//--    Definicao do Dialog e todos os seus componentes.
+//-- **********************************************************************
+_oDlgNRA   := MSDialog():New( 202,326,359,699,_cTitle,,,.F.,,,,,,.T.,,,.T. )
+_oSayNR    := TSay():New( 024,050,{||"Numero Inicial: "},_oDlgNRA,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,050,008)
+_oGetNR    := TGet():New( 021,090,{|u| If(PCount()>0,_cNrInicial:=u,_cNrInicial)}	,_oDlgNRA,060,008,"@!"	,{|| !Empty(Alltrim(_cNrInicial)) }	,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","_cNrInicial",,)
+//--
+_oBtnNROK     := TButton():New( 048,070,"OK"		,_oDlgNRA,{|| u_fGeraNr(_cNrInicial), _oDlgNRA:End() }	,037,012,,,,.T.,,"",,,,.F. )
+_oBtnNRESC    := TButton():New( 048,110,"Cancelar"	,_oDlgNRA,{|| _oDlgNRA:End() } 							,037,012,,,,.T.,,"",,,,.F. )
+//--
+_oDlgNRA:Activate(,,,.T.)          
+Return .t.  
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGeraNr>                                                  |
+|Numera automaticamente campo [Id do Cartao], a partir de numero fornecido |
+|como argumento.                                                           |
+|** IMPORTANTE: Considera a existencia de uma INICIAL LITERAL.             |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<05/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|< _cNrInicial (c) - Numero Inicial                                        |
+|>                                                                         |
+|@return                                                                   |
+|<  .t.                                                                    |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fGeraNr(_cNrInicial)
+Local _aNewCols		:= aClone(_oBrwMatr:aCols)
+Local _aNewHead		:= aClone(_oBrwMatr:aHeader)
+Local _nTamSt		:= 0
+Local _cNumero		:= ""
+Local _cPrefixo 	:= ""
+Local _nTam			:= 0
+Local _nTamPf		:= 0
+Local _nTamNr		:= 0
+Local _cNewNr		:= ""
+Local _nNewNR		:= 0
+Local _nPosM 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XNRREF"})   
+Local _nPID 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XCARTA"}) 
+Local _nPS3 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP3XSTATU"}) 
+Local _cNrRefer		:= ""
+Local _lFindZP3 	:= .f.
+Local _nCtaA 		:= 0
+Local _lNotFount 	:= .f.      
+Local _lNotLivre	:= .f.
+//-- *******************************************************************
+//--   Identifica e Remove o PREFIXO
+//-- *******************************************************************
+_nCtaA 	:= 0
+_nTamSt	:= Len(Alltrim(_cNrInicial))
+For _nCtaA := 1 to _nTamSt
+	If Substr(_cNrInicial,_nCtaA,1) $ "0123456789"
+		_cNumero	+= Substr(_cNrInicial,_nCtaA,1)
+	Else
+		_cPrefixo 	+= Substr(_cNrInicial,_nCtaA,1)
+	Endif
+Next _nCtaA   
+//-- *******************************************************************
+//--   Define o tamanho do Prefixo e do Numero 
+//-- *******************************************************************
+_nTam	:= Len(_cNumero)
+_nTamPf	:= Len(_cPrefixo)
+_nTamNr	:= 	_nTam - _nTamPf
+//-- *******************************************************************
+//--   Implementa a Numerecao Automatica, preservendo o Literal 
+//-- *******************************************************************
+_nCtaA 	:= 0
+_nNewNR	:= Val(_cNumero)
+For _nCtaA := 1 to Len(_aNewCols)
+	If Empty(Alltrim(_aNewCols[_nCtaA,_nPosM]))
+		//+------------------------------------------------------------------------------+
+		//| Identifica o numero de Referencia do CARTAO                                  |
+		//+------------------------------------------------------------------------------+
+		_cNewNr		:= _cPrefixo+Strzero(_nNewNR,_nTam)
+		_cNrRefer	:= PadR(Alltrim(_cNewNr),TamSX3("ZP7_XNRREF")[1])
+		//+------------------------------------------------------------------------------+
+		//| Valida o Numero do Cartão que esta sendo informado. Já existe, esta OK ??    |
+		//+------------------------------------------------------------------------------+
+		dbSelectArea("ZP3")
+		ZP3->(dbSetOrder(6)) 		//-- Numero de Referencia do CARTAO 
+		_lFindZP3 := (ZP3->(dbSeek(_cNrRefer)))                     
+		If _lFindZP3
+			If ZP3->ZP3_XSTATU $ "P#L#C"		//-- P=Em Preparação; C=Conveniado
+				If Empty(Alltrim(ZP3->ZP3_XMATRI))
+					_cNewNr	:= _cPrefixo+Strzero(_nNewNR,_nTam)
+					_aNewCols[_nCtaA,_nPosM]	:= PadR(Alltrim(_cNewNr),TamSX3("ZP7_XNRREF")[1])
+					_aNewCols[_nCtaA,_nPID] 	:= ZP3->ZP3_XIDCON   
+					_aNewCols[_nCtaA,_nPS3] 	:= u_fGetSat(_aNewCols[_nCtaA,_nPosM])
+					_nNewNR++	
+				Else
+					_lNotLivre	:= .t.
+				Endif 
+			Endif 		
+		Else
+			_lNotFount := .t.
+		Endif 
+	Endif 
+Next _nCtaA   
+_oBrwMatr:aCOLS := _aNewCols
+_oBrwMatr:Refresh()  
+If _lNotLivre
+	Aviso(FunName()+"/"+ProcName(),"ATENÇÃO: Existem MATRICULAS com NUMERO DE CARTÃO já Atribuido a Outra Matricula!", {"OK"})
+Endif 
+If _lNotFount
+	Aviso(FunName()+"/"+ProcName(),"ATENÇÃO: Existem MATRICULAS com NUMERO DE CARTÃO em BRANCO, pois, não foram localizados. Processar Arquivo de Retorno de Solicitação de Cartõpes VI940!", {"OK"})
+Endif 
+Return .t.
+ 
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fUserCart>                                                 |
+|Devolve qual Aluno "Conveniado" esta utilizando este Numero de Cartao     |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<18/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<    _cNrRefCar (c) - Numero de Referencia do Cartao                      |
+|     _cConvenio (c) - Codigo do Convenio                                  |
+|>                                                                         |
+|@return                                                                   |
+|<    _aUserCart (a) - Array com Informacoes do Conveniado                 |
+|  _aUserCart[1] (c) - Codigo da Matricula do Aluno                        |
+|  _aUserCart[2] (c) - Numero do CPF do Aluno                              |
+|  _aUserCart[3] (c) - Nome do Aluno                                       |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fUserCart(_cNrRefCar,_cConvenio)
+Local _aUserCart 	:= {"","",""}
+Local _aArea		:= GetArea()
+Local _cQuery 		:= ""  
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+_cQuery := ""
+_cQuery += "Select ZP3_XMATRI, ZP3_XALUNO, ZP3_XCPF, ZP3_XNOME, ZP3_XNRREF, ZP3_XCONVE "
+_cQuery += "From "+RetSqlName("ZP3")+" "+_ChrBreak
+_cQuery += "Where D_E_L_E_T_ <> '*' "+_ChrBreak
+_cQuery += "and ZP3_XNRREF = '"+PadR(Alltrim(_cNrRefCar),TamSX3("ZP3_XNRREF")[1])+"' "+_ChrBreak
+_cQuery += "and ZP3_XCONVE = '"+_cConvenio+"' "+_ChrBreak
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Grava o Resultado da Query para consulta                         |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TMPZP3")>0
+	TMPZP3->(DbCloseArea())
+Endif      
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPZP3",.t.,.t.)  
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Seleciona a Tabela temporaria e Inicia Loop para Tratar os Dados |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+dbSelectArea("TMPZP3")
+TMPZP3->(dbGoTop())    
+If TMPZP3->(!Eof()) .and. TMPZP3->(!Bof()) 
+	//-- Encontrou registros que atendem a condicao, entao NAO PODE EXCLUIR
+	_aUserCart 	:= {TMPZP3->ZP3_XMATRI, TMPZP3->ZP3_XCPF, TMPZP3->ZP3_XALUNO}
+Endif 
+TMPZP3->(dbCloseArea())
+RestArea(_aArea)
+Return _aUserCart 
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCartMov>                                                  |
+|Vefifica se o Numero de Referencia de Cartao, fornecido como Referencia   |
+|Ja Sofreu movimentacao.                                                   |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<21/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<    _cNrRefCar (c) - Numero de Referencia do Cartao                      |
+|     _cConvenio (c) - Codigo do Convenio                                  |
+|>                                                                         |
+|@return                                                                   |
+|<      _lReturn (l) - (.t.) Tem Movimentacao; (.f.) Nao Tem Movimentacao  |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function  fCartMov(_cNrRefCar,_cConvenio)
+Local _lReturn 		:= .f.
+Local _aArea		:= GetArea()
+Local _cQuery 		:= ""  
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+_cQuery := ""
+_cQuery += "Select ZP7_XMATRI, ZP7_XNOME, ZP7_XCPF, ZP7_XCONVE, ZP7_XNRREF, ZP7_XSTATU "+_ChrBreak
+_cQuery += "From "+RetSqlName("ZP7")+" "+_ChrBreak
+_cQuery += "Where D_E_L_E_T_ <> '*' "+_ChrBreak
+_cQuery += "and ZP7_XNRREF = '"+PadR(Alltrim(_cNrRefCar),TamSX3("ZP7_XNRREF")[1])+"' "+_ChrBreak
+_cQuery += "and ZP7_XCONVE = '"+_cConvenio+"' "+_ChrBreak 
+_cQuery += "and ZP7_XSTATU in ('E','O','R','N','P') "+_ChrBreak 		//-- E=Remessa Gerada; O=Ordem de Pagamento Agendada; R=Rejeitado; N=Não Pago; P=Pago
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Grava o Resultado da Query para consulta                         |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TMPZP7")>0
+	TMPZP3->(DbCloseArea())
+Endif      
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPZP7",.t.,.t.)  
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Seleciona a Tabela temporaria e Inicia Loop para Tratar os Dados |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+dbSelectArea("TMPZP7")
+TMPZP7->(dbGoTop())    
+If TMPZP7->(!Eof()) .and. TMPZP7->(!Bof()) 
+	//-- Encontrou registros que atendem a condicao, entao NAO PODE EXCLUIR
+	_lReturn := .t. 
+Endif 
+TMPZP7->(dbCloseArea())
+RestArea(_aArea)
+Return _lReturn        
+                   
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fZeraNum>                                                  |
+| Verifica se ja foi incluido um cartao para esta matricula, e se este     |
+| Cartao ainda esta no PROCESSO de Liberacao [ZP3_XSTATU = P]: EXCLUI.     |
+| Para permitir somente UM UNICO numero de referencia de cartao para esta  |
+| matricula no processo de CADASTRO/LIBERACAO DE CARTAO                    |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<26/09/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<    _cNrRefCar (c) - Numero de Referencia do Cartao                      |
+|     _cConvenio (c) - Codigo do Convenio                                  |
+|>                                                                         |
+|@return                                                                   |
+|<      _lReturn (l) - (.t.) Tem Movimentacao; (.f.) Nao Tem Movimentacao  |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fZeraNum(_nOpc)
+Local _aNewCols		:= aClone(_oBrwMatr:aCols)
+Local _aNewHead		:= aClone(_oBrwMatr:aHeader)
+//-- Posicionamento dos campos na Grid 
+Local _nPosF 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_FILIAL"})
+Local _nPosP 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XPERIO"})
+Local _nPosS 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XSEG"})
+Local _nPosE 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XSESSA"})
+Local _nPosM 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XMATRI"})
+Local _nPDg 			:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XDATAG"})  
+Local _nPosT 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XTIPO"})
+Local _nPosC 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XCONVE"})
+Local _nPosH 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XCPF"})
+Local _nPosD 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XDESCO"})
+Local _nPosR 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XNRREF"})
+Local _nPosX 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XCARTA"}) 
+Local _nCtaA 		:= 0
+Local _cMsg			:= ""
+//--    
+_cMsg := "Esta operação irá REMOVER os Cartões já atribuidos para " + cValToChar(Len(_aNewCols)) + " matrículas que estão na tela." + Chr(13) + Chr(10)
+_cMsg += "Será necessário atribuir NOVOS cartões para estas matrículas. Confirma a Operação? "
+
+If Aviso(FunName()+"/"+ProcName(), _cMsg, {"Sim","Não"})== 2
+	Return 
+Endif
+//--    
+_nCtaA 	:= 0
+For _nCtaA := 1 to Len(_aNewCols)
+	If !Empty(Alltrim(_aNewCols[_nCtaA,_nPosR]))
+		//-- **********************************************************************
+		//--     Localiza O CARTAO e Posiciona o Cadastro de Beneficiarios 
+		//-- **********************************************************************
+		dbSelectArea("ZP3")
+		ZP3->(dbSetOrder(6)) 		//-- Numero de Referencia do CARTAO 
+		If (ZP3->(dbSeek(_aNewCols[_nCtaA,_nPosR])))
+			//-- **********************************************************************
+			//--    Apaga a referencia em ZP3, pois pode trocar o numero do cartao
+			//-- **********************************************************************
+			ZP3->(RecLock("ZP3",.f.))
+			Replace ZP3->ZP3_FILIAL	With " " 	//-- Filial
+			Replace ZP3->ZP3_XMATRI	With " "	//-- Matricula
+			Replace ZP3->ZP3_XALUNO	With " "	//-- Aluno
+			Replace ZP3->ZP3_XCPF	With " "	//-- CPF Aluno
+			Replace ZP3->ZP3_XNOME	With " "	//-- Nome
+			Replace ZP3->ZP3_XEVENT	With " "	//-- Evento
+			Replace ZP3->ZP3_XDESEV	With " "	//-- Descricao
+			Replace ZP3->ZP3_XMODAL	With " "	//-- Modalidade
+			Replace ZP3->ZP3_XDESMO	With " "	//-- Descr Modali
+			Replace ZP3->ZP3_XATECN	With " "	//-- Area Tecnolo
+			Replace ZP3->ZP3_XDESAT	With " "	//-- Descr A Tecn
+			Replace ZP3->ZP3_XCURSO	With " "	//-- Curso
+			Replace ZP3->ZP3_XDESCS	With " "	//-- Descr Curso
+			Replace ZP3->ZP3_XTURNO	With " "	//-- Turno   
+			Replace ZP3->ZP3_XSESSA	With " "	//-- Sessao INICIAO ou incorporado
+			ZP3->(MsUnLock())
+			ZP3->(dbCommit())
+			//-- **********************************************************************
+			//--    Apaga a referencia em ZP7, pois pode trocar o numero do cartao
+			//-- **********************************************************************
+			//-- Chave:     ZP7_FILIAL              +ZP7_XPERIO              +ZP7_XSEG                 +ZP7_XSESSA              +ZP7_XMATRI               +ZP7_XDATAG
+			_cChave 	:= _aNewCols[_nCtaA,_nPosF]+_aNewCols[_nCtaA,_nPosP]+_aNewCols[_nCtaA,_nPosS]+_aNewCols[_nCtaA,_nPosE]+_aNewCols[_nCtaA,_nPosM]+dtos(_aNewCols[_nCtaA,_nPDg])
+			//-- **********************************************************************
+			//--     Localiza e Posiciona a Matricula 
+			//-- **********************************************************************
+			dbSelectArea("ZP7")
+			ZP7->(dbSetOrder(1))			//-- Cod Periodo+Seg Calendar+Cod Sessao
+	  		If (ZP7->(dbseek(_cChave)))
+				RecLock("ZP7",.f.)
+				Replace ZP7->ZP7_XCARTA With ""
+				Replace ZP7->ZP7_XNRREF With ""
+				ZP7->(MsUnLock())
+				ZP7->(dbCommit())
+			Endif 
+			//-- **********************************************************************
+			//--    Apaga a referencia em ZP0, pois pode trocar o numero do cartao
+			//-- **********************************************************************
+			dbSelectArea("ZP0")
+			ZP0->(dbSetOrder(1)) 		//-- CPF   
+			If (ZP0->(dbSeek(FwxFilial("ZP0")+_aNewCols[_nCtaA,_nPosH])))
+				ZP0->(RecLock("ZP0",.f.))
+				Replace ZP0->ZP0_XCARTA With ""
+				Replace ZP0->ZP0_XNRREF With ""
+				Replace ZP0->ZP0_XDTCAR With CTOD("  /  /  ")
+				ZP0->(MsUnLock())
+				ZP0->(dbCommit())
+			Endif 	//-- (ZP0->(dbSeek(FwxFilial("ZP0")+ZP7->ZP7_XCPF)))	
+			//-- **********************************************************************
+			//--    Aplica no Vetor VAZIO para Referencias Cartao e Numero do Cartão
+			//-- **********************************************************************
+			_aNewCols[_nCtaA,_nPosR] := ""
+			_aNewCols[_nCtaA,_nPosX] := ""
+		Endif	//-- (ZP3->(dbSeek(ZP7->ZP7_XNRREF)))
+	Endif	//-- !Empty(Alltrim(ZP7->ZP7_XNRREF))       
+Next _nCtaA   
+Aviso(FunName()+"/"+ProcName(),"Numero de Referencia de Cartões Excluidos!", {"OK"})
+_oBrwMatr:aCOLS := _aNewCols
+_oBrwMatr:Refresh()  
+Return
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fVldRef>                                                   |
+| Valida a existencia e condições de uso do Numero de Referencia do CARTÃO.|
+| Devolve o [ID - NUMEDO DO CARTÃO] correspondente.                        |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<29/10/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive<>                                                                |
+|@return                                                                   |
+|<      _lReturn (l) - (.t.) Cartão existe e esta Apto                     |
+                       (.f.) Cartão não lozalizado ou NÃO Apto.            |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fVldRef()
+//-- Salva Area aberta e Tabela ZP3 
+Local _aSaveArea	:= GetArea()
+Local _aSaveaZP3	:= ZP3->(GetArea())
+//-- 
+Local _lReturn		:= .t.  
+Local _nCtaA 		:= 0 
+//-- 
+Local _aNewCols		:= aClone(_oBrwMatr:aCols)
+Local _aNewHead		:= aClone(_oBrwMatr:aHeader)
+//-- 
+Local _nPRF 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XNRREF"})   
+Local _nPID 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XCARTA"})   
+Local _nPS3 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP3XSTATU"}) 
+//-- 
+Local _cVlVar 		:= &(ReadVar())  							//-- Captura o valor do GET CORRENTE 
+Local _cNrRefer		:= PadR(_cVlVar,TamSX3("ZP7_XNRREF")[1])
+If !Empty(Alltrim(_cNrRefer))
+	//-- **********************************************************************
+	//--    Valida o Cartão     
+	//-- **********************************************************************
+	dbSelectArea("ZP3")
+	ZP3->(dbSetOrder(6)) 		//-- Numero de Referencia do CARTAO 
+	If !(ZP3->(dbSeek(_cNrRefer)))
+		Aviso(FunName()+"/"+ProcName(),"Não existe Cartão com este NÚMERO DE REFERÊNCIA. Processar Arquivo de Retorno de Solicitação de Cartõpes VI940!", {"OK"})
+		_lReturn := .f.
+	Else
+		If !(ZP3->ZP3_XSTATU $ "P#L#C")		//-- P=Em Preparação; C=Conveniado
+			Aviso(FunName()+"/"+ProcName(),"Cartão não encontra-se APTO á ser utilizado!", {"OK"})
+			_lReturn := .f.
+		Endif 
+	Endif 
+	//+------------------------------------------------------------------+
+	//| Não permite utilizar um Nr de Referencia que já tenha sido       |
+	//| utilizado aqui.                                                  |
+	//+------------------------------------------------------------------+
+	_nCtaA := 0 
+	For _nCtaA := 1 to Len(_aNewCols)
+		If !Empty(Alltrim(_aNewCols[_nCtaA,_nPRF]))  
+			If _nCtaA != N
+				If Alltrim(_aNewCols[_nCtaA,_nPRF]) == Alltrim(_cNrRefer)
+					Aviso(FunName()+"/"+ProcName(),"Numero de Referencia já foi utilizado aqui!", {"OK"})
+					_lReturn := .f.
+				Endif 		
+			Endif
+		Endif 
+	Next _nCtaA   
+	//-- Implementa o NUMERO DO CARTÃO para o Operador 
+	If _lReturn
+		//-- Implementa no Array os Numero de Referencia do Cartão
+		_aNewCols[N,_nPRF] 			:= _cNrRefer
+		_oBrwMatr:aCols[N,_nPRF]	:= _cNrRefer
+		//-- Implementa no Array os Numero (ID) do Cartão
+		_aNewCols[N,_nPID] 			:= ZP3->ZP3_XIDCON
+		_oBrwMatr:aCols[N,_nPID] 	:= ZP3->ZP3_XIDCON     
+		//-- Implementa no Array o STATUS DO CARTÃO
+		_aNewCols[N,_nPS3] 			:= u_fGetSat(_cNrRefer)
+		_oBrwMatr:aCols[N,_nPS3] 	:= _aNewCols[N,_nPS3]
+		//-- Atualiza o Array no Objeto MsNewGetDados
+		_oBrwMatr:aCOLS := _aNewCols
+		_oBrwMatr:ForceRefresh()
+		_oBrwMatr:Refresh()     
+	Endif     
+Else
+	//-- Implementa no Array os Numero de Referencia do Cartão
+	_aNewCols[N,_nPRF] 			:= PadR(" ",TamSX3("ZP7_XNRREF")[1])
+	_oBrwMatr:aCols[N,_nPRF]	:= PadR(" ",TamSX3("ZP7_XNRREF")[1])
+	//-- Implementa no Array os Numero (ID) do Cartão
+	_aNewCols[N,_nPID] 			:= PadR(" ",TamSX3("ZP7_XCARTA")[1])
+	_oBrwMatr:aCols[N,_nPID] 	:= PadR(" ",TamSX3("ZP7_XCARTA")[1])
+	//-- Implementa no Array o STATUS DO CARTÃO
+	_aNewCols[N,_nPS3] 			:= u_fGetSat("")
+	_oBrwMatr:aCols[N,_nPS3] 	:= _aNewCols[N,_nPS3]
+	//-- Atualiza o Array no Objeto MsNewGetDados
+	_oBrwMatr:aCOLS := _aNewCols
+	_oBrwMatr:ForceRefresh()
+	_oBrwMatr:Refresh()     
+Endif
+//-- Restaura a areas em uso 
+RestArea(_aSaveaZP3)
+RestArea(_aSaveArea)
+Return _lReturn 
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fVldRef>                                                   |
+| Devolve o Situação do Cartão informado como Referencia                   |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<29/10/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive<>                                                                |
+|<    _cNfRef (c) - Numero de Referencia do Cartão                         |                                                                       |
+|>                                                                         |
+|@return                                                                   |
+|<   _cStatus (c) - Situação do Cartao                                     |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fGetSat(_cNfRef)
+Local _aArea		:= GetArea()
+Local _nPos			:= 0
+Local _lFindZP3		:= .f.
+Local _cStatus 		:= ""      
+Local _cTpoStat		:= "PLERCXT"
+Local _aStatus		:={	"P=Em Preparação"	,;
+						"L=Liberado"		,;
+						"E=Enviado"			,;
+						"R=Rejeitado"		,;
+						"C=Conveniado"		,;
+						"X=Extraviado"		,;
+						"T=Transferido"		,; 
+						"Desconhecido"		} 
+dbSelectArea("ZP3")
+ZP3->(dbSetOrder(6)) 		//-- Numero de Referencia do CARTAO 
+//-- Verifica o Status do CARTÃO	
+_lFindZP3 := (ZP3->(dbSeek(_cNfRef)))
+If !Empty(Alltrim(_cNfRef)) .and. _lFindZP3
+	_nPos		:= At(ZP3->ZP3_XSTATU,_cTpoStat)
+	_nPos		:= Iif(_nPos==0,Len(_aStatus),_nPos)
+	_cStatus 	:= _aStatus[_nPos] 
+Else
+	_cStatus 	:= "CARTÃO NÃO ATRIBUIDO"
+Endif 	
+RestArea(_aArea)
+Return _cStatus

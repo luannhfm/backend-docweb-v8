@@ -1,10 +1,9 @@
-import { Entity, PrimaryGeneratedColumn, Column, BeforeInsert, CreateDateColumn, UpdateDateColumn, PrimaryColumn } from 'typeorm';
-import * as bcrypt from 'bcryptjs';
+import { Entity, PrimaryColumn, Column } from 'typeorm';
 
 @Entity('users')
 export class User {
-  @PrimaryColumn('uuid')
-  id: string;
+  @PrimaryColumn({ type: 'varchar' })
+  id: string; // Usando 'id' como nome de login
 
   @Column({ type: 'varchar' })
   nome: string;
@@ -15,14 +14,9 @@ export class User {
   @Column({ type: 'varchar' })
   senha: string;
 
-  @Column({ type: 'varchar' })
+  @Column({ type: 'varchar' }) 
   group: string;
 
   @Column({ type: 'boolean' })
-  admin: boolean;
-
-  @BeforeInsert()
-  async hashPassword() {
-    this.senha = await bcrypt.hash(this.senha, 10);
-  }
+  admin: boolean; // Adicionando o campo 'admin'
 }
