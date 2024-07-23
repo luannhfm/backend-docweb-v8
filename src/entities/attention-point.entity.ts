@@ -28,6 +28,9 @@ export class AttentionPoint {
   @ManyToOne(() => AnalysisResult, analysisResult => analysisResult.attentionPoints)
   analysisResult: AnalysisResult;
 
-  @OneToMany(() => Difference, difference => difference.attentionPoint)
+  @OneToMany(() => Difference, difference => difference.attentionPoint, {
+    cascade: true, // Adiciona esta linha
+    onDelete: 'CASCADE' // Adiciona esta linha
+  })
   differences: Difference[];
 }

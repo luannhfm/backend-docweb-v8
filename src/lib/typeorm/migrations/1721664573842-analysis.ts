@@ -18,7 +18,8 @@ export class Analysis1721666809328 implements MigrationInterface {
             "action" VARCHAR NOT NULL, 
             "commit" VARCHAR NOT NULL, 
             "source" text NOT NULL, 
-            "sourceOld" text
+            "sourceOld" text,
+            "createdAt" TIMESTAMP NOT NULL DEFAULT now() 
 
         )`);
         

@@ -24,14 +24,10 @@ __export(delete_analysis_process_exports, {
 });
 module.exports = __toCommonJS(delete_analysis_process_exports);
 var DeleteAnalysisProcessUseCase = class {
-  constructor(analysisResultRepository, attentionPointRepository, differenceRepository) {
+  constructor(analysisResultRepository) {
     this.analysisResultRepository = analysisResultRepository;
-    this.attentionPointRepository = attentionPointRepository;
-    this.differenceRepository = differenceRepository;
   }
   async handler(id) {
-    await this.differenceRepository.deleteByAttentionPointId(Number(id));
-    await this.attentionPointRepository.deleteByAnalysisId(id);
     await this.analysisResultRepository.delete(id);
   }
 };

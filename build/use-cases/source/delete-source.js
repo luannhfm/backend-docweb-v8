@@ -24,11 +24,23 @@ __export(delete_source_exports, {
 });
 module.exports = __toCommonJS(delete_source_exports);
 var DeleteSourceUseCase = class {
-  constructor(sourceRepository) {
+  constructor(sourceRepository, histRepository) {
     this.sourceRepository = sourceRepository;
+    this.histRepository = histRepository;
   }
-  async handler(name) {
+  async handler(name, user) {
+    const source = await this.sourceRepository.findByPrw(name);
+    if (!source) {
+      throw new Error("Source not found");
+    }
     await this.sourceRepository.delete(name);
+    await this.histRepository.create({
+      fonte: source.name,
+      user,
+      action: "DELETE",
+      source: source.source,
+      commit: `Registro deletado pelo usuario ${user}`
+    });
   }
 };
 // Annotate the CommonJS export names for ESM import in node:

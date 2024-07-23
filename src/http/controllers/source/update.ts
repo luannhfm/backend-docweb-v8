@@ -13,5 +13,5 @@ export async function updateSource(request: FastifyRequest, reply: FastifyReply)
   const updateSourceUseCase = makeUpdateSourceUseCase();
   await updateSourceUseCase.handler(prw, { category });
 
-  reply.send({ message: 'Source updated successfully.' });
+  reply.send({ message: 'Categoria alterada com sucesso.' });
 }

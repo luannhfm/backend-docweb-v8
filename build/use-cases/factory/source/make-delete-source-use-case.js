@@ -42,128 +42,37 @@ __export(make_delete_source_use_case_exports, {
 });
 module.exports = __toCommonJS(make_delete_source_use_case_exports);
 
-// src/entities/source.entity.ts
-var import_typeorm4 = require("typeorm");
-
-// src/entities/source-function.entity.ts
+// src/entities/history.entity.ts
 var import_typeorm = require("typeorm");
-var SourceFunction = class {
+var Hist = class {
 };
 __decorateClass([
   (0, import_typeorm.PrimaryGeneratedColumn)()
-], SourceFunction.prototype, "id", 2);
+], Hist.prototype, "id", 2);
 __decorateClass([
   (0, import_typeorm.Column)("varchar")
-], SourceFunction.prototype, "type", 2);
+], Hist.prototype, "fonte", 2);
 __decorateClass([
   (0, import_typeorm.Column)("varchar")
-], SourceFunction.prototype, "name", 2);
+], Hist.prototype, "user", 2);
+__decorateClass([
+  (0, import_typeorm.Column)("varchar")
+], Hist.prototype, "action", 2);
+__decorateClass([
+  (0, import_typeorm.Column)("varchar")
+], Hist.prototype, "commit", 2);
 __decorateClass([
   (0, import_typeorm.Column)("text")
-], SourceFunction.prototype, "source", 2);
+], Hist.prototype, "source", 2);
 __decorateClass([
-  (0, import_typeorm.Column)("int")
-], SourceFunction.prototype, "line", 2);
+  (0, import_typeorm.Column)("text", { nullable: true })
+], Hist.prototype, "sourceOld", 2);
 __decorateClass([
-  (0, import_typeorm.Column)("int")
-], SourceFunction.prototype, "blankLines", 2);
-__decorateClass([
-  (0, import_typeorm.Column)("int")
-], SourceFunction.prototype, "commentedLines", 2);
-__decorateClass([
-  (0, import_typeorm.ManyToOne)(() => Source, (source) => source.Functions, { onDelete: "CASCADE" })
-], SourceFunction.prototype, "Source", 2);
-SourceFunction = __decorateClass([
-  (0, import_typeorm.Entity)("source_function")
-], SourceFunction);
-
-// src/entities/source-table.entity.ts
-var import_typeorm3 = require("typeorm");
-
-// src/entities/source-table-field.entity.ts
-var import_typeorm2 = require("typeorm");
-var SourceTableField = class {
-};
-__decorateClass([
-  (0, import_typeorm2.PrimaryGeneratedColumn)()
-], SourceTableField.prototype, "id", 2);
-__decorateClass([
-  (0, import_typeorm2.Column)("varchar")
-], SourceTableField.prototype, "name", 2);
-__decorateClass([
-  (0, import_typeorm2.ManyToOne)(() => SourceTable, (sourceTable) => sourceTable.fields, { onDelete: "CASCADE" })
-], SourceTableField.prototype, "sourceTable", 2);
-SourceTableField = __decorateClass([
-  (0, import_typeorm2.Entity)("source_table_field")
-], SourceTableField);
-
-// src/entities/source-table.entity.ts
-var SourceTable = class {
-};
-__decorateClass([
-  (0, import_typeorm3.PrimaryGeneratedColumn)()
-], SourceTable.prototype, "id", 2);
-__decorateClass([
-  (0, import_typeorm3.Column)("varchar")
-], SourceTable.prototype, "name", 2);
-__decorateClass([
-  (0, import_typeorm3.ManyToOne)(() => Source, (source) => source.Tables, { onDelete: "CASCADE" })
-], SourceTable.prototype, "source", 2);
-__decorateClass([
-  (0, import_typeorm3.OneToMany)(() => SourceTableField, (sourceTableField) => sourceTableField.sourceTable)
-], SourceTable.prototype, "fields", 2);
-SourceTable = __decorateClass([
-  (0, import_typeorm3.Entity)("source_table")
-], SourceTable);
-
-// src/entities/source.entity.ts
-var Source = class {
-};
-__decorateClass([
-  (0, import_typeorm4.PrimaryGeneratedColumn)()
-], Source.prototype, "id", 2);
-__decorateClass([
-  (0, import_typeorm4.Column)("varchar")
-], Source.prototype, "label", 2);
-__decorateClass([
-  (0, import_typeorm4.Column)("varchar")
-], Source.prototype, "category", 2);
-__decorateClass([
-  (0, import_typeorm4.Column)("varchar")
-], Source.prototype, "name", 2);
-__decorateClass([
-  (0, import_typeorm4.Column)("int")
-], Source.prototype, "tables", 2);
-__decorateClass([
-  (0, import_typeorm4.Column)("int")
-], Source.prototype, "functions", 2);
-__decorateClass([
-  (0, import_typeorm4.Column)("text")
-], Source.prototype, "source", 2);
-__decorateClass([
-  (0, import_typeorm4.Column)("int")
-], Source.prototype, "line", 2);
-__decorateClass([
-  (0, import_typeorm4.Column)("int")
-], Source.prototype, "blankLines", 2);
-__decorateClass([
-  (0, import_typeorm4.Column)("int")
-], Source.prototype, "commentedLines", 2);
-__decorateClass([
-  (0, import_typeorm4.Column)("smallint", { default: 0 })
-], Source.prototype, "status", 2);
-__decorateClass([
-  (0, import_typeorm4.Column)("boolean")
-], Source.prototype, "reserv", 2);
-__decorateClass([
-  (0, import_typeorm4.OneToMany)(() => SourceFunction, (sourceFunction) => sourceFunction.Source)
-], Source.prototype, "Functions", 2);
-__decorateClass([
-  (0, import_typeorm4.OneToMany)(() => SourceTable, (sourceTable) => sourceTable.source)
-], Source.prototype, "Tables", 2);
-Source = __decorateClass([
-  (0, import_typeorm4.Entity)("source")
-], Source);
+  (0, import_typeorm.Column)("timestamp", { default: () => "CURRENT_TIMESTAMP" })
+], Hist.prototype, "createdAt", 2);
+Hist = __decorateClass([
+  (0, import_typeorm.Entity)("hist_source")
+], Hist);
 
 // src/lib/typeorm/typeorm.ts
 var import_typeorm13 = require("typeorm");
@@ -192,91 +101,185 @@ var env = _env.data;
 var import_console = require("console");
 
 // src/entities/category.entity.ts
-var import_typeorm5 = require("typeorm");
+var import_typeorm2 = require("typeorm");
 var Category = class {
 };
 __decorateClass([
-  (0, import_typeorm5.PrimaryColumn)("varchar")
+  (0, import_typeorm2.PrimaryColumn)("varchar")
 ], Category.prototype, "category", 2);
 __decorateClass([
-  (0, import_typeorm5.Column)("varchar")
+  (0, import_typeorm2.Column)("varchar")
 ], Category.prototype, "content", 2);
 Category = __decorateClass([
-  (0, import_typeorm5.Entity)("category")
+  (0, import_typeorm2.Entity)("category")
 ], Category);
 
-// src/entities/history.entity.ts
-var import_typeorm6 = require("typeorm");
-var Hist = class {
-};
-__decorateClass([
-  (0, import_typeorm6.PrimaryGeneratedColumn)()
-], Hist.prototype, "id", 2);
-__decorateClass([
-  (0, import_typeorm6.Column)("varchar")
-], Hist.prototype, "fonte", 2);
-__decorateClass([
-  (0, import_typeorm6.Column)("varchar")
-], Hist.prototype, "user", 2);
-__decorateClass([
-  (0, import_typeorm6.Column)("varchar")
-], Hist.prototype, "action", 2);
-__decorateClass([
-  (0, import_typeorm6.Column)("varchar")
-], Hist.prototype, "commit", 2);
-__decorateClass([
-  (0, import_typeorm6.Column)("text")
-], Hist.prototype, "source", 2);
-__decorateClass([
-  (0, import_typeorm6.Column)("text", { nullable: true })
-], Hist.prototype, "sourceOld", 2);
-Hist = __decorateClass([
-  (0, import_typeorm6.Entity)("hist_source")
-], Hist);
-
 // src/entities/user.entity.ts
-var import_typeorm7 = require("typeorm");
+var import_typeorm3 = require("typeorm");
 var User = class {
   // Adicionando o campo 'admin'
 };
 __decorateClass([
-  (0, import_typeorm7.PrimaryColumn)({ type: "varchar" })
+  (0, import_typeorm3.PrimaryColumn)({ type: "varchar" })
 ], User.prototype, "id", 2);
 __decorateClass([
-  (0, import_typeorm7.Column)({ type: "varchar" })
+  (0, import_typeorm3.Column)({ type: "varchar" })
 ], User.prototype, "nome", 2);
 __decorateClass([
-  (0, import_typeorm7.Column)({ type: "varchar" })
+  (0, import_typeorm3.Column)({ type: "varchar" })
 ], User.prototype, "email", 2);
 __decorateClass([
-  (0, import_typeorm7.Column)({ type: "varchar" })
+  (0, import_typeorm3.Column)({ type: "varchar" })
 ], User.prototype, "senha", 2);
 __decorateClass([
-  (0, import_typeorm7.Column)({ type: "varchar" })
+  (0, import_typeorm3.Column)({ type: "varchar" })
 ], User.prototype, "group", 2);
 __decorateClass([
-  (0, import_typeorm7.Column)({ type: "boolean" })
+  (0, import_typeorm3.Column)({ type: "boolean" })
 ], User.prototype, "admin", 2);
 User = __decorateClass([
-  (0, import_typeorm7.Entity)("users")
+  (0, import_typeorm3.Entity)("users")
 ], User);
 
 // src/entities/analysis.entity.ts
-var import_typeorm8 = require("typeorm");
+var import_typeorm4 = require("typeorm");
 var Analysis = class {
 };
 __decorateClass([
-  (0, import_typeorm8.PrimaryColumn)({ type: "varchar" })
+  (0, import_typeorm4.PrimaryColumn)({ type: "varchar" })
 ], Analysis.prototype, "id_analysis", 2);
 __decorateClass([
-  (0, import_typeorm8.Column)({ type: "json" })
+  (0, import_typeorm4.Column)({ type: "json" })
 ], Analysis.prototype, "analysis", 2);
 __decorateClass([
-  (0, import_typeorm8.Column)({ type: "varchar" })
+  (0, import_typeorm4.Column)({ type: "varchar" })
 ], Analysis.prototype, "status", 2);
 Analysis = __decorateClass([
-  (0, import_typeorm8.Entity)("analysis")
+  (0, import_typeorm4.Entity)("analysis")
 ], Analysis);
+
+// src/entities/source.entity.ts
+var import_typeorm8 = require("typeorm");
+
+// src/entities/source-function.entity.ts
+var import_typeorm5 = require("typeorm");
+var SourceFunction = class {
+};
+__decorateClass([
+  (0, import_typeorm5.PrimaryGeneratedColumn)()
+], SourceFunction.prototype, "id", 2);
+__decorateClass([
+  (0, import_typeorm5.Column)("varchar")
+], SourceFunction.prototype, "type", 2);
+__decorateClass([
+  (0, import_typeorm5.Column)("varchar")
+], SourceFunction.prototype, "name", 2);
+__decorateClass([
+  (0, import_typeorm5.Column)("text")
+], SourceFunction.prototype, "source", 2);
+__decorateClass([
+  (0, import_typeorm5.Column)("int")
+], SourceFunction.prototype, "line", 2);
+__decorateClass([
+  (0, import_typeorm5.Column)("int")
+], SourceFunction.prototype, "blankLines", 2);
+__decorateClass([
+  (0, import_typeorm5.Column)("int")
+], SourceFunction.prototype, "commentedLines", 2);
+__decorateClass([
+  (0, import_typeorm5.ManyToOne)(() => Source, (source) => source.Functions, { onDelete: "CASCADE" })
+], SourceFunction.prototype, "Source", 2);
+SourceFunction = __decorateClass([
+  (0, import_typeorm5.Entity)("source_function")
+], SourceFunction);
+
+// src/entities/source-table.entity.ts
+var import_typeorm7 = require("typeorm");
+
+// src/entities/source-table-field.entity.ts
+var import_typeorm6 = require("typeorm");
+var SourceTableField = class {
+};
+__decorateClass([
+  (0, import_typeorm6.PrimaryGeneratedColumn)()
+], SourceTableField.prototype, "id", 2);
+__decorateClass([
+  (0, import_typeorm6.Column)("varchar")
+], SourceTableField.prototype, "name", 2);
+__decorateClass([
+  (0, import_typeorm6.ManyToOne)(() => SourceTable, (sourceTable) => sourceTable.fields, { onDelete: "CASCADE" })
+], SourceTableField.prototype, "sourceTable", 2);
+SourceTableField = __decorateClass([
+  (0, import_typeorm6.Entity)("source_table_field")
+], SourceTableField);
+
+// src/entities/source-table.entity.ts
+var SourceTable = class {
+};
+__decorateClass([
+  (0, import_typeorm7.PrimaryGeneratedColumn)()
+], SourceTable.prototype, "id", 2);
+__decorateClass([
+  (0, import_typeorm7.Column)("varchar")
+], SourceTable.prototype, "name", 2);
+__decorateClass([
+  (0, import_typeorm7.ManyToOne)(() => Source, (source) => source.Tables, { onDelete: "CASCADE" })
+], SourceTable.prototype, "source", 2);
+__decorateClass([
+  (0, import_typeorm7.OneToMany)(() => SourceTableField, (sourceTableField) => sourceTableField.sourceTable)
+], SourceTable.prototype, "fields", 2);
+SourceTable = __decorateClass([
+  (0, import_typeorm7.Entity)("source_table")
+], SourceTable);
+
+// src/entities/source.entity.ts
+var Source = class {
+};
+__decorateClass([
+  (0, import_typeorm8.PrimaryGeneratedColumn)()
+], Source.prototype, "id", 2);
+__decorateClass([
+  (0, import_typeorm8.Column)("varchar")
+], Source.prototype, "label", 2);
+__decorateClass([
+  (0, import_typeorm8.Column)("varchar")
+], Source.prototype, "category", 2);
+__decorateClass([
+  (0, import_typeorm8.Column)("varchar")
+], Source.prototype, "name", 2);
+__decorateClass([
+  (0, import_typeorm8.Column)("int")
+], Source.prototype, "tables", 2);
+__decorateClass([
+  (0, import_typeorm8.Column)("int")
+], Source.prototype, "functions", 2);
+__decorateClass([
+  (0, import_typeorm8.Column)("text")
+], Source.prototype, "source", 2);
+__decorateClass([
+  (0, import_typeorm8.Column)("int")
+], Source.prototype, "line", 2);
+__decorateClass([
+  (0, import_typeorm8.Column)("int")
+], Source.prototype, "blankLines", 2);
+__decorateClass([
+  (0, import_typeorm8.Column)("int")
+], Source.prototype, "commentedLines", 2);
+__decorateClass([
+  (0, import_typeorm8.Column)("smallint", { default: 0 })
+], Source.prototype, "status", 2);
+__decorateClass([
+  (0, import_typeorm8.Column)("boolean")
+], Source.prototype, "reserv", 2);
+__decorateClass([
+  (0, import_typeorm8.OneToMany)(() => SourceFunction, (sourceFunction) => sourceFunction.Source)
+], Source.prototype, "Functions", 2);
+__decorateClass([
+  (0, import_typeorm8.OneToMany)(() => SourceTable, (sourceTable) => sourceTable.source)
+], Source.prototype, "Tables", 2);
+Source = __decorateClass([
+  (0, import_typeorm8.Entity)("source")
+], Source);
 
 // src/entities/reserv.entity.ts
 var import_typeorm9 = require("typeorm");
@@ -382,7 +385,12 @@ __decorateClass([
   (0, import_typeorm11.ManyToOne)(() => AnalysisResult, (analysisResult) => analysisResult.attentionPoints)
 ], AttentionPoint.prototype, "analysisResult", 2);
 __decorateClass([
-  (0, import_typeorm11.OneToMany)(() => Difference, (difference) => difference.attentionPoint)
+  (0, import_typeorm11.OneToMany)(() => Difference, (difference) => difference.attentionPoint, {
+    cascade: true,
+    // Adiciona esta linha
+    onDelete: "CASCADE"
+    // Adiciona esta linha
+  })
 ], AttentionPoint.prototype, "differences", 2);
 AttentionPoint = __decorateClass([
   (0, import_typeorm11.Entity)("attention_point")
@@ -413,7 +421,12 @@ __decorateClass([
   (0, import_typeorm12.Column)({ type: "timestamp", default: () => "CURRENT_TIMESTAMP" })
 ], AnalysisResult.prototype, "created_at", 2);
 __decorateClass([
-  (0, import_typeorm12.OneToMany)(() => AttentionPoint, (attentionPoint) => attentionPoint.analysisResult)
+  (0, import_typeorm12.OneToMany)(() => AttentionPoint, (attentionPoint) => attentionPoint.analysisResult, {
+    cascade: true,
+    // Adiciona esta linha
+    onDelete: "CASCADE"
+    // Adiciona esta linha
+  })
 ], AnalysisResult.prototype, "attentionPoints", 2);
 AnalysisResult = __decorateClass([
   (0, import_typeorm12.Entity)("analysis_result")
@@ -435,7 +448,8 @@ var Analysis1721666809328 = class {
             "action" VARCHAR NOT NULL, 
             "commit" VARCHAR NOT NULL, 
             "source" text NOT NULL, 
-            "sourceOld" text
+            "sourceOld" text,
+            "createdAt" TIMESTAMP NOT NULL DEFAULT now() 
 
         )`);
     await queryRunner.query(`CREATE TABLE "users" (
@@ -598,6 +612,26 @@ appDataSource.initialize().then(() => {
   console.error(`Error connecting to database with typeorm, ${import_console.error}`);
 });
 
+// src/repositories/typeorm/history.repository.ts
+var HistRepository = class {
+  constructor() {
+    this.repository = appDataSource.getRepository(Hist);
+  }
+  async create(data) {
+    return this.repository.save(data);
+  }
+  async findByFonte(fonte) {
+    return this.repository.find({ where: { fonte }, order: { id: "DESC" } });
+  }
+  async findFontes(search) {
+    const query = this.repository.createQueryBuilder("hist").select("fonte").groupBy("fonte").orderBy("fonte", "ASC");
+    if (search) {
+      query.where("LOWER(hist.fonte) LIKE :search", { search: `%${search.toLowerCase()}%` });
+    }
+    return query.getRawMany();
+  }
+};
+
 // src/repositories/typeorm/source.repository.ts
 var SourceRepository = class {
   constructor() {
@@ -606,17 +640,19 @@ var SourceRepository = class {
   async create(data) {
     return this.repository.save(data);
   }
-  async findAll() {
-    return this.repository.find();
+  async findAll(search) {
+    const queryBuilder = this.repository.createQueryBuilder("source");
+    if (search) {
+      const searchLower = `%${search.toLowerCase()}%`;
+      queryBuilder.where("LOWER(source.source) LIKE :searchLower", { searchLower }).orWhere("LOWER(source.name) LIKE :searchLower", { searchLower });
+    }
+    return queryBuilder.orderBy("source.name", "ASC").getMany();
   }
   async findById(id) {
     return this.repository.findOne({ where: { id } });
   }
   async findByPrw(name) {
     return this.repository.findOne({ where: { name } });
-  }
-  async findByUuid(uuid) {
-    return this.repository.find({ where: { uuid } });
   }
   async update(name, updates) {
     await this.repository.update({ name }, updates);
@@ -641,18 +677,31 @@ var SourceRepository = class {
 
 // src/use-cases/source/delete-source.ts
 var DeleteSourceUseCase = class {
-  constructor(sourceRepository) {
+  constructor(sourceRepository, histRepository) {
     this.sourceRepository = sourceRepository;
+    this.histRepository = histRepository;
   }
-  async handler(name) {
+  async handler(name, user) {
+    const source = await this.sourceRepository.findByPrw(name);
+    if (!source) {
+      throw new Error("Source not found");
+    }
     await this.sourceRepository.delete(name);
+    await this.histRepository.create({
+      fonte: source.name,
+      user,
+      action: "DELETE",
+      source: source.source,
+      commit: `Registro deletado pelo usuario ${user}`
+    });
   }
 };
 
 // src/use-cases/factory/source/make-delete-source-use-case.ts
 function makeDeleteSourceUseCase() {
   const sourceRepository = new SourceRepository();
-  return new DeleteSourceUseCase(sourceRepository);
+  const histRepository = new HistRepository();
+  return new DeleteSourceUseCase(sourceRepository, histRepository);
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {

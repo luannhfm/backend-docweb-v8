@@ -27,8 +27,8 @@ var GetAllSourcesUseCase = class {
   constructor(sourceRepository) {
     this.sourceRepository = sourceRepository;
   }
-  async handler() {
-    return this.sourceRepository.findAll();
+  async handler(search) {
+    return this.sourceRepository.findAll(search);
   }
 };
 // Annotate the CommonJS export names for ESM import in node:

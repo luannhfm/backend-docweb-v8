@@ -24,6 +24,9 @@ export class AnalysisResult {
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   created_at: Date;
 
-  @OneToMany(() => AttentionPoint, attentionPoint => attentionPoint.analysisResult)
+  @OneToMany(() => AttentionPoint, attentionPoint => attentionPoint.analysisResult, {
+    cascade: true, // Adiciona esta linha
+    onDelete: 'CASCADE' // Adiciona esta linha
+  })
   attentionPoints: AttentionPoint[];
 }

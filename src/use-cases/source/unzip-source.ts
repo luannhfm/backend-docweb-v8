@@ -2,148 +2,135 @@ import * as fs from 'fs/promises';
 import * as pathlib from 'path';
 import { SourceRepository } from '@/repositories/typeorm/source.repository';
 import { parseFile } from '@/utils/parseFile';
-import { HistRepository } from '@/repositories/typeorm/history.repository'; // Adicione isso
-import { ReservRepository } from '@/repositories/typeorm/reserv.repository'; // Adicione isso
-import { SourceFunctionRepository } from '@/repositories/typeorm/source-function.repository'; // Adicione isso
-import { SourceTableRepository } from '@/repositories/typeorm/source-table.repository'; // Adicione isso
-import { SourceTableFieldRepository } from '@/repositories/typeorm/source-table-field.repository'; // Adicione isso
-import * as utils from '@/utils/file.utils'
+import { HistRepository } from '@/repositories/typeorm/history.repository';
+import { ReservRepository } from '@/repositories/typeorm/reserv.repository';
+import { SourceFunctionRepository } from '@/repositories/typeorm/source-function.repository';
+import { SourceTableRepository } from '@/repositories/typeorm/source-table.repository';
+import { SourceTableFieldRepository } from '@/repositories/typeorm/source-table-field.repository';
+import * as utils from '@/utils/file.utils';
 import * as chardet from 'chardet';
 import * as iconv from 'iconv-lite';
 
 export class UnzipSourceUseCase {
   constructor(
     private sourceRepository: SourceRepository,
-    private histRepository: HistRepository, // Adicione isso
-    private reservRepository: ReservRepository, // Adicione isso
-    private sourceFunctionRepository: SourceFunctionRepository, // Adicione isso
-    private sourceTableRepository: SourceTableRepository, // Adicione isso
-    private sourceTableFieldRepository: SourceTableFieldRepository // Adicione isso
+    private histRepository: HistRepository,
+    private reservRepository: ReservRepository,
+    private sourceFunctionRepository: SourceFunctionRepository,
+    private sourceTableRepository: SourceTableRepository,
+    private sourceTableFieldRepository: SourceTableFieldRepository
   ) {}
 
   async handler(uid: string, filePath: string, user: string, commit: string): Promise<void> {
     const unzipper = require('unzipper');
-
-    // Lê o arquivo zip
     const readStream = await fs.readFile(filePath);
-
-    // Abre o buffer do arquivo zip
     const entries = await unzipper.Open.buffer(readStream);
-    for (const entry of entries.files) {
+
+    await fs.mkdir('tmp/', { recursive: true });
+
+    const processEntry = async (entry: any) => {
       const fileName = pathlib.basename(entry.path);
       const fileExt = pathlib.extname(entry.path).toLowerCase();
 
-      // Processa apenas arquivos .prw, .prx, .tlpp
-      if (['.prw', '.prx', '.tlpp'].includes(fileExt)) {
-        const contentBuffer = await entry.buffer();
-        const detectedEncoding = chardet.detect(contentBuffer) || 'UTF-8';
-        const content = iconv.decode(contentBuffer, detectedEncoding);
-        const utf8Buffer = Buffer.from(content, 'utf-8');
+      if (!['.prw', '.prx', '.tlpp'].includes(fileExt)) return;
 
-        console.log(utf8Buffer)
-        // Cria o diretório tmp se não existir
-        await fs.mkdir('tmp/', { recursive: true });
+      const contentBuffer = await entry.buffer();
+      const detectedEncoding = chardet.detect(contentBuffer) || 'UTF-8';
+      const content = iconv.decode(contentBuffer, detectedEncoding);
+      const utf8Buffer = Buffer.from(content, 'utf-8');
+      const outfile = `tmp/${fileName}_${uid}.dat`;
 
-        // Salva o arquivo convertido em UTF-8
-        const outfile = `tmp/${fileName}_${uid}.dat`;
-        await fs.writeFile(outfile, utf8Buffer);
+      await fs.writeFile(outfile, utf8Buffer);
 
-        try {
-          // Processa o arquivo salvo
-          const result: any = await parseFile(outfile);
+      try {
+        const result: any = await parseFile(outfile);
 
-          const existingSource = await this.sourceRepository.findByPrw(fileName);
-          if (existingSource && existingSource.category !== result.category) {
-            console.log(`${fileName} : ${existingSource.category} => ${result.category}`);
-          }
+        const existingSource = await this.sourceRepository.findByPrw(fileName);
+        if (existingSource && existingSource.category !== result.category) {
+          console.log(`${fileName} : ${existingSource.category} => ${result.category}`);
+        }
 
-          if (existingSource) {
-            const sourceOldHist = existingSource.source;
+        if (existingSource) {
+          const sourceOldHist = existingSource.source;
 
-            await this.sourceRepository.delete(fileName);
+          await this.sourceRepository.delete(fileName);
 
-            await this.histRepository.create({
-              fonte: fileName,
-              user: user,
-              action: 'UPDATE',
-              source: result.source,
-              commit: commit,
-              sourceOld: sourceOldHist
-            });
-          } else {
-            await this.histRepository.create({
-              fonte: fileName,
-              user: user,
-              action: 'CREATE',
-              source: result.source,
-              commit: commit
-            });
-          }
-
-          const lines = (result.source ?? '').split('\n');
-          const blankLinesCount = utils.countBlankLines(result.source ?? '');
-          const commentedLinesCount = utils.countCommentedLines(lines);
-
-          // Cria o objeto Source
-          const s = await this.sourceRepository.create({
-           // uuid: uid,
-            label: 'Documentação',
-            category: result.category,
-            name: fileName,
-            reserv: false,
-            tables: result.tables.length,
-            functions: result.functions.length,
+          await this.histRepository.create({
+            fonte: fileName,
+            user: user,
+            action: 'UPDATE',
             source: result.source,
-            line: lines.length ?? 0, // Conta o número total de linhas
-            blankLines: blankLinesCount, // Conta o número de linhas em branco
-            commentedLines: commentedLinesCount // Conta o número de linhas comentadas
+            commit: commit,
+            sourceOld: sourceOldHist
           });
+        } else {
+          await this.histRepository.create({
+            fonte: fileName,
+            user: user,
+            action: 'CREATE',
+            source: result.source,
+            commit: commit
+          });
+        }
 
-          const currentDate = new Date();
-          const dataFim = currentDate.toLocaleDateString('pt-BR');
-          const horaFim = currentDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        const lines = (result.source ?? '').split('\n');
+        const blankLinesCount = utils.countBlankLines(result.source ?? '');
+        const commentedLinesCount = utils.countCommentedLines(lines);
 
-          await this.reservRepository.updateSource(
-            { source_dev: result.source, data_fim: dataFim, hora_fim: horaFim }, 
-            { fonte: fileName, data_fim: '' }
+        const s = await this.sourceRepository.create({
+          label: 'Documentação',
+          category: result.category,
+          name: fileName,
+          reserv: false,
+          tables: result.tables.length,
+          functions: result.functions.length,
+          source: result.source,
+          line: lines.length ?? 0,
+          blankLines: blankLinesCount,
+          commentedLines: commentedLinesCount
+        });
+
+        const currentDate = new Date();
+        const dataFim = currentDate.toLocaleDateString('pt-BR');
+        const horaFim = currentDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+        await this.reservRepository.updateSource(
+          { source_dev: result.source, data_fim: dataFim, hora_fim: horaFim },
+          { fonte: fileName, data_fim: '' }
         );
 
-      
+        await Promise.all(result.functions.map(async (f: any) => {
+          await this.sourceFunctionRepository.create({
+            type: f.type,
+            name: f.name,
+            source: f.body.join('\n'),
+            line: lines.length ?? 0,
+            blankLines: blankLinesCount,
+            commentedLines: commentedLinesCount,
+            Source: s
+          });
+        }));
 
-          for (const f of result.functions) {
-            await this.sourceFunctionRepository.create({
-            //  uuid: uid,
-              type: f.type,
-              name: f.name,
-              source: f.body.join('\n'),
-              line: lines.length ?? 0, // Conta o número total de linhas
-              blankLines: blankLinesCount, // Conta o número de linhas em branco
-              commentedLines: commentedLinesCount, // Conta o número de linhas comentadas
-              Source: s // Aqui estamos referenciando a entidade Source 
+        await Promise.all(result.tables.map(async (table: any) => {
+          const t = await this.sourceTableRepository.create({
+            name: table.name,
+            source: s
+          });
+
+          await Promise.all(table.fields.map(async (field: any) => {
+            await this.sourceTableFieldRepository.create({
+              name: field,
+              sourceTable: t
             });
-          }
-          
-          for (const table of result.tables) {
-            const t = await this.sourceTableRepository.create({
-             // uuid: uid,
-              name: table.name,
-              source: s // Aqui estamos referenciando a entidade Source criada anteriormente
-            });
-          
-            for (const field of table.fields) {
-              await this.sourceTableFieldRepository.create({
-               // uuid: uid,
-                name: field,
-                sourceTable: t // Aqui estamos referenciando a entidade SourceTable criada anteriormente
-              });
-            }
-          }
-                   
-        } catch (error) {
-          console.error(`Erro ao processar o arquivo ${fileName}:`, error);
-        }
+          }));
+        }));
+
+      } catch (error) {
+        console.error(`Erro ao processar o arquivo ${fileName}:`, error);
       }
-    }
+    };
+
+    await Promise.all(entries.files.map(processEntry));
 
     console.log('Processamento finalizado');
   }

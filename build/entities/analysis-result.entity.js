@@ -96,7 +96,12 @@ __decorateClass([
   (0, import_typeorm2.ManyToOne)(() => AnalysisResult, (analysisResult) => analysisResult.attentionPoints)
 ], AttentionPoint.prototype, "analysisResult", 2);
 __decorateClass([
-  (0, import_typeorm2.OneToMany)(() => Difference, (difference) => difference.attentionPoint)
+  (0, import_typeorm2.OneToMany)(() => Difference, (difference) => difference.attentionPoint, {
+    cascade: true,
+    // Adiciona esta linha
+    onDelete: "CASCADE"
+    // Adiciona esta linha
+  })
 ], AttentionPoint.prototype, "differences", 2);
 AttentionPoint = __decorateClass([
   (0, import_typeorm2.Entity)("attention_point")
@@ -127,7 +132,12 @@ __decorateClass([
   (0, import_typeorm3.Column)({ type: "timestamp", default: () => "CURRENT_TIMESTAMP" })
 ], AnalysisResult.prototype, "created_at", 2);
 __decorateClass([
-  (0, import_typeorm3.OneToMany)(() => AttentionPoint, (attentionPoint) => attentionPoint.analysisResult)
+  (0, import_typeorm3.OneToMany)(() => AttentionPoint, (attentionPoint) => attentionPoint.analysisResult, {
+    cascade: true,
+    // Adiciona esta linha
+    onDelete: "CASCADE"
+    // Adiciona esta linha
+  })
 ], AnalysisResult.prototype, "attentionPoints", 2);
 AnalysisResult = __decorateClass([
   (0, import_typeorm3.Entity)("analysis_result")

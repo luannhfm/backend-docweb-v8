@@ -11,7 +11,7 @@ export async function sourceRoutes(app: FastifyInstance) {
   app.post('/source/:user/:commit', unzipSource);
   app.get('/source' , getAllSources);
   app.get('/source/detail/:id', getSourceDetail);
-  app.delete('/source/:prw' ,deleteSource)
+  app.delete('/source/:prw/:user' ,deleteSource)
   app.delete('/source', deleteAllSources);
   app.get('/source/reserv/:prw/:user',reservSource);
   app.post('/source/reserv', reservSource);

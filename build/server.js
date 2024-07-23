@@ -102,6 +102,9 @@ __decorateClass([
 __decorateClass([
   (0, import_typeorm2.Column)("text", { nullable: true })
 ], Hist.prototype, "sourceOld", 2);
+__decorateClass([
+  (0, import_typeorm2.Column)("timestamp", { default: () => "CURRENT_TIMESTAMP" })
+], Hist.prototype, "createdAt", 2);
 Hist = __decorateClass([
   (0, import_typeorm2.Entity)("hist_source")
 ], Hist);
@@ -377,7 +380,12 @@ __decorateClass([
   (0, import_typeorm11.ManyToOne)(() => AnalysisResult, (analysisResult) => analysisResult.attentionPoints)
 ], AttentionPoint.prototype, "analysisResult", 2);
 __decorateClass([
-  (0, import_typeorm11.OneToMany)(() => Difference, (difference) => difference.attentionPoint)
+  (0, import_typeorm11.OneToMany)(() => Difference, (difference) => difference.attentionPoint, {
+    cascade: true,
+    // Adiciona esta linha
+    onDelete: "CASCADE"
+    // Adiciona esta linha
+  })
 ], AttentionPoint.prototype, "differences", 2);
 AttentionPoint = __decorateClass([
   (0, import_typeorm11.Entity)("attention_point")
@@ -408,7 +416,12 @@ __decorateClass([
   (0, import_typeorm12.Column)({ type: "timestamp", default: () => "CURRENT_TIMESTAMP" })
 ], AnalysisResult.prototype, "created_at", 2);
 __decorateClass([
-  (0, import_typeorm12.OneToMany)(() => AttentionPoint, (attentionPoint) => attentionPoint.analysisResult)
+  (0, import_typeorm12.OneToMany)(() => AttentionPoint, (attentionPoint) => attentionPoint.analysisResult, {
+    cascade: true,
+    // Adiciona esta linha
+    onDelete: "CASCADE"
+    // Adiciona esta linha
+  })
 ], AnalysisResult.prototype, "attentionPoints", 2);
 AnalysisResult = __decorateClass([
   (0, import_typeorm12.Entity)("analysis_result")
@@ -430,7 +443,8 @@ var Analysis1721666809328 = class {
             "action" VARCHAR NOT NULL, 
             "commit" VARCHAR NOT NULL, 
             "source" text NOT NULL, 
-            "sourceOld" text
+            "sourceOld" text,
+            "createdAt" TIMESTAMP NOT NULL DEFAULT now() 
 
         )`);
     await queryRunner.query(`CREATE TABLE "users" (
@@ -1607,17 +1621,19 @@ var SourceRepository = class {
   async create(data) {
     return this.repository.save(data);
   }
-  async findAll() {
-    return this.repository.find();
+  async findAll(search) {
+    const queryBuilder = this.repository.createQueryBuilder("source");
+    if (search) {
+      const searchLower = `%${search.toLowerCase()}%`;
+      queryBuilder.where("LOWER(source.source) LIKE :searchLower", { searchLower }).orWhere("LOWER(source.name) LIKE :searchLower", { searchLower });
+    }
+    return queryBuilder.orderBy("source.name", "ASC").getMany();
   }
   async findById(id) {
     return this.repository.findOne({ where: { id } });
   }
   async findByPrw(name) {
     return this.repository.findOne({ where: { name } });
-  }
-  async findByUuid(uuid) {
-    return this.repository.find({ where: { uuid } });
   }
   async update(name, updates) {
     await this.repository.update({ name }, updates);
@@ -2035,107 +2051,93 @@ var UnzipSourceUseCase = class {
     const unzipper = require("unzipper");
     const readStream = await fs3.readFile(filePath);
     const entries = await unzipper.Open.buffer(readStream);
-    for (const entry of entries.files) {
+    await fs3.mkdir("tmp/", { recursive: true });
+    const processEntry = async (entry) => {
       const fileName = pathlib.basename(entry.path);
       const fileExt = pathlib.extname(entry.path).toLowerCase();
-      if ([".prw", ".prx", ".tlpp"].includes(fileExt)) {
-        const contentBuffer = await entry.buffer();
-        const detectedEncoding = chardet.detect(contentBuffer) || "UTF-8";
-        const content = iconv.decode(contentBuffer, detectedEncoding);
-        const utf8Buffer = Buffer.from(content, "utf-8");
-        console.log(utf8Buffer);
-        await fs3.mkdir("tmp/", { recursive: true });
-        const outfile = `tmp/${fileName}_${uid}.dat`;
-        await fs3.writeFile(outfile, utf8Buffer);
-        try {
-          const result = await parseFile(outfile);
-          const existingSource = await this.sourceRepository.findByPrw(fileName);
-          if (existingSource && existingSource.category !== result.category) {
-            console.log(`${fileName} : ${existingSource.category} => ${result.category}`);
-          }
-          if (existingSource) {
-            const sourceOldHist = existingSource.source;
-            await this.sourceRepository.delete(fileName);
-            await this.histRepository.create({
-              fonte: fileName,
-              user,
-              action: "UPDATE",
-              source: result.source,
-              commit,
-              sourceOld: sourceOldHist
-            });
-          } else {
-            await this.histRepository.create({
-              fonte: fileName,
-              user,
-              action: "CREATE",
-              source: result.source,
-              commit
-            });
-          }
-          const lines = (result.source ?? "").split("\n");
-          const blankLinesCount = countBlankLines(result.source ?? "");
-          const commentedLinesCount = countCommentedLines(lines);
-          const s = await this.sourceRepository.create({
-            // uuid: uid,
-            label: "Documenta\xE7\xE3o",
-            category: result.category,
-            name: fileName,
-            reserv: false,
-            tables: result.tables.length,
-            functions: result.functions.length,
-            source: result.source,
-            line: lines.length ?? 0,
-            // Conta o número total de linhas
-            blankLines: blankLinesCount,
-            // Conta o número de linhas em branco
-            commentedLines: commentedLinesCount
-            // Conta o número de linhas comentadas
-          });
-          const currentDate = /* @__PURE__ */ new Date();
-          const dataFim = currentDate.toLocaleDateString("pt-BR");
-          const horaFim = currentDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-          await this.reservRepository.updateSource(
-            { source_dev: result.source, data_fim: dataFim, hora_fim: horaFim },
-            { fonte: fileName, data_fim: "" }
-          );
-          for (const f of result.functions) {
-            await this.sourceFunctionRepository.create({
-              //  uuid: uid,
-              type: f.type,
-              name: f.name,
-              source: f.body.join("\n"),
-              line: lines.length ?? 0,
-              // Conta o número total de linhas
-              blankLines: blankLinesCount,
-              // Conta o número de linhas em branco
-              commentedLines: commentedLinesCount,
-              // Conta o número de linhas comentadas
-              Source: s
-              // Aqui estamos referenciando a entidade Source 
-            });
-          }
-          for (const table of result.tables) {
-            const t = await this.sourceTableRepository.create({
-              // uuid: uid,
-              name: table.name,
-              source: s
-              // Aqui estamos referenciando a entidade Source criada anteriormente
-            });
-            for (const field of table.fields) {
-              await this.sourceTableFieldRepository.create({
-                // uuid: uid,
-                name: field,
-                sourceTable: t
-                // Aqui estamos referenciando a entidade SourceTable criada anteriormente
-              });
-            }
-          }
-        } catch (error2) {
-          console.error(`Erro ao processar o arquivo ${fileName}:`, error2);
+      if (![".prw", ".prx", ".tlpp"].includes(fileExt)) return;
+      const contentBuffer = await entry.buffer();
+      const detectedEncoding = chardet.detect(contentBuffer) || "UTF-8";
+      const content = iconv.decode(contentBuffer, detectedEncoding);
+      const utf8Buffer = Buffer.from(content, "utf-8");
+      const outfile = `tmp/${fileName}_${uid}.dat`;
+      await fs3.writeFile(outfile, utf8Buffer);
+      try {
+        const result = await parseFile(outfile);
+        const existingSource = await this.sourceRepository.findByPrw(fileName);
+        if (existingSource && existingSource.category !== result.category) {
+          console.log(`${fileName} : ${existingSource.category} => ${result.category}`);
         }
+        if (existingSource) {
+          const sourceOldHist = existingSource.source;
+          await this.sourceRepository.delete(fileName);
+          await this.histRepository.create({
+            fonte: fileName,
+            user,
+            action: "UPDATE",
+            source: result.source,
+            commit,
+            sourceOld: sourceOldHist
+          });
+        } else {
+          await this.histRepository.create({
+            fonte: fileName,
+            user,
+            action: "CREATE",
+            source: result.source,
+            commit
+          });
+        }
+        const lines = (result.source ?? "").split("\n");
+        const blankLinesCount = countBlankLines(result.source ?? "");
+        const commentedLinesCount = countCommentedLines(lines);
+        const s = await this.sourceRepository.create({
+          label: "Documenta\xE7\xE3o",
+          category: result.category,
+          name: fileName,
+          reserv: false,
+          tables: result.tables.length,
+          functions: result.functions.length,
+          source: result.source,
+          line: lines.length ?? 0,
+          blankLines: blankLinesCount,
+          commentedLines: commentedLinesCount
+        });
+        const currentDate = /* @__PURE__ */ new Date();
+        const dataFim = currentDate.toLocaleDateString("pt-BR");
+        const horaFim = currentDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+        await this.reservRepository.updateSource(
+          { source_dev: result.source, data_fim: dataFim, hora_fim: horaFim },
+          { fonte: fileName, data_fim: "" }
+        );
+        await Promise.all(result.functions.map(async (f) => {
+          await this.sourceFunctionRepository.create({
+            type: f.type,
+            name: f.name,
+            source: f.body.join("\n"),
+            line: lines.length ?? 0,
+            blankLines: blankLinesCount,
+            commentedLines: commentedLinesCount,
+            Source: s
+          });
+        }));
+        await Promise.all(result.tables.map(async (table) => {
+          const t = await this.sourceTableRepository.create({
+            name: table.name,
+            source: s
+          });
+          await Promise.all(table.fields.map(async (field) => {
+            await this.sourceTableFieldRepository.create({
+              name: field,
+              sourceTable: t
+            });
+          }));
+        }));
+      } catch (error2) {
+        console.error(`Erro ao processar o arquivo ${fileName}:`, error2);
       }
-    }
+    };
+    await Promise.all(entries.files.map(processEntry));
     console.log("Processamento finalizado");
   }
 };
@@ -2191,8 +2193,8 @@ var GetAllSourcesUseCase = class {
   constructor(sourceRepository) {
     this.sourceRepository = sourceRepository;
   }
-  async handler() {
-    return this.sourceRepository.findAll();
+  async handler(search) {
+    return this.sourceRepository.findAll(search);
   }
 };
 
@@ -2203,9 +2205,14 @@ function makeGetAllSourcesUseCase() {
 }
 
 // src/http/controllers/source/get-all.ts
+var import_zod19 = require("zod");
 async function getAllSources(request, reply) {
+  const querySchema = import_zod19.z.object({
+    search: import_zod19.z.string().optional()
+  });
+  const { search } = querySchema.parse(request.query);
   const getAllSourcesUseCase = makeGetAllSourcesUseCase();
-  const sources = await getAllSourcesUseCase.handler();
+  const sources = await getAllSourcesUseCase.handler(search);
   reply.send({ items: sources });
 }
 
@@ -2249,10 +2256,10 @@ function makeGetSourceDetailUseCase() {
 }
 
 // src/http/controllers/source/get-detail.ts
-var import_zod19 = require("zod");
+var import_zod20 = require("zod");
 async function getSourceDetail(request, reply) {
-  const paramsSchema = import_zod19.z.object({
-    id: import_zod19.z.preprocess((val) => Number(val), import_zod19.z.number())
+  const paramsSchema = import_zod20.z.object({
+    id: import_zod20.z.preprocess((val) => Number(val), import_zod20.z.number())
   });
   const { id } = paramsSchema.parse(request.params);
   const getSourceDetailUseCase = makeGetSourceDetailUseCase();
@@ -2262,31 +2269,44 @@ async function getSourceDetail(request, reply) {
 
 // src/use-cases/source/delete-source.ts
 var DeleteSourceUseCase = class {
-  constructor(sourceRepository) {
+  constructor(sourceRepository, histRepository) {
     this.sourceRepository = sourceRepository;
+    this.histRepository = histRepository;
   }
-  async handler(name) {
+  async handler(name, user) {
+    const source = await this.sourceRepository.findByPrw(name);
+    if (!source) {
+      throw new Error("Source not found");
+    }
     await this.sourceRepository.delete(name);
+    await this.histRepository.create({
+      fonte: source.name,
+      user,
+      action: "DELETE",
+      source: source.source,
+      commit: `Registro deletado pelo usuario ${user}`
+    });
   }
 };
 
 // src/use-cases/factory/source/make-delete-source-use-case.ts
 function makeDeleteSourceUseCase() {
   const sourceRepository = new SourceRepository();
-  return new DeleteSourceUseCase(sourceRepository);
+  const histRepository = new HistRepository();
+  return new DeleteSourceUseCase(sourceRepository, histRepository);
 }
 
 // src/http/controllers/source/delete.ts
-var import_zod20 = require("zod");
+var import_zod21 = require("zod");
 async function deleteSource(request, reply) {
-  const paramsSchema = import_zod20.z.object({
-    prw: import_zod20.z.string()
+  const paramsSchema = import_zod21.z.object({
+    prw: import_zod21.z.string(),
+    user: import_zod21.z.string()
   });
-  const { prw } = paramsSchema.parse(request.params);
-  console.log(prw);
+  const { prw, user } = paramsSchema.parse(request.params);
   const deleteSourceUseCase = makeDeleteSourceUseCase();
-  await deleteSourceUseCase.handler(prw);
-  reply.code(200).send({ message: "Source deleted successfully." });
+  await deleteSourceUseCase.handler(prw, user);
+  reply.code(200).send({ message: "Fonte deletado com sucesso." });
 }
 
 // src/use-cases/source/delete-all-sources.ts
@@ -2354,12 +2374,12 @@ function makeReservSourceUseCase() {
 }
 
 // src/http/controllers/source/reserv.ts
-var import_zod21 = require("zod");
+var import_zod22 = require("zod");
 async function reservSource(request, reply) {
   console.log("API reserv");
-  const paramsSchema = import_zod21.z.object({
-    prw: import_zod21.z.string(),
-    user: import_zod21.z.string()
+  const paramsSchema = import_zod22.z.object({
+    prw: import_zod22.z.string(),
+    user: import_zod22.z.string()
   });
   const { prw, user } = paramsSchema.parse(request.params);
   try {
@@ -2389,16 +2409,16 @@ function makeUpdateSourceUseCase() {
 }
 
 // src/http/controllers/source/update.ts
-var import_zod22 = require("zod");
+var import_zod23 = require("zod");
 async function updateSource(request, reply) {
-  const paramsSchema = import_zod22.z.object({
-    prw: import_zod22.z.string(),
-    category: import_zod22.z.string()
+  const paramsSchema = import_zod23.z.object({
+    prw: import_zod23.z.string(),
+    category: import_zod23.z.string()
   });
   const { prw, category } = paramsSchema.parse(request.params);
   const updateSourceUseCase = makeUpdateSourceUseCase();
   await updateSourceUseCase.handler(prw, { category });
-  reply.send({ message: "Source updated successfully." });
+  reply.send({ message: "Categoria alterada com sucesso." });
 }
 
 // src/http/controllers/source/route.ts
@@ -2406,7 +2426,7 @@ async function sourceRoutes(app2) {
   app2.post("/source/:user/:commit", unzipSource);
   app2.get("/source", getAllSources);
   app2.get("/source/detail/:id", getSourceDetail);
-  app2.delete("/source/:prw", deleteSource);
+  app2.delete("/source/:prw/:user", deleteSource);
   app2.delete("/source", deleteAllSources);
   app2.get("/source/reserv/:prw/:user", reservSource);
   app2.post("/source/reserv", reservSource);
@@ -2432,7 +2452,7 @@ async function validateJwt(request, reply) {
 var import_jwt = __toESM(require("@fastify/jwt"));
 
 // src/http/controllers/analysis-process/create.ts
-var import_zod23 = require("zod");
+var import_zod24 = require("zod");
 
 // src/repositories/typeorm/analysis-result.repository.ts
 var AnalysisResultRepository = class {
@@ -2443,7 +2463,11 @@ var AnalysisResultRepository = class {
     return this.repository.save(data);
   }
   async findAll() {
-    return this.repository.find();
+    return this.repository.find({
+      order: {
+        created_at: "DESC"
+      }
+    });
   }
   async findById(id) {
     return this.repository.findOne({ where: { id_analysis: id } });
@@ -2457,7 +2481,10 @@ var AnalysisResultRepository = class {
   async findAndCount(page, pageSize) {
     return this.repository.findAndCount({
       skip: (page - 1) * pageSize,
-      take: pageSize
+      take: pageSize,
+      order: {
+        created_at: "DESC"
+      }
     });
   }
 };
@@ -2532,7 +2559,7 @@ var CreateAnalysisProcessUseCase = class {
     const { id, fontes, categorys, analysisId } = data;
     const analysisResult = await this.analysisResultRepository.create({
       id_analysis: analysisId,
-      fontes: fontes.length,
+      fontes: fontes.length === 0 ? categorys.length : fontes.length,
       fontes_points: 0,
       total_points: 0,
       status: "processando",
@@ -2665,11 +2692,11 @@ function makeCreateAnalysisProcessUseCase() {
 
 // src/http/controllers/analysis-process/create.ts
 async function createAnalysisProcess(request, reply) {
-  const bodySchema = import_zod23.z.object({
-    id: import_zod23.z.string(),
-    fontes: import_zod23.z.array(import_zod23.z.string()),
-    categorys: import_zod23.z.array(import_zod23.z.string()),
-    analysisId: import_zod23.z.string()
+  const bodySchema = import_zod24.z.object({
+    id: import_zod24.z.string(),
+    fontes: import_zod24.z.array(import_zod24.z.string()),
+    categorys: import_zod24.z.array(import_zod24.z.string()),
+    analysisId: import_zod24.z.string()
   });
   const { id, fontes, categorys, analysisId } = bodySchema.parse(request.body);
   const createAnalysisProcessUseCase = makeCreateAnalysisProcessUseCase();
@@ -2678,7 +2705,7 @@ async function createAnalysisProcess(request, reply) {
 }
 
 // src/http/controllers/analysis-process/getAll.ts
-var import_zod24 = require("zod");
+var import_zod25 = require("zod");
 
 // src/use-cases/analysis-process/get-all-analysis-process.ts
 var GetAllAnalysisProcessUseCase = class {
@@ -2700,9 +2727,9 @@ function makeGetAllAnalysisProcessUseCase() {
 
 // src/http/controllers/analysis-process/getAll.ts
 async function getAllAnalysisProcess(request, reply) {
-  const querySchema = import_zod24.z.object({
-    page: import_zod24.z.string().optional(),
-    pageSize: import_zod24.z.string().optional()
+  const querySchema = import_zod25.z.object({
+    page: import_zod25.z.string().optional(),
+    pageSize: import_zod25.z.string().optional()
   });
   const { page, pageSize } = querySchema.parse(request.query);
   const pageNumber = parseInt(page || "1", 10);
@@ -2721,7 +2748,7 @@ async function getAllAnalysisProcess(request, reply) {
 }
 
 // src/http/controllers/analysis-process/getDetails.ts
-var import_zod25 = require("zod");
+var import_zod26 = require("zod");
 
 // src/use-cases/analysis-process/get-analysis-details.ts
 var GetAnalysisDetailsUseCase = class {
@@ -2779,8 +2806,8 @@ function makeGetAnalysisDetailsUseCase() {
 
 // src/http/controllers/analysis-process/getDetails.ts
 async function getAnalysisDetails(request, reply) {
-  const querySchema = import_zod25.z.object({
-    analysisId: import_zod25.z.string()
+  const querySchema = import_zod26.z.object({
+    analysisId: import_zod26.z.string()
   });
   const { analysisId } = querySchema.parse(request.query);
   const getAnalysisDetailsUseCase = makeGetAnalysisDetailsUseCase();
@@ -2789,18 +2816,14 @@ async function getAnalysisDetails(request, reply) {
 }
 
 // src/http/controllers/analysis-process/delete.ts
-var import_zod26 = require("zod");
+var import_zod27 = require("zod");
 
 // src/use-cases/analysis-process/delete-analysis-process.ts
 var DeleteAnalysisProcessUseCase = class {
-  constructor(analysisResultRepository, attentionPointRepository, differenceRepository) {
+  constructor(analysisResultRepository) {
     this.analysisResultRepository = analysisResultRepository;
-    this.attentionPointRepository = attentionPointRepository;
-    this.differenceRepository = differenceRepository;
   }
   async handler(id) {
-    await this.differenceRepository.deleteByAttentionPointId(Number(id));
-    await this.attentionPointRepository.deleteByAnalysisId(id);
     await this.analysisResultRepository.delete(id);
   }
 };
@@ -2808,19 +2831,13 @@ var DeleteAnalysisProcessUseCase = class {
 // src/use-cases/factory/analysis-process/make-delete-analysis-process-use-case.ts
 function makeDeleteAnalysisProcessUseCase() {
   const analysisResultRepository = new AnalysisResultRepository();
-  const attentionPointRepository = new AttentionPointRepository();
-  const differenceRepository = new DifferenceRepository();
-  return new DeleteAnalysisProcessUseCase(
-    analysisResultRepository,
-    attentionPointRepository,
-    differenceRepository
-  );
+  return new DeleteAnalysisProcessUseCase(analysisResultRepository);
 }
 
 // src/http/controllers/analysis-process/delete.ts
 async function deleteAnalysisProcess(request, reply) {
-  const paramsSchema = import_zod26.z.object({
-    id: import_zod26.z.string()
+  const paramsSchema = import_zod27.z.object({
+    id: import_zod27.z.string()
   });
   const { id } = paramsSchema.parse(request.params);
   const deleteAnalysisProcessUseCase = makeDeleteAnalysisProcessUseCase();

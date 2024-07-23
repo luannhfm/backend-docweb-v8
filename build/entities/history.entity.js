@@ -55,6 +55,9 @@ __decorateClass([
 __decorateClass([
   (0, import_typeorm.Column)("text", { nullable: true })
 ], Hist.prototype, "sourceOld", 2);
+__decorateClass([
+  (0, import_typeorm.Column)("timestamp", { default: () => "CURRENT_TIMESTAMP" })
+], Hist.prototype, "createdAt", 2);
 Hist = __decorateClass([
   (0, import_typeorm.Entity)("hist_source")
 ], Hist);

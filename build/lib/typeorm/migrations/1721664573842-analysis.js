@@ -48,7 +48,8 @@ var Analysis1721666809328 = class {
             "action" VARCHAR NOT NULL, 
             "commit" VARCHAR NOT NULL, 
             "source" text NOT NULL, 
-            "sourceOld" text
+            "sourceOld" text,
+            "createdAt" TIMESTAMP NOT NULL DEFAULT now() 
 
         )`);
     await queryRunner.query(`CREATE TABLE "users" (

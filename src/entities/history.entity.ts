@@ -22,4 +22,7 @@ export class Hist {
 
   @Column('text', { nullable: true })
   sourceOld: string;
+
+  @Column('timestamp', { default: () => 'CURRENT_TIMESTAMP' })
+  createdAt: Date;
 }

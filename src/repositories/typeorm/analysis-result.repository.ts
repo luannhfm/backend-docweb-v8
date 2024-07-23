@@ -14,7 +14,11 @@ export class AnalysisResultRepository {
   }
 
   async findAll(): Promise<AnalysisResult[]> {
-    return this.repository.find();
+    return this.repository.find({
+      order: {
+        created_at: 'DESC',
+      },
+  });
   }
 
   async findById(id: string): Promise<AnalysisResult | null> {
@@ -32,6 +36,9 @@ export class AnalysisResultRepository {
     return this.repository.findAndCount({
       skip: (page - 1) * pageSize,
       take: pageSize,
+      order: {
+        created_at: 'DESC',
+      },
     });
   }
 }

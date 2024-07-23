@@ -1,5 +1,5 @@
 // src/repositories/typeorm/source.repository.ts
-import { Repository } from 'typeorm';
+import { Like, Repository } from 'typeorm';
 import { Source } from '@/entities/source.entity';
 import { appDataSource } from '@/lib/typeorm/typeorm';
 
@@ -13,20 +13,24 @@ export class SourceRepository {
     return this.repository.save(data);
   }
 
-  async findAll(): Promise<Source[]> {
-    return this.repository.find();
-  }
+  async findAll(search?: string): Promise<Source[]> {
+    const queryBuilder = this.repository.createQueryBuilder('source');
 
+    if (search) {
+      const searchLower = `%${search.toLowerCase()}%`;
+      queryBuilder.where('LOWER(source.source) LIKE :searchLower', { searchLower })
+                  .orWhere('LOWER(source.name) LIKE :searchLower', { searchLower });
+    }
+
+    return queryBuilder.orderBy('source.name', 'ASC').getMany();
+  }
+  
   async findById(id: number): Promise<Source | null> {
     return this.repository.findOne({ where: { id } });
   }
 
   async findByPrw(name: string): Promise<Source | null>  {
     return this.repository.findOne({ where: { name } });
-  }
-
-  async findByUuid(uuid: string): Promise<Source[]> {
-    return this.repository.find({ where: { uuid } });
   }
 
   async update(name: string, updates: Partial<Source>): Promise<void> {

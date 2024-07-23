@@ -109,7 +109,12 @@ __decorateClass([
   (0, import_typeorm2.ManyToOne)(() => AnalysisResult, (analysisResult) => analysisResult.attentionPoints)
 ], AttentionPoint.prototype, "analysisResult", 2);
 __decorateClass([
-  (0, import_typeorm2.OneToMany)(() => Difference, (difference) => difference.attentionPoint)
+  (0, import_typeorm2.OneToMany)(() => Difference, (difference) => difference.attentionPoint, {
+    cascade: true,
+    // Adiciona esta linha
+    onDelete: "CASCADE"
+    // Adiciona esta linha
+  })
 ], AttentionPoint.prototype, "differences", 2);
 AttentionPoint = __decorateClass([
   (0, import_typeorm2.Entity)("attention_point")
@@ -140,7 +145,12 @@ __decorateClass([
   (0, import_typeorm3.Column)({ type: "timestamp", default: () => "CURRENT_TIMESTAMP" })
 ], AnalysisResult.prototype, "created_at", 2);
 __decorateClass([
-  (0, import_typeorm3.OneToMany)(() => AttentionPoint, (attentionPoint) => attentionPoint.analysisResult)
+  (0, import_typeorm3.OneToMany)(() => AttentionPoint, (attentionPoint) => attentionPoint.analysisResult, {
+    cascade: true,
+    // Adiciona esta linha
+    onDelete: "CASCADE"
+    // Adiciona esta linha
+  })
 ], AnalysisResult.prototype, "attentionPoints", 2);
 AnalysisResult = __decorateClass([
   (0, import_typeorm3.Entity)("analysis_result")
@@ -211,6 +221,9 @@ __decorateClass([
 __decorateClass([
   (0, import_typeorm5.Column)("text", { nullable: true })
 ], Hist.prototype, "sourceOld", 2);
+__decorateClass([
+  (0, import_typeorm5.Column)("timestamp", { default: () => "CURRENT_TIMESTAMP" })
+], Hist.prototype, "createdAt", 2);
 Hist = __decorateClass([
   (0, import_typeorm5.Entity)("hist_source")
 ], Hist);
@@ -436,7 +449,8 @@ var Analysis1721666809328 = class {
             "action" VARCHAR NOT NULL, 
             "commit" VARCHAR NOT NULL, 
             "source" text NOT NULL, 
-            "sourceOld" text
+            "sourceOld" text,
+            "createdAt" TIMESTAMP NOT NULL DEFAULT now() 
 
         )`);
     await queryRunner.query(`CREATE TABLE "users" (
@@ -608,7 +622,11 @@ var AnalysisResultRepository = class {
     return this.repository.save(data);
   }
   async findAll() {
-    return this.repository.find();
+    return this.repository.find({
+      order: {
+        created_at: "DESC"
+      }
+    });
   }
   async findById(id) {
     return this.repository.findOne({ where: { id_analysis: id } });
@@ -622,7 +640,10 @@ var AnalysisResultRepository = class {
   async findAndCount(page, pageSize) {
     return this.repository.findAndCount({
       skip: (page - 1) * pageSize,
-      take: pageSize
+      take: pageSize,
+      order: {
+        created_at: "DESC"
+      }
     });
   }
 };
@@ -691,17 +712,19 @@ var SourceRepository = class {
   async create(data) {
     return this.repository.save(data);
   }
-  async findAll() {
-    return this.repository.find();
+  async findAll(search) {
+    const queryBuilder = this.repository.createQueryBuilder("source");
+    if (search) {
+      const searchLower = `%${search.toLowerCase()}%`;
+      queryBuilder.where("LOWER(source.source) LIKE :searchLower", { searchLower }).orWhere("LOWER(source.name) LIKE :searchLower", { searchLower });
+    }
+    return queryBuilder.orderBy("source.name", "ASC").getMany();
   }
   async findById(id) {
     return this.repository.findOne({ where: { id } });
   }
   async findByPrw(name) {
     return this.repository.findOne({ where: { name } });
-  }
-  async findByUuid(uuid) {
-    return this.repository.find({ where: { uuid } });
   }
   async update(name, updates) {
     await this.repository.update({ name }, updates);
@@ -770,7 +793,7 @@ var CreateAnalysisProcessUseCase = class {
     const { id, fontes, categorys, analysisId } = data;
     const analysisResult = await this.analysisResultRepository.create({
       id_analysis: analysisId,
-      fontes: fontes.length,
+      fontes: fontes.length === 0 ? categorys.length : fontes.length,
       fontes_points: 0,
       total_points: 0,
       status: "processando",

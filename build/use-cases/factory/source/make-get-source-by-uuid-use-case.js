@@ -230,6 +230,9 @@ __decorateClass([
 __decorateClass([
   (0, import_typeorm6.Column)("text", { nullable: true })
 ], Hist.prototype, "sourceOld", 2);
+__decorateClass([
+  (0, import_typeorm6.Column)("timestamp", { default: () => "CURRENT_TIMESTAMP" })
+], Hist.prototype, "createdAt", 2);
 Hist = __decorateClass([
   (0, import_typeorm6.Entity)("hist_source")
 ], Hist);
@@ -435,7 +438,8 @@ var Analysis1721666809328 = class {
             "action" VARCHAR NOT NULL, 
             "commit" VARCHAR NOT NULL, 
             "source" text NOT NULL, 
-            "sourceOld" text
+            "sourceOld" text,
+            "createdAt" TIMESTAMP NOT NULL DEFAULT now() 
 
         )`);
     await queryRunner.query(`CREATE TABLE "users" (

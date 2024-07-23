@@ -40,7 +40,7 @@ export class CreateAnalysisProcessUseCase {
 
     const analysisResult = await this.analysisResultRepository.create({
       id_analysis: analysisId,
-      fontes: fontes.length,
+      fontes: fontes.length === 0 ? categorys.length : fontes.length,
       fontes_points: 0,
       total_points: 0,
       status: 'processando',

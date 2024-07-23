@@ -145,6 +145,9 @@ __decorateClass([
 __decorateClass([
   (0, import_typeorm3.Column)("text", { nullable: true })
 ], Hist.prototype, "sourceOld", 2);
+__decorateClass([
+  (0, import_typeorm3.Column)("timestamp", { default: () => "CURRENT_TIMESTAMP" })
+], Hist.prototype, "createdAt", 2);
 Hist = __decorateClass([
   (0, import_typeorm3.Entity)("hist_source")
 ], Hist);
@@ -382,7 +385,12 @@ __decorateClass([
   (0, import_typeorm11.ManyToOne)(() => AnalysisResult, (analysisResult) => analysisResult.attentionPoints)
 ], AttentionPoint.prototype, "analysisResult", 2);
 __decorateClass([
-  (0, import_typeorm11.OneToMany)(() => Difference, (difference) => difference.attentionPoint)
+  (0, import_typeorm11.OneToMany)(() => Difference, (difference) => difference.attentionPoint, {
+    cascade: true,
+    // Adiciona esta linha
+    onDelete: "CASCADE"
+    // Adiciona esta linha
+  })
 ], AttentionPoint.prototype, "differences", 2);
 AttentionPoint = __decorateClass([
   (0, import_typeorm11.Entity)("attention_point")
@@ -413,7 +421,12 @@ __decorateClass([
   (0, import_typeorm12.Column)({ type: "timestamp", default: () => "CURRENT_TIMESTAMP" })
 ], AnalysisResult.prototype, "created_at", 2);
 __decorateClass([
-  (0, import_typeorm12.OneToMany)(() => AttentionPoint, (attentionPoint) => attentionPoint.analysisResult)
+  (0, import_typeorm12.OneToMany)(() => AttentionPoint, (attentionPoint) => attentionPoint.analysisResult, {
+    cascade: true,
+    // Adiciona esta linha
+    onDelete: "CASCADE"
+    // Adiciona esta linha
+  })
 ], AnalysisResult.prototype, "attentionPoints", 2);
 AnalysisResult = __decorateClass([
   (0, import_typeorm12.Entity)("analysis_result")
@@ -435,7 +448,8 @@ var Analysis1721666809328 = class {
             "action" VARCHAR NOT NULL, 
             "commit" VARCHAR NOT NULL, 
             "source" text NOT NULL, 
-            "sourceOld" text
+            "sourceOld" text,
+            "createdAt" TIMESTAMP NOT NULL DEFAULT now() 
 
         )`);
     await queryRunner.query(`CREATE TABLE "users" (
@@ -651,17 +665,19 @@ var SourceRepository = class {
   async create(data) {
     return this.repository.save(data);
   }
-  async findAll() {
-    return this.repository.find();
+  async findAll(search) {
+    const queryBuilder = this.repository.createQueryBuilder("source");
+    if (search) {
+      const searchLower = `%${search.toLowerCase()}%`;
+      queryBuilder.where("LOWER(source.source) LIKE :searchLower", { searchLower }).orWhere("LOWER(source.name) LIKE :searchLower", { searchLower });
+    }
+    return queryBuilder.orderBy("source.name", "ASC").getMany();
   }
   async findById(id) {
     return this.repository.findOne({ where: { id } });
   }
   async findByPrw(name) {
     return this.repository.findOne({ where: { name } });
-  }
-  async findByUuid(uuid) {
-    return this.repository.find({ where: { uuid } });
   }
   async update(name, updates) {
     await this.repository.update({ name }, updates);

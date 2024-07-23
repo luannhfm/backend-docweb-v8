@@ -5,7 +5,7 @@ import { Source } from '@/entities/source.entity';
 export class GetAllSourcesUseCase {
   constructor(private sourceRepository: SourceRepository) {}
 
-  async handler(): Promise<Source[]> {
-    return this.sourceRepository.findAll();
+  async handler(search?: string): Promise<Source[]> {
+    return this.sourceRepository.findAll(search);
   }
 }

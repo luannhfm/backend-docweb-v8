@@ -109,7 +109,12 @@ __decorateClass([
   (0, import_typeorm2.ManyToOne)(() => AnalysisResult, (analysisResult) => analysisResult.attentionPoints)
 ], AttentionPoint.prototype, "analysisResult", 2);
 __decorateClass([
-  (0, import_typeorm2.OneToMany)(() => Difference, (difference) => difference.attentionPoint)
+  (0, import_typeorm2.OneToMany)(() => Difference, (difference) => difference.attentionPoint, {
+    cascade: true,
+    // Adiciona esta linha
+    onDelete: "CASCADE"
+    // Adiciona esta linha
+  })
 ], AttentionPoint.prototype, "differences", 2);
 AttentionPoint = __decorateClass([
   (0, import_typeorm2.Entity)("attention_point")
@@ -140,7 +145,12 @@ __decorateClass([
   (0, import_typeorm3.Column)({ type: "timestamp", default: () => "CURRENT_TIMESTAMP" })
 ], AnalysisResult.prototype, "created_at", 2);
 __decorateClass([
-  (0, import_typeorm3.OneToMany)(() => AttentionPoint, (attentionPoint) => attentionPoint.analysisResult)
+  (0, import_typeorm3.OneToMany)(() => AttentionPoint, (attentionPoint) => attentionPoint.analysisResult, {
+    cascade: true,
+    // Adiciona esta linha
+    onDelete: "CASCADE"
+    // Adiciona esta linha
+  })
 ], AnalysisResult.prototype, "attentionPoints", 2);
 AnalysisResult = __decorateClass([
   (0, import_typeorm3.Entity)("analysis_result")
@@ -211,6 +221,9 @@ __decorateClass([
 __decorateClass([
   (0, import_typeorm5.Column)("text", { nullable: true })
 ], Hist.prototype, "sourceOld", 2);
+__decorateClass([
+  (0, import_typeorm5.Column)("timestamp", { default: () => "CURRENT_TIMESTAMP" })
+], Hist.prototype, "createdAt", 2);
 Hist = __decorateClass([
   (0, import_typeorm5.Entity)("hist_source")
 ], Hist);
@@ -436,7 +449,8 @@ var Analysis1721666809328 = class {
             "action" VARCHAR NOT NULL, 
             "commit" VARCHAR NOT NULL, 
             "source" text NOT NULL, 
-            "sourceOld" text
+            "sourceOld" text,
+            "createdAt" TIMESTAMP NOT NULL DEFAULT now() 
 
         )`);
     await queryRunner.query(`CREATE TABLE "users" (
@@ -608,7 +622,11 @@ var AnalysisResultRepository = class {
     return this.repository.save(data);
   }
   async findAll() {
-    return this.repository.find();
+    return this.repository.find({
+      order: {
+        created_at: "DESC"
+      }
+    });
   }
   async findById(id) {
     return this.repository.findOne({ where: { id_analysis: id } });
@@ -622,77 +640,20 @@ var AnalysisResultRepository = class {
   async findAndCount(page, pageSize) {
     return this.repository.findAndCount({
       skip: (page - 1) * pageSize,
-      take: pageSize
+      take: pageSize,
+      order: {
+        created_at: "DESC"
+      }
     });
-  }
-};
-
-// src/repositories/typeorm/attention-point.repository.ts
-var AttentionPointRepository = class {
-  constructor() {
-    this.repository = appDataSource.getRepository(AttentionPoint);
-  }
-  async create(data) {
-    return this.repository.save(data);
-  }
-  async findAll() {
-    return this.repository.find();
-  }
-  async findById(id) {
-    return this.repository.findOne({ where: { id } });
-  }
-  async findByAnalysisId(id_analysis) {
-    return this.repository.find({ where: { id_analysis } });
-  }
-  async update(id, updates) {
-    await this.repository.update({ id }, updates);
-  }
-  async delete(id) {
-    await this.repository.delete({ id });
-  }
-  async deleteByAnalysisId(id_analysis) {
-    await this.repository.delete({ id_analysis });
-  }
-};
-
-// src/repositories/typeorm/difference.repository.ts
-var DifferenceRepository = class {
-  constructor() {
-    this.repository = appDataSource.getRepository(Difference);
-  }
-  async create(data) {
-    return this.repository.save(data);
-  }
-  async findAll() {
-    return this.repository.find();
-  }
-  async findById(id) {
-    return this.repository.findOne({ where: { id } });
-  }
-  async findByAttentionPointId(attention_point_id) {
-    return this.repository.find({ where: { attention_point_id } });
-  }
-  async update(id, updates) {
-    await this.repository.update({ id }, updates);
-  }
-  async delete(id) {
-    await this.repository.delete({ id });
-  }
-  async deleteByAttentionPointId(attention_point_id) {
-    await this.repository.delete({ attention_point_id });
   }
 };
 
 // src/use-cases/analysis-process/delete-analysis-process.ts
 var DeleteAnalysisProcessUseCase = class {
-  constructor(analysisResultRepository, attentionPointRepository, differenceRepository) {
+  constructor(analysisResultRepository) {
     this.analysisResultRepository = analysisResultRepository;
-    this.attentionPointRepository = attentionPointRepository;
-    this.differenceRepository = differenceRepository;
   }
   async handler(id) {
-    await this.differenceRepository.deleteByAttentionPointId(Number(id));
-    await this.attentionPointRepository.deleteByAnalysisId(id);
     await this.analysisResultRepository.delete(id);
   }
 };
@@ -700,13 +661,7 @@ var DeleteAnalysisProcessUseCase = class {
 // src/use-cases/factory/analysis-process/make-delete-analysis-process-use-case.ts
 function makeDeleteAnalysisProcessUseCase() {
   const analysisResultRepository = new AnalysisResultRepository();
-  const attentionPointRepository = new AttentionPointRepository();
-  const differenceRepository = new DifferenceRepository();
-  return new DeleteAnalysisProcessUseCase(
-    analysisResultRepository,
-    attentionPointRepository,
-    differenceRepository
-  );
+  return new DeleteAnalysisProcessUseCase(analysisResultRepository);
 }
 
 // src/http/controllers/analysis-process/delete.ts
