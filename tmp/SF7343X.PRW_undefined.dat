@@ -1,0 +1,132 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "APWIZARD.CH"
+#INCLUDE "TBICONN.CH"
+#INCLUDE "PARMTYPE.CH"     
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH" 
+
+#DEFINE CRLF chr(13)+chr(10)   
+/*
+----------------------------------------------------------------------------
+{Protheus.doc}<SF7343X>     
+  #CONTROLE_DN - CANCELAMENTO DA REMESSA                                               
+  Trata do controle de Cancelamento da Remessa, a Devolucao ira permitir
+  que a remessa seja Re-Enviada.
+                                                                          
+@author<Antonio Dantas> 
+@since<10/12/2015>                                                        
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+----------------------------------------------------------------------------
+*/
+User Function SF7343X()
+
+Local cEstat := U_SFGN001A(ProcName(0), "SF7343X")
+Local _lReturn			:= .f. 
+Local _cMensagem		:= ""
+Local _cNamField		:= ""
+Local _cNamField 		:= ""
+Local _aExceptio		:= {}
+Local _nCtaA 			:= 0
+Local _cTitulo			:= "Cancelamento da Remessa"
+//-- 
+Private _oDlgZCK		:= Nil 
+Private _bCpo 			:= {|nField| Field(nField)}
+Private _cJustif 		:= CriaVar("ZCK_HISTOR",.T.)
+//-- Monta as Definicoes das Dimensoes da Tela 
+Private _APosEnch		:= {015,001,070,315}
+Private _aSize			:= MsAdvSize()
+Private _aInfo			:= {_aSize[1],_aSize[2],_aSize[3],_aSize[4],3,3}
+Private _aObjects		:= { {100,100,.T.,.T.},{100,100,.T.,.T.},{100,015,.T.,.F.} }
+Private _APosObj		:= MsObjSize(_aInfo,_aObjects)
+Private _APosGet		:= MsObjGetPos((_aSize[3]-_aSize[1]),315,{{004,024,240,270}})
+//-- Inicializa os Obejetos da interface 
+SetPrvt("_oMemoOBJ","_oFontOBJ","_oSayMsg","_oFontAR")
+//+------------------------------------------------------------------+
+//| Valida a execucao da Devolucao                                   | 
+//+------------------------------------------------------------------+
+If (ZCK->ZCK_STATUS $ "FC")		//-- F=Finalizada OK;C=Cancelada 
+	Aviso(FunName()+"/"+ProcName(),"Remessa fora da condição para Cancelamento!",{"OK"})
+	Return _lReturn
+Endif 
+//+------------------------------------------------------------------+
+//| Cria e Inicializa as Variaves PRIVATES que seram Utilizadas pela |
+//| Funcao [EnChoice]                                                |
+//+------------------------------------------------------------------+
+_nCtaA := 0
+For _nCtaA := 1 To ZCK->(FCount())
+	_nPos		:= 0 
+	_nPos 		:= Ascan( _aExceptio, {|X| UPPER(X) == UPPER(ZCK->(FieldName(_nCtaA))) } ) 	 
+	If _nPos > 0 
+		Loop 
+	Endif 
+	//-- Inicializa as Variaveis com o Conteudo encontrado no Registro Atual 
+  	M->&(Eval(_bCpo,_nCtaA)) := ZCK->(FieldGet(_nCtaA))
+Next _nCtaA
+//-- Define a Fonte da mensagem 
+_oFontAR	:= TFont():New( "Arial Rounded MT Bold",0,-13,,.F.,0,,400,.F.,.F.,,,,,, )
+//-- Define a Fonte da Justificativa  
+_oFontOBJ	:= TFont():New( "MS Sans Serif",0,-12,,.F.,0,,400,.F.,.F.,,,,,, )
+//+------------------------------------------------------------------+
+//| Monta a Interfase (Tela) que sera apresentada ao usuario         | 
+//+------------------------------------------------------------------+
+DEFINE MSDIALOG _oDlgZCK TITLE _cTitulo FROM _aSize[7],_aSize[1] TO _aSize[6],_aSize[5] OF oMainWnd PIXEL
+//-- Apresenta Informacoes de Remessa 
+EnChoice("ZCK",,2,,,,,_APosObj[1],,3,,,,,,,,,.T.)
+//-- Apresenta a mensagem da Justificativa
+_oSayMsg := TSay():New(130,005,{|| "Justifique do Cancelamento:" },_oDlgZCK,,_oFontAR,.F.,.F.,.F.,.T.,CLR_BLUE,CLR_WHITE,300,008)
+//-- Apresenta Campo para Informar a Justificativa  
+@ 140,05 GET _oMemoOBJ VAR _cJustif MEMO SIZE 300,120 OF _oDlgZCK PIXEL 
+_oMemoOBJ:bRClicked := {||AllwaysTrue()}
+_oMemoOBJ:oFont:=_oFontOBJ
+//-- 
+ACTIVATE MSDIALOG _oDlgZCK ON INIT EnchoiceBar(_oDlgZCK,{|| _lReturn := fDevolve(_cJustif),Iif(_lReturn,_oDlgZCK:End(),"")},{||_oDlgZCK:End()})
+Return _lReturn
+
+/*
+----------------------------------------------------------------------------
+{Protheus.doc}<SF7328X>                                                   
+  Grava a Justificativa do Cancelamento e historico informado pelo operador.
+                                                                          
+@author<Antonio Dantas> 
+@since<09/12/2015>                                                        
+@version<1.00>
+@receive
+<  _cJustif (C) - Campo MEMO com o historico do cancelamento 
+>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+----------------------------------------------------------------------------
+*/
+Static Function fDevolve(_cJustif)
+
+Local cEstat := U_SFGN001A(ProcName(0), "SF7343X")
+Local _cHistory 	:= "" 
+Local _lReturn 		:= .f. 
+//-- 
+If Empty(_cJustif)
+	Aviso(FunName()+"/"+ProcName(),"O Preenchimento da Justificativa do Cancelamento é Obrigatoria!",{"OK"})
+Else  
+	//-- Implementa o Historico
+	_cHistory := Dtoc(dDataBase)+" "+Time()+" -> Remessa [CANCELADA] pelo Operador "+Upper(cUserName)+CRLF
+	_cHistory += RTrim(_cJustif)+CRLF
+	_cHistory += "--------> "+CRLF
+	_cHistory += " "+CRLF
+	_cHistory += ZCK->ZCK_HISTOR			 
+	//-- 
+	If (ZCK->(RecLock("ZCK",.f.)))
+		Replace	ZCK->ZCK_HISTOR With _cHistory	//-- Historico
+		Replace	ZCK->ZCK_STATUS With "C"		//-- Status
+		_lReturn := .t. 
+	Endif 
+Endif
+Return 	_lReturn    

@@ -1,0 +1,2164 @@
+#include "Rwmake.ch"
+#include "Protheus.ch"
+
+Static lFWCodFil := FindFunction("FWCodFil")
+
+/*
+Campos criados
+SED
+ED_XTIPO caracter 1 Tipo natureza
+(Alterado 25/08/2017 caio j2a)
+O=OPERACIONAL;I=INVESTIMENTOS;F=FINANCIAMENTOS
+(agora é)
+1=Receitas correntes;2=Despesas correntes
+
+X3_WHEN -> ED_PAI
+M->ED_TIPO == "2"
+
+Esse relatorio fuciona de acordo com o compartilhamento da SED
+caso a natureza seja exclusiva esse relatorio funciona de maneira exclusiva
+caso SED seja compartilhada o relatorio funciona de maneira compartilhada.
+
+Obs.:
+O relatorio ira gerar uma tabela temporaria (_cALiasTmp)
+Campos : ORDEM,XTIPO,CODIGO,DESCRIC,VALORN~
+ORDEM  1F - BANCOS  |   2F - PEDIDOS | 3F - NATUREZAS  |     				 |
+ORDEM  1T - TOT.Bcos|   2T - Tot.Ped | 3T - Tot.Nat    | 4T  - Tot. Geral    |
+*/
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} FINR02A
+Relatorio de fluxo de caixa projetado - diario/mensal 
+
+@author Caio Renan
+@since 12/01/2015
+@version 1.0
+/*/
+//------------------------------------------------------------------
+User Function SF06R14X()
+	Local oReport
+	Local _lContinua := .T.
+
+	Private _cPerg     := "SF06R14X"
+	Private _cALias    := GetNextAlias()
+	Private _cALiasTmp := GetNextAlias()
+	Private _cArqTrab  := Nil
+	Private _oFluxo , _oTotal, _oSinte // variaveis dos objetos de secao
+	Private _cPicture := TM(999999999.99,14,2) // "@E 999,999,999.99"
+
+	Private _bPrint := {|oReport| Alert("Erro") }
+
+	Private _aCols := {} 
+	/*  N,1 - Data em Caracter
+	/   N,2 - Data em string
+	*/
+	Private _aSldIniT  := {}  // Total de saldo inicial por dia
+	Private _aTotGeral := {} 	// total geral do relatorio
+	Private _aTotTip   := {} 		// total por tipo de natureza
+	Private _aTotNatS  := {} 	// totalizador por natureza sintetica cada linha do array primeira posicao e o codigo da natureza o restantes são todas os valores somados
+	Private _aTotPC	   := {}
+	//Private _aSelFil   := {}
+	Private _lTdasFil  := .F.
+
+	AjustaSX1(_cPerg)
+
+	// e necessario a apresentação da tela de pergunta antes pois as colunas serao dinamicas de acordo com as perguntas.
+	// se parametro tipo igual a dia (MV_PAR02 == 1) tera uma coluna para cada dia entre o intervalos das datas
+	// de MV_PAR03 ate MV_PAR04 se parametro tipo igual a mes (MV_PAR02 == 2) tera uma coluna para cada mes entre o intervalo das datas
+	// de MV_PAR03 ate MV_PAR04
+	If Pergunte(_cPerg, .T.)
+		_lContinua := .T.
+		// enquanto nao passar pela validacao dos parametros continua aparecendo a tela para as perguntas
+		While _lContinua .AND. !fValPar()
+			If !Pergunte(_cPerg, .T.)
+				_lContinua := .F.
+			EndIf
+		EndDo
+	Else
+		_lContinua := .F.
+	EndIf
+
+	//--------------------------------------------------------------+
+	// Seleciona Filial = Sim                                       |
+	//--------------------------------------------------------------+
+	/*If MV_PAR07 == 1
+		If Empty(_aSelFil)
+			_aSelFil := AdmGetFil(@_lTdasFil,.F.,"SED")
+		Endif
+	Endif*/
+
+	//--------------------------------------------------------------+
+	// Caso MV_PAR07 == 2 ou nao marcar nehuma filial.              |
+	// Defino a filial logada                                       |
+	//--------------------------------------------------------------+
+	/*If Empty(_aSelFil)
+		Aadd(_aSelFil,cFilAnt)
+	Endif*/
+
+	If _lContinua
+		If FindFunction("TRepInUse")
+			oReport := ReportDef()
+			oReport:PrintDialog()
+		EndIf
+	EndIf
+
+Return
+
+//ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+// funcao Definicoes dos objetos treport
+//ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+Static Function ReportDef()
+
+	Local oReport
+	Local _cDescri := "Fluxo de caixa projetado " + " - Periodo de "+ DToC(MV_PAR03) + " Ate " + DToC(MV_PAR04) 
+
+	_aCols := fGetACol()
+
+	oReport := TReport():New(_cPerg,_cDescri,_cPerg,{|oReport| PrintReport(oReport)},_cDescri)
+	//oReport:SetCustomText({ || teste(oReport)})
+	oReport:SetLeftMargin(2)
+	oReport:SetLandScape() 			// paisagem
+	oReport:oPage:SetPaperSize(9) 	// papel A4
+	//oReport:SetDevice(4) 			// 4- planilha
+	oReport:SetEnvironment(2) 		// local
+	oReport:SetTotalInLine(.F.)
+	oReport:ParamReadOnly(.T.)
+	
+	//oReport:HideParamPage()
+	//oReport:HideHeader()
+	//oReport:OnPageBreak( {|| fImpCab(oReport) } )
+	
+	_oFluxo := TRSection():New(oReport,"Fluxo de caixa projetado",{_cALiasTmp} )
+	TRCell():New(_oFluxo, "DESCRIC" ,_cALiasTmp , "Saldo inicial (bancos)", "", 30)
+
+	For _nx := 1 To Len(_aCols)
+		TRCell():New(_oFluxo,  _aCols[_nx,2] ,_cALiasTmp, _aCols[_nx,1] ,_cPicture , 14, , {|| 0 }  )
+	Next
+	TRCell():New(_oFluxo, "T_GERAL" ,_cALiasTmp , "Total Geral", _cPicture , 14)
+	
+	// secao para totalizar
+	_oTotal := TRSection():New(oReport,"Total",{_cALiasTmp} )
+	TRCell():New(_oTotal, "DESCRIC" ,_cALiasTmp , "Saldo inicial (bancos)", "", 30)
+
+	For _nx := 1 To Len(_aCols)
+		TRCell():New(_oTotal,  _aCols[_nx,2] ,_cALiasTmp, _aCols[_nx,1] ,_cPicture , 14, , {|| 0 }  )
+	Next
+	TRCell():New(_oTotal, "T_GERAL" ,_cALiasTmp , "Total Geral", _cPicture , 14)
+
+	_oTotal:lHeaderSection := .F.
+	_oTotal:nLinesBefore := 0
+	_oTotal:SetCellBorder("TOP" , 1 , , .F.)
+	_oTotal:SetCellBorder("BOTTOM" , 1 , , .F.)
+
+Return(oReport)
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} fGetACol
+funcao que retorna um array com cada coluna do relatorio
+
+@author caiocrol
+@since 19/01/2015
+/*/
+//------------------------------------------------------------------
+Static Function fGetACol()
+	Local _aRet := {}
+	Local _nQtdCol := fGetQtdCol()
+	Local _dDtCol := MV_PAR03
+	Local _cDtCol := DToC(_dDtCol)
+	Local _SDtCol := DToS(_dDtCol)
+	Local _nMes := month(MV_PAR03)
+	Local _nAno := year(MV_PAR03)
+
+	For _nx := 1 To _nQtdCol
+
+		If MV_PAR02 == 1 // tipo igual dia
+			// primeira posicao conforme layout segunda coluna conforme necessario no select
+			Aadd(_aRet , { _cDtCol , _SDtCol  } )
+
+			_dDtCol := _dDtCol + 1
+			_cDtCol := DToC(_dDtCol)
+			_SDtCol := DToS(_dDtCol)
+
+
+		ElseIf MV_PAR02 == 2 // tipo igual mes
+			// primeira posicao conforme layout segunda coluna conforme necessario no select
+			Aadd(_aRet , { StrZero(_nMes,2) + "/" + cValToChar(_nAno) , cValToChar(_nAno) + StrZero(_nMes,2) } )
+
+			_nMes++
+			If _nMes > 12
+				_nMes := 1
+				_nAno++
+			EndIf
+		EndIf
+	Next
+
+	//MemoWrite("D:\LOGSQL\arrayacols"+_cPerg+".txt" , VarInfo("_aRet", _aRet ))
+
+Return(_aRet)
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} PrintReport
+Funcao que realiza o filtro e imprimi os dados na tela
+@author Caio Croll
+@since 15/07/2015
+@version 1.0
+@param oReport, objeto, (Descrição do parâmetro)
+/*/
+//------------------------------------------------------------------
+Static Function PrintReport(oReport)
+
+	// tipos de naturezas disponiveis
+	Local _aTipos 		:= {"1" , "2"}
+	Local _aTiposDesc 	:= {"RECEITAS CORRENTES" , "DESPESAS CORRENTES"}
+	Local _aTiposComp 	:= {"CAIXA DAS RECEITAS CORRENTES" , "CAIXA DAS DESPESAS CORRENTES"}
+	Local _aTpBco := {{"1",Upper("Aplicações financeiras")},{"2",Upper("Banco conta movimento")} }
+	Local cDataBase     := Iif(MV_PAR02 == 1,Dtos(dDataBase), SubStr(Dtos(dDataBase),1,6))  
+	Local lCompoeSld    := (MV_PAR06 == 1)
+	Local lSintetico    := (MV_PAR01 == 1)
+	Local lPedido       := (MV_PAR07 == 1)
+	//---------------------------------------------------------------------------------+
+	// Crio Arquivo temporario para manipular valores do relatorio antes da impressão  |
+	//---------------------------------------------------------------------------------+
+	fArqTmp()
+	
+	Private _cTpBco := ""
+	aEval(_aTpBco, {|x,y| _cTpBco += x[1] + ";" } )
+	_cTpBco := SubStr(_cTpBco, 1, Len(_cTpBco) - 1 )
+	
+	if lSintetico
+		_cTitle := oReport:Title() + " - Sintético" 
+		oReport:SetTitle(_cTitle)
+	Else
+		_cTitle := oReport:Title() + " - Analítico" 
+		oReport:SetTitle(_cTitle)
+	EndIf
+	
+	// Inicializa totalizadores geral e por tipo
+	For _nx := 1 To Len(_aCols)
+		Aadd(_aTotGeral, 0 )
+		Aadd(_aTotTip  , 0 )
+		aAdd(_aTotPC   , 0 )
+		aAdd(_aSldIniT , 0 )
+	Next
+
+	//--------------------------------------------------------------+
+	// PRINT A PRIMEIRA LINHA DO RELATORIO REFERENTE A SALDO INICIAL|
+	//--------------------------------------------------------------+
+
+	MsgRun( "Selecionando registros - Saldos iniciais...", "Aguarde" ,  {|| fQrySldIni() } )
+
+	//--------------------------------------------------------------+
+	// Percorro  o alias na ORDEM 1f(Saldos Bancos)                 |
+	//--------------------------------------------------------------+
+	(_cALiasTmp)->(DbGoTop())
+	(_cALiasTmp)->(DbSeek("1F")) 
+	While  (_cALiasTmp)->(!Eof()) .AND. (_cALiasTmp)->ORDEM == "1F" 
+
+		//--------------------------------------------------------------+
+		// Obtenho o valores para o totalizador dos bancos              |
+		//--------------------------------------------------------------+
+		For _nx := 1 to Len(_aCols)
+
+			_aSldIniT[_nX]+= (_cALiasTmp)->(&("VALOR"+StrZero(_nX,2)))
+		Next
+
+		(_cALiasTmp)->(dbSkip())
+
+	EndDo
+
+	//--------------------------------------------------------------+
+	// Crio a linha do totalizador no Alias                         |
+	//--------------------------------------------------------------+
+	If RecLock((_cALiasTmp),.T.)
+
+		Replace (_cAliasTmp)->(ORDEM)   With "1T"
+		Replace (_cAliasTmp)->(XTIPO)   With " "
+		Replace (_cAliasTmp)->(CODIGO)  With SPACE(18)
+		Replace (_cAliasTmp)->(DESCRIC) With Upper("Total Saldos iniciais")
+		
+		For _nx := 1 to Len(_aCols)
+			Replace (_cAliasTmp)->(&("VALOR"+StrZero(_nX,2))) With _aSldIniT[_nX]
+		Next
+		
+		MsUnlock()
+	EndIf
+	
+	//---------------------------------------
+	//- Pedido de Compras
+	//---------------------------------------
+	If lPedido
+
+		MsgRun( "Selecionando registros - Pedido de Compras...", "Aguarde" ,  {|| fProcPC() } )
+
+		//--------------------------------------------------------------+
+		// Percorro o Alias na ORDEM 2F (PC)                            |
+		//--------------------------------------------------------------+
+		(_cALiasTmp)->(DbGoTop())
+		(_cALiasTmp)->(DbSeek("2F")) 
+		While  (_cALiasTmp)->(!Eof()) .AND. (_cALiasTmp)->ORDEM == "2F" 
+
+			//--------------------------------------------------------------+
+			// Obtenho os valores para criar o totalizador                  |
+			//--------------------------------------------------------------+
+			For _nx := 1 to Len(_aCols)
+
+				_aTotPC[_nX]+= (_cALiasTmp)->(&("VALOR"+StrZero(_nX,2)))
+
+			Next
+
+			(_cALiasTmp)->(dbSkip())
+
+		EndDo
+
+		//--------------------------------------------------------------+
+		// Crio a linha de totalizador para o PC                        |
+		//--------------------------------------------------------------+
+		If RecLock((_cALiasTmp),.T.)
+
+			Replace (_cAliasTmp)->(ORDEM)   With "2T"
+			Replace (_cAliasTmp)->(XTIPO)   With " "
+			Replace (_cAliasTmp)->(CODIGO)  With SPACE(18)
+			Replace (_cAliasTmp)->(DESCRIC) With "Total Pedido de Compra" 		
+			
+			For _nx := 1 to Len(_aCols)
+				Replace (_cAliasTmp)->(&("VALOR"+StrZero(_nX,2))) With _aTotPC[_nX]
+			Next
+
+			MsUnlock()
+		EndIf
+
+	EndIf
+	
+	MsgRun( "Selecionando registros - Natureza...", "Aguarde" ,  {|| fProcNat() } )
+
+	MsgRun( "Selecionando registros - "+ NGSX2NOME("SE1") +"...", "Aguarde" ,  {|| fProcSe1() } )
+
+	MsgRun( "Selecionando registros - "+ NGSX2NOME("SE2") +"...", "Aguarde" ,  {|| fProcSe2() } )
+
+	// totalizador por natureza sintetica
+	_aTotNatS := fGetTot()
+	//Aviso("VarInfo", VarInfo("_aTotNatS",_aTotNatS,,.F.) , {"ok"},3 )
+
+	SED->(DbSetOrder(1)) // ED_FILIAL + ED_CODIGO
+
+	//--------------------------------------------------------------+
+	// Percorro o array de tipo com base no parametro MV_PAR05      |
+	//--------------------------------------------------------------+
+	For _nTipo:= 1 to Len(_aTipos)
+
+		If MV_PAR05 == 2 .AND. _aTipos[_nTipo] <> "1" // RECEITAS CORRENTES
+			loop
+		ElseIf MV_PAR05 == 3 .AND. _aTipos[_nTipo] <> "2" // DESPESAS CORRENTES
+			loop
+		//ElseIf MV_PAR05 == 4 .AND. _aTipos[_nTipo] <> "F" // FINANCIAMENTO
+		//	loop
+		EndIf
+		//--------------------------------------------------------------+
+		// Zero as posicoes do array                                    |
+		//--------------------------------------------------------------+
+		For _ny := 1 To Len(_aCols)
+			_aTotTip[_ny] := 0
+		Next
+
+		//--------------------------------------------------------------+
+		// Percorro o Alis na Ordem 3F (Naturezas) + XTIPO              |
+		//--------------------------------------------------------------+
+		(_cALiasTmp)->(DbGoTop())
+		(_cALiasTmp)->(DbSeek("3F" +_aTipos[_nTipo]))
+		While  (_cALiasTmp)->(!Eof()) .AND. (_cALiasTmp)->ORDEM == "3F" .AND. (_cALiasTmp)->XTIPO == _aTipos[_nTipo]
+
+			//--------------------------------------------------------------+
+			// Caso posicionar na SED atualizo a Descriçao                  |
+			//--------------------------------------------------------------+
+			If	SED->(DbSeek(xFilial("SED") + (_cALiasTmp)->(CODIGO)))
+				If RecLock((_cALiasTmp),.F.)
+					Replace (_cAliasTmp)->(DESCRIC) With  (fGetDescN())
+					MsUnlock()
+				EndIf
+			EndIf
+
+			//--------------------------------------------------------------+
+			// Obtenho os valores por dia para criar o totalizador          |
+			//--------------------------------------------------------------+
+			For _nx := 1 to Len(_aCols)
+
+				_aTotTip[_nx]+= (_cALiasTmp)->(&("VALOR"+StrZero(_nx,2)))
+
+			Next
+			(_cALiasTmp)->(dbSkip())
+
+		EndDo
+
+		//--------------------------------------------------------------+
+		// Crio a linha do totalizador Natureza + XTIPO                 |
+		//--------------------------------------------------------------+
+		If RecLock((_cALiasTmp),.T.)
+
+			Replace (_cAliasTmp)->(ORDEM)   With "3T"
+			Replace (_cAliasTmp)->(XTIPO)   With _aTipos[_nTipo]
+			Replace (_cAliasTmp)->(CODIGO)  With SPACE(18)
+			Replace (_cAliasTmp)->(DESCRIC) With _aTiposComp[_nTipo]  		
+			
+			For _nx := 1 to Len(_aCols)
+				Replace (_cAliasTmp)->(&("VALOR"+StrZero(_nX,2))) With (_aTotTip[_nx])
+			Next
+			
+			MsUnlock()
+		EndIf
+
+	Next
+
+	//---------------------------------------------------------------+
+	// Crio a linha do totalizador geral com os saldos por dia zerado|
+	//---------------------------------------------------------------+
+	If Reclock(_cAliasTmp,.T.)		
+		For nY:= 1 To (_cAliasTmp)->(FCount())
+			Do Case
+			Case nY == 1
+				_xValue := "4T"
+			Case nY == 2
+				_xValue := " "
+			Case nY == 3
+				_xValue := Space(18)
+			Case nY == 4
+				_xValue := "RESUMO FINAL -> CAIXA ATUAL"
+			Case nY == 5
+				_xValue := Space(150)
+			Otherwise
+				_xValue := 0
+			EndCase
+			FieldPut(nY, _xValue)		
+			//FieldPut(nY, IIF(nY==1,"4T",IIF(nY==2," ",IIF(nY==3,SPACE(18),IIF(nY==4,"RESUMO FINAL -> CAIXA ATUAL",0)))))		
+		Next nY	
+		MsUnLock()
+	EndIf
+
+	//--------------------------------------------------------------------------------------+
+	// Percorro o Alias temporario por coluna para recalcular o relatorio por dia ou mes    |
+	//--------------------------------------------------------------------------------------+
+	For _nX := 1 To Len(_aCols )
+
+		//--------------------------------------------------------------+
+		// Saldos iniciais                                              |
+		//--------------------------------------------------------------+
+		(_cALiasTmp)->(DbGoTop())
+		If (_cALiasTmp)->(DbSeek("1T")) 
+			_aSldIniT[_nX]:= (_cALiasTmp)->(&("VALOR"+StrZero(_nX,2)))
+		EndIf
+
+		//--------------------------------------------------------------+
+		// Pc                                                           |
+		//--------------------------------------------------------------+
+		(_cALiasTmp)->(DbGoTop())
+		If (_cALiasTmp)->(DbSeek("2T")) 
+			_aTotPC[_nX]:= (_cALiasTmp)->(&("VALOR"+StrZero(_nX,2)))
+		EndIf
+
+		//--------------------------------------------------------------+
+		// Naturezas                                                    |
+		//--------------------------------------------------------------+
+		//zero a posição do array
+		_aTotTip[_nX]:= 0
+		For _nY := 1 to Len(_aTipos)
+			(_cALiasTmp)->(DbGoTop())
+			If (_cALiasTmp)->(DbSeek("3T"+_aTipos[_nY])) 
+				_aTotTip[_nX]+= (_cALiasTmp)->(&("VALOR"+StrZero(_nX,2)))
+			EndIf
+
+		Next
+
+		_aTotGeral[_nX] := _aSldIniT[_nX] + _aTotPC[_nX] + _aTotTip[_nX]
+
+
+		If lCompoeSld
+
+			If (_nX+1) <= Len(_aCols) //.AND. _aCols[_nX,2] < cDataBase 
+
+				(_cALiasTmp)->(DbGoTop())
+				If (_cALiasTmp)->(DbSeek("1T"))
+					If RecLock(_cALiasTmp,.F.)
+						Replace (_cAliasTmp)->(&("VALOR"+StrZero(_nX+1,2))) With _aTotGeral[_nX]
+						MsUnlock()
+					EndIf
+				EndIf
+			Endif
+		EndIf
+	Next
+	
+	//--------------------------------------------------------------+
+	// Atualizo o Totalizador geral(Resumo caixa atual)             |
+	//--------------------------------------------------------------+
+	(_cALiasTmp)->(DbGoTop())
+	If (_cALiasTmp)->(DbSeek("4T"))
+		If RecLock(_cALiasTmp,.F.)
+			for _nX:= 1 to Len(_aCols)
+				Replace (_cAliasTmp)->(&("VALOR"+StrZero(_nX,2))) With _aTotGeral[_nX]
+			next
+			MsUnlock()
+		EndIf
+	EndIf
+	
+	// Crio uma linha para totalizar o total por tipo de cadastro de banco
+	(_cALiasTmp)->(DbGoTop())
+	While ( (_cALiasTmp)->(!Eof()) )
+
+		If AllTrim((_cALiasTmp)->ORDEM) = "1F"
+			
+			_nP := aScan(_aTpBco, {|x| x[1] = (_cALiasTmp)->XTIPO } )
+			
+			If _nP > 0
+				If Len(_aTpBco[_nP]) = 2
+					For _nX := 1 to Len(_aCols)
+						Aadd(_aTpBco[_nP], (_cAliasTmp)->(&("VALOR"+StrZero(_nX,2))) )
+					Next
+				Else
+					For _nX := 1 to Len(_aCols)
+						_aTpBco[_nP, _nX + 2 ] += (_cAliasTmp)->(&("VALOR"+StrZero(_nX,2)))
+					Next
+				EndIf
+			EndIf
+		EndIf
+		
+		(_cALiasTmp)->(dbSkip())
+	EndDo
+	
+	// indice 1 - ORDEM+XTIPO+PAI+CODIGO+DESCRIC
+	For _nz := 1 To Len(_aTpBco)
+		If RecLock((_cALiasTmp), !(_cALiasTmp)->( dbSeek("1F" + _aTpBco[_nz,1] + Space(150) + Replicate("Z",18)) ))
+		
+			(_cAliasTmp)->(ORDEM)   := "1F"
+			(_cAliasTmp)->(XTIPO)   := _aTpBco[_nz,1]
+			(_cAliasTmp)->(CODIGO)  := Replicate("Z",18)
+			(_cAliasTmp)->(DESCRIC) := _aTpBco[_nz,2]
+			
+			If Len(_aTpBco[_nz]) > 2
+				For _nx := 1 to Len(_aCols)
+					(_cAliasTmp)->(&("VALOR"+StrZero(_nX,2))) := _aTpBco[_nz,_nx + 2]
+				Next
+			EndIf
+			
+			(_cAliasTmp)->(MsUnlock())
+		EndIf
+	Next
+	
+	//--------------------------------------------------------------+
+	// Atualizo a coluna T_GERAL - Caio Lima - J2A                  |
+	//--------------------------------------------------------------+
+	(_cALiasTmp)->(DbGoTop())
+	while ( (_cALiasTmp)->(!Eof()) )
+		
+		_lDeleta := .F.
+		_nTGeral := 0
+		If AllTrim((_cALiasTmp)->ORDEM) $ "2F,3F,2T,3T"
+			If AllTrim((_cALiasTmp)->ORDEM) $ "3F"
+				_nPos := aScan(_aTotNatS, {|x| x[1] == (_cAliasTmp)->CODIGO } )
+				If _nPos > 0
+					For _nX:= 4 to Len(_aTotNatS[_nPos])
+						_nTGeral += _aTotNatS[_nPos,_nx]
+					next
+				Else
+					For _nX:= 1 to Len(_aCols)
+						_nTGeral += (_cAliasTmp)->(&("VALOR"+StrZero(_nX,2)))
+					next
+				EndIf
+			Else 
+				For _nX:= 1 to Len(_aCols)
+					_nTGeral += (_cAliasTmp)->(&("VALOR"+StrZero(_nX,2)))
+				next
+			EndIf
+			//Alert((_cALiasTmp)->ORDEM + (_cALiasTmp)->DESCRIC + cValToChar(_nTGeral))
+		Else
+			_nTGeral := (_cAliasTmp)->(&("VALOR"+StrZero(Len(_aCols),2)))
+		EndIf
+		
+		// deleta registros zerados caso o parametro esteja como não imprime zerados
+		If MV_PAR12 == 2
+			_nValZero := 0
+			If AllTrim((_cALiasTmp)->ORDEM) $ "1F,2F,3F"
+				_lDeleta := .T. 
+				For _nX:= 1 to Len(_aCols)
+					If (_cAliasTmp)->(&("VALOR"+StrZero(_nX,2))) <> 0
+						_lDeleta := .F.
+						Exit
+					EndIf
+				next
+				If _lDeleta
+					If RecLock(_cALiasTmp, .F.)
+						(_cALiasTmp)->(dbDelete())
+						(_cALiasTmp)->(MsUnlock())
+						(_cALiasTmp)->(dbSkip())
+						loop
+					EndIf
+				EndIf
+			EndIf
+		EndIf
+		
+		If RecLock(_cALiasTmp, .F.)
+			(_cALiasTmp)->T_GERAL := _nTGeral
+			(_cALiasTmp)->(MsUnlock())
+		EndIf
+		
+		(_cALiasTmp)->(dbSkip())
+	EndDo
+	
+	//=========================================================================================
+	//================== PRINTLINE Do Relatorio ===============================================
+	//=========================================================================================
+
+	For _nx := 1 To Len(_aCols)
+		_oFluxo:Cell(_aCols[_nx,2]):SetBlock( &("{|| (_cAliasTmp)->VALOR" + StrZero(_nx,02) +"  }") )
+		_oTotal:Cell(_aCols[_nx,2]):SetBlock( &("{|| (_cAliasTmp)->VALOR" + StrZero(_nx,02) +"  }") )
+	Next
+
+	//--------------------------------------------------------------+
+	// IMPRIME OS SALDOS BANCARIOS                                  |
+	//--------------------------------------------------------------+
+	//If !lSintetico
+		_oFluxo:Init()
+		(_cALiasTmp)->(DbGoTop())
+		(_cALiasTmp)->(DbSeek("1F"))
+		While  (_cALiasTmp)->(!Eof()) .AND. (_cALiasTmp)->ORDEM == "1F" 
+			
+			If (_cALiasTmp)->CODIGO = Replicate("Z",18)
+				_oFluxo:SetCellBorder("TOP",1,,.f.)
+				_oFluxo:SetCellBorder("BOTTOM",1,,.f.)
+			Else
+				_oFluxo:SetCellBorder("TOP",0,,.f.)
+				_oFluxo:SetCellBorder("BOTTOM",0,,.f.)
+			EndIf
+			
+			_oFluxo:PrintLine()
+			
+			If (_cALiasTmp)->CODIGO = Replicate("Z",18)
+				oReport:SkipLine()
+			EndIf
+			
+			(_cALiasTmp)->(dbSkip())
+
+		EndDo
+		_oFluxo:Finish()
+		
+		_oFluxo:SetCellBorder("TOP",0,,.f.)
+		_oFluxo:SetCellBorder("BOTTOM",0,,.f.)
+	//Else
+	//	_oTotal:lHeaderSection := .T.	
+	//EndIf
+
+	//--------------------------------------------------------------+
+	// IMPRIME O TOTALIZADOR DOS SALDOS BANCARIOS                   |
+	//--------------------------------------------------------------+
+	(_cALiasTmp)->(DbGoTop())
+	If (_cALiasTmp)->(DbSeek("1T"))
+
+		_oTotal:Init()
+		_oTotal:PrintLine()
+		_oTotal:Finish()
+
+		_oFluxo:lHeaderSection := .F.
+		_oTotal:lHeaderSection := .F.
+	EndIf
+
+	//--------------------------------------------------------------+
+	// IMPRIME OS PEDIDOS                                           |
+	//--------------------------------------------------------------+
+	/*If lPedido 
+
+		_oFluxo:Init()
+		(_cALiasTmp)->(DbGoTop())
+		(_cALiasTmp)->(DbSeek("2F"))
+		While  (_cALiasTmp)->(!Eof()) .AND. (_cALiasTmp)->ORDEM == "2F" 
+
+			If !lSintetico
+				_oFluxo:PrintLine()
+			EndIf
+			(_cALiasTmp)->(dbSkip())
+
+		EndDo
+		_oFluxo:Finish()
+
+		//--------------------------------------------------------------+
+		// IMPRIME O TOTALIZADOR DOS PEDIDOS                            |
+		//--------------------------------------------------------------+
+		(_cALiasTmp)->(DbGoTop())
+		If (_cALiasTmp)->(DbSeek("2T"))
+
+			_oTotal:Init()
+			_oTotal:PrintLine()
+			_oTotal:Finish()
+
+		EndIf
+
+	EndIf*/
+
+	//--------------------------------------------------------------+
+	// IMPRIME AS NATUREZAS                                         |
+	//--------------------------------------------------------------+
+	For _nx := 1 To Len(_aCols)
+		_oFluxo:Cell(_aCols[_nx,2]):SetBlock( &("{|| U_FIRF2CC((_cAliasTmp)->VALOR" + StrZero(_nx,02) + ","+ StrZero(_nx,02) +" ) }") )
+	Next
+
+	For _nX := 1 to Len(_aTipos)
+
+		If MV_PAR05 == 2 .AND. _aTipos[_nX] <> "1" // RECEITAS CORRENTES
+			loop
+		ElseIf MV_PAR05 == 3 .AND. _aTipos[_nX] <> "2" // DESPESAS CORRENTES
+			loop
+		//ElseIf MV_PAR05 == 4 .AND. _aTipos[_nX] <> "F" // FINANCIAMENTO
+		//	loop
+		EndIf
+
+		_oFluxo:Init()
+		(_cALiasTmp)->(DbGoTop())
+		(_cALiasTmp)->(DbSeek("3F" + _aTipos[_nX] ))
+		While  (_cALiasTmp)->(!Eof()) .AND. (_cALiasTmp)->ORDEM == "3F" .AND. (_cALiasTmp)->XTIPO == _aTipos[_nX]  
+
+			SED->(DbSeek(xFilial("SED") + (_cALiasTmp)->CODIGO))
+
+			// Se relatorio for sintetico imprime apenas as naturezas sinteticas
+			If lSintetico .AND. SED->ED_TIPO == "1" // Sintetico
+				_oFluxo:PrintLine()
+			ElseIf !lSintetico // para relatorio analitico imprime todas as naturezas
+				_oFluxo:PrintLine()
+			EndIf
+			(_cALiasTmp)->(dbSkip())
+
+		EndDo
+		_oFluxo:Finish()
+
+		//--------------------------------------------------------------+
+		// IMPRIME O TOTALIZADOR DOS PEDIDOS                            |
+		//--------------------------------------------------------------+
+		(_cALiasTmp)->(DbGoTop())
+		If (_cALiasTmp)->(DbSeek("3T"+_aTipos[_nX]))
+
+			_oTotal:Init()
+			_oTotal:PrintLine()
+			_oTotal:Finish()
+			
+			oReport:SkipLine()
+
+		EndIf
+
+	Next	
+
+	//--------------------------------------------------------------+
+	// IMPRIME O totalizador Geral                                  |
+	//--------------------------------------------------------------+
+
+	(_cALiasTmp)->(DbGoTop())
+	If (_cALiasTmp)->(DbSeek("4T"))
+
+		_oTotal:Init()
+		_oTotal:PrintLine()
+		_oTotal:Finish()
+
+	EndIf
+
+	//--------------------------------------------------------------+
+	// IMPRIME OS PEDIDOS                                           |
+	//--------------------------------------------------------------+
+	If lPedido 
+
+		_oFluxo:Init()
+		(_cALiasTmp)->(DbGoTop())
+		(_cALiasTmp)->(DbSeek("2F"))
+		While  (_cALiasTmp)->(!Eof()) .AND. (_cALiasTmp)->ORDEM == "2F" 
+
+			If !lSintetico
+				_oFluxo:PrintLine()
+			EndIf
+			(_cALiasTmp)->(dbSkip())
+
+		EndDo
+		_oFluxo:Finish()
+
+		//--------------------------------------------------------------+
+		// IMPRIME O TOTALIZADOR DOS PEDIDOS                            |
+		//--------------------------------------------------------------+
+		(_cALiasTmp)->(DbGoTop())
+		If (_cALiasTmp)->(DbSeek("2T"))
+
+			_oTotal:Init()
+			_oTotal:PrintLine()
+			_oTotal:Finish()
+
+		EndIf
+
+	EndIf
+
+
+	(_cALiasTmp)->(dbClosearea())
+
+	//-------------------------------------		
+	//-- Apaga Arquivo temporáio
+	//-------------------------------------
+	//-- arquivo de trabalho
+	If File(_cArqTrab+GetDBExtension())
+		FERASE(_cArqTrab+GetDBExtension())    
+	EndIf
+
+	//-- ndice gerado
+	If File(_cArqTrab+OrdBagExt())
+		FERASE(_cArqTrab+OrdBagExt())    
+	EndIf	
+
+Return
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} FIRF2CC
+funcao a ser utilizada no setblock das celulas de valores para as 
+naturezas sinteticas retorna os valores totalizados 
+@author Caio Croll
+@since 15/07/2015
+@version 1.0
+@param _nValorCell	, Numerico	, ...
+@param _nCol		, Numerico	, ...
+@return Numerico	, 
+/*/
+//------------------------------------------------------------------
+User Function FIRF2CC( _nValorCell , _nCol )
+	Local _nRet := 0
+	Local _nPos := 0
+
+	If SED->ED_TIPO = "1" // Sintetico
+		_nPos := aScan(_aTotNatS, {|x| x[1] == (_cAliasTmp)->CODIGO } )
+
+		If _nPos > 0
+			_nRet := _aTotNatS[_nPos , _nCol + 3 ]
+		Else
+			_nRet := _nValorCell
+		EndIf
+
+	Else // Analitico
+		_nRet := _nValorCell
+	EndIf
+	
+Return(_nRet)
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} fGetTot
+funcao que efetua a totalizacao necessária para as naturezas sinteticas 
+@author Caio Croll
+@since 15/07/2015
+@version 1.0
+@return Array, Totalizadores Sintéticas 
+/*/
+//------------------------------------------------------------------
+Static Function fGetTot()
+	Local _aRet := {}
+	Local _aChave := {}
+	Local _nPos := 0
+	Local _nLen := 0
+	Local _cNat := ""
+	Local _aAux := {}
+	Local _nTNat := 0
+	Local _lSoma := 0
+	Local _cPai := ""
+	Local _nz := 0
+	Local _nTamED := TamSX3("ED_CODIGO")[1]
+	Local _nTamEDP := TamSX3("ED_PAI")[1]
+	
+	// Primeiro adiciono todas as naturezas sintéticas no array
+	(_cAliasTmp)->(dbGoTop())
+	(_cAliasTmp)->(DbSeek("3F"))
+	while ( (_cAliasTmp)->(!Eof()) .AND. (_cAliasTmp)->ORDEM == "3F" )
+		_cPai := StrTran((_cAliasTmp)->PAI , (_cAliasTmp)->CODIGO , "" )
+		If  Posicione("SED",1,xFilial("SED") + PadR((_cAliasTmp)->CODIGO,_nTamED) ,"ED_TIPO") = "1" // Sintetico
+			Aadd(_aRet , { (_cAliasTmp)->CODIGO, SED->ED_PAI, SED->ED_TIPO } )
+			_nPos := Len(_aRet)
+			For _nz := 1 To Len(_aCols)
+				Aadd(_aRet[_nPos] , 0 )
+			Next
+		Endif
+		(_cAliasTmp)->(dbSkip())
+	EndDo
+	
+	// Atualizo apenas a primeira natureza sintetica das analiticas
+	(_cAliasTmp)->(dbGoTop())
+	(_cAliasTmp)->(DbSeek("3F"))
+	while ( (_cAliasTmp)->(!Eof()) .AND. (_cAliasTmp)->ORDEM == "3F" )
+		
+		If (_cAliasTmp)->ORDEM == "3F"
+			
+			_cPai := Posicione("SED",1,xFilial("SED") + PadR((_cAliasTmp)->CODIGO,_nTamED) ,"ED_PAI")
+			
+			_nPos := aScan(_aRet, {|x| x[1] == PadR(_cPai,Len((_cAliasTmp)->CODIGO) ) } )
+			
+			If _nPos > 0
+				If SED->ED_TIPO == "2" // ANALITICO
+					For _nz := 1 To Len(_aCols)
+						_aRet[_nPos,_nz + 3] += &("(_cAliasTmp)->VALOR" + StrZero(_nz,02))
+					Next
+				EndIf
+			EndIf
+		EndIf
+		(_cAliasTmp)->(dbSkip())
+	EndDo
+	
+	// Atualizo os valores das naturezas sinteticas que possuem filhos
+	// for no array de tras pra frente
+	For _ny := Len(_aRet) To 1 Step -1
+		For _nz := 1 to Len(_aRet)
+			If PadR(_aRet[_ny,1],_nTamEDP) == _aRet[_nz,2]
+				For _na := 1 To Len(_aCols)
+					_aRet[_ny,_na + 3] += _aRet[_nz,_na + 3] 
+				Next
+			EndIf
+		next
+	Next
+Return _aRet
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} fGetDescN
+Funcao que retorna a descrica da natureza utilizada no setblock
+@author Caio Crol
+@since 15/07/2015
+@version 1.0
+@return Caracter, Descrição Natureza
+/*/
+//------------------------------------------------------------------
+Static Function fGetDescN()
+	Local _cRet := ""
+	Local _cPref := ""
+
+	If SED->ED_COND == "R" // Receita
+		_cPref := ""
+	ElseIf SED->ED_COND == "D" // Despesa
+		_cPref := "(-) "
+	EndIf
+
+	If SED->ED_TIPO == "1" // Sintetico
+		_cRet := Capital(AllTrim(SED->ED_CODIGO) + ". " + SED->ED_DESCRIC )
+	ElseIf SED->ED_TIPO == "2" // Analitico
+		_cRet := Capital(SED->ED_DESCRIC)
+	EndIf
+
+	If SED->ED_TIPO == "2" // Analitico
+		_cRet := _cPref + _cRet
+	EndIf
+
+Return(_cRet)
+
+
+/*/{Protheus.doc} fGetFilial
+Funcao que retorna o filtro a ser utilizado em uma tabela de acordo com o compartilhamento
+@author j2a.caiolima
+@since 10/07/2017
+@param tabela, caractere, tabela a retornar 
+@return Caractere, Retorna o filtro a ser utilizado de acordo
+/*/
+Static Function fGetFilial(_cTabela, _cCampo, _cDe, _cAte)
+	Local _nTmFil1 	:= Len(AllTrim(FWxFilial(_cTabela)))
+	Local _cRet := ""
+	
+	If _nTmFil1 > 0
+		_cRet := " AND "+_cCampo+" BETWEEN '"+_cDe+"' AND '"+_cAte+"' "
+	EndIf
+	
+Return _cRet
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} fGetSqlFil
+funcao que retorna uma string sql com a correta trativa 
+para os possiveis compartilhamentos das tabelas
+@author Caio Croll
+@since 15/07/2015
+@version 1.0
+@param _cAlias1, Caracter , Alias Principal
+@param _cAlias2, Caracter , Alias Segundário
+@return Caracter , Query
+/*/
+//------------------------------------------------------------------
+Static Function fGetSqlFil( _cAlias1, _cAlias2 )
+
+	Local _nTmFil1 	:= Len(AllTrim(FWxFilial(_cAlias1)))  
+	Local _nTmFil2 	:= Len(AllTrim(FWxFilial(_cAlias2)))  
+	Local _cTpTab1  := _cAlias1+"."+SubStr(_cAlias1,2,2)
+	Local _cTpTab2  := _cAlias2+"."+SubStr(_cAlias2,2,2)    
+
+	Local _cRet := ""
+
+	// trativa para pega o compartilhamento correto das tabelas
+	If _nTmFil1 > 0 .AND. _nTmFil2 > 0
+		If _nTmFil1 = _nTmFil2
+			_cRet += " AND "+_cTpTab1+"_FILIAL = "+_cTpTab2+"_FILIAL"
+
+		ElseIf _nTmFil1 > _nTmFil2
+			_cRet += " AND SUBSTRING("+_cTpTab1+"_FILIAL,1,"+cValToChar(_nTmFil2)+") = "+_cTpTab2+"_FILIAL"
+
+		ElseIf _nTmFil1 < _nTmFil2
+			_cRet += " AND SUBSTRING("+_cTpTab2+"_FILIAL,1,"+cValToChar(_nTmFil1)+") = "+_cTpTab1+"_FILIAL"
+
+		EndIf
+	ElseIf _nTmFil1 > 0 .AND. _nTmFil2 = 0
+
+	EndIf
+
+	If _nTmFil1 > 0 //.AND. MV_PAR07 == 1
+		_cRet += " AND "+_cTpTab1+"_FILIAL BETWEEN '"+ MV_PAR10 +"' AND '"+ MV_PAR11 +"'"
+		//_cRet += " AND "+_cTpTab1+"_FILIAL "+ GetRngFil( _aSelFil, _cAlias1 ) +" "
+	EndIf
+
+Return(_cRet)
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} fQrySldIni
+Saldo Inicial Bancário.
+
+@author Caio Croll
+@since 15/07/2015
+@version 1.0
+/*/
+//------------------------------------------------------------------
+Static Function fQrySldIni()
+	Local cQuery     := ""
+	//Local _cSqlSA6   := GetRngFil(_aSelFil,"SA6")
+	//Local _cSqlSE8   := GetRngFil(_aSelFil,"SE8")
+	Local lSintetico := (MV_PAR01 == 1)
+	Local lCompoeSld := (MV_PAR06 == 1)
+	local  nY        := 0
+	Local cData      := Iif(MV_PAR02 == 1,Dtos(dDataBase),SubStr(Dtos(dDataBase),1,6) ) 
+	
+	/*If lSintetico
+		If Reclock(_cAliasTmp,.T.)
+			For nY:= 1 To (_cAliasTmp)->(FCount())
+				Do Case
+				Case nY == 1
+					_xValue := "1F"
+				Case nY == 2
+					_xValue := " "
+				Case nY == 3
+					_xValue := Space(18)
+				Case nY == 4
+					_xValue := SPACE(TAMSX3("A6_NREDUZ")[1])
+				Case nY == 5
+					_xValue := Space(150)
+				Otherwise
+					_xValue := 0
+				EndCase
+				FieldPut(nY, _xValue)
+				//FieldPut(nY, IIF(nY==1,"1F",IIF(nY==2," ",IIF(nY==3,SPACE(18),IIF(nY==4,SPACE(TAMSX3("A6_NREDUZ")[1]),0)))))		
+			Next nY	
+			MsUnLock()
+		EndIf
+	EndIF*/
+	
+	_nTGeral := 0
+	For _nX := 1 To Len(_aCols)
+
+		// Compoe Saldo anterior 
+		If ! lCompoeSld
+			//--------------------------------------------------------------+
+			// Caso nao compoe saldo obter somente saldo da database(d-1)   |
+			//--------------------------------------------------------------+
+			If  cData  <> _aCols[_nX,2]
+				Loop
+			EndIf 
+
+		Else	
+			//----------------------------------------------------------------------------------------------------+
+			// Conforme conversado irá compor todos os saldos ate a database baseado no primeiro dia (MV_PAR03)   |
+			//----------------------------------------------------------------------------------------------------+
+			If _nX > 1
+				//Loop
+			EndIf
+
+		EndIf
+
+		cQuery:="     FROM "+ RetSqlName("SA6") +" SA6 "+CRLF
+		cQuery+=" LEFT JOIN (SELECT MAX(E8_DTSALAT) DTSALDO, E8_FILIAL, E8_BANCO, E8_AGENCIA, E8_CONTA "+CRLF
+		cQuery+="	         FROM "+ RetSqlName("SE8") +" SE8  "+CRLF
+		cQuery+="	        WHERE SE8.D_E_L_E_T_ <> '*'  "+CRLF
+		If MV_PAR02 == 1
+			cQuery+="              AND E8_DTSALAT < '"+ _aCols[_nx,2] +"' "+CRLF
+		Else
+			cQuery+="              AND E8_DTSALAT <= '"+ Dtos(LastDate(Stod(_aCols[_nx,2]+"01"))) +"' "+CRLF		
+		EndIf
+		//cQuery+="              AND E8_FILIAL "+ _cSqlSE8 +" "+CRLF
+		cQuery+= fGetFilial("SE8", "E8_FILIAL", MV_PAR10, MV_PAR11 )
+		cQuery+="         GROUP BY E8_FILIAL, E8_BANCO, E8_AGENCIA, E8_CONTA) SE8DT "+CRLF
+		cQuery+="       ON SE8DT.E8_FILIAL||SE8DT.E8_BANCO||SE8DT.E8_AGENCIA||SE8DT.E8_CONTA = A6_FILIAL||A6_COD||A6_AGENCIA||A6_NUMCON "+CRLF
+		cQuery+=" LEFT JOIN "+ RetSqlName("SE8") +" SE8VL  "+CRLF
+		cQuery+="       ON  (SE8VL.E8_FILIAL||SE8VL.E8_BANCO||SE8VL.E8_AGENCIA||SE8VL.E8_CONTA = A6_FILIAL||A6_COD||A6_AGENCIA||A6_NUMCON "+CRLF
+		cQuery+="      AND SE8VL.E8_DTSALAT = SE8DT.DTSALDO  "+CRLF
+		cQuery+="      AND SE8VL.D_E_L_E_T_ <> '*' ) "+CRLF
+		cQuery+="    WHERE SA6.D_E_L_E_T_   <> '*' "+CRLF
+		cQuery+="      AND SA6.A6_FLUXCAI   = 'S' "+CRLF
+		cQuery+="      AND SA6.A6_BLOCKED   <> '1' "+CRLF
+		cQuery+=" AND A6_XTIPO IN ('" + StrTran(_cTpBco,";","','") + "') "  
+		//cQuery+="      AND A6_FILIAL "+ GetRngFil( _aSelFil,"SA6") 
+		cQuery+="      AND A6_FILIAL BETWEEN '"+ MV_PAR10 +"' AND '"+ MV_PAR11 +"'" 
+
+		If lSintetico // sintetico
+
+			cQuery:="   SELECT A6_XTIPO, SUM(COALESCE(E8_SALATUA,  A6_SALATU)) AS SALDO "+CRLF+cQuery
+			//cQuery := "   SELECT  SUM(E8_SALATUA) + SUM(A6_SALATU) AS SALDO "+CRLF+cQuery
+			cQuery += " GROUP BY A6_XTIPO "
+			cQuery += " ORDER BY A6_XTIPO "
+
+		Else // Analitico
+
+			cQuery:="  SELECT A6_XTIPO, A6_COD, A6_AGENCIA, A6_NUMCON, A6_NREDUZ, COALESCE(E8_SALATUA,  A6_SALATU)AS SALDO "+CRLF+cQuery
+			cQuery+=" Order by A6_XTIPO, A6_NREDUZ " 
+
+		EndIf
+
+		MemoWrite("C:\temp\LOGSQL\"+_cPerg+"SldIni.txt" , cQuery) // escreve em arquivo de texto e se nao encontrar cria o arquivo
+
+		If Select(_cALias) > 0
+			(_cALias)->(dbClosearea())
+		Endif
+
+		DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(cQuery)), _cALias, .F., .F.)
+
+		While ( (_cAlias)->(!Eof()) )
+
+			If lSintetico
+			
+				If (_cALiasTmp)->(dbSeek("1F"+(_cAlias)->A6_XTIPO))
+					If RecLock(_cAliasTmp,.F.)
+						(_cAliasTmp)->(&("VALOR"+StrZero(_nX,2))) := (_cAlias)->SALDO
+						(_cAliasTmp)->(MsUnLock())
+					EndIF
+				Else
+					If RecLock(_cAliasTmp,.T.)
+						(_cAliasTmp)->(ORDEM)   := "1F"
+						(_cAliasTmp)->(XTIPO)   := (_cAlias)->A6_XTIPO
+						(_cAliasTmp)->(CODIGO)  := Replicate("Z",18)
+						Replace (_cAliasTmp)->(&("VALOR"+StrZero(_nX,2))) With (_cAlias)->SALDO
+						(_cAliasTmp)->(MsUnLock())
+					EndIF
+				EndIf
+
+			Else
+				//--------------------------------------------------------------+
+				// Verifico se ja existe o banco no alias temporario            |
+				//--------------------------------------------------------------+
+				// ORDEM+XTIPO+PAI+CODIGO+DESCRIC
+				If !(_cAliasTmp)->(DbSeek("1F" + (_cAlias)->A6_XTIPO + Space(150) +(_cAlias)->(A6_COD+A6_AGENCIA+A6_NUMCON)))
+					//--------------------------------------------------------------+
+					// Adiciono o banco ao alias temporario                         |
+					//--------------------------------------------------------------+
+					If Reclock(_cALiasTmp,.T.)		
+						For _YY:=1 To (_cALiasTmp)->(FCount())
+							Do Case
+							Case _yy == 1
+								_xValue := "1F"
+							Case _yy == 2
+								_xValue := (_cAlias)->A6_XTIPO
+							Case _yy == 3
+								_xValue := (_cAlias)->(A6_COD+A6_AGENCIA+A6_NUMCON)
+							Case _yy == 4
+								_xValue := (_cAlias)->A6_NREDUZ
+							Case _yy == 5
+								_xValue := Space(150)
+							Otherwise
+								_xValue := 0
+							EndCase
+							FieldPut(_yy, _xValue)
+							//FieldPut(_yy,IIF(_yy==1,"1F",IIF(_yy==2," ",IIF(_yy==3,(_cAlias)->(A6_COD+A6_AGENCIA+A6_NUMCON),IIF(_yy==4,(_cAlias)->A6_NREDUZ,0)))))		
+						Next _yy	
+						Replace (_cAliasTmp)->(&("VALOR"+StrZero(_nX,2))) With (_cAlias)->SALDO   
+						MsUnLock()
+					EndIf
+
+				Else
+
+					If RecLock(_cAliasTmp,.F.)
+						_nTGeral += (_cAlias)->SALDO
+						Replace (_cAliasTmp)->(&("VALOR"+StrZero(_nX,2))) With ( (_cAliasTmp)->(&("VALOR"+StrZero(_nX,2))) + (_cAlias)->SALDO)
+						MsUnLock()
+					EndIf
+
+				EndIf
+
+			EndIf
+
+			(_cAlias)->(dbSkip())
+		EndDo
+	Next
+
+Return Nil
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} fGetQtdCol
+@author: caiocrol
+@data: 19/01/2015
+@descricao:
+retorna a quantidade de colunas de valor que o relatorio devera ter
+/*/
+//------------------------------------------------------------------
+Static Function fGetQtdCol()
+	Local _nRet := 0
+
+	If MV_PAR02 == 1 // tipo igual dia
+		_nRet := MV_PAR04 - MV_PAR03 + 1
+
+	ElseIf MV_PAR02 == 2 // tipo igual mes
+		_nRet := fCalcMont(MV_PAR03, MV_PAR04)
+	EndIf
+
+Return(_nRet)
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} fValPar
+@author: caiocrol
+@data: 15/01/2015
+@descricao: Funcao para validacao dos parametros digitados
+nao permite que seja selecionado um intervalo entre datas 
+muito grande
+/*/
+//------------------------------------------------------------------
+Static Function fValPar()
+	Local _lRet := .T.
+	Local _nMaxDif := 0
+	Local _nDif := 0
+
+	If Empty(MV_PAR03) .OR. Empty(MV_PAR04)
+		Alert("Parâmetros 'data de' e 'data até' não podem ser vazios.")
+		_lRet := .F.
+	EndIf
+
+	If _lRet .AND. MV_PAR03 > MV_PAR04
+		Alert("Parâmetro 'data de' não pode ser maior que o parâmetro 'data até'.")
+		_lRet := .F.
+	EndIf
+
+	If _lRet .AND. MV_PAR02 == 1 // tipo igual dia
+		_nMaxDif := 40 // dias
+
+		_nDif := MV_PAR04 - MV_PAR03
+
+		If _nDif > _nMaxDif
+			Alert("Para relatório tipo 'Dia' o intervalo entre as datas deve ser no maximo " + cValToChar(_nMaxDif) + " dias." )
+			_lRet := .F.
+		EndIf
+
+	ElseIf _lRet .AND. MV_PAR02 == 2 // tipo igual mes
+		_nMaxDif := 12 // meses
+
+		_nDif := fCalcMont(MV_PAR03, MV_PAR04)
+
+		If _nDif > _nMaxDif
+			Alert("Para relatório tipo 'Mês' o intervalo entre as datas deve ser no maximo " + cValToChar(_nMaxDif) + " meses." )
+			_lRet := .F.
+		EndIf
+
+	EndIf
+
+Return _lRet
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} fCalcMont
+Funcao que calcula o numero de meses entre duas datas
+@author Caiocrol
+@since 16/01/2015
+@version 1.0
+@param _dDtDe	, Data , Data Inicial 
+@param _dDtAte	, Data , Data Final
+@return Numerico, Numero de Meses
+/*/
+//------------------------------------------------------------------
+Static Function fCalcMont(_dDtDe , _dDtAte)
+	Local _nRet := 0
+	Local _sDtDe := DToS(_dDtDe)
+	Local _sDtAte := DToS(_dDtAte)
+	Local _cAnoDe := SubStr(_sDtDe , 1, 4)
+	Local _cMesDe := SubStr(_sDtDe , 5, 2)
+	Local _cAnoAte := SubStr(_sDtAte , 1, 4)
+	Local _cMesAte := SubStr(_sDtAte , 5, 2)
+	Local _nMesDe := 0
+	Local _nMesAte:= 0
+
+	// para efetuar qualquer calculo primeiro devemos passar tudo para a mesma medida
+	// nesse caso como eu quero os mesese entao vou passar tudo para mes
+	_nMesDe := Val(_cAnoDe)
+	_nMesDe := _nMesDe * 12
+	_nMesDe := _nMesDe + Val(_cMesDe)
+
+	_nMesAte := Val(_cAnoAte)
+	_nMesAte := _nMesAte * 12
+	_nMesAte := _nMesAte + Val(_cMesAte)
+
+	// mais 1 para levar em conta tambem o do parametro
+	_nRet := _nMesAte - _nMesDe + 1
+
+Return(_nRet)
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} fProcPC
+Processa Pedido de Compras
+
+@author Allan da Silva Faria
+@since 22/07/2015
+@version 1.0
+/*/
+//------------------------------------------------------------------
+Static Function fProcPC()
+
+	Local _cTmp 	:= Nil
+	//Local _nValor 	:= 0
+	Local _aTitulo	:= {}
+	Local _nPosTit	:= 0
+	Local _sData	:= Nil
+	Local _cField	:= "VALOR"
+	Local _dData	:= Nil	//-- Data de Entregua/DataBase
+	Local _cFilial  := ""	//-- Filial PC
+	Local _cNumPC	:= ""	//-- Numero PC
+	Local _cCond	:= ""	//-- Código Condição de Pagamento
+	Local _cNomFor	:= ""	//-- Nome do Fornecedor
+	Local _cCodFor	:= ""	//-- Codigo do Fornecedor
+	Local _nValIPI	:= 0	//-- Valor do IPI
+	Local _nBaseIPI := 0	//-- Valor Base do IPI
+	Local _nValLIPI	:= 0  	//-- Valor Liquido 
+	Local _nTotDesc := 0	//-- Total Descontos
+	Local _nValTot  := 0	//-- Valor Total do PC
+	Local _nDespFret:= 0	//-- Valor Total Despesas/Frete/Seguros
+	Local _nTxMoed  := 0	//-- Taxa Seguda Moeda
+	Local _nMoeda	:= 1	//-- Moeda Nascional
+	Local _nPrcComp := 0	//-- Preço do Item - Compra
+	Local _nDecimais:= TamSx3("C7_PRECO")[2]
+
+
+	//---------------------------------------
+	//-- Filtra Registro Pedido de Compras
+	//---------------------------------------
+	_cTmp := fQryPC()
+
+	dbSelectArea(_cTmp)
+	(_cTmp)->(dbGoTop())
+
+
+	dbSelectArea("SF4")
+	SF4->(dbSetOrder(1))
+
+	dbSelectArea("SB1")
+	SB1->(dbSetOrder(1))
+
+	While (_cTmp)->(!EOF())
+
+		_cFilial	:= (_cTmp)->C7_FILIAL
+		_cNumPC 	:= (_cTmp)->C7_NUM
+		_cCond		:= (_cTmp)->C7_COND
+		//_cNomFor	:= Iif(EMPTY((_cTmp)->(C7_XNOMFOR)),Posicione("SA2",1, xFilial("SA2") + (_cTmp)->(C7_FORNECE),"A2_NOME") ,(_cTmp)->(C7_XNOMFOR))
+		_cNomFor	:= Posicione("SA2",1, xFilial("SA2") + (_cTmp)->(C7_FORNECE),"A2_NOME")
+		_cCodFor	:= (_cTmp)->(C7_FORNECE)
+		_nValIPI	:= 0
+		_nTotDesc	:= SC7->C7_VLDESC
+		_nValTot  	:= 0
+		_nDespFret	:= 0
+		_nPrcComp   := 0 
+		_nValTIPI   := 0
+
+		While ( (_cTmp)->(!EOF()) .AND. (_cTmp)->C7_FILIAL == _cFilial .AND.  (_cTmp)->C7_NUM == _cNumPC )	
+
+			SB1->(dbSeek(FWxFilial("SB1")+(_cTmp)->C7_PRODUTO)) 	//-- Posiciona Produto
+			If !Empty((_cTmp)->C7_TES)
+				SF4->(dbSeek(FWxFilial("SF4")+(_cTmp)->C7_TES ))  	//-- Posiciona TES
+			Else
+				SF4->(dbSeek(FWxFilial("SF4")+SB1->B1_TE)) 		//-- Posiciona TES
+			Endif
+
+			//------------------------------------------------------------------
+			//-- Se nao houver TES no Pedido ou Produto serah considerado			
+			//-- pois o tes no PC nao eh obrigatorio ou comum.
+			//------------------------------------------------------------------
+			If SF4->F4_DUPLIC == "N" 
+				(_cTmp)->(dbSkip())
+				Loop
+			Endif    
+
+			//------------------------------------------------------
+			//-- Data Base para Calculo de Vencimento de títulos
+			//-- Data Entrega ou DataBase
+			//------------------------------------------------------
+			//_dData := Iif((_cTmp)->C7_DATPRF < dDataBase, dDataBase, DataValida((_cTmp)->C7_DATPRF))
+			_dData := (_cTmp)->C7_EMISSAO
+
+			//------------------------------------------------------
+			//-- Valor de Compre por Item
+			//------------------------------------------------------
+			_nTxMoed	:= RecMoeda(_dData,(_cTmp)->C7_MOEDA)
+			_nPrcComp 	:= xMoeda((_cTmp)->C7_PRECO,(_cTmp)->C7_MOEDA,_nMoeda,_dData,_nDecimais,Iif(_nTxMoed==0,(_cTmp)->C7_TXMOEDA,0))
+
+			//------------------------------------------------------
+			//-- Valor Frete/Seguros e Despesas
+			//------------------------------------------------------
+			_nDespFret := xMoeda((_cTmp)->C7_VALFRE+(_cTmp)->C7_SEGURO+(_cTmp)->C7_DESPESA,(_cTmp)->C7_MOEDA,_nMoeda,_dData,_nDecimais,Iif(_nTxMoed==0,(_cTmp)->C7_TXMOEDA,0))
+
+			//------------------------------------------------------
+			//-- Valor Total + Frete/Seguros/Despesas
+			//------------------------------------------------------
+			_nValTot	  := (((_cTmp)->C7_QUANT-(_cTmp)->C7_QUJE) * _nPrcComp)+_nDespFret
+
+			_nValIPI  := 0
+			_nValLIPI := _nValTot
+
+			//------------------------------------------------------
+			//-- Calcula Valor Desconto
+			//------------------------------------------------------
+			If _nTotDesc == 0 
+				_nTotDesc := CalcDesc(_nValTot,(_cTmp)->C7_DESC1,(_cTmp)->C7_DESC2,(_cTmp)->C7_DESC3)
+			Else
+				//------------------------------------------------------------------
+				//-- Proporcionaliza o desconto de pedidos com entrega parcial	 
+				//------------------------------------------------------------------
+				_nTotDesc := (((_cTmp)->C7_VLDESC * _nValTot) / (_cTmp)->C7_TOTAL)
+			EndIf
+
+			_nValTot := _nValTot - _nTotDesc
+
+			//------------------------------------------------------
+			//-- Calcula IPI	
+			//------------------------------------------------------
+			IF (_cTmp)->C7_IPI > 0
+				If (_cTmp)->C7_IPIBRUT != "L"
+					_nBaseIPI := _nValTot
+				Else
+					_nBaseIPI := _nValLIPI
+				Endif
+				IF SF4->F4_BASEIPI > 0
+					_nBaseIPI *= SF4->F4_BASEIPI / 100
+				Endif
+				_nValIPI := IIf(_nBaseIPI = 0, 0, _nBaseIPI * (_cTmp)->C7_IPI / 100)
+			Endif
+			_nValTot  += _nValIPI
+
+			//------------------------------------------------------
+			//-- Calcula Juros conforme cond. Pagamento		
+			//------------------------------------------------------
+			dbSelectArea("SE4")
+			SE4->(dbSeek(FWxFilial("SE4")+_cCond))
+			_nValTot  *= (SE4->E4_ACRSFIN/100)+1
+
+			//------------------------------------------------------
+			//-- Calcula vencimento e valores de títulos
+			//------------------------------------------------------
+			_aTitulo :=  Condicao(_nValTot,_cCond,_nValTIPI,_dData)
+
+			For _n:= 1 To Len(_aTitulo)	
+
+				//-- Por Dia
+				If MV_PAR02 == 1 
+					_nPosTit := aScan(_aCols,{|HH| HH[2] == DtoS(_aTitulo[_n,1]) })			
+					//-- Por Mês
+				ElseIf MV_PAR02 == 2 
+					_nPosTit := aScan(_aCols,{|HH| HH[2] == cValToChar(Year(_aTitulo[_n,1])) + StrZero(Month(_aTitulo[_n,1]),2) })		
+				EndIf
+
+				//-- Se não achar em uma posição no Acols
+				//-- lupa para o próximo título
+				If _nPosTit == 0 
+					Loop
+				EndIf
+
+				_cField:= "VALOR"+StrZero(_nPosTit,2)	
+
+				If (_cALiasTmp)->(DbSeek("2F "+ Space(150) +_cCodFor))
+
+					If RecLock(_cALiasTmp,.F.)
+						Replace (_cALiasTmp)->(&_cField) With ((_cALiasTmp)->(&_cField) + (_aTitulo[_n,2] * -1) )
+						(_cALiasTmp)->(MsUnLock())
+					EndIf
+
+				Else
+
+					If Reclock(_cALiasTmp,.T.)		
+						For _YY:=1 To (_cALiasTmp)->(FCount())
+							Do Case
+							Case _yy == 1
+								_xValue := "2F"
+							Case _yy == 2
+								_xValue := " "
+							Case _yy == 3
+								_xValue := _cCodFor
+							Case _yy == 4
+								_xValue := _cNomFor
+							Case _yy == 5
+								_xValue := Space(150)
+							Otherwise
+								_xValue := 0
+							EndCase
+							FieldPut(_yy, _xValue)
+							//FieldPut(_yy,IIF(_yy==1,"2F",IIF(_yy==2," ",IIF(_yy==3,_cCodFor,IIF(_yy==4,_cNomFor,0)))))		
+						Next _yy	
+						Replace (_cALiasTmp)->(&_cField) With ((_cALiasTmp)->(&_cField) + (_aTitulo[_n,2] * -1) )
+						(_cALiasTmp)->(MsUnLock())
+					EndIf
+				EndIf 
+
+			Next _n 
+
+			(_cTmp)->(dbSkip())
+		EndDo
+
+	EndDo
+
+	(_cTmp)->(dbCloseArea())
+Return Nil
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} fArqTmp
+Cria Arquivo de trabalho Temporário para o Relatorio.
+
+@author Allan da Silva Faria
+@since 22/07/2015
+@version 1.0
+/*/
+//------------------------------------------------------------------
+Static Function fArqTmp()
+
+	Local _aCampos	:= {}
+
+	If Select(_cAliasTmp) > 0
+		dbSelectArea(_cAliasTmp) 
+		(_cAliasTmp)->(dbCloseArea())
+	EndIf
+
+	_nx:=0
+
+	aAdd(_aCampos,{"ORDEM"  ,"C",2                     ,0})
+	aAdd(_aCampos,{"XTIPO"  ,"C",1                     ,0})
+	aAdd(_aCampos,{"CODIGO" ,"C",18                    ,0})
+	aAdd(_aCampos,{"DESCRIC","C",TamSX3("A6_NOME")[1]  ,0})
+	aAdd(_aCampos,{"PAI"    ,"C",150                   ,0})
+	aEval(_aCols,{|HH| _nx++,aAdd(_aCampos,{"VALOR"+StrZero(_nx,02),"N",14,2})})	
+	aAdd(_aCampos,{"T_GERAL","N",14,2})
+	
+	_cArqTrab := CriaTrab(_aCampos,.T.)
+
+	dbUseArea(.T.,,_cArqTrab,_cAliasTmp,.F.,.F. )
+
+	IndRegua(_cAliasTmp,_cArqTrab,"ORDEM+XTIPO+PAI+CODIGO+DESCRIC",,,"Selecionando Registros...",.F.) 
+
+	dbSelectArea(_cAliasTmp)
+	(_cAliasTmp)->(dbSetOrder(1))
+
+Return Nil
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} fQryPC
+Filtra Pedido de Compras
+
+@author Allan da Silva Faria
+@since 22/07/2015
+@version 1.0
+@return Caracter, Nome do Arquivo de trabalho temporário.
+/*/
+//------------------------------------------------------------------
+Static Function fQryPC()
+
+	Local _aStruC7:= SC7->(dbStruct())
+	Local _cTbPC  := GetNextAlias()
+	Local cQuery  := " "
+
+
+	If Select(_cTbPC) > 0
+		dbSelectArea(_cTbPC) 
+		(_cTbPC)->(dbCloseArea())
+	EndIf 
+
+	cQuery:=" SELECT * "
+	cQuery+=" FROM  "+ RetSqlName("SC7") +" SC7
+	cQuery+=" WHERE  SC7.D_E_L_E_T_ <> '*' "
+	//cQuery+=" AND SC7.C7_FILIAL  "+ GetRngFil(_aSelFil,"SC7") +" "
+	cQuery+=" AND SC7.C7_FILIAL  BETWEEN '"+ MV_PAR10 +"' AND '"+ MV_PAR11 +"'"
+	cQuery+=" AND SC7.C7_FLUXO <> 'N'   "
+	cQuery+=" AND SC7.C7_RESIDUO = ' '  "
+	cQuery+=" AND SC7.C7_CONAPRO = 'L' "
+	cQuery+=" AND ( SC7.C7_QUJE >=0 OR SC7.C7_QTDACLA>=0 ) "
+	cQuery+=" AND SC7.C7_QUJE < SC7.C7_QUANT "
+	//cQuery+=" ORDER BY SC7.C7_XNOMFOR,SC7.C7_FILIAL,SC7.C7_NUM,SC7.C7_ITEM "
+	cQuery+=" ORDER BY SC7.C7_FILIAL,SC7.C7_NUM,SC7.C7_ITEM "
+
+	DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(cQuery)), _cTbPC, .F., .F.)
+
+	aEval(_aStruC7,{|HH| TCSetField(_cTbPC,HH[1],HH[2],HH[3],HH[4])})
+
+Return(_cTbPC)
+
+
+/*/{Protheus.doc} fGetPai
+Funcao que busca todos os pais de uma natureza
+@author j2a.caiolima
+@since 24/07/2017
+/*/
+Static Function fGetPai(_cFilial, _cNatureza)
+	Local _cRet := ""
+	
+	dbSelectArea("SED")
+	dbSetOrder(1)
+	If SED->(dbSeek(xFilial("SED", _cFilial) + _cNatureza))
+		_cRet := SED->ED_PAI
+		_nRec := SED->(Recno())
+		While !Empty(SED->ED_PAI) .AND. SED->( dbSeek(xFilial("SED", _cFilial) + SED->ED_PAI) )
+			_cRet := SED->ED_PAI + "|" + _cRet
+			If _nRec <> SED->(Recno())
+				_nRec := SED->(Recno())
+			Else
+				Exit
+			EndIf
+		EndDo
+	EndIf
+	
+	_cRet := _cRet + "|" + _cNatureza
+	
+	_cRet := PadR(_cRet , 150)
+	
+Return(_cRet)
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} fProcNat
+Busco as naturezas
+
+@author Marcelo Evangelista
+@since 31/05/2016
+@version 1.0
+@return nil
+/*/
+//------------------------------------------------------------------
+Static Function fProcNat()
+
+	Local _aStruED:= SED->(dbStruct())
+	Local _cTbNat := GetNextAlias()
+	Local cQuery  := " "
+	Local cQryIn   := Iif(MV_PAR05==2,"1",Iif(MV_PAR05==3,"2","1#2"))
+
+
+	If Select(_cTbNat) > 0
+		dbSelectArea(_cTbNat) 
+		(_cTbNat)->(dbCloseArea())
+	EndIf 
+	
+	cQuery:="SELECT *  "+CRLF
+	cQuery+="  FROM "+ RetSqlName("SED") +" SED "+CRLF
+	cQuery+=" WHERE SED.D_E_L_E_T_ <> '*' "+CRLF
+	//cQuery+="   AND SED.ED_FILIAL"+ GetRngFil(_aSelFil,"SED") +" "  +CRLF
+	//cQuery+="   AND SED.ED_FILIAL BETWEEN '"+ MV_PAR10 +"' AND '"+ MV_PAR11 +"'"
+	cQuery += fGetFilial("SED", "ED_FILIAL", MV_PAR10 , MV_PAR11)
+	cQuery+="   AND SED.ED_MSBLQL  <> '1'  " +CRLF
+	//cQuery+="   AND SED.ED_XTIPO   IN ('F','I','O') " +CRLF
+	cQuery+="       AND SED.ED_XTIPO IN "+FormatIn(cQryIn,"#") +" "+CRLF
+	cQuery+="   AND SED.ED_COND    IN ('D','R') "+CRLF
+	cQuery += " AND ED_CODIGO BETWEEN '" + MV_PAR08 + "' AND '"+ MV_PAR09 +"' "
+	cQuery+="ORDER BY ED_FILIAL,ED_CODIGO,ED_DESCRIC,ED_PAI,ED_XTIPO,ED_TIPO,ED_COND "+CRLF
+
+	MemoWrite("C:\temp\LOGSQL\"+_cPerg+"fProcNat.txt" , cQuery) // escreve em arquivo de texto e se nao encontrar cria o arquivo
+
+	DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(cQuery)), _cTbNat, .F., .F.)
+
+	aEval(_aStruED,{|HH| TCSetField(_cTbNat,HH[1],HH[2],HH[3],HH[4])})
+	
+	While ( (_cTbNat)->(!Eof()) )
+		_cPai := fGetPai((_cTbNat)->ED_FILIAL, (_cTbNat)->ED_CODIGO)
+		//Alert((_cTbNat)->ED_CODIGO + CRLF + _cPai)
+		(_cALiasTmp)->(DbGoTop())
+		If !(_cALiasTmp)->(dbSeek("3F"+(_cTbNat)->(ED_XTIPO + _cPai + ED_CODIGO )))
+			If Reclock(_cALiasTmp,.T.)		
+				For _YY:=1 To (_cALiasTmp)->(FCount())
+					Do Case
+					Case _yy == 1
+						_xValue := "3F"
+					Case _yy == 2
+						_xValue := (_cTbNat)->(ED_XTIPO)
+					Case _yy == 3
+						_xValue := (_cTbNat)->(ED_CODIGO)
+					Case _yy == 4
+						_xValue := (_cTbNat)->(ED_DESCRIC)
+					Case _yy == 5
+						_xValue := _cPai
+					Otherwise
+						_xValue := 0
+					EndCase
+					FieldPut(_yy, _xValue)
+					//FieldPut(_yy,IIF(_yy==1,"3F",IIF(_yy==2,(_cTbNat)->(ED_XTIPO),IIF(_yy==3,(_cTbNat)->(ED_CODIGO),IIF(_yy==4,(_cTbNat)->(ED_DESCRIC),0)))))		
+				Next _yy
+				MsUnLock()
+			EndIf
+		EndIf
+
+		(_cTbNat)->(dbSkip())
+	EndDo
+
+Return
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} fProcSe1
+Busco os registros na se1
+
+@author Marcelo Evangelista
+@since 31/05/2016
+@version 1.0
+@return nil
+/*/
+//------------------------------------------------------------------
+Static Function fProcSe1()
+
+	Local _aStruE1 := SE1->(dbStruct())
+	Local _cTbSe1  := GetNextAlias()
+	Local cQryIn   := Iif(MV_PAR05==2,"1",Iif(MV_PAR05==3,"2","1#2"))
+	Local cQuery   := " "
+	Local nPos     := 0
+	Local cData    := ""
+	//	Local nSaldoTit:= 0
+	// variavel utilizada para somar apenas uma vez o valor do saldo do titulo 
+	// caso o mesmo tenha mais de uma baixa e ainda possua saldo
+	Local _aKeyTit := {}
+
+	If Select(_cTbSe1) > 0
+		dbSelectArea(_cTbSe1) 
+		(_cTbSe1)->(dbCloseArea())
+	EndIf
+
+	cQuery:="   SELECT SE1.E1_NATUREZ, SED.ED_XTIPO, SED.ED_PAI, SED.ED_FILIAL "+CRLF
+	cQuery+=" , E1_FILIAL||E1_PREFIXO||E1_NUM||E1_PARCELA||E1_TIPO||E1_CLIENTE||E1_LOJA||E1_NATUREZ AS KEY_TIT " + CRLF
+	cQuery+=" , COALESCE(E5_DATA, '') AS DT_REC " + CRLF
+	cQuery+=" , E1_VENCREA AS DT_VENC "+CRLF
+	cQuery+=" , COALESCE(E5_VALOR, 0) AS VL_REC " + CRLF
+	cQuery+=" , E1_SALDO AS VL_SALDO " + CRLF
+	cQuery+="      FROM "+ RetSqlName("SE1") +" SE1  "+CRLF
+	cQuery+="INNER JOIN "+ RetSqlName("SED") +" SED "+CRLF
+	cQuery+="        ON SE1.E1_NATUREZ= SED.ED_CODIGO    "+CRLF
+	//cQuery+="       AND SED.ED_FILIAL"+ GetRngFil(_aSelFil,"SED") +" "  +CRLF
+	//cQuery+="       AND SED.ED_FILIAL BETWEEN '"+ MV_PAR10 +"' AND '"+ MV_PAR11 +"'"
+	//cQuery += fGetFilial("SED", "ED_FILIAL", MV_PAR10 , MV_PAR11)
+	cQuery+= fGetSqlFil("SED", "SE1")
+	cQuery+="       AND SED.ED_XTIPO IN "+FormatIn(cQryIn,"#") +" "+CRLF
+	cQuery+="       AND SED.ED_COND = 'R'    "+CRLF
+	cQuery+="       AND SED.ED_MSBLQL <> '1'  "+CRLF
+	cQuery+="       AND SED.D_E_L_E_T_ <> '*' "+CRLF
+	cQuery+=" LEFT JOIN "+ RetSqlName("SE5") +" SE5  "+CRLF
+	cQuery+=" 	     ON  E5_FILIAL  = E1_FILIAL "+CRLF
+	cQuery+="	    AND  E5_PREFIXO = E1_PREFIXO  "+CRLF
+	cQuery+="	    AND  E5_NUMERO  = E1_NUM "+CRLF
+	cQuery+="	    AND  E5_PARCELA = E1_PARCELA "+CRLF
+	cQuery+="	    AND  E5_TIPO    = E1_TIPO "+CRLF
+	cQuery+="	    AND  E5_CLIFOR  = E1_CLIENTE "+CRLF
+	cQuery+="	    AND  E5_LOJA    = E1_LOJA "+CRLF
+	cQuery+="	    AND  SE5.D_E_L_E_T_ <> '*' "+CRLF
+	cQuery+="	    AND  SE5.E5_SITUACA NOT IN ('C','E','X') AND E5_TIPODOC NOT IN ('PA','RA','ES','TR','TE','CH','EC') "+CRLF
+	cQuery+="	    AND  SE5.E5_DATA BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"' "+CRLF
+	cQuery+="	    AND SE5.E5_MOTBX NOT IN ('DSD','CMP','FAT','LIQ') "+CRLF
+	// Busca movimentos apenas que não existem extorno do mesmo
+	cQuery += " AND NOT EXISTS (SELECT * FROM "+RetSQLName("SE5")+" E5X WHERE E5X.E5_FILIAL=SE5.E5_FILIAL AND E5X.E5_PREFIXO=SE5.E5_PREFIXO " + CRLF
+	cQuery += " AND E5X.E5_NUMERO=SE5.E5_NUMERO AND E5X.E5_PARCELA=SE5.E5_PARCELA AND E5X.E5_TIPO=SE5.E5_TIPO " + CRLF
+	cQuery += " AND E5X.E5_CLIFOR=SE5.E5_CLIFOR AND E5X.E5_LOJA=SE5.E5_LOJA AND E5X.E5_VALOR=SE5.E5_VALOR " + CRLF
+	cQuery += " AND E5X.E5_RECPAG='P' AND E5X.E5_SEQ=SE5.E5_SEQ AND E5X.E5_TIPODOC='ES' AND E5X.E5_DOCUMEN=SE5.E5_DOCUMEN) " + CRLF
+	
+	//cQuery+="     WHERE E1_FILIAL "+ GetRngFil(_aSelFil,"SE1") +" "+CRLF
+	cQuery+="     WHERE E1_FILIAL BETWEEN '"+ MV_PAR10 +"' AND '"+ MV_PAR11 +"'"
+	//cQuery+="	    AND (E5_NUMERO IS NULL  OR E5_DATA BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"' ) "+CRLF
+	cQuery+="       AND SE1.E1_FLUXO <> 'N'   "+CRLF
+	cQuery+="       AND SE1.D_E_L_E_T_ <> '*'  "+CRLF
+	cQuery+="       AND SE1.E1_MULTNAT <> '1'   " +CRLF
+	cQuery+="       AND ((SE1.E1_VENCREA BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"') "+CRLF
+	cQuery+="	    OR  (SE5.E5_DATA BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"')) "+CRLF
+	
+	cQuery+=" UNION ALL" +CRLF
+
+	cQuery+="      SELECT SEV.EV_NATUREZ AS NATUREZ, SED.ED_XTIPO   AS TIPO, SED.ED_PAI, SED.ED_FILIAL "+CRLF
+	cQuery+=" , E1_FILIAL||E1_PREFIXO||E1_NUM||E1_PARCELA||E1_TIPO||E1_CLIENTE||E1_LOJA||EV_NATUREZ AS KEY_TIT " + CRLF
+	//cQuery+="             SE1.E1_VENCREA AS VENCREA,  "+CRLF
+	//cQuery+="             (SEV.EV_VALOR*-1)   AS VALOR "+CRLF
+	cQuery+=" , COALESCE(E5_DATA, '') AS DT_PG "+CRLF
+	cQuery+=" , E1_VENCREA AS DT_VENC "+CRLF
+	// Tratativa abaixo para pegar apenas o percentual do valor baixado ou saldo
+	cQuery+=" , COALESCE(E5_VALOR * (EV_VALOR/E1_VALOR), 0) AS VL_REC " + CRLF
+	cQuery+=" , (E1_SALDO * (EV_VALOR/E1_VALOR)) AS VL_SALDO " + CRLF
+	cQuery+="        FROM "+ RetSqlName("SEV") +" SEV  "+CRLF
+	cQuery+="  INNER JOIN "+ RetSqlName("SE1") +" SE1  "+CRLF
+	cQuery+="          ON SE1.E1_FILIAL  = SEV.EV_FILIAL    "+CRLF
+	cQuery+="         AND SE1.E1_PREFIXO = SEV.EV_PREFIXO   "+CRLF
+	cQuery+="         AND SE1.E1_NUM     = SEV.EV_NUM       "+CRLF
+	cQuery+="         AND SE1.E1_TIPO    = SEV.EV_TIPO      "+CRLF
+	cQuery+="         AND SE1.E1_CLIENTE = SEV.EV_CLIFOR    "+CRLF
+	cQuery+="         AND SE1.E1_LOJA    = SEV.EV_LOJA      "+CRLF
+	cQuery+="         AND SE1.D_E_L_E_T_ <> '*'  "+CRLF
+	cQuery+="   LEFT JOIN  "+ RetSqlName("SE5") +" SE5  "+CRLF
+	cQuery+="          ON  E5_FILIAL  = E1_FILIAL "+CRLF
+	cQuery+="         AND  E5_PREFIXO = E1_PREFIXO  "+CRLF
+	cQuery+="         AND  E5_NUMERO  = E1_NUM "+CRLF
+	cQuery+="         AND  E5_PARCELA = E1_PARCELA "+CRLF
+	cQuery+="         AND  E5_TIPO    = E1_TIPO "+CRLF
+	cQuery+="         AND  E5_CLIFOR  = E1_CLIENTE "+CRLF
+	cQuery+="         AND  E5_LOJA    = E1_LOJA "+CRLF
+	cQuery+="       AND  SE5.D_E_L_E_T_<>'*' "+CRLF
+	cQuery+="	    AND  SE5.E5_SITUACA NOT IN ('C','E','X') AND E5_TIPODOC NOT IN ('PA','RA','ES','TR','TE','CH','EC') "+CRLF
+	cQuery+="	    AND  SE5.E5_DATA BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"' "+CRLF
+	cQuery+="	    AND SE5.E5_MOTBX NOT IN ('DSD','CMP','FAT','LIQ') "+CRLF
+	// Busca movimentos apenas que não existem extorno do mesmo
+	cQuery += " AND NOT EXISTS (SELECT * FROM "+RetSQLName("SE5")+" E5X WHERE E5X.E5_FILIAL=SE5.E5_FILIAL AND E5X.E5_PREFIXO=SE5.E5_PREFIXO " + CRLF
+	cQuery += " AND E5X.E5_NUMERO=SE5.E5_NUMERO AND E5X.E5_PARCELA=SE5.E5_PARCELA AND E5X.E5_TIPO=SE5.E5_TIPO " + CRLF
+	cQuery += " AND E5X.E5_CLIFOR=SE5.E5_CLIFOR AND E5X.E5_LOJA=SE5.E5_LOJA AND E5X.E5_VALOR=SE5.E5_VALOR " + CRLF
+	cQuery += " AND E5X.E5_RECPAG='P' AND E5X.E5_SEQ=SE5.E5_SEQ AND E5X.E5_TIPODOC='ES' AND E5X.E5_DOCUMEN=SE5.E5_DOCUMEN) " + CRLF
+	
+	cQuery+="  INNER JOIN  "+ RetSqlName("SED") +" SED "+CRLF
+	cQuery+="          ON  SED.ED_CODIGO = SEV.EV_NATUREZ  "+CRLF
+	cQuery+="       AND SED.ED_XTIPO IN "+ FormatIn(cQryIn,"#") +" "+CRLF
+	cQuery+= fGetSqlFil("SED", "SEV")
+	cQuery+="         AND SED.D_E_L_E_T_ <> '*' "+CRLF
+	//cQuery+="       WHERE SEV.EV_FILIAL "+ GetRngFil(_aSelFil,"SEV") +"  " +CRLF
+	cQuery+="       WHERE SEV.EV_FILIAL BETWEEN '"+ MV_PAR10 +"' AND '"+ MV_PAR11 +"'"
+	//cQuery+="         AND (E5_NUMERO IS NULL  OR E5_DATA BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"' ) "+CRLF
+	cQuery+="         AND SEV.D_E_L_E_T_ <> '*'  "+CRLF
+	cQuery+="         AND SE1.E1_MULTNAT = '1'  "+CRLF
+	cQuery+="         AND SEV.EV_RECPAG = 'R'  "+CRLF
+	cQuery+="         AND SEV.EV_IDENT = '1'  "+CRLF
+	cQuery+="         AND SE1.E1_FLUXO<>'N' "+CRLF
+	cQuery+="         AND ((SE1.E1_VENCREA BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"' )  "+CRLF
+	cQuery+="	    OR  (SE5.E5_DATA BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"')) "+CRLF
+	
+	cQuery += " UNION ALL " + CRLF
+	
+	cQuery += " SELECT ZF4_NATURE, ED_XTIPO, ED_PAI, ED_FILIAL " + CRLF
+	cQuery += " , 'PROVISAO' || ZF4_FILIAL || ZF4_CODIGO || ZF4_COND " + CRLF
+	cQuery += " , '', ZF4_DATA, 0, ZF4_VALOR " + CRLF
+	cQuery += " FROM "+RetSQLName("ZF4")+" ZF4 " + CRLF
+	cQuery += " INNER JOIN "+RetSQLName("SED")+" SED ON SED.D_E_L_E_T_=' ' AND ED_CODIGO=ZF4_NATURE " + CRLF
+	cQuery += " AND SED.ED_XTIPO IN "+ FormatIn(cQryIn,"#") +" "+CRLF
+	cQuery += " WHERE ZF4.D_E_L_E_T_=' ' AND ZF4_COND='R' AND ED_COND='R' " + CRLF
+	cQuery += " AND ZF4.ZF4_DATA   BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"' " + CRLF
+	cQuery += " AND ZF4.ZF4_FILIAL BETWEEN '"+MV_PAR10+"' AND '"+MV_PAR11+"' " + CRLF
+	
+	MemoWrite("C:\temp\LOGSQL\"+_cPerg+"fProcSe1.txt" , cQuery) // escreve em arquivo de texto e se nao encontrar cria o arquivo
+
+	DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(cQuery)), _cTbSe1, .F., .F.)
+
+	aEval(_aStruE1,{|HH| TCSetField(_cTbSe1,HH[1],HH[2],HH[3],HH[4])})
+	TCSetField(_cTbSe1, "DT_REC", "D", 8, 0 )
+	TCSetField(_cTbSe1, "DT_VENC", "D", 8, 0 )
+	
+	While ( (_cTbSe1)->(!Eof()) )
+		//_cPai := (_cTbSe1)->(Iif(Empty(ED_PAI), PadR(E1_NATUREZ,18), PadR(ED_PAI,17)+"Z"))
+		_cPai := fGetPai((_cTbSe1)->ED_FILIAL, (_cTbSe1)->E1_NATUREZ)
+		
+		(_cALiasTmp)->(DbGoTop())
+		If (_cALiasTmp)->(dbSeek("3F"+(_cTbSe1)->(ED_XTIPO + _cPai + E1_NATUREZ )))
+			
+			If !Empty((_cTbSe1)->DT_REC)
+				cData:= Iif(MV_PAR02 == 1,Dtos((_cTbSe1)->(DT_REC)), SubStr(Dtos((_cTbSe1)->(DT_REC)),1,6))  
+				nPos := aScan(_ACols,{|x| x[2] == cData })
+				If nPos > 0 .AND. Reclock(_cALiasTmp,.F.)		
+					(_cALiasTmp)->&("VALOR"+StrZero(nPos,02)) += (_cTbSe1)->VL_REC
+					(_cALiasTmp)->(MsUnLock())
+				EndIf
+			EndIf
+			
+			// o que o titulo tiver de saldo sempre vai aparecer na data de vencimento ou mes de vencimento
+			If (_cTbSe1)->VL_SALDO <> 0 .AND. aScan(_aKeyTit , (_cTbSe1)->KEY_TIT) = 0
+				Aadd(_aKeyTit , (_cTbSe1)->KEY_TIT)
+				cData:= Iif(MV_PAR02 == 1,Dtos((_cTbSe1)->(DT_VENC)), SubStr(Dtos((_cTbSe1)->(DT_VENC)),1,6))  
+				nPos := aScan(_ACols,{|x| x[2] == cData })
+				If nPos > 0 .AND. Reclock(_cALiasTmp,.F.)		
+					(_cALiasTmp)->&("VALOR"+StrZero(nPos,02)) += (_cTbSe1)->VL_SALDO
+					(_cALiasTmp)->(MsUnLock())
+				EndIf
+			EndIf
+		EndIf 
+
+		(_cTbSe1)->(dbSkip())
+	EndDo
+
+Return
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} fProcSe2
+Busco os registros na se2
+
+@author Marcelo Evangelista
+@since 31/05/2016
+@version 1.0
+@return nil
+/*/
+//------------------------------------------------------------------
+Static Function fProcSe2()
+
+
+	Local _cTbSe2  := GetNextAlias()
+	Local cQuery   := " "
+	Local cQryIn   := Iif(MV_PAR05==2,"1",Iif(MV_PAR05==3,"2","1#2"))
+	Local nPos     := 0
+	Local nSaldoTit:= 0
+	Local cData    := ""
+	// variavel utilizada para somar apenas uma vez o valor do saldo do titulo 
+	// caso o mesmo tenha mais de uma baixa e ainda possua saldo
+	Local _aKeyTit := {}
+
+	If Select(_cTbSe2) > 0
+		dbSelectArea(_cTbSe2) 
+		(_cTbSe2)->(dbCloseArea())
+	EndIf 
+
+	cQuery+="  SELECT SE2.E2_NATUREZ AS NATUREZ, SED.ED_XTIPO AS TIPO, SED.ED_PAI, SED.ED_FILIAL   " +CRLF
+	cQuery+=" , E2_FILIAL||E2_PREFIXO||E2_NUM||E2_PARCELA||E2_TIPO||E2_FORNECE||E2_LOJA||E2_NATUREZ AS KEY_TIT " + CRLF
+	//cQuery+="  SE2.E2_VENCREA AS VENCREA, (SE2.E2_VALOR*-1) AS VALOR   " +CRLF
+	cQuery+=" , COALESCE(E5_DATA, '') AS DT_PG " + CRLF
+	cQuery+=" , E2_VENCREA AS DT_VENC "+CRLF
+	cQuery+=" , (COALESCE(E5_VALOR, 0)*-1) AS VL_PG " + CRLF
+	cQuery+=" , (E2_SALDO * -1) AS VL_SALDO " + CRLF
+	cQuery+="      FROM "+ RetSqlName("SE2") +" SE2   " +CRLF
+	cQuery+="INNER JOIN "+ RetSqlName("SED") +" SED   " +CRLF
+	cQuery+="        ON SE2.E2_NATUREZ = SED.ED_CODIGO  " +CRLF
+	cQuery+= fGetSqlFil("SED", "SE2")
+	cQuery+="       AND SED.ED_XTIPO IN "+ FormatIn(cQryIn,"#") +" "+CRLF
+	cQuery+="       AND SED.ED_COND = 'D'    "+CRLF
+	cQuery+="       AND SED.ED_MSBLQL <> '1'  "+CRLF
+	cQuery+="       AND SED.D_E_L_E_T_ <> '*' "+CRLF
+	cQuery+=" LEFT JOIN "+ RetSqlName("SE5") +" SE5  " +CRLF
+	cQuery+="        ON  E5_FILIAL  = E2_FILIAL " +CRLF
+	cQuery+="       AND  E5_PREFIXO = E2_PREFIXO  " +CRLF
+	cQuery+="       AND  E5_NUMERO  = E2_NUM " +CRLF
+	cQuery+="       AND  E5_PARCELA = E2_PARCELA " +CRLF
+	cQuery+="       AND  E5_TIPO    = E2_TIPO " +CRLF
+	cQuery+="       AND  E5_CLIFOR  = E2_FORNECE " +CRLF
+	cQuery+="       AND  E5_LOJA    = E2_LOJA " +CRLF
+	cQuery+="       AND  SE5.D_E_L_E_T_ <> '*' " +CRLF
+	cQuery+="	    AND  SE5.E5_SITUACA NOT IN ('C','E','X') AND E5_TIPODOC NOT IN ('PA','RA','ES','TR','TE','CH','EC') "+CRLF
+	cQuery+="	    AND  SE5.E5_DATA BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"' "+CRLF
+	cQuery+="	    AND SE5.E5_MOTBX NOT IN ('DSD','CMP','FAT','LIQ') "+CRLF
+	// Busca movimentos apenas que não existem extorno do mesmo
+	cQuery += " AND NOT EXISTS (SELECT * FROM "+RetSQLName("SE5")+" E5X WHERE E5X.E5_FILIAL=SE5.E5_FILIAL AND E5X.E5_PREFIXO=SE5.E5_PREFIXO " + CRLF
+	cQuery += " AND E5X.E5_NUMERO=SE5.E5_NUMERO AND E5X.E5_PARCELA=SE5.E5_PARCELA AND E5X.E5_TIPO=SE5.E5_TIPO " + CRLF
+	cQuery += " AND E5X.E5_CLIFOR=SE5.E5_CLIFOR AND E5X.E5_LOJA=SE5.E5_LOJA AND E5X.E5_VALOR=SE5.E5_VALOR " + CRLF
+	cQuery += " AND E5X.E5_RECPAG='R' AND E5X.E5_SEQ=SE5.E5_SEQ AND E5X.E5_TIPODOC='ES' AND E5X.E5_DOCUMEN=SE5.E5_DOCUMEN) " + CRLF
+	
+	//cQuery+="     WHERE SE2.E2_FILIAL "+ GetRngFil(_aSelFil,"SE2") +"  " +CRLF
+	cQuery+="     WHERE SE2.E2_FILIAL BETWEEN '"+ MV_PAR10 +"' AND '"+ MV_PAR11 +"'"
+	//cQuery+="       AND (E5_NUMERO IS NULL  OR E5_DATA BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"' ) " +CRLF
+	cQuery+="       AND SE2.D_E_L_E_T_ <> '*'   " +CRLF
+	cQuery+="       AND SE2.E2_FLUXO <> 'N'   " +CRLF
+	cQuery+="       AND SE2.E2_MULTNAT <> '1'   " +CRLF
+	cQuery+="       AND ((SE2.E2_VENCREA BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"' ) " +CRLF
+	cQuery+="	    OR  (SE5.E5_DATA BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"')) "+CRLF
+
+	cQuery+=" UNION ALL" +CRLF
+
+	cQuery+="      SELECT SEV.EV_NATUREZ AS NATUREZ, SED.ED_XTIPO   AS TIPO, SED.ED_PAI, SED.ED_FILIAL "+CRLF
+	cQuery+=" , E2_FILIAL||E2_PREFIXO||E2_NUM||E2_PARCELA||E2_TIPO||E2_FORNECE||E2_LOJA||EV_NATUREZ AS KEY_TIT " + CRLF
+	//cQuery+="             SE2.E2_VENCREA AS VENCREA,  "+CRLF
+	//cQuery+="             (SEV.EV_VALOR*-1)   AS VALOR "+CRLF
+	cQuery+=" , COALESCE(E5_DATA, '') AS DT_PG "+CRLF
+	cQuery+=" , E2_VENCREA AS DT_VENC "+CRLF
+	// Tratativa abaixo para pegar apenas o percentual do valor baixado ou saldo
+	cQuery+=" , (COALESCE(E5_VALOR * (EV_VALOR/E2_VALOR), 0)*-1) AS VL_PG " + CRLF
+	cQuery+=" , (E2_SALDO * (EV_VALOR/E2_VALOR)) * -1 AS VL_SALDO " + CRLF
+	cQuery+="        FROM "+ RetSqlName("SEV") +" SEV  "+CRLF
+	cQuery+="  INNER JOIN "+ RetSqlName("SE2") +" SE2  "+CRLF
+	cQuery+="          ON SE2.E2_FILIAL  = SEV.EV_FILIAL    "+CRLF
+	cQuery+="         AND SE2.E2_PREFIXO = SEV.EV_PREFIXO   "+CRLF
+	cQuery+="         AND SE2.E2_NUM     = SEV.EV_NUM       "+CRLF
+	cQuery+="         AND SE2.E2_TIPO    = SEV.EV_TIPO      "+CRLF
+	cQuery+="         AND SE2.E2_FORNECE = SEV.EV_CLIFOR    "+CRLF
+	cQuery+="         AND SE2.E2_LOJA    = SEV.EV_LOJA      "+CRLF
+	cQuery+="         AND SE2.D_E_L_E_T_ <> '*'  "+CRLF
+	cQuery+="   LEFT JOIN  "+ RetSqlName("SE5") +" SE5  "+CRLF
+	cQuery+="          ON  E5_FILIAL  = E2_FILIAL "+CRLF
+	cQuery+="         AND  E5_PREFIXO = E2_PREFIXO  "+CRLF
+	cQuery+="         AND  E5_NUMERO  = E2_NUM "+CRLF
+	cQuery+="         AND  E5_PARCELA = E2_PARCELA "+CRLF
+	cQuery+="         AND  E5_TIPO    = E2_TIPO "+CRLF
+	cQuery+="         AND  E5_CLIFOR  = E2_FORNECE "+CRLF
+	cQuery+="         AND  E5_LOJA    = E2_LOJA "+CRLF
+	cQuery+="       AND  SE5.D_E_L_E_T_<>'*' "+CRLF
+	cQuery+="	    AND  SE5.E5_SITUACA NOT IN ('C','E','X') AND E5_TIPODOC NOT IN ('PA','RA','ES','TR','TE','CH','EC') "+CRLF
+	cQuery+="	    AND  SE5.E5_DATA BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"' "+CRLF
+	cQuery+="	    AND SE5.E5_MOTBX NOT IN ('DSD','CMP','FAT','LIQ') "+CRLF
+	// Busca movimentos apenas que não existem extorno do mesmo
+	cQuery += " AND NOT EXISTS (SELECT * FROM "+RetSQLName("SE5")+" E5X WHERE E5X.E5_FILIAL=SE5.E5_FILIAL AND E5X.E5_PREFIXO=SE5.E5_PREFIXO " + CRLF
+	cQuery += " AND E5X.E5_NUMERO=SE5.E5_NUMERO AND E5X.E5_PARCELA=SE5.E5_PARCELA AND E5X.E5_TIPO=SE5.E5_TIPO " + CRLF
+	cQuery += " AND E5X.E5_CLIFOR=SE5.E5_CLIFOR AND E5X.E5_LOJA=SE5.E5_LOJA AND E5X.E5_VALOR=SE5.E5_VALOR " + CRLF
+	cQuery += " AND E5X.E5_RECPAG='R' AND E5X.E5_SEQ=SE5.E5_SEQ AND E5X.E5_TIPODOC='ES' AND E5X.E5_DOCUMEN=SE5.E5_DOCUMEN) " + CRLF
+	
+	cQuery+="  INNER JOIN  "+ RetSqlName("SED") +" SED "+CRLF
+	cQuery+="          ON  SED.ED_CODIGO = SEV.EV_NATUREZ  "+CRLF
+	cQuery+="       AND SED.ED_XTIPO IN "+ FormatIn(cQryIn,"#") +" "+CRLF
+	cQuery+= fGetSqlFil("SED", "SEV")
+	cQuery+="         AND SED.D_E_L_E_T_ <> '*' "+CRLF
+	//cQuery+="       WHERE SEV.EV_FILIAL "+ GetRngFil(_aSelFil,"SEV") +"  " +CRLF
+	cQuery+="       WHERE SEV.EV_FILIAL BETWEEN '"+ MV_PAR10 +"' AND '"+ MV_PAR11 +"'"
+	//cQuery+="         AND (E5_NUMERO IS NULL  OR E5_DATA BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"' ) "+CRLF
+	cQuery+="         AND SEV.D_E_L_E_T_ <> '*'  "+CRLF
+	cQuery+="         AND SE2.E2_MULTNAT = '1'  "+CRLF
+	cQuery+="         AND SEV.EV_RECPAG = 'P'  "+CRLF
+	cQuery+="         AND SEV.EV_IDENT = '1'  "+CRLF
+	cQuery+="         AND SE2.E2_FLUXO<>'N' "+CRLF
+	cQuery+="         AND ((SE2.E2_VENCREA BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"' )  "+CRLF
+	cQuery+="	    OR  (SE5.E5_DATA BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"')) "+CRLF
+	
+	cQuery += " UNION ALL " + CRLF
+	
+	cQuery += " SELECT ZF4_NATURE, ED_XTIPO, ED_PAI, ED_FILIAL " + CRLF
+	cQuery += " , 'PROVISAO' || ZF4_FILIAL || ZF4_CODIGO || ZF4_COND " + CRLF
+	cQuery += " , '', ZF4_DATA, 0, ZF4_VALOR * (-1) " + CRLF
+	cQuery += " FROM "+RetSQLName("ZF4")+" ZF4 " + CRLF
+	cQuery += " INNER JOIN "+RetSQLName("SED")+" SED ON SED.D_E_L_E_T_=' ' AND ED_CODIGO=ZF4_NATURE " + CRLF
+	cQuery += " AND SED.ED_XTIPO IN "+ FormatIn(cQryIn,"#") +" "+CRLF
+	cQuery += " WHERE ZF4.D_E_L_E_T_=' ' AND ZF4_COND='D' AND ED_COND='D' " + CRLF
+	cQuery += " AND ZF4.ZF4_DATA   BETWEEN '"+Dtos(MV_PAR03)+"' AND '"+Dtos(MV_PAR04)+"' " + CRLF
+	cQuery += " AND ZF4.ZF4_FILIAL BETWEEN '"+MV_PAR10+"' AND '"+MV_PAR11+"' " + CRLF
+	
+	MemoWrite("C:\temp\LOGSQL\"+_cPerg+"fProcSe2.txt" , cQuery) // escreve em arquivo de texto e se nao encontrar cria o arquivo
+
+	DbUseArea(.T., "TOPCONN", TCGenQry(,,cQuery), _cTbSe2, .F., .F.)
+
+	While ( (_cTbSe2)->(!Eof()) )
+		//_cPai := (_cTbSe2)->(Iif(Empty(ED_PAI), PadR(NATUREZ,18), PadR(ED_PAI,17)+"Z"))
+		_cPai := fGetPai((_cTbSe2)->ED_FILIAL, (_cTbSe2)->NATUREZ)
+		
+		(_cALiasTmp)->(DbGoTop())
+		If (_cALiasTmp)->(DbSeek("3F"+(_cTbSe2)->(TIPO + _cPai + NATUREZ )))
+			If !Empty((_cTbSe2)->DT_PG)
+				cData:= Iif(MV_PAR02 == 1,(_cTbSe2)->(DT_PG), SubStr((_cTbSe2)->(DT_PG),1,6))  
+				nPos := aScan(_aCols,{|x| x[2] == cData })
+				If nPos > 0 .AND. Reclock(_cALiasTmp,.F.)
+					(_cALiasTmp)->(&("VALOR"+StrZero(nPos,02))) += (_cTbSe2)->(VL_PG)
+					MsUnLock()
+				EndIf
+			EndIf
+			
+			// o que o titulo tiver de saldo sempre vai aparecer na data de vencimento ou mes de vencimento
+			If (_cTbSe2)->VL_SALDO <> 0 .AND. aScan(_aKeyTit , (_cTbSe2)->KEY_TIT) = 0
+				Aadd(_aKeyTit , (_cTbSe2)->KEY_TIT)
+				cData:= Iif(MV_PAR02 == 1,(_cTbSe2)->(DT_VENC), SubStr((_cTbSe2)->(DT_VENC),1,6))  
+				nPos := aScan(_aCols,{|x| x[2] == cData })
+				If nPos > 0 .AND. Reclock(_cALiasTmp,.F.)
+					(_cALiasTmp)->(&("VALOR"+StrZero(nPos,02))) += (_cTbSe2)->(VL_SALDO)
+					MsUnLock()
+				EndIf
+			EndIf
+		EndIf 
+
+		(_cTbSe2)->(dbSkip())
+	EndDo
+
+Return
+
+/*/
+@author: caiocrol
+@data: 18/08/2014
+@descricao: Impressao do cabecalho de cada bordero
+/*/
+Static Function fImpCab(oReport)
+Local cStartPath	:= GetSrvProfString("Startpath","")
+Local cLogo := cStartPath + "LGRL" + SM0->M0_CODIGO + IIf( lFWCodFil, FWGETCODFILIAL, SM0->M0_CODFIL ) + ".BMP" 	// Empresa+Filial
+
+oReport:PrintText("")
+//oReport:ThinLine()
+If !File( cLogo )
+	//cLogo := cStartPath + "LGRL" + SM0->M0_CODIGO + ".BMP" // Empresa
+	cLogo := cStartPath + "LGRL" + SM0->M0_CODIGO + ".BMP" 	// Empresa
+	If !File( cLogo )
+		cLogo := cStartPath + "LGMID" + SM0->M0_CODIGO + ".PNG" // Empresa
+		oReport:SayBitmap (oReport:Row(),050,cLogo,213,200)
+	Else
+		oReport:SayBitmap (oReport:Row(),050,cLogo,110,36)
+	EndIf
+	//oReport:SayBitmap( oReport:Row(),005,cLogo )
+Else
+	oReport:SayBitmap (oReport:Row(),050,cLogo,110,36)
+endif
+
+oReport:PrtRight( "Folha: " + AllTrim(cValToChar(oReport:oPage:nPage)))
+oReport:SkipLine()
+oReport:PrtCenter(oReport:cTitle)
+oReport:PrtRight( DToC(dDataBase) )
+oReport:SkipLine()
+oReport:PrtCenter(Iif(MV_PAR01 == 1, "Sintético","Analítico"))
+oReport:PrtRight( "Empresa: " + AllTrim( FwEmpName(cEmpAnt) ) + " / Filial: " + AllTrim( FWFilialName() ) )
+oReport:SkipLine()
+oReport:PrtRight( Time() )
+oReport:SkipLine()
+oReport:SkipLine()
+
+oReport:ThinLine()
+Return
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} AjustaSX1
+Ajusta as Perguntas
+
+@author Caio Renan
+@since 15/07/2015
+@version 1.0
+@param cPerg, character, Nome do Cadastro de Pergunta
+/*/
+//------------------------------------------------------------------
+Static Function AjustaSX1(cPerg)
+
+	Local aHelp01 := {}
+	Local aHelp03 := {}
+	Local aHelp04 := {}
+	Local aHelp05 := {}
+	Local aHelp06 := {}
+	Local _nLenSED := TamSX3("ED_CODIGO")[1]
+	Local _nLenFilial := Len(FWxFilial("CT1"))
+
+	/*u_SFPUTSX1(cPerg, "01", "Considera fluxo?"       ,"","","mv_ch1","N",01         ,00,00,"C","",""    ,"","","mv_par01","1-Sintético","","","","2-Analítico","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "02", "Tipo?"                  ,"","","mv_ch2","N",01         ,00,00,"C","",""    ,"","","mv_par02","1-Dia","","","","2-Mês","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "03", "Natureza?"              ,"","","mv_ch3","C",20         ,00,00,"R","","SED" ,"","","mv_par03","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "04", "Data de?"               ,"","","mv_ch4","D",08         ,00,00,"G","",""    ,"","","mv_par04","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "05", "Data ate?"              ,"","","mv_ch5","D",08         ,00,00,"G","",""    ,"","","mv_par05","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "06", "Mostra visão?"          ,"","","mv_ch6","N",01         ,00,00,"C","",""    ,"","","mv_par06","1-Geral","","","","2-Operacional","","","3-Investimento","","","4-Financiamento","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "07", "Seleciona Filial?"      ,"","","mv_ch7","N",01         ,00,00,"C","",""    ,"","","mv_par07","1-Sim","","","","2-Não","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "08", "Compor Saldo Anterior?" ,"","","mv_ch8","N",01         ,00,00,"C","",""    ,"","","mv_par08","1-Sim","","","","2-Não","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "09", "Cons. Pedido de Compra?","","","mv_ch9","N",01         ,00,00,"C","",""    ,"","","mv_par09","1-Sim","","","","2-Não","","","","","","","","","","","",,"","","")
+	*/
+	
+	u_SFPUTSX1(cPerg, "01", "Considera fluxo?"       ,"","","mv_ch1","N",01         ,00,00,"C","",""    ,"","","mv_par01","1-Sintético","","","","2-Analítico","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "02", "Tipo?"                  ,"","","mv_ch2","N",01         ,00,00,"C","",""    ,"","","mv_par02","1-Dia","","","","2-Mês","","","","","","","","","","","",,"","","")
+	//u_SFPUTSX1(cPerg, "03", "Natureza?"              ,"","","mv_ch3","C",20         ,00,00,"R","","SED" ,"","","mv_par03","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "03", "Data de?"               ,"","","mv_ch3","D",08         ,00,00,"G","",""    ,"","","MV_PAR03","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "04", "Data ate?"              ,"","","mv_ch4","D",08         ,00,00,"G","",""    ,"","","MV_PAR04","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "05", "Mostra visão?"          ,"","","mv_ch5","N",01         ,00,00,"C","",""    ,"","","MV_PAR05","1-Geral","","","","2-Receitas correntes","","","3-Despesas correntes","","","","","","","","",,"","","")
+	//u_SFPUTSX1(cPerg, "07", "Seleciona Filial?"      ,"","","mv_ch7","N",01         ,00,00,"C","",""    ,"","","mv_par07","1-Sim","","","","2-Não","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "06", "Compor Saldo Anterior?" ,"","","mv_ch6","N",01         ,00,00,"C","",""    ,"","","MV_PAR06","1-Sim","","","","2-Não","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "07", "Cons. Pedido de Compra?","","","mv_ch7","N",01         ,00,00,"C","",""    ,"","","MV_PAR07","1-Sim","","","","2-Não","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "08", "Natureza de?"           ,"","","mv_ch8","C",_nLenSED   ,00,00,"G","","SED" ,"","","MV_PAR08","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "09", "Natureza ate?"          ,"","","mv_ch9","C",_nLenSED   ,00,00,"G","","SED" ,"","","MV_PAR09","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "10", "Filial de?"             ,"","","mv_cha","C",_nLenFilial,00,00,"G","","XM0" ,"","","MV_PAR10","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "11", "Filial ate?"            ,"","","mv_chb","C",_nLenFilial,00,00,"G","","XM0" ,"","","MV_PAR11","","","","","","","","","","","","","","","","",,"","","")
+	u_SFPUTSX1(cPerg, "12", "Imprime zerados?"       ,"","","mv_chc","N",01         ,00,00,"C","",""    ,"","","MV_PAR12","1-Sim","","","","2-Não","","","","","","","","","","","",,"","","")
+	
+Return Nil
+
+Static Function teste(oReport)
+
+	Local aCabec    := {}
+	Local cNmEmp    := ""
+	Local cNmFilial := ""
+	Local cChar     := CHR(160)
+	
+	If SM0->(Eof())
+		SM0->(MsSeek( cEmpAnt + cFilAnt, .T. ))
+	EndIf
+	
+	cNmEmp    := AllTrim(SM0->M0_NOME)
+	cNmFilial := AllTrim(SM0->M0_FILIAL)
+	 
+	//-> Linha 1
+	aAdd(aCabec,"__LOGOEMP__")// Esquerda
+	
+	//-> Linha 2
+	aAdd(aCabec,cChar) // Esquerda
+	aCabec[2] += Space(9)// Meio
+	aCabec[2] += Space(9) + RptFolha + Transform(oReport:Page(),'999999') // Direita 
+
+	//-> Linha 3
+	aAdd(aCabec,"SIGA /"   + oReport:ReportName() + "/v." + cVersao)// Esquerda
+	aCabec[3] += Space(09) + oReport:cRealTitle // Meio  
+	aCabec[3] += Space(09) + "Dt.Ref:" + DToC(dDataBase) // Direita
+
+	//-> Linha 4
+	aAdd(aCabec,RptHora + oReport:cTime)              // Esquerda
+	aCabec[4] += Space(09)                            // Meio  
+	aCabec[4] += Space(09) + RptEmiss + oReport:cDate // Direita
+	
+	//-> Linha 5
+	aAdd(aCabec,"Empresa:")// Esquerda
+	aCabec[5] += Space(09) + "Periodo de 05/08/1980 Ate 12/09/2017" // Meio  
+	
+	aAdd(aCabec,"Filial:" + cNmFilial)
+
+//"Periodo de 05/08/1980 Ate 12/09/2017"
+
+Return aCabec

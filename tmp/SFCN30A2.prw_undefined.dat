@@ -1,0 +1,118 @@
+#Include 'Protheus.ch'
+#Include 'FwMVCDef.ch'
+
+/*/{Protheus.doc} SFCN30A2
+@description Gatilho para preenchimento dos dados do cliente nas grid da rotina FATA300.
+@type  Function
+@author Alan Teles de Oliveira
+@since 29/11/2018
+@version 12.1.17
+@return cRet, characters, código do cliente
+@history 23/01/2019, Alan Teles de Oliveira, adicionado ao gatilho o preenchimento dos itens da planilha de dados. 
+/*/
+User Function SFCN30A2()
+
+    Local cRet      := ''
+    Local cAlTmp    := ''
+    Local nUltReg   := 0
+    Local nI        := 0
+    Local aArea     := GetArea()    
+    Local oModel    := FWModelActive()
+    Local oView		:= FwViewActive()
+    Local oStruCNB  := oModel:GetModel('CNBDETAIL')
+
+    //Itens da Planilha
+    oStruCNB:SetNoUpdateLine(.F.)
+    oStruCNB:SetNoInsertLine(.F.)
+
+    If oStruCNB:Length(.T.) > 1 .or. oStruCNB:IsUpdated(1)
+                    
+        For nI := 1 to oStruCNB:Length()
+
+            oStruCNB:SetNoDeleteLine(.F.)
+            oStruCNB:GoLine(oStruCNB:Length())
+            oStruCNB:DeleteLine()
+            //oStruCNB:SetNoDeleteLine(.T.)
+
+        Next
+        
+        nI := 0
+
+        oStruCNB:AddLine()
+
+    EndIf        
+
+    cAlTmp := fIntPlan()
+
+    (cAlTmp)->(dbGoTop())
+    (cAlTmp)->(dbEval({|x| nUltReg++}))
+    (cAlTmp)->(dbGoTop())
+
+    While .not. (cAlTmp)->(Eof())
+
+        nI++
+
+        oStruCNB:SetValue('CNB_PRODUT', (cAlTmp)->ADZ_PRODUT)
+        oStruCNB:SetValue('CNB_QUANT',  (cAlTmp)->ADZ_QTDVEN)
+        oStruCNB:SetValue('CNB_VLUNIT', (cAlTmp)->ADZ_PRCVEN)
+        oStruCNB:SetValue('CNB_DESC',   (cAlTmp)->ADZ_DESCON)
+        oStruCNB:SetValue('CNB_VLDESC', (cAlTmp)->ADZ_VALDES)
+
+        If nI < nUltReg
+            oStruCNB:AddLine()
+        EndIf
+
+        (cAlTmp)->(dbSkip())
+
+    EndDo
+
+    /*oStruCNB:SetNoUpdateLine(.T.)
+    oStruCNB:SetNoInsertLine(.T.)*/
+
+    oView:lModify := .T.
+    oView:Refresh()
+
+    RestArea(aArea)
+
+Return cRet
+
+
+/*/{Protheus.doc} fIntPlan
+@description Consulta os itens da proposta aprovada para a oportunidade selecionda.
+@type  Static Function
+@author Alan Teles de Oliveira
+@since 23/01/2019
+@version 12.1.17
+@return cRet, characters, o alias criado com o resultado da consulta.
+/*/
+Static Function fIntPlan()
+
+    Local cRet := GetNextAlias()
+
+    If Select(cRet) > 0
+        (cRet)->(dbCloseArea())
+    EndIf
+
+    BeginSQL Alias cRet
+
+        SELECT 	
+            ADZ.ADZ_PRODUT,
+            ADZ.ADZ_QTDVEN,
+            ADZ.ADZ_PRCVEN,
+            ADZ.ADZ_DESCON,
+            ADZ.ADZ_VALDES
+        FROM %Table:ADY% ADY
+        INNER JOIN %Table:ADZ% ADZ ON
+            ADZ.ADZ_PROPOS = ADY.ADY_PROPOS AND
+            ADZ.ADZ_FILIAL = ADY.ADY_FILIAL AND
+            ADZ.%NotDel%
+        WHERE
+            ADY.ADY_FILIAL = %Exp:xFilial('ADY')% AND
+            ADY.ADY_OPORTU = %Exp:M->CN9_XOPORT% AND
+            ADY.ADY_REVISA = %Exp:M->CN9_XREVOP% AND
+            ADY.ADY_STATUS = 'E' AND
+            ADY.%NotDel%
+
+    EndSQL
+
+Return cRet

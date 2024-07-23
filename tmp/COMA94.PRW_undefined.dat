@@ -1,0 +1,197 @@
+#include "TOTVS.ch"
+#include "topconn.ch"
+#include "tbiconn.ch"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³COMA94    ºAutor  ³ Bruna Paola        º Data ³ 29/06/11    º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³Envio de Pedido de Compras para o fornecedor via Schedule   º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ TOTVS			                                          º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function COMA94(_aParam)
+
+If GetRemoteType() == -1 //Se Job
+	IF _aParam <> nil
+		Conout("Inicio Workflow PC Empresa: "+_aParam[1])
+		WfPrepEnv(_aParam[1],_aParam[2])
+	ENDIF
+EndIf
+
+U_COMA94WF(_aParam) 
+
+Return()  
+  
+User Function COMA94WF(_aParam)
+
+Local _cWfDir    := Alltrim(GetNewPar("MV_WFDIRWF","\workflow") )
+Local _nSubTot   := 0
+Local _nFrete    := 0
+Local _nTotal    := 0
+Local oHTML
+Local cQuery     := ""
+Local _cNumPC    := ""
+Local cCodFilial := Substr(cFilant,1,4)+"0001"
+Local cUrlFo     := SuperGetMv("SI_URLFOR", .F., "Consulte o departamento de Compras", cCodFilial) // Endereco URL do Portal do Fornecedor por Empresa (Casa)
+Local cEmail     := ""
+Local cxDataHr   := ""
+Local cDescProd  := ""
+Local lOracle	 := "ORACLE"$Upper(TCGetDB())
+Local aAreaSM0   := {}
+Local lC7FILENT  := .F.
+
+If GetRemoteType() == -1 // Job  
+	        
+	cQuery := " select "
+	cQuery += "    C7_FILIAL ,C7_WFE_FOR ,C7_NUM    ,C7_USER  ,C7_FORNECE ,C7_LOJA   ,C7_COND ,C7_EMISSAO ,C7_PRODUTO "
+	cQuery += "   ,A2_NOME   ,A2_END     ,A2_BAIRRO ,A2_MUN   ,A2_EST     ,A2_EMAIL  ,E4_CODIGO "
+	cQuery += "   ,C7_ITEM   ,C7_UM      ,C7_QUANT  ,C7_PRECO ,C7_TOTAL   ,C7_DATPRF ,C7_OBS, C7_VALFRE "
+	If lOracle
+		cQuery += "   ,nvl(C1_XCODCOM,' ') as C1_XCODCOM ,nvl(Y1_USER,' ') as Y1_USER "
+		cQuery += "   ,nvl(AI3_LOGIN,' ')  as AI3_LOGIN  ,nvl(AI3_PSW,' ') as AI3_PSW "
+	Else
+		cQuery += "   ,isnull(C1_XCODCOM,' ') as C1_XCODCOM ,isnull(Y1_USER,' ') as Y1_USER "
+		cQuery += "   ,isnull(AI3_LOGIN,' ')  as AI3_LOGIN  ,isnull(AI3_PSW,' ') as AI3_PSW "
+	EndIf
+	cQuery += " from " + RetSqlName("SC7") + " SC7 "
+	cQuery += " inner join " + RetSqlName("SA2") + " SA2 on SA2.D_E_L_E_T_ = ' ' and A2_FILIAL  = '" + xFilial("SA2") + "' and A2_COD    = C7_FORNECE and A2_LOJA = C7_LOJA "
+	cQuery += "  left join " + RetSqlName("SE4") + " SE4 on SE4.D_E_L_E_T_ = ' ' and E4_FILIAL  = '" + xFilial("SE4") + "' and E4_CODIGO = C7_COND "
+	cQuery += "  left join " + RetSqlName("SC1") + " SC1 on SC1.D_E_L_E_T_ = ' ' and C1_FILIAL  = C7_FILIAL  and C1_NUM    = C7_NUMSC and C1_ITEM   = C7_ITEMSC "
+	cQuery += "  left join " + RetSqlName("SY1") + " SY1 on SY1.D_E_L_E_T_ = ' ' and Y1_FILIAL  = '" + xFilial("SY1") + "' and Y1_COD    = C1_XCODCOM "
+	cQuery += "  left join " + RetSqlName("AI5") + " AI5 on AI5.D_E_L_E_T_ = ' ' and AI5_FILIAL = '" + xFilial("AI5") + "' and AI5_CODFOR = C7_FORNECE and AI5_LOJFOR = C7_LOJA " 
+	cQuery += "  left join " + RetSqlName("AI3") + " AI3 on AI3.D_E_L_E_T_ = ' ' and AI3_FILIAL = '" + xFilial("AI3") + "' and AI3_CODUSU = AI5_CODUSU "
+	cQuery += " where SC7.D_E_L_E_T_ = ' ' "
+	cQuery += "   and C7_FILIAL      = '" + xFilial("SC7") + "' "
+	cQuery += "   and C7_WFE_FOR = 'F' "
+	cQuery += "   and C7_CONAPRO = 'L' "
+	cQuery += " order by C7_NUM"
+
+	ChangeQuery(cQuery)
+	dbUseArea( .T., "TOPCONN", TCGENQRY(,,cQuery),"COMA94", .F., .T.)   
+	
+	dbSelectArea("COMA94")
+	dbGoTop()    
+	
+	Do While COMA94->(!EOF())  
+	
+		_nSubTot := 0
+		_nFrete  := 0
+		_nTotal  := 0
+		
+			//Abre o HTML
+			oProcess := TWFProcess():New( "PEDIDO", "Pedido de Compras" )
+			oProcess:NewTask( "000001", _cWfDir+"\Pedido.htm" )
+			oProcess:cSubject := "Pedido de Compra Nr. " +COMA94->C7_NUM
+			oProcess:UserSiga := COMA94->C7_USER
+			oProcess:NewVersion(.T.)
+			oHTML   := oProcess:oHTML
+			
+			oHtml:ValByName( "NUMPC"      , COMA94->C7_NUM )
+			oHtml:ValByName( "c7_emissao" , (COMA94->C7_EMISSAO) )
+			oHtml:ValByName( "a2_nome"    , COMA94->A2_NOME )
+			oHtml:ValByName( "a2_end"     , COMA94->A2_END	)
+			oHtml:ValByName( "a2_bairro"  , COMA94->A2_BAIRRO )
+			oHtml:ValByName( "a2_mun"     , COMA94->A2_MUN )
+			oHtml:ValByName( "a2_est"     , COMA94->A2_EST )
+			oHtml:ValByName( "c7_user"    , Iif(Empty(COMA94->Y1_USER),UsrFullName(COMA94->C7_USER),UsrFullName(COMA94->Y1_USER)) )
+			oHtml:ValByName( "e4_descri"  , Posicione("SE4",1,xFilial("SE4")+COMA94->C7_COND,"SE4->E4_DESCRI"))
+			
+			If !Empty(SC7->C7_FILENT)
+				aAreaSM0   := SM0->(GetArea())
+				DbSelectArea("SM0")
+				SM0->(DbGoTop())
+				While SM0->(!EOF())
+					If SM0->(RTrim(M0_CODIGO)+RTrim(M0_CODFIL)) == RTrim(cEmpAnt)+RTrim(SC7->C7_FILENT)
+						lC7FILENT := .T.
+						Exit
+					EndIf
+					SM0->(DbSkip())
+				End
+			EndIf
+			
+			oHtml:ValByName( "M0_NOMECOM" , SM0->M0_NOMECOM )
+			oHtml:ValByName( "M0_FILIAL"  , SM0->M0_FILIAL )
+			oHtml:ValByName( "M0_NOME"    , SM0->M0_NOME )
+			oHtml:ValByName( "M0_CODFIL"  , SM0->M0_CODFIL )
+			oHtml:ValByName( "M0_ENDENT"  , SM0->M0_ENDENT )
+			oHtml:ValByName( "M0_CIDENT"  , SM0->M0_CIDENT )
+			oHtml:ValByName( "M0_CEPENT"  , Transform( SM0->M0_CEPENT, "@R 99999-999" ) )
+			oHtml:ValByName( "M0_ESTENT"  , SM0->M0_ESTENT )
+			oHtml:ValByName( "M0_CGC"     , Iif(Len(Alltrim(SM0->M0_CGC))>11,Transform(SM0->M0_CGC,"@R 99.999.999/9999-99"),Transform(SM0->M0_CGC,"@E 999.999.999-99")) )
+			
+			If lC7FILENT
+				RestArea(aAreaSM0)
+			EndIf
+			
+			_cNumPC = COMA94->C7_NUM
+			
+			cEmail := Alltrim(COMA94->A2_EMAIL)
+			
+			While COMA94->(!Eof()) .and. COMA94->C7_FILIAL == XFilial("SC7") .and. COMA94->C7_NUM == _cNumPC
+				
+				SB1->(dbSetOrder(1))
+				SB1->(dbSeek(XFilial("SB1")+COMA94->C7_PRODUTO))
+				
+				cDescProd  := Posicione("SB5",1,xFilial("SB5")+SB1->B1_COD,"B5_CEME")
+				DbSelectArea("SB1")
+			
+				AAdd( (oHtml:ValByName( "prod.cItem"    )),COMA94->C7_ITEM )
+				AAdd( (oHtml:ValByName( "prod.cCod"     )),COMA94->C7_PRODUTO )
+				AAdd( (oHtml:ValByName( "prod.cDesc"    )),Iif(Empty(cDescProd),SB1->B1_DESC,cDescProd) )
+				AAdd( (oHtml:ValByName( "prod.cUM"      )),COMA94->C7_UM )
+				AAdd( (oHtml:ValByName( "prod.nQuant"   )),TRANSFORM( COMA94->C7_QUANT,'@E 999,999,999.99' ) )
+				AAdd( (oHtml:ValByName( "prod.nVrUnit"  )),TRANSFORM( COMA94->C7_PRECO,'@E 999,999,999.99' ) )
+				AAdd( (oHtml:ValByName( "prod.nVrTotal" )),TRANSFORM( COMA94->C7_TOTAL,'@E 999,999,999.99' ) )
+				AAdd( (oHtml:ValByName( "prod.dEntrega" )),(COMA94->C7_DATPRF) )
+				AAdd( (oHtml:ValByName( "prod.cObs" )),COMA94->C7_OBS )
+				
+				SC7->(dbGoTop())
+				SC7->(dbSetOrder(1))
+				SC7->(dbSeek(XFilial("SC7")+_cNumPC+COMA94->C7_ITEM))
+				WFSalvaID('SC7','SC7->C7_WFE_FOR', .T.) 
+				WFSalvaID('SC7','SC7->C7_XSTATUS', '')//Status = Emitido
+				WFSalvaID('SC7','SC7->C7_DTRECPT', '')
+				WFSalvaID('SC7','SC7->C7_DTCONPT', '')  
+				
+				cxDataHr := DTOC(dDatabase)+" - "+Time()
+				
+				WFSalvaID('SC7','SC7->C7_DTEMIPT', cxDataHr)//Grava data e hora da emissão
+				
+				_nSubTot += COMA94->C7_TOTAL
+				_nFrete  += COMA94->C7_VALFRE
+				_nTotal  += COMA94->(C7_TOTAL+C7_VALFRE)
+				
+				COMA94->(dbSkip())  
+			Enddo
+			
+			oHtml:ValByName( "vlrtotal" , TRANSFORM( _nSubTot,'@E 999,999,999.99' ) )
+			oHtml:ValByName( "vlrfrete" , TRANSFORM( _nFrete ,'@E 999,999,999.99' ) )
+			oHtml:ValByName( "totgeral" , TRANSFORM( _nTotal ,'@E 999,999,999.99' ) )   
+		   
+			//Informações do endereço de URL e login e senha
+			oHtml:ValByName( "URL"   , cUrlFo)
+			oHtml:ValByName( "Login" , COMA94->AI3_LOGIN)
+			oHtml:ValByName( "Senha" , COMA94->AI3_PSW) 
+				  
+		If !Empty(cEmail)	                             
+			//Envio de e-mail
+			oProcess:cTo := Alltrim(cEmail)
+			oProcess:Start() 
+		EndIf
+		
+	EndDo 
+	
+	COMA94->(dbCloseArea())
+
+Else  // Se não for Job  
+	U_CWKFA005(_aParam[1],.T.)
+EndIf
+
+Return

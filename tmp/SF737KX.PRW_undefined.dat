@@ -1,0 +1,684 @@
+#INCLUDE 'FWMVCDEF.CH'
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+
+/*/{Protheus.doc} SF737KX
+Consulta histórico de relacionamento com cliente por empresa
+@type funcion
+@author j2a.luizjunior
+@since 26/05/2017
+/*/
+User Function SF737KX() 
+Local   aCoors   := FWGetDialogSize(oMainWnd)
+Local   cRotina  := "Historico de Clientes"
+Local   oTFont   := TFont():New('Courier new',,16,.T.)
+Local   cCliente := "Cliente: " + SA1->A1_NOME 
+Local   cCNPJ    := "CNPJ: "    + Transform(SA1->A1_CGC,"@R 99.999.999/9999-99")
+Local   cFilADY  := ""
+Local   cFilCN9  := ""
+Local   aFADY    := { "ADY_FILIAL","ADY_OPORTU","ADY_PROPOS","ADY_XASSIN","B1_DESC"  ,"ADZ_TOTAL" ,"ADY_STATUS"             }
+Private oBAD1    := Nil
+Private oBAD5    := Nil
+Private oBADY    := Nil
+Private oBCN9    := Nil
+Private oBAOF := Nil
+Private cAlProp  
+Private cAlOpor 
+Private cAlVis 
+Private cAlCon
+Private oTblAD1 := FWTemporaryTable():New()
+Private oTblADY := FWTemporaryTable():New()
+Private oTblAOF := FWTemporaryTable():New()
+Private oTblCN9 := FWTemporaryTable():New()
+	
+	// AD1 - OPORTUNIDADE
+	aColsAD1 := fFldsAD1()
+	
+	// ADY - PROPOSTA COMERCIAL		
+	aColsADY := fFldsADY()
+
+	//AOF - Atividades
+	aColsAOF := fFldsAOF()
+
+	// CN9 - CONTRATO		
+	aColsCN9 := fFldsCN9()
+
+	oWindow          := MsDialog():New(aCoors[1], aCoors[2], aCoors[3], aCoors[4], cRotina,,, .F.,,,,,, .T.,,, .T.)
+	oWindow:bInit    := {||EnchoiceBar(oWindow,{|| oWindow:End()},{|| oWindow:End()},.F.,{})}
+
+	oFWLayer	     := FWLayer():New()		
+	oFWLayer:init(oWindow)
+
+	oFWLayer:addCollumn("ColEsq", 50, .T.)
+	oFWLayer:addCollumn("ColDir", 50, .T.)
+	
+	oColDir		     := oFWLayer:getColPanel("ColDir")
+	oColEsq		     := oFWLayer:getColPanel("ColEsq")
+		
+	oLayEsq		     := FWLayer():New()
+	oLayEsq:init(oColEsq, .T.)
+	
+	oLayEsq:addLine('LinEsq1', 10) // 1ª Linha do box esquerdo com os dados do cliente
+	oLayEsq:addLine('LinEsq2', 40) // 2ª Linha do box esquerdo do os dados de oportunidade
+	oLayEsq:addLine('LinEsq3', 40) // 3ª Linha do box esquerdo do dados de proposta
+		
+	oLayDir          := FWLayer():New()
+	oLayDir:init(oColDir, .T.)	
+		
+	oLayDir:addLine('LinDir1', 45) // 1ª Linha do box direito com dados de atividades
+	oLayDir:addLine('LinDir2', 45) // 2ª Linha do box direito com dados de contratos
+		
+	oLayEsq:addCollumn('ColEsq1', 100, , 'LinEsq1') 
+	oLayEsq:addCollumn('ColEsq2', 100, , 'LinEsq2')
+	oLayEsq:addCollumn('ColEsq3', 100, , 'LinEsq3')
+	
+	oLayDir:addCollumn('ColDe1', 100, , 'LinDir1')
+	oLayDir:addCollumn('ColDe2', 100, , 'LinDir2')
+	
+	oLayEsq:addWindow('ColEsq1', "WinEsq01", "Dados Clientes", 100, .F., .T., {||  }, 'LinEsq1')
+	oLayEsq:addWindow('ColEsq2', "WinEsq02", "Oportunidades", 100, .F., .T., {||  }, 'LinEsq2')	  
+	oLayEsq:addWindow('ColEsq3', "WinEsq03", "Visitas", 100, .F., .T., {||  }, 'LinEsq3')
+
+	oPnl1            := oLayEsq:GetColPanel("ColEsq1", "LinEsq1")
+	oPan1            := TPanel():New(020, 006, "", oPnl1, oTFont, .T., , CLR_YELLOW, CLR_WHITE, 450, 20)	
+
+	oGrp             := TGroup():New(001, 004, 019, 450, "", oPan1, CLR_BLACK, CLR_WHITE, .T., .F.)
+	oCliente         := TSay():New(005, 010, {|| AllTrim(cCliente) + Space(01) + AllTrim(cCNPJ) }, oGrp, , oTFont, .F., .F., .F., .T., CLR_BLUE, CLR_WHITE, 400, 10)
+
+	oLayDir:addWindow('ColDe1', "WinDe1", "Propostas", 100, .F., .T., {||  }, 'LinDir1')
+	oLayDir:addWindow('ColDe2', "WinDe2", "Contratos", 100, .F., .T., {||  }, 'LinDir2')
+		
+	oLinEsq1		 := oLayEsq:getLinePanel('LinEsq1')
+	oLinEsq2		 := oLayEsq:getLinePanel('LinEsq2')
+		
+	oLinDir1		 := oLayDir:getLinePanel('LinDir1')          
+	oLinDir2		 := oLayDir:getLinePanel('LinDir2')
+		
+	oWndDe1	         := oLayDir:getWinPanel('ColDe1','WinDe1','LinDir1')                                                                        
+	oWndDe2	         := oLayDir:getWinPanel('ColDe2','WinDe2','LinDir2')
+		        	
+	oWndOp   	     := oLayEsq:getWinPanel('ColEsq1',"WinEsq01",'LinEsq1') 
+
+	oPAD1            := oLayEsq:GetColPanel("ColEsq2", "LinEsq2")
+	oPan1            := TPanel():New(021, 006, "", oPAD1, oTFont, .T., , CLR_YELLOW, CLR_WHITE, 315, 24)
+
+	cAlOpor := oTblAD1:GetAlias()
+	MntDados( , ,"AD1")
+		
+	//-> Oportunidades
+	oBAD1            := FWMBrowse():New()
+	oBAD1:SetOwner(oPAD1)
+	oBAD1:SetAlias(cAlOpor) 
+	oBAD1:SetColumns(aColsAD1)
+	oBAD1:SetTemporary(.T.)
+	oBAD1:SetProfileID("1")
+	oBAD1:DisableDetails()
+	oBAD1:SetFixedBrowse(.T.)
+	oBAD1:SetWalkThru(.F.)
+	oBAD1:SetAmbiente(.F.)
+	oBAD1:SetChange({|| AtuDados()})
+	oBAD1:SetDescription("Oportunidades")
+	oBAD1:SetMenuDef("")
+	oBAD1:ForceQuitButton()	
+	oBAD1:Activate()
+	
+	oPAOF            := oLayDir:GetColPanel("ColDe1","LinDir1")
+	oPan2            := TPanel():New(01,01,"",oPAOF,oTFont,.T.,,CLR_YELLOW,CLR_WHITE,aCoors[4],140)
+	
+	cAlVis := oTblAOF:GetAlias()
+	MntDados( , , "AOF")
+
+	oBAOF := FWMBrowse():New()
+	oBAOF:SetOwner(oPAOF)
+	oBAOF:SetAlias(cAlVis)
+	oBAOF:SetColumns(aColsAOF)
+	oBAOF:SetProfileID("2")
+	oBAOF:SetTemporary(.T.)
+	oBAOF:SetUseFilter(.T.) //Using Filter
+	oBAOF:SetDescription("Atividades")
+	oBAOF:SetMenuDef("")
+	oBAOF:DisableDetails()
+	oBAOF:SetFixedBrowse(.T.)
+	oBAOF:ForceQuitButton()
+	oBAOF:SetWalkThru(.F.)
+	oBAOF:SetAmbiente(.F.)
+	oBAOF:Activate()
+	
+	oPADY            := oLayEsq:GetColPanel("ColEsq3","LinEsq3")
+	oPan3            := TPanel():New(01,01,"",oPADY,oTFont,.T.,,CLR_YELLOW,CLR_WHITE,aCoors[4],140)
+	cFilADY          := " ADY_OPORTU = '" + (cAlOpor)->AD1_NROPOR + "' .And. ADY_FILIAL = '" + (cAlOpor)->AD1_FILIAL + "' "
+	
+	cAlProp := oTblADY:GetAlias()
+	MntDados(, , "ADY")
+	
+	//-> Proposta
+	oBADY := FWMBrowse():New()
+	oBADY:SetOwner(oPADY)
+	oBADY:SetAlias(cAlProp) 
+	oBADY:SetColumns(aColsADY)
+	oBADY:SetProfileID("4")
+	oBADY:SetTemporary(.T.)
+	oBADY:SetUseFilter(.T.) //Using Filter
+	oBADY:SetFilterDefault(cFilADY)
+	oBADY:SetOnlyFields(aFADY)
+	oBADY:SetDescription("Propostas")
+	oBADY:SetMenuDef("")
+	oBADY:DisableDetails()
+	oBADY:SetFixedBrowse(.T.)
+	oBADY:ForceQuitButton()	
+	oBADY:SetWalkThru(.F.)
+	oBADY:SetAmbiente(.F.)
+	oBADY:Activate()
+	
+	oPCN9           := oLayDir:GetColPanel("ColDe2","LinDir2")
+	oPan3           := TPanel():New(01,01,"",oPCN9,oTFont,.T.,,CLR_YELLOW,CLR_WHITE,aCoors[4],140)
+	cFilCN9         := " CN9_XOPORT = '" + (cAlProp)->ADY_OPORTU + "' .And. CN9_FILIAL = '" + (cAlProp)->ADY_FILIAL + "' "
+	
+	cAlCon          := oTblCN9:GetAlias()
+	MntDados(, , "CN9")
+	
+	//-> Contrato
+	oBCN9 := FWMBrowse():New()
+	oBCN9:SetOwner(oPCN9)	
+	oBCN9:SetAlias(cAlCon) 
+	oBCN9:SetColumns(aColsCN9)
+	oBCN9:SetTemporary(.T.)	
+	oBCN9:SetFilterDefault(cFilCN9)
+	oBCN9:SetProfileID("5")
+	oBCN9:SetDescription("Contratos")
+	oBCN9:SetMenuDef("")
+	oBCN9:DisableDetails()
+	oBCN9:SetFixedBrowse(.T.)
+	oBCN9:ForceQuitButton()	
+	oBCN9:SetWalkThru(.F.)
+	oBCN9:SetAmbiente(.F.)
+	oBCN9:Activate()	
+	
+	oWindow:lEscClose := .T. 
+	oWindow:lCentered := .T.			
+	oWindow:Activate()
+	
+	//Deleta FWMBrowse
+	oBCN9:Destroy()
+	oBADY:Destroy()
+	oBAOF:Destroy()
+	oBAD1:Destroy()
+	
+	//Delete Temporary Table
+    oTblAD1:Delete()
+	oTblADY:Delete()
+	oTblAOF:Delete()
+	oTblCN9:Delete()
+
+Return Nil
+
+/*/{Protheus.doc} AtuDados
+Régua de processamento durante atualização de dados
+@type function
+@author j2a.luizjunior
+@since 30/05/2017
+/*/
+Static Function AtuDados()
+
+	FWMsgRun(,{|| ExecAt() }, "Atualizando dados...", "Aguarde...")
+
+Return
+
+/*/{Protheus.doc} ExecAt
+Executa atualização de filtros na navegação dos registros
+@type function
+@author j2a.luizjunior
+@since 31/05/2017
+/*/
+Static Function ExecAt
+
+	Local cFilADY := ""
+	Local cFilCN9 := "" 
+	
+	If Type("oBAD1") != "U" .And. Type("oBAOF") != "U" .And. Type("oBADY") != "U" .And. Type("oBCN9") != "U"
+
+		oBAD1:lForceRefresh := .T.
+				
+		cFilADY := " ADY_OPORTU = '" + (cAlOpor)->AD1_NROPOR + "' .And. ADY_FILIAL = '" + (cAlOpor)->AD1_FILIAL + "' "
+		
+		oBADY:SetFilterDefault(cFilADY)
+		oBADY:lForceRefresh := .T.
+		
+		cFilCN9 := " CN9_XOPORT = '" + (cAlProp)->ADY_OPORTU + "' .And. CN9_FILIAL = '" + (cAlProp)->ADY_FILIAL + "' "
+	
+		oBCN9:SetFilterDefault(cFilCN9)
+		oBCN9:lForceRefresh := .T.
+	
+	EndIf
+	
+Return Nil
+
+/*/{Protheus.doc} RetDescFil
+Retorna a descrição da filial
+@type function
+@author j2a.luizjunior
+@since 12/06/2017
+@version 1.0
+@param pFilial, character, código da filial a ser pesquisada
+@return character, código e nome da filial enviada
+/*/
+Static Function RetDescFil(pFilial)
+
+Return pFilial + " - " + FWFilName(cEmpAnt, pFilial)
+
+/*/{Protheus.doc} MntDados
+Função para a montagem das informações que serão exibidas
+@type function
+@author j2a.luizjunior
+@since 01/06/2017
+/*/
+Static Function MntDados(pAlCST, pCamAl, pAlBD)
+Local cAlBD    := pAlBD 
+	
+	Do Case
+		Case cAlBD = "AD1"
+			fInstAD1()
+		Case cAlBD = "ADY"
+			fInstADY()
+		Case cAlBD = "CN9"
+			fInstCN9()
+		CASE cAlBD=="AOF" 
+		    fInstAOF()
+	EndCase	
+	
+Return
+
+/*/{Protheus.doc} fInstAD1
+Insere dados na tabela temporária da AD1
+@type  Function
+@author Franklin de Brito de Oliveira
+@since 14/04/2022
+/*/
+Static Function fInstAD1()
+Local cQuery := ""
+Local cFields := ""
+Local cFltrEmp := SubStr(FWCodFil(), 1, 4)	//Filtra os registros por empresa
+
+	cFields := "AD1_FILIAL, AD1_NROPOR, AD1_REVISA, AD1_VEND, AD1_DTINI, AD1_DTFIM, AD1_STATUS, "
+	cFields += "AD1_CODCLI, AD1_LOJCLI, AD1_DESCRI, AD1_DATA, AD1_HORA"
+	
+	//Criação do insert into
+	cQuery := "INSERT INTO " + oTblAD1:GetRealName()
+	cQuery += " (" + cFields + ") "
+	cQuery += "SELECT "
+	cQuery += " 	AD1.AD1_FILIAL, AD1.AD1_NROPOR, AD1.AD1_REVISA, SA3.A3_NOME, AD1.AD1_DTINI, AD1.AD1_DTFIM, "
+	cQuery += " 	AD1.AD1_STATUS, AD1.AD1_CODCLI, AD1.AD1_LOJCLI, AD1_DESCRI, AD1_DATA, AD1_HORA "
+	cQuery += "FROM "
+	cQuery += " 	" + RetSqlName("AD1") + " AD1 "
+	cQuery += "LEFT JOIN "
+	cQuery += " 	" + RetSqlName("SA3") + " SA3 "
+	cQuery += "ON "
+	cQuery += "	SUBSTR(AD1.AD1_FILIAL, 1, 4) = SUBSTR(SA3.A3_FILIAL, 1, 4) "
+	cQuery += "	AND AD1.AD1_VEND = SA3.A3_COD "
+	cQuery += "	AND SA3.D_E_L_E_T_ = ' ' "
+	cQuery += "WHERE "
+	cQuery += "	SUBSTR(AD1.AD1_FILIAL, 1, 4) = '" + cFltrEmp + "' "
+	cQuery += "	AND AD1.AD1_CODCLI  = '" + SA1->A1_COD + "' "
+	cQuery += "	AND AD1.AD1_LOJCLI  = '" + SA1->A1_LOJA + "' "
+	cQuery += "	AND AD1.D_E_L_E_T_ = ' ' "
+	cQuery += "ORDER BY "
+	cQuery += "	AD1.AD1_FILIAL, "
+	cQuery += "	AD1.AD1_NROPOR "
+
+	//Envia o insert into para o banco de dados, portanto toda a cópia é feita pelo banco de dados, com grande performance!
+	if TCSqlExec(cQuery) < 0
+		ConOut("O comando SQL gerou erro:", TCSqlError())
+	endif
+
+Return Nil
+
+/*/{Protheus.doc} fInstADY
+Insere dados na tabela temporária da ADY
+@type Function
+@author Franklin de Brito de Oliveira
+@since 14/04/2022
+/*/
+Static Function fInstADY()
+Local cQuery := ""
+Local cFields := ""
+Local cFltrEmp := SubStr(FWCodFil(), 1, 4)	//Filtra os registros por empresa
+
+	cFields := "ADY_FILIAL, ADY_OPORTU, ADY_PROPOS, ADZ_REVISA, U5_CONTAT, B1_DESC, ADZ_TOTAL, "
+	cFields += "ADZ_ITEM, ADZ_PRODUT, ADY_STATUS"
+ 
+	//Criação do insert into
+	cQuery := "INSERT INTO " + oTblADY:GetRealName()
+	cQuery += " (" + cFields + ") "
+	cQuery += "SELECT "
+	cQuery += "	ADY_FILIAL, ADY_OPORTU, ADY_PROPOS, ADZ_REVISA, U5_CONTAT, B1_DESC, ADZ_TOTAL, "
+	cQuery += "	ADZ_ITEM, ADZ_PRODUT, "
+	cQuery += "	CASE ADY_STATUS "
+	cQuery += "		WHEN 'A' THEN 'Aberto' "
+	cQuery += "		WHEN 'B' THEN 'Fechada' "
+	cQuery += "		WHEN 'C' THEN 'Cancelada' "
+	cQuery += "		WHEN 'D' THEN 'Proposta não aprovada' "
+	cQuery += "		WHEN 'E' THEN 'Aprovada' "
+	cQuery += "		WHEN 'F' THEN 'Proposta Bloqueada' "
+	cQuery += "		WHEN 'Y' THEN 'Cancelada ápos aprovação' "
+	cQuery += "		WHEN 'Z' THEN 'Distratada' "
+	cQuery += "		ELSE 'Desconhecido' "
+	cQuery += "	 END AS STATUS "
+	cQuery += "FROM "
+	cQuery += " 	" + RetSqlName("ADY") + " DY "
+	cQuery += "INNER JOIN "
+	cQuery += " 	" + RetSqlName("ADZ") + " DZ "
+	cQuery += "ON "
+	cQuery += "	ADZ_FILIAL  = ADY_FILIAL "
+	cQuery += "	AND    ADZ_PROPOS  = ADY_PROPOS "
+	cQuery += "	AND    ADZ_PROPOS  = ADY_PROPOS "
+	cQuery += "	AND    ADZ_REVISA  = (SELECT MAX(ADZ_REVISA) FROM " + RetSqlName("ADZ") + " WHERE D_E_L_E_T_ = ' ' AND ADZ_FILIAL = DY.ADY_FILIAL AND ADZ_PROPOS = DY.ADY_PROPOS) "
+	cQuery += "	AND DZ.D_E_L_E_T_ = ' ' "
+	cQuery += "LEFT JOIN 
+	cQuery += " 	" + RetSqlName("SU5") + " SU5 "
+	cQuery += "ON
+	cQuery += "	SU5.U5_FILIAL = '" + xFilial("SU5") + "' "
+	cQuery += "	AND SU5.U5_CODCONT = DY.ADY_XASSIN "
+	cQuery += "	AND SU5.D_E_L_E_T_ = ' ' "
+	cQuery += "LEFT JOIN "
+	cQuery += " 	" + RetSqlName("SB1") + " SB1 "
+	cQuery += "ON "
+	cQuery += "	SB1.B1_FILIAL = '" + xFilial("SB1")  +"' "
+	cQuery += "	AND SB1.B1_COD = ADZ_PRODUT "
+	cQuery += "	AND SB1.D_E_L_E_T_ = ' ' "
+	cQuery += "WHERE "
+	cQuery += "	SUBSTR(DY.ADY_FILIAL, 1, 4) = '" + cFltrEmp + "' "
+	cQuery += "	AND    DY.ADY_CODIGO  = '" + SA1->A1_COD + "' "
+	cQuery += "	AND    DY.ADY_LOJA    = '" + SA1->A1_LOJA + "' "
+	cQuery += "	AND    DY.D_E_L_E_T_ = ' ' "
+	cQuery += "ORDER BY "
+	cQuery += "	DY.ADY_FILIAL, "
+	cQuery += "	DY.ADY_PROPOS, "	
+	cQuery += "	DY.ADY_PREVIS "	
+
+	//Envia o insert into para o banco de dados, portanto toda a cópia é feita pelo banco de dados, com grande performance!
+	if TCSqlExec(cQuery) < 0
+		ConOut("O comando SQL gerou erro:", TCSqlError())
+	endif
+
+Return Nil
+
+/*/{Protheus.doc} fInstCN9
+Insere dados na tabela temporária da CN9
+@type Function
+@author Franklin de Brito de Oliveira
+@since 14/04/2022
+/*/
+Static Function fInstCN9()
+Local cQuery := ""
+Local cFields := ""
+Local cFltrEmp := SubStr(FWCodFil(), 1, 4)	//Filtra os registros por empresa
+
+	cFields := "CN9_FILIAL, CN9_NUMERO, CN9_REVISA, CN9_XOPORT, CN9_XSRVEX, "
+	cFields += " CN9_DTINIC, CN9_DTFIM, CN9_XDTINI, CN9_XDTFIM "
+
+	//Criação do insert into
+	cQuery := "INSERT INTO " + oTblCN9:GetRealName()
+	cQuery += " (" + cFields + ") "
+	cQuery += "SELECT "
+	cQuery += "	CN9_FILIAL, CN9_NUMERO, CN9_REVISA, CN9_XOPORT, 
+	cQuery += "	CASE CN9_XSRVEX
+	cQuery += "		WHEN 'S' THEN 'Sim'
+	cQuery += "		ELSE 'Não'
+	cQuery += "	END AS CN9_XSRVEX, "
+	cQuery += "	CN9_DTINIC, CN9_DTFIM, CN9_XDTINI, CN9_XDTFIM "
+	cQuery += "FROM "
+	cQuery += " 	" + RetSqlName("CN9") + " CN9 "
+	cQuery += "INNER JOIN "
+	cQuery += " 	" + RetSqlName("CNC") + " CNC "
+	cQuery += "ON "
+	cQuery += "	CNC.CNC_FILIAL = CN9.CN9_FILIAL "
+	cQuery += "	AND CNC.CNC_NUMERO = CN9_NUMERO "
+	cQuery += "	AND CNC.CNC_REVISA = CN9_REVISA "
+	cQuery += "	AND CNC.D_E_L_E_T_ = ' ' "
+	cQuery += "WHERE  "
+	cQuery += "	SUBSTR(CN9.CN9_FILIAL, 1, 4) = '" + cFltrEmp + "' "
+	cQuery += "	AND CN9.D_E_L_E_T_ = ' ' "
+	cQuery += "	AND CNC.CNC_CLIENT = '" + SA1->A1_COD + "' "
+	cQuery += "	AND CNC.CNC_LOJACL = '" + SA1->A1_LOJA + "' "
+	cQuery += "ORDER BY "
+	cQuery += "	CN9.CN9_FILIAL, "
+	cQuery += "	CN9.CN9_NUMERO, "	
+	cQuery += "	CN9.CN9_REVISA "
+
+	//Envia o insert into para o banco de dados, portanto toda a cópia é feita pelo banco de dados, com grande performance!
+	if TCSqlExec(cQuery) < 0
+		ConOut("O comando SQL gerou erro:", TCSqlError())
+	endif
+
+Return Nil
+
+/*/{Protheus.doc} fInstAOF
+Insere dados na tabela temporária da AOF
+@type Function
+@author Franklin de Brito de Oliveira
+@since 14/04/2022
+/*/
+Static Function fInstAOF()
+Local cQuery := ""
+Local cFields := ""
+Local cFltrEmp := SubStr(FWCodFil(), 1, 4)	//Filtra os registros por empresa
+
+	cFields := "AOF_CODIGO, AOF_TIPO, AOF_STATUS, AOF_DTCAD, AOF_ASSUNT, "
+	cFields += " AOF_LOCAL "
+
+	//Criação do insert into
+	cQuery := "INSERT INTO " + oTblAOF:GetRealName()
+	cQuery += " (" + cFields + ") "
+	cQuery += "SELECT "
+	cQuery += "	AOF.AOF_CODIGO, AOF.AOF_TIPO, AOF.AOF_STATUS, "
+	cQuery += "	AOF.AOF_DTCAD, AOF.AOF_ASSUNT, AOF.AOF_LOCAL "
+	cQuery += "FROM "
+	cQuery += " 	" + RetSqlName("AOF") + " AOF "
+	cQuery += "WHERE "
+	cQuery += "	SUBSTR(AOF.AOF_FILIAL, 1, 4) = '" + cFltrEmp + "' "
+	cQuery += "	AND AOF.AOF_ENTIDA = 'SA1' "
+	cQuery += "	AND AOF.AOF_CHAVE = '" + SA1->A1_COD + SA1->A1_LOJA + "' "
+	cQuery += "	AND AOF.D_E_L_E_T_ = ' ' "
+	cQuery += "	ORDER BY "
+	cQuery += "		AOF.AOF_FILIAL, "
+	cQuery += "		AOF.AOF_CODIGO "
+
+	//Envia o insert into para o banco de dados, portanto toda a cópia é feita pelo banco de dados, com grande performance!
+	if TCSqlExec(cQuery) < 0
+		ConOut("O comando SQL gerou erro:", TCSqlError())
+	endif
+
+Return Nil
+
+/*/{Protheus.doc} fFldsAD1
+Monta os campos que serão adicionados as colunas do Browse da tabela AD1.
+@type Function
+@author Franklin de Brito de Oliveira
+@since 13/04/2022
+/*/
+Static Function fFldsAD1(param_name)
+Local aStruct    As Array //Fields Struct
+Local aColumns   As Array //Browse Columns
+Local aFilter    As Array //Filter Array
+Local nX         As Numeric //Loop Control
+    
+	aStruct := {}
+    AAdd(aStruct, {"NUMREG", "N", 12, 00})
+    AAdd(aStruct, {"AD1_FILIAL", "C", TamSX3("AD1_FILIAL")[01], TamSX3("AD1_FILIAL")[02], PesqPict("AD1", "AD1_FILIAL")})
+    AAdd(aStruct, {"AD1_NROPOR", "C", TamSX3("AD1_NROPOR")[01], TamSX3("AD1_NROPOR")[02], PesqPict("AD1", "AD1_NROPOR")})
+    AAdd(aStruct, {"AD1_REVISA", "C", TamSX3("AD1_REVISA")[01], TamSX3("AD1_REVISA")[02], PesqPict("AD1", "AD1_REVISA")})
+    AAdd(aStruct, {"AD1_DESCRI", "C", TamSX3("AD1_DESCRI")[01], TamSX3("AD1_DESCRI")[02], PesqPict("AD1", "AD1_DESCRI")})
+	AAdd(aStruct, {"AD1_DATA", "D", TamSX3("AD1_DATA")[01], TamSX3("AD1_DATA")[02], PesqPict("AD1", "AD1_DATA")})
+	AAdd(aStruct, {"AD1_HORA", "C", TamSX3("AD1_HORA")[01], TamSX3("AD1_HORA")[02], PesqPict("AD1", "AD1_HORA")})
+	AAdd(aStruct, {"AD1_VEND", "C", TamSX3("A3_NOME")[01], TamSX3("A3_NOME")[02], PesqPict("SA3", "A3_NOME")})
+	AAdd(aStruct, {"AD1_DTINI", "D", TamSX3("AD1_DTINI")[01], TamSX3("AD1_DTINI")[02], PesqPict("AD1", "AD1_DTINI")})
+	AAdd(aStruct, {"AD1_DTFIM", "D", TamSX3("AD1_DTFIM")[01], TamSX3("AD1_DTFIM")[02], PesqPict("AD1", "AD1_DTFIM")})
+	AAdd(aStruct, {"AD1_STATUS", "C", TamSX3("AD1_STATUS")[01], TamSX3("AD1_STATUS")[02], PesqPict("AD1", "AD1_STATUS")})
+	AAdd(aStruct, {"AD1_CODCLI", "C", TamSX3("AD1_CODCLI")[01], TamSX3("AD1_CODCLI")[02], PesqPict("AD1", "AD1_CODCLI")})
+	AAdd(aStruct, {"AD1_LOJCLI", "C", TamSX3("AD1_LOJCLI")[01], TamSX3("AD1_LOJCLI")[02], PesqPict("AD1", "AD1_LOJCLI")})
+ 
+    //Set Columns
+    aColumns := {}
+    aFilter  := {}
+    For nX := 02 To Len(aStruct)
+        //Columns
+        AAdd(aColumns,FWBrwColumn():New())
+        aColumns[Len(aColumns)]:SetData( &("{||"+aStruct[nX][1]+"}") )
+        aColumns[Len(aColumns)]:SetTitle(RetTitle(aStruct[nX][1]))
+        aColumns[Len(aColumns)]:SetSize(aStruct[nX][3])
+        aColumns[Len(aColumns)]:SetDecimal(aStruct[nX][4])
+        aColumns[Len(aColumns)]:SetPicture(aStruct[nX][5])
+        //Filters
+        aAdd(aFilter, {aStruct[nX][1], RetTitle(aStruct[nX][1]), TamSX3(aStruct[nX][1])[3], TamSX3(aStruct[nX][1])[1], TamSX3(aStruct[nX][1])[2], aStruct[nX][5]} )
+    Next nX
+ 
+    //Set Fields
+    oTblAD1:SetFields(aStruct)
+    //Set Indexes
+    oTblAD1:AddIndex("INDEX1", {"AD1_FILIAL", "AD1_NROPOR", "AD1_REVISA"})
+    //Create
+    oTblAD1:Create()
+
+Return aColumns
+
+/*/{Protheus.doc} fFldsADY
+Monta os campos que serão adicionados as colunas do Browse da tabela ADY.
+@type Function
+@author Franklin de Brito de Oliveira	@since 13/04/2022
+/*/
+Static Function fFldsADY()
+Local aStruct    As Array //Fields Struct
+Local aColumns   As Array //Browse Columns
+Local aFilter    As Array //Filter Array
+Local nX         As Numeric //Loop Control
+    
+	aStruct := {}
+    AAdd(aStruct, {"NUMREG", "N", 12, 00})
+    AAdd(aStruct, {"ADY_FILIAL", "C", TamSX3("ADY_FILIAL")[01], TamSX3("ADY_FILIAL")[02], PesqPict("ADY", "ADY_FILIAL")})
+    AAdd(aStruct, {"ADY_OPORTU", "C", TamSX3("ADY_OPORTU")[01], TamSX3("ADY_OPORTU")[02], PesqPict("ADY", "ADY_OPORTU")})
+    AAdd(aStruct, {"ADY_PROPOS", "C", TamSX3("ADY_PROPOS")[01], TamSX3("ADY_PROPOS")[02], PesqPict("ADY", "ADY_PROPOS")})
+	AAdd(aStruct, {"ADZ_REVISA", "C", TamSX3("ADZ_REVISA")[01], TamSX3("ADZ_REVISA")[02], PesqPict("ADZ", "ADZ_REVISA")})
+	AAdd(aStruct, {"U5_CONTAT", "C", TamSX3("U5_CONTAT")[01], TamSX3("U5_CONTAT")[02], PesqPict("SU5", "U5_CONTAT")})
+	AAdd(aStruct, {"ADZ_ITEM", "C", TamSX3("ADZ_ITEM")[01], TamSX3("ADZ_ITEM")[02], PesqPict("ADZ", "ADZ_ITEM")})
+	AAdd(aStruct, {"ADZ_PRODUT", "C", TamSX3("ADZ_PRODUT")[01], TamSX3("ADZ_PRODUT")[02], PesqPict("ADZ", "ADZ_PRODUT")})
+	AAdd(aStruct, {"B1_DESC", "C", TamSX3("B1_DESC")[01], TamSX3("B1_DESC")[02], PesqPict("SB1", "B1_DESC")})
+	AAdd(aStruct, {"ADZ_TOTAL", "N", TamSX3("ADZ_TOTAL")[01], TamSX3("ADZ_TOTAL")[02], PesqPict("ADZ", "ADZ_TOTAL")})
+	AAdd(aStruct, {"ADY_STATUS", "C", 25, 0, "@!"})
+ 
+    //Set Columns
+    aColumns := {}
+    aFilter  := {}
+    For nX := 02 To Len(aStruct)
+        //Columns
+        AAdd(aColumns,FWBrwColumn():New())
+        aColumns[Len(aColumns)]:SetData( &("{||"+aStruct[nX][1]+"}") )
+        aColumns[Len(aColumns)]:SetTitle(RetTitle(aStruct[nX][1]))
+        aColumns[Len(aColumns)]:SetSize(aStruct[nX][3])
+        aColumns[Len(aColumns)]:SetDecimal(aStruct[nX][4])
+        aColumns[Len(aColumns)]:SetPicture(aStruct[nX][5])
+        //Filters
+        aAdd(aFilter, {aStruct[nX][1], RetTitle(aStruct[nX][1]), TamSX3(aStruct[nX][1])[3], TamSX3(aStruct[nX][1])[1], TamSX3(aStruct[nX][1])[2], aStruct[nX][5]})
+    Next nX
+ 
+    //Set Fields
+    oTblADY:SetFields(aStruct)
+    //Set Indexes
+    oTblADY:AddIndex("INDEX1", {"ADY_FILIAL", "ADY_PROPOS"})
+    //Create
+    oTblADY:Create()
+
+Return aColumns
+
+/*/{Protheus.doc} fFldsAOF
+Monta os campos que serão adicionados as colunas do Browse da tabela AOF.
+@type Function
+@author Franklin de Brito de Oliveira
+@since 12/04/2022
+/*/
+Static Function fFldsAOF()
+Local aStruct    As Array //Fields Struct
+Local aColumns   As Array //Browse Columns
+Local aFilter    As Array //Filter Array
+Local nX         As Numeric //Loop Control
+ 
+    aStruct := {}
+    AAdd(aStruct, {"NUMREG", "N", 12, 00})
+    AAdd(aStruct, {"AOF_CODIGO", "C", TamSX3("AOF_CODIGO")[01], TamSX3("AOF_CODIGO")[02]})
+    AAdd(aStruct, {"AOF_TIPO", "C", TamSX3("AOF_TIPO")[01], TamSX3("AOF_TIPO")[02]})
+    AAdd(aStruct, {"AOF_STATUS", "C", TamSX3("AOF_STATUS")[01], TamSX3("AOF_STATUS")[02]})
+	AAdd(aStruct, {"AOF_DTCAD", "D", TamSX3("AOF_DTCAD")[01], TamSX3("AOF_DTCAD")[02]})
+	AAdd(aStruct, {"AOF_ASSUNT", "C", TamSX3("AOF_ASSUNT")[01], TamSX3("AOF_ASSUNT")[02]})
+	AAdd(aStruct, {"AOF_LOCAL", "C", TamSX3("AOF_LOCAL")[01], TamSX3("AOF_LOCAL")[02]})
+ 
+    //Set Columns
+    aColumns := {}
+    aFilter  := {}
+    For nX := 02 To Len(aStruct)
+        //Columns
+        AAdd(aColumns,FWBrwColumn():New())
+        aColumns[Len(aColumns)]:SetData( &("{||"+aStruct[nX][1]+"}") )
+        aColumns[Len(aColumns)]:SetTitle(RetTitle(aStruct[nX][1]))
+        aColumns[Len(aColumns)]:SetSize(aStruct[nX][3])
+        aColumns[Len(aColumns)]:SetDecimal(aStruct[nX][4])
+        aColumns[Len(aColumns)]:SetPicture(PesqPict("AOF",aStruct[nX][1]))
+        //Filters
+        aAdd(aFilter, {aStruct[nX][1], RetTitle(aStruct[nX][1]), TamSX3(aStruct[nX][1])[3], TamSX3(aStruct[nX][1])[1], TamSX3(aStruct[nX][1])[2], PesqPict("AOF", aStruct[nX][1])} )
+    Next nX
+ 
+    //Set Fields
+    oTblAOF:SetFields(aStruct)
+    //Set Indexes
+    oTblAOF:AddIndex("INDEX1", {"AOF_CODIGO"})
+    //Create
+    oTblAOF:Create()
+
+Return aColumns
+
+/*/{Protheus.doc} fFldsCN9
+Monta os campos que serão adicionados as colunas do Browse da tabela CN9.
+@type Function
+@author Franklin de Brito de Oliveira
+/*/
+Static Function fFldsCN9(param_name)
+Local aStruct    As Array //Fields Struct
+Local aColumns   As Array //Browse Columns
+Local aFilter    As Array //Filter Array
+Local nX         As Numeric //Loop Control
+ 
+    aStruct := {}
+    AAdd(aStruct, {"NUMREG", "N", 12, 00})
+    AAdd(aStruct, {"CN9_FILIAL", "C", TamSX3("CN9_FILIAL")[01], TamSX3("CN9_FILIAL")[02], PesqPict("CN9", "CN9_FILIAL")})
+    AAdd(aStruct, {"CN9_NUMERO", "C", TamSX3("CN9_NUMERO")[01], TamSX3("CN9_NUMERO")[02], PesqPict("CN9", "CN9_NUMERO")})
+    AAdd(aStruct, {"CN9_REVISA", "C", TamSX3("CN9_REVISA")[01], TamSX3("CN9_REVISA")[02], PesqPict("CN9", "CN9_REVISA")})
+    AAdd(aStruct, {"CN9_XOPORT", "C", TamSX3("CN9_XOPORT")[01], TamSX3("CN9_XOPORT")[02], PesqPict("CN9", "CN9_XOPORT")})
+	AAdd(aStruct, {"CN9_XSRVEX", "C", 3, 0, "@!"})
+	AAdd(aStruct, {"CN9_DTINIC", "D", TamSX3("CN9_DTINIC")[01], TamSX3("CN9_DTINIC")[02], PesqPict("CN9", "CN9_DTINIC")})
+	AAdd(aStruct, {"CN9_DTFIM", "D", TamSX3("CN9_DTFIM")[01], TamSX3("CN9_DTFIM")[02], PesqPict("CN9", "CN9_DTFIM")})
+	AAdd(aStruct, {"CN9_XDTINI", "D", TamSX3("CN9_XDTINI")[01], TamSX3("CN9_XDTINI")[02], PesqPict("CN9", "CN9_XDTINI")})
+	AAdd(aStruct, {"CN9_XDTFIM", "D", TamSX3("CN9_XDTFIM")[01], TamSX3("CN9_XDTFIM")[02], PesqPict("CN9", "CN9_XDTFIM")})
+ 
+    //Set Columns
+    aColumns := {}
+    aFilter  := {}
+    For nX := 02 To Len(aStruct)
+        //Columns
+        AAdd(aColumns,FWBrwColumn():New())
+        aColumns[Len(aColumns)]:SetData( &("{||"+aStruct[nX][1]+"}") )
+        aColumns[Len(aColumns)]:SetTitle(RetTitle(aStruct[nX][1]))
+        aColumns[Len(aColumns)]:SetSize(aStruct[nX][3])
+        aColumns[Len(aColumns)]:SetDecimal(aStruct[nX][4])
+        aColumns[Len(aColumns)]:SetPicture(aStruct[nX][5])
+        //Filters
+        aAdd(aFilter, {aStruct[nX][1], RetTitle(aStruct[nX][1]), TamSX3(aStruct[nX][1])[3], TamSX3(aStruct[nX][1])[1], TamSX3(aStruct[nX][1])[2], aStruct[nX][5]} )
+    Next nX
+ 
+    //Set Fields
+    oTblCN9:SetFields(aStruct)
+    //Set Indexes
+    oTblCN9:AddIndex("INDEX1", {"CN9_FILIAL", "CN9_NUMERO", "CN9_REVISA"})
+    //Create
+    oTblCN9:Create()
+
+Return aColumns

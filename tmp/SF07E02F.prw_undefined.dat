@@ -1,0 +1,121 @@
+#INCLUDE "TOTVS.CH"
+
+User Function SF07E02F()
+Local aArrSay	:= {}
+Local aArrBut	:= {}
+Local cArqTxt	:= ''
+Local lExefun	:= .F.
+Local cHrIni	:= ""
+
+Private aCampos	:= {}
+Private aDados	:= {}
+
+	Aadd(aArrSay, 'Esta rotina tem por objetivo atualizar o cadastro de funcionário, ')
+	Aadd(aArrSay, 'conforme arquivos de dados no formato csv.')
+	
+	Aadd(aArrBut, {1, .T., {|| lExeFun := .T., FechaBatch()}})
+	Aadd(aArrBut, {2, .T., {|| lExeFun := .F., FechaBatch()}})
+	
+	FormBatch('Atualiza Funcionário', aArrSay, aArrBut)
+	
+	If lExefun
+		cHrIni := Time()
+		Processa( {|| lExefun := LeArq()}, "Aguarde...", "Lendo arquivo de importação")
+		If lExefun
+			Processa({|| ExImp()}, "Aguarde...", "Atualizando funcionário")
+			 MsgInfo("Processamento Concluido!","[Fonte: " + FunName() + "]" + CRLF +;
+			 		"Inicio da execução: " + cHrIni + CRLF +;
+			 		"Fim da execução...: " + TIME() + CRLF +;
+			 		"Tempo de execução.: " + ElapTime( cHrIni, TIME() ); 
+			 		)
+		EndIf
+		
+	EndIf
+	
+Return
+
+Static Function LeArq()
+Local cArq		:= cGetFile("*.csv|*.csv","Texto (CSV)", 1, "C:\", .f., GETF_LOCALHARD, .f.)
+Local cLinha	:= ""
+Local lPrim		:= .T.
+Local lCont		:= .T.
+Local nPos		:= 0
+Local nLast		:= 0
+Local nItm		:= 0
+    If !File(cArq)
+        MsgStop("Não foi possivel localizar o arquivo!","[Fonte " + FunName() + "]")
+        lCont := .F.
+    EndIf
+    If lCont
+        FT_FUSE(cArq)
+        FT_FGOTOP()
+        nLast := FT_FLastRec()
+        ProcRegua(nLast)
+        While !FT_FEOF() .and. lCont
+            cLinha := FT_FREADLN()
+            If lPrim
+                aCampos := Separa(cLinha,";",.t.)
+                lPrim := .f.
+                For nX := 1 to Len(aCampos) 
+                    If !(SubStr(aCampos[nX],1,2) == "RA")
+                        lCont := .f.
+                        MsgStop("Arquivo invalido para esta operação!")
+                        exit
+                    EndIf
+                Next nX
+            Else
+            	nItm++
+            	IncProc( StrZero(nItm, 4) +  " de " + StrZero(nLast, 4) )
+                aLinha := Separa(cLinha,";",.t.)
+            	Aadd(aDados, aLinha)
+            EndIf
+            FT_FSKIP()
+        EndDo
+		// Fecha o Arquivo
+		FT_FUSE()
+    EndIf
+Return lCont
+
+Static Function ExImp()    
+Local aCabec	:= {}
+Local cMsgLog	:= ""
+Local cFile 	:= dToS(Date()) + StrTran(Time(),":") + FunName()
+Local nPosFili, nPosMatr, nY, nX := 0
+
+Private lMsErroAuto		:= .F.
+Private lAutoErrNoFile	:= .T.
+	nPosFili := AScan(aCampos, {|x| AllTrim(x) == "RA_FILIAL"})
+	nPosMatr := AScan(aCampos, {|x| AllTrim(x) == "RA_MAT"})
+    nHdlLog := fCreate("C:\Util\" + cFile + "_LOG.TXT")  	
+	ProcRegua(Len(aDados))
+	For nY := 1 to Len(aDados)
+		lMsErroAuto		:= .F.
+		lAutoErrNoFile	:= .T.
+		aCabec := {}
+		IncProc( "Processando o registro " + StrZero(nY, 4) +  " de " + StrZero(Len(aDados), 4) )
+		For nX := 1 to Len(aCampos)
+        		If GetSx3Cache(aCampos[nX],"X3_TIPO"   ) == "N"
+        			aAdd(aCabec,{ aCampos[nX], Val(StrTran(aDados[nY][nX], ",", ".")), Nil })
+        		Else
+        			aAdd(aCabec,{ aCampos[nX], aDados[nY][nX], Nil })
+        		EndIf
+		Next nX
+		aAdd(aCabec,{ "RA_DATAALT", CtoD("01/01/2021"), Nil })
+		aAdd(aCabec,{ "RA_TIPOALT", "007", Nil })
+		cFilMat := aCabec[nPosFili][2] + "/" + aCabec[nPosMatr][2]
+		cMsgLog := "Processando registro " + StrZero(nY, 4) +  " de ";
+		 	+ StrZero(Len(aDados), 4) + ". Registro " + aCabec[nPosFili][2];
+		 	+ "/" + aCabec[nPosMatr][2] + CRLF
+		fWrite(nHdlLog, cMsgLog)
+		MSExecAuto({|x,y,k,w| GPEA010(x,y,k,w)}, NIL, NIL, aCabec, 4)
+		If lMsErroAuto
+			cMsgErr := ""
+			fWrite(nHdlLog, "Erro ao processar o registro: " + cFilMat + ": " + CRLF)
+			aLogErr := GetAutoGrLog()
+				For nA := 1 To Len(aLogErr)
+					fWrite(nHdlLog, aLogErr[nA] + CRLF)
+				Next nA
+		EndIf
+	Next nY
+	fClose(nHdlLog)
+Return Nil

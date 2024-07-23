@@ -1,0 +1,514 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "APWIZARD.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "TOTVS.CH"
+#INCLUDE "FWMVCDEF.CH"		
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWMBROWSE.CH"    
+
+#DEFINE DS_MODALFRAME 128   
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<SN061AX>                                                   |
+|Rotina para manutacao Do cadastro de Beneficiarios com Cartao Pre-Pago BB |
+|@Author<Antonio Dantas>                                                   |
+|@since<25/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<Nil>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function SN061AX()
+Local _oMBrowse 	:= FwMBrowse():New()
+Private _cTitulo	:= "Controle de Cartões Pré Pagos"
+Private aRotina 	:= MenuDef() 
+Private _cConven	:= Space(TamSX3("ZP1_XCONV")[1]) 
+Private _cSessao	:= ZP6->ZP6_XCOD
+Private _cFilterD	:= ""
+//-- Torna a selecao do Convenio como OBRIGATORIA
+_cConven := fGetConv()  
+If Empty(Alltrim(_cConven))
+	Return .t.
+Endif 
+_cFilterD := "ZP3->ZP3_XCONVE == "+_cConven 
+//--  Definicao do filtro
+_oMBrowse:SetFilterDefault(_cFilterD)  
+_oMBrowse:SetAlias("ZP3")          
+_oMBrowse:SetLocate()
+_oMBrowse:SetDescription(_cTitulo)
+//--
+_oMBrowse:AddLegend( "ZP3->ZP3_XSTATU == 'P'"	,"BR_LARANJA"		, "Em Preparacao"              	)
+_oMBrowse:AddLegend( "ZP3->ZP3_XSTATU == 'L'"	,"BR_VERDE.BMP"		, "Liberado para remessa"		)
+_oMBrowse:AddLegend( "ZP3->ZP3_XSTATU == 'E'"	,"BR_VERMELHO.BMP" 	, "Enviado"						)
+_oMBrowse:AddLegend( "ZP3->ZP3_XSTATU == 'C'"	,"BR_AZUL"			, "Conveniado"					)
+_oMBrowse:AddLegend( "ZP3->ZP3_XSTATU == 'R'"	,"CANCEL_15.PNG"	, "Rejeitado"					)
+_oMBrowse:AddLegend( "ZP3->ZP3_XSTATU == 'X'"	,"BR_PRETO" 		, "Extraviado/Roubado/Perdido"	)
+//--
+_oMBrowse:Activate()
+Return NIL
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<MenuDef>                                                   |
+|Definicao do MenuDef                                                      |
+|@Author<Antonio Dantas>                                                   |
+|@since<25/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<   _aRotina (a) - Vetor com as opcoes de Menu                            |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function MenuDef()
+Local _aRotina := {}
+ADD OPTION _aRotina Title "Visualizar" ACTION "VIEWDEF.SN061AX"	OPERATION 2 ACCESS 0
+&&--ADD OPTION _aRotina Title "Alterar"    ACTION "VIEWDEF.SN061AX"	OPERATION 4 ACCESS 0
+&&--ADD OPTION _aRotina Title "Excluir"    ACTION "VIEWDEF.SN061AX"	OPERATION 5 ACCESS 0
+ADD OPTION _aRotina Title "Extraviar"  ACTION "StaticCall(SN061AX,fExtrav)"	OPERATION 4 ACCESS 0   
+
+Return _aRotina
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<ModelDef>                                                  |
+|Definicao do ModelDef                                                     |
+|@Author<Antonio Dantas>                                                   |
+|@since<25/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<   _oModel (o) - Objeto com a Definicao do Modelo                        |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function Modeldef()
+Local _oStruZP3		:= FWFormStruct(1,"ZP3")
+Local _oModel     	:= MPFormModel():New("SN061AXZ", /*Pre-Validacao*/, {|_oMod| fVldForM(_oMod) }, {|_oMod| fGravar(_oMod)} )
+Local _nOper		:= 0
+Local _nPosMenu 	:= 0
+_oModel:AddFields("ZP3MASTER",/*cOwner*/,_oStruZP3,/*Pre-Validacao*/,/*Pos-Validacao*/)
+_oModel:SetPrimaryKey({"ZP3_XNRREF"})
+_oModel:SetDescription(_cTitulo)
+_oModel:GetModel("ZP3MASTER"):SetDescription(_cTitulo)
+Return _oModel   
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<ViewDef>                                                   |
+|Definicao do ViewDef                                                      |
+|@Author<Antonio Dantas>                                                   |
+|@since<25/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<   _oView (o) - Objeto com a Definicao do Visao do Modelo                |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function ViewDef()
+Local _oModel  	:= FWLoadModel("SN061AX")
+Local _oStruZP3 := FWFormStruct(2,"ZP3")
+Local _oView	:= FWFormView():New()   
+_oView:SetModel(_oModel)
+_oView:AddField("SN061AXZ",_oStruZP3,"ZP3MASTER")   
+_oView:CreateHorizontalBox("FormZP3",100)
+_oView:SetOwnerView("SN061AXZ","FormZP3")
+_oView:SetDescription(_cTitulo)
+_oView:EnableControlBar(.T.)  
+&&_oStruZP3:SetProperty("ZP3_XOCORR",MODEL_FIELD_OBRIGAT,.f.)  
+Return _oView     
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fVldForM>                                                  |
+| Funcao de Validacao do Formulario e Chamada de Rotinas de Pre-Gracacao   |
+| das Tabelas co-Relacionadas                                              |
+|@Author<Antonio Dantas>                                                   |
+|@since<25/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<      _oModel (o) - Objeto [oModel] - Formulario a ser validado          |
+|>                                                                         |
+|@return                                                                   |
+|<     _lReturn (l) - (.t.) Validacao OK, pode proceguir acao              |
+|                     (.f.) Validacao Negativa, impedi a acao              |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fVldForM(_oModel)
+Local _lReturn  	:= .t.
+Local _nOper		:= _oModel:GetOperation() 
+Local _nPosMenu 	:= _oModel:aControls[4]   
+do Case
+	Case _nOper == 3	//-- Incluir
+		_lReturn := .T.
+	Case _nOper == 4	//-- Alterar
+		_lReturn := .T.
+	Case _nOper == 5	//-- Excluir
+		_lReturn  := .t.
+	Case _nOper == 8	//-- Imprimir
+		_lReturn  := .t.
+	Case _nOper == 9	//-- Copiar
+		_lReturn  := .t.
+Endcase
+Return _lReturn 
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGravar>                                                   |
+|Funcao de Controel de Gravacao: Chamada as Funcoes de Validacao das       |
+|Acoes do Formulario                                                       |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<10/10/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<    _oModel (o) - Objeto do Modelo Principal                             |
+|>                                                                         |
+|@return                                                                   |
+|<     _lReturn (l) - (.t.) Pode Executar a Acao                           |
+|                     (.f.) Nao Pode executar a Acao                       |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGravar(_oModel)
+Local _lReturn  	:= .t.
+Local _nOper		:= _oModel:GetOperation()   
+Local _nPosMenu 	:= _oModel:aControls[4]   
+Local _aUserCart 	:= {}  
+Local _cMensag 		:= ""  
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+//-- 
+Local _oStruZP3 	:= _oModel:GetModel("ZP3MASTER")
+Local _cMatric		:= _oStruZP3:GetValue("ZP3_XMATRI")
+Local _cCPF			:= _oStruZP3:GetValue("ZP3_XCPF")
+Local _cConvenio	:= _oStruZP3:GetValue("ZP3_XCONVE")
+Local _cNrCartao	:= _oStruZP3:GetValue("ZP3_XIDCON")
+Local _cNrRefer 	:= _oStruZP3:GetValue("ZP3_XNRREF") 
+Local _cStatus		:= _oStruZP3:GetValue("ZP3_XSTATU") 
+Begin Transaction
+	do Case
+		Case _nOper == 3	//-- Incluir
+			_lReturn  := .t.
+		Case _nOper == 4	//-- Alterar
+			//-- **********************************************************************
+			//--    Nao Permite a Alteracao de Cartoes EXTRAVIADOS.
+			//-- **********************************************************************
+			If _cStatus == "X"
+				Help(,,"HELP",,"Cartão Extraviado, não pode ser Alterado!",1,0)    
+				_lReturn  := .f.
+			Endif 
+			If _lReturn
+				//-- **********************************************************************
+				//-- 	Verifica se existe Movimentacao para o Numero de Referencia 
+				//--   	Informado. 
+				//--	_aUserCart[1] - Matricula
+				//--	_aUserCart[2] - CPF
+				//--	_aUserCart[3] - Nome do Aluno 
+				//-- **********************************************************************
+				_aUserCart 	:= u_fUserCart(_cNrRefer,_cConvenio) 
+				If Alltrim(_aUserCart[2]) != ""
+					If Alltrim(_cCPF) != Alltrim(_aUserCart[2]) 
+						_cMensag := "O Cartão de referência Nr.: ["+Alltrim(_cNrRefer)+"] não pode ser atribuido ao CPF.: "+;
+									Alltrim(_cCPF)+", pois já Atribuido a Matricula: "+Alltrim(_aUserCart[1])+;
+									", do Aluno:"+Alltrim(_aUserCart[3])+" de CPF "+Transform(Alltrim(_aUserCart[2]),"@R 999.999.999-99")+"."
+						Help(,,"HELP",,_cMensag,1,0)    
+						_lReturn := .f. 
+					Endif 
+				Endif 			
+				If _lReturn
+					If _aUserCart[1] != ""
+						If u_fCartMov(_cNrRefer,_cConvenio)
+							_cMensag := "O Cartão de referência Nr.: ["+Alltrim(_cNrRefer)+"] não pode ser atribuido ao CPF.: "+;
+										Alltrim(_cCPF)+", pois já foi movimentado na Matricula: "+Alltrim(_aUserCart[1])+;
+										", do Aluno:"+Alltrim(_aUserCart[3])+" de CPF "+Transform(Alltrim(_aUserCart[2]),"@R 999.999.999-99")+"."
+							Help(,,"HELP",,_cMensag,1,0)    
+							_lReturn := .f. 
+						Endif 
+					Endif      
+				Endif 	
+				If _lReturn
+					//-- **********************************************************************
+					//--     Imput do NR de Referencia do Cartao Na ZP7 - Matricula a Pagar 
+					//-- **********************************************************************
+					_cQuery := ""
+					_cQuery += "Update "+RetSqlName("ZP7")+" set ZP7_XNRREF = '"+_cNrRefer+"' "+_ChrBreak
+					_cQuery += "Where D_E_L_E_T_ <> '*' "+_ChrBreak
+					_cQuery += "and ZP7_XSTATU not in ('E','O','P') "+_ChrBreak		//-- E=Remessa Gerada;O=O.P. Agendada;P=Pago
+					_cQuery += "and ZP7_XMATRI = '"+_cMatric+"' "+_ChrBreak
+					_cQuery += "and ZP7_XCONVE = '"+_cConvenio+"' "
+					TCSqlExec(_cQuery)
+					TcSqlExec("COMMIT")
+					//-- 
+					dbSelectArea("ZP0")
+					ZP0->(dbSetOrder(1)) 		//-- CPF
+					If (ZP0->(dbSeek(FwxFilial("ZP0")+_cCPF)))
+						RecLock("ZP0",.f.)
+						Replace ZP0->ZP0_XCARTA With _cNrCatao
+						Replace ZP0->ZP0_XNRREF With _cNrRefer     
+						Replace ZP0->ZP0_XDTCAR With dDataBase
+						ZP0->(MsUnLock())
+						ZP0->(dbCommit())
+					Endif 
+				Endif 			
+			Endif 
+		Case _nOper == 5	//-- Excluir
+			//-- **********************************************************************
+			//--    Nao Permite a Alteracao de Cartoes EXTRAVIADOS.
+			//-- **********************************************************************
+			If _cStatus == "X"
+				Help(,,"HELP",,"Cartão Extraviado, não pode ser Excluido!",1,0)    
+				_lReturn  := .f.
+			Endif 
+			If _lReturn
+				//-- **********************************************************************
+				//-- 	Verifica se existe Movimentacao para o Numero de Referencia 
+				//--   	Informado. 
+				//--	_aUserCart[1] - Matricula
+				//--	_aUserCart[2] - CPF
+				//--	_aUserCart[3] - Nome do Aluno 
+				//-- **********************************************************************
+				_aUserCart 	:= u_fUserCart(_cNrRefer,_cConvenio) 
+				If _aUserCart[1] != ""
+					If u_fCartMov(_cNrRefer,_cConvenio)
+						_cMensag := "O Cartão de referência Nr.: ["+Alltrim(_cNrRefer)+"] não pode ser EXCLUIDO, pois já foi movimentado!"
+						Help(,,"HELP",,_cMensag,1,0)    
+						_lReturn := .f. 
+					Endif 
+				Endif      
+				If _lReturn
+					//-- **********************************************************************
+					//--     Imput do NR de Referencia do Cartao Na ZP7 - Matricula a Pagar 
+					//-- **********************************************************************
+					_cQuery := ""
+					_cQuery += "Update "+RetSqlName("ZP7")+" set ZP7_XNRREF = '"+Space(TamSX3("ZP7_XNRREF")[1])+"' "+_ChrBreak  
+					_cQuery += "Where D_E_L_E_T_ <> '*' "+_ChrBreak
+					_cQuery += "and ZP7_XSTATU not in ('E','O','P') "+_ChrBreak 		//-- E=Remessa Gerada;O=O.P. Agendada;P=Pago
+					_cQuery += "and ZP7_XMATRI = '"+_cMatric+"' "+_ChrBreak
+					_cQuery += "and ZP7_XCONVE = '"+_cConvenio+"' "
+					TCSqlExec(_cQuery)
+					TcSqlExec("COMMIT")
+					//-- 
+					dbSelectArea("ZP0")
+					ZP0->(dbSetOrder(1)) 		//-- CPF
+					If (ZP0->(dbSeek(FwxFilial("ZP0")+_cCPF)))
+						RecLock("ZP0",.f.)
+						Replace ZP0->ZP0_XCARTA With Space(TamSX3("ZP0_XCARTA")[1])
+						Replace ZP0->ZP0_XNRREF With Space(TamSX3("ZP7_XNRREF")[1])
+						Replace ZP0->ZP0_XDTCAR With CTOD("  /  /  ")
+						ZP0->(MsUnLock())
+						ZP0->(dbCommit())
+					Endif 
+				Endif 			
+			Endif 
+		Case _nOper == 8	//-- Imprimir
+			_lReturn  := .t.
+		Case _nOper == 9	//-- Copiar
+			_lReturn  := .t.
+	Endcase
+	If _lReturn
+		FWFormCommit(_oModel)   
+		If _nOper == 4	//-- Alterar	
+			dbSelectArea("ZP3")      
+			RecLock("ZP3",.f.)
+			Replace ZP3->ZP3_XSTATU With "P"
+			ZP3->(MsUnLock())
+			ZP3->(dbCommit())
+		Endif 
+	Endif       
+End Transaction
+Return _lReturn 
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGetConv>                                                  |
+| Abre interface (Tela) p/operador selecionar ou informar Cod do Convenio  |
+|@Author<Antonio Dantas>                                                   |
+|@since<24/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<   _cConven (c) - Codigo do Convenio Selecionado                         |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGetConv()
+//-- **********************************************************************
+//--    Declaração de Variaveis Private dos Objetos
+//-- **********************************************************************
+SetPrvt("_oDlgCv","_oSayCv","_oGetCv","_oBtnCvOK","_oBtnESC")      
+dbSelectArea("ZP1")
+ZP1->(dbSetorder(1))
+//-- **********************************************************************
+//--    Definicao do Dialog e todos os seus componentes.
+//-- **********************************************************************
+_oDlgCv		:= MSDialog():New( 202,326,359,699,"Cadastro de Convênios",,,.F.,,,,,,.T.,,,.T. )
+_oSayCv		:= TSay():New( 024,050,{||"Cod. do Convenio:"},_oDlgCv,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,045,008)
+_oGetCv		:= TGet():New( 021,095,{|u| If(PCount()>0,_cConven:=u,_cConven)}		,_oDlgCv,060,008,"@!"	,{|| Empty(Alltrim(_cConven)) .OR. VldZP1(@_cConven) }	,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"ZP1","_cConven",,)
+_oBtnCvOK	:= TButton():New(048,120,"OK"	,_oDlgCv,{|| _oDlgCv:End() }	,037,012,,,,.T.,,"",,,,.F. )
+_oDlgCv:Activate(,,,.T.) 
+Return _cConven
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<VldZP1>                                                    |
+|Valida o codigo do Convenio passada como argumento                        |
+|@Author<Antonio Dantas>                                                   |
+|@since<24/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<  _cConven (c) - Codigo do Convenio que sera validado                    |     
+|                  *Recebida por REFERENCIA para ser modificada na funcao  |
+|>                                                                         |
+|@return                                                                   |
+|<  _lReturn (l) - (.t.) Codigo valido/ (.f.) Codigo Invalido              |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function VldZP1(_cConven)
+Local _aArea	:= GetArea() 
+Local _aAreaZP1	:= ZP1->(GetArea())
+Local _lReturn 	:= .t.
+_cConven := StrZero(Val(_cConven),TamSX3("ZP1_XCONV")[1])
+dbSelectArea("ZP1")
+ZP1->(dbSetOrder(1)) 	//-- Cod Convenio
+If !(ZP1->(dbSeek(FwxFilial("ZP1")+_cConven)))
+	Aviso(FunName()+"/"+ProcName(),"Codigo do Convenio informado é invalido!",{"OK"})
+	_lReturn 	:= .f.
+Endif     
+RestArea(_aArea)
+RestArea(_aAreaZP1)
+Return _lReturn
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fExtrav>                                                   |
+| Abre interface "Tela" para que o operador possa informar a justificativa |
+| do Extravio/Roubo/Perca                                                  |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<28/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<.t.>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fExtrav()
+Local   _aArea		:= GetArea()
+Local _cAvCab		:= "Ocorrência"
+Private _cJustif 	:= ZP3->ZP3_XOCORR
+//-- Inicializa os Obejetos da interface 
+SetPrvt("_oDlgOBJ","_oFontOBJ","_oMemoOBJ")
+//-- Solicita ao cliente a justificativa
+DEFINE FONT _oFontOBJ NAME "MS Sans Serif" SIZE 05,11
+DEFINE MSDIALOG _oDlgOBJ From 003,000 to 340,545 PIXEL STYLE DS_MODALFRAME TITLE OemToAnsi("Ocorrência")
+//-- Não permite que a tela seja fechada ao pressionar <ENTER>
+_oDlgOBJ:lEscClose := .F.  
+@ 05,05 GET _oMemoOBJ VAR _cJustif MEMO SIZE 265,145 OF _oDlgOBJ PIXEL 
+_oMemoOBJ:bRClicked := {||AllwaysTrue()}
+_oMemoOBJ:oFont:=_oFontOBJ
+DEFINE SBUTTON  FROM 153,245 TYPE 1 ACTION fFimOco(@_cJustif) ENABLE OF _oDlgOBJ PIXEL //OK
+ACTIVATE MSDIALOG _oDlgOBJ CENTER                                               
+RestArea(_aArea)
+Return .t.
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fFimOco>                                                   |
+| Valida a justificativa e grava e modifica o STATUS da ZP3 - Conveniados  |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<28/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<.t.>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fFimOco(_cJustif)
+Local _lReturn 	:= .t. 
+If Empty(Alltrim(_cJustif))
+	Aviso(FunName()+"/"+ProcName(),"Não pode estar em branco. Preencha a Ocorrência!", {"OK"})
+	_lReturn := .f. 
+Endif 
+If Len(Alltrim(_cJustif)) > 200
+	Aviso(FunName()+"/"+ProcName(),"O Histórico da justificativa deve ter menos de 201 caracter!", {"OK"})
+	_lReturn := .f. 
+Endif 
+If _lReturn  
+	RecLock("ZP3",.f.)
+	Replace ZP3->ZP3_XOCORR	With Alltrim(_cJustif)
+	Replace ZP3->ZP3_XSTATU	With "X"
+	ZP3->(MsUnLock())
+	ZP3->(dbCommit())
+	dbSelectArea("ZP0")
+	ZP0->(dbSetOrder(1)) 		//-- CPF
+	If (ZP0->(dbSeek(FwxFilial("ZP0")+ZP3->ZP3_XCPF)))
+		ZP0->(RecLock("ZP0",.F.))
+		Replace ZP0->ZP0_XCARTA With " "
+		Replace ZP0->ZP0_XNRREF With " "
+		Replace ZP0->ZP0_XDTCAR With CTOD("  /  /  ")
+		ZP0->(msUnlock())
+		ZP0->(dbCommit()) 
+	Endif 
+	_oDlgOBJ:End()     
+Endif 
+Return _lReturn

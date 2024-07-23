@@ -1,0 +1,754 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "ApWizard.CH"
+
+//Situacoes de contrato                
+#DEFINE DEF_SCANC "01"//Cancelado
+#DEFINE DEF_SELAB "02"//Em Elaboracao
+#DEFINE DEF_SEMIT "03"//Emitido
+#DEFINE DEF_SAPRO "04"//Em Aprovacao
+#DEFINE DEF_SVIGE "05"//Vigente
+#DEFINE DEF_SPARA "06"//Paralisado
+#DEFINE DEF_SSPAR "07"//Sol Fina.
+#DEFINE DEF_SFINA "08"//Finalizado
+#DEFINE DEF_SREVS "09"//Revisao
+#DEFINE DEF_SREVD "10"//Revisado
+
+#DEFINE DEF_SCTB  "11"//Revisado
+
+//Transações
+#DEFINE DEF_TRAINC "011"//Inclusao de cronogramas
+#DEFINE DEF_TRAEDT "012"//Edicao de cronogramas
+#DEFINE DEF_TRAEXC "013"//Exclusao de cronogramas
+#DEFINE DEF_TRAVIS "033"//Visualizacao de cronogramas
+
+//Tipos de Revisao
+
+/*/{Protheus.doc} CN110Manut
+(long_description)
+@author j2a.luizjunior
+@since 08/06/2017
+@version 1.0
+@param cAlias, character, (Descrição do parâmetro)
+@param nReg, numérico, (Descrição do parâmetro)
+@param nOpcX, numérico, (Descrição do parâmetro)
+@param aCpos, array, (Descrição do parâmetro)
+@param cContra, character, (Descrição do parâmetro)
+@param cRevisa, character, (Descrição do parâmetro)
+@param lAtuPlan, ${param_type}, (Descrição do parâmetro)
+@param lPlanReg, ${param_type}, (Descrição do parâmetro)
+@param lVisAprCt, ${param_type}, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+User Function SF69A01X(cAlias,nReg,nOpcX,aCpos,cContra,cRevisa,lAtuPlan,lPlanReg,lVisAprCt)
+
+	Local aPlanilha := {}
+	Local aArea     := GetArea()
+	Local aTpCron   := {"Acrescimo"}
+	Local aAntecipa := {"Proxima","Última"}
+	
+	Local dPrevista := dDataBase
+	
+	Local nParcelas := 0
+	Local nSaldCont := 0
+	Local nSaldPlan := 0
+	Local nParcel   := Space(3)
+	Local nPerc     := 0.00
+	
+	Local cCond     := ""
+	Local cCronog   := ""  
+	Local cCondPG   := ""
+	Local cFilCod   := ""
+	Local cQuery    := ""
+	Local cCompete  := strzero(Month(dDataBase),2)+"/"+strzero(Year(dDataBase),4)       
+	Local cFunName  := FunName() 
+	
+	Local lDist     := .F.
+	Local lArrasto  := .F.
+	Local lRet      := .T.
+	Local lContinua := .T.
+	Local lTpCron   := .F.
+	Local lC110vsit := ExistBlock("C110VSIT")  
+	Local lAtCronog := .T.
+	
+	Local oOk       := LoadBitmap( GetResources(), "LBTIK" )
+	Local oNo       := LoadBitmap( GetResources(), "LBNO" )
+	Local cCampos   := "CNF_FILIAL|CNF_NUMERO|CNF_CONTRA|CNF_MAXPAR|CNF_REVISA|CNF_PERANT|CNF_PERIOD|CNF_DIAPAR|CNF_CONDPG"// Campos excluidos da GetDados
+	Local oFont
+	Local oFnt
+	Local oAntecipa
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Variaveis do painel de contratos                    ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	Local aStruCN9  := CN9->(dbStruct())
+	Local cArqCN9   := ""
+	Local oBrowse//Contratos
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Variaveis do painel de planilhas                    ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	Local aStruCNA  := CNA->(dbStruct())
+	Local cArqCNA   := ""
+	Local oBrowse2//Planilhas
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Variaveis do painel de cronogramas                  ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	Local aStruCNF  := CNF->(dbStruct())
+	Local cArqCNF   := ""
+	Local oBrowse3//Cronogramas
+	
+	Local oSaldCont
+	Local oSaldPlan
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Variaveis do painel de parcelas                     ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	Local oDist//Redistribui
+	Local oArrasto//Arrasto
+	Local oBtnFsc
+	//Local //aTpPeriod := {STR0084,STR0085,STR0086}
+	Local aTpPeriod := {"Mensal","Quinzenal","Diario"}
+	Local cPeriod
+	Local cPerant
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Variaveis do cronograma fisico                      ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	Local aColsParc := {}
+	Local aHeadParc := {}
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Variavel de controle de alcada do contrato          ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	//Default lVisAprCt := .F.
+	Local lVisAprCt := .F.
+
+	Local cContra  := Space(TamSX3("CN9_NUMERO")[1])
+	Local cRevisa  := Space(TamSX3("CN9_REVISA")[1])
+	Local lAtuPlan := .F.
+	Local lPlanReg := .F.
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Variaveis responsaveis pela periodicidade	        ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	Private oTpPeriod
+	Private oUltimoDia:= NIL
+	Private lUltimoDia:= .F.      
+	Private nDiaPar   := 30
+	Private lDias     := .F.
+	Private lPeriod   := (CNF->(FieldPos("CNF_PERIOD")) > 0)
+	Private lCondicao := (CNF->(FieldPos("CNF_CONDPG")) > 0)   
+	Private cContraCNF:= ""
+	Private cRevisaCNF:= ""
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Parametro responsavel pela habilitacao da reducao de parcelas do contrato³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	Private oTpCron//Tipo de acrescimo
+	If GetMv("MV_CNREDUP")
+		aAdd(aTpCron,"Redução")
+	EndIf
+	
+	PRIVATE aTela := {}
+	PRIVATE aGets := {}
+	
+	Private lRecCronog := .T.
+	Private aAreaCNF   := CNF->(GetArea())
+	
+	//DEFAULT cContra := Space(TamSX3("CN9_NUMERO")[1])
+	//DEFAULT cRevisa := Space(TamSX3("CN9_REVISA")[1])
+	//DEFAULT lAtuPlan:=.F.
+	//DEFAULT lPlanReg:=.F.
+	
+	If lCondicao     
+		aAdd(aTpPeriod,"Cond. Pgto.")                  
+	EndIf
+	
+	If nOpcX != 3
+		lContinua := CN240VldUsr(If(lAtuPlan,CNA->CNA_CONTRA,CNF->CNF_CONTRA),If(nOpcX==4,DEF_TRAEDT,If(nOpcX==5,DEF_TRAEXC,DEF_TRAVIS)),.T.,lVisAprCt)
+	EndIf
+	
+	If lContinua
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Inicializa lancamento do PCO  ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		PcoIniLan("000357")
+	
+		Private nTotPlan  := 0
+		Private nTotCronog:= 0
+		Private aItVl     := {}	//Valores dos itens, usado pelo cronograma fisico
+		Private aHeader   := {}
+		Private oTotCronog
+		Private oSaldDist			//Saldo a ser distribuido
+		Private oGetDados			//Parcelas
+		
+		dbSelectArea("SX3")
+		dbSetOrder(1)
+		If dbSeek("CNF", .F.)
+			While !Eof() .And. SX3->X3_ARQUIVO=="CNF"
+				If ( X3USO(SX3->X3_USADO) .And. cNivel >= SX3->X3_NIVEL) .And. !(AllTrim(SX3->X3_CAMPO) $ cCampos) .And. SX3->X3_CAMPO != "CNF_CONDPG"
+					AAdd(aHeader,{AllTrim(X3Titulo()),;
+					AllTrim(SX3->X3_CAMPO),;
+					SX3->X3_PICTURE,;
+					SX3->X3_TAMANHO,;
+					SX3->X3_DECIMAL,;
+					SX3->X3_VALID,;
+					SX3->X3_USADO,;
+					SX3->X3_TIPO,;
+					SX3->X3_F3,;
+					SX3->X3_CONTEXT})
+				EndIf
+				dbSkip()
+			EndDo
+		EndIf
+	
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Adiciona os campos de Alias e Recno ao aHeader para WalkThru.³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		If nOpcX <> 3
+			ADHeadRec("CNF",aHeader)
+		EndIf	
+	
+		//Carrega variaveis de controle quando o wizard
+		//for chamado pela edicao de planilhas
+		If lAtuPlan
+			cContra   := CNA->CNA_CONTRA
+			cRevisa   := CNA->CNA_REVISA
+			cCronog   := CNA->CNA_CRONOG  
+		
+			aAdd(aPlanilha,{CNA->(Recno()),CNA->CNA_NUMERO})
+			
+			dbSelectArea("CNF")
+			dbSetOrder(2)
+			
+			//Filtra primeira parcela do cronograma       
+			cQuery := "SELECT CNF.R_E_C_N_O_ as RECNO,CNF.CNF_COMPET,CNF.CNF_PRUMED,CNF.CNF_MAXPAR  " 
+			If lPeriod
+				cQuery += ",CNF.CNF_PERIOD,CNF.CNF_DIAPAR "
+			EndIf
+			
+			If lCondicao
+				cQuery += ",CNF.CNF_CONDPG "
+			EndIf
+			
+			cQuery += "  FROM " + RetSQLName("CNF") +" CNF "
+			cQuery += " WHERE CNF.CNF_FILIAL = '"+ xFilial("CNF") +"'"
+			cQuery += "   AND CNF.CNF_CONTRA = '"+ cContra +"'"
+			cQuery += "   AND CNF.CNF_REVISA = '"+ cRevisa +"'"
+			cQuery += "   AND CNF.CNF_NUMERO = '"+ cCronog +"'"
+			cQuery += "   AND CNF.CNF_PARCEL = '"+ StrZero(1,TamSX3("CNF_PARCEL")[1]) +"'"
+			cQuery += "   AND CNF.D_E_L_E_T_ <> '*'"
+			
+			cQuery := ChangeQuery(cQuery)
+			dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),"TRBCNF",.F.,.T.)
+			
+			TCSetField("TRBCNF","CNF_PRUMED","D",08,0)
+			
+			If !TRBCNF->(Eof())
+				cCompete  := TRBCNF->CNF_COMPET
+				dPrevista := TRBCNF->CNF_PRUMED
+				nParcelas := TRBCNF->CNF_MAXPAR
+				If lPeriod
+					cPerAnt   := TRBCNF->CNF_PERIOD
+					nDiaPar	  := TRBCNF->CNF_DIAPAR
+				EndIf
+	
+				If lCondicao
+					cCondPG   := TRBCNF->CNF_CONDPG
+				EndIf
+				
+				CNF->(dbGoTo(TRBCNF->RECNO))
+			EndIf
+			
+			TRBCNF->(dbCloseArea())
+			
+			dbSelectArea("CN9")
+			dbSetOrder(1)
+			If dbSeek(xFilial("CN9")+CNA->CNA_CONTRA+CNA->CNA_REVISA)
+				cCond := CN9->CN9_CONDPG
+			EndIf
+		EndIf
+		
+		If nOpcX == 3//Inclusao
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Cria arquivo temporario para os contratos            ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			cArqCN9 := CriaTrab(aStruCN9)
+			dbUseArea(.T.,,cArqCN9,"TRBCN9",.F.,.F.)
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Cria arquivo temporario para as planilhas            ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			cArqCNA := CriaTrab(aStruCNA)
+			dbUseArea(.T.,,cArqCNA,"TRBCNA",.F.,.F.)
+		Else
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Carrega informacoes do cronograma se nao for inclusao³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			cContra := CNF->CNF_CONTRA
+			cRevisa := CNF->CNF_REVISA
+			cCronog := CNF->CNF_NUMERO
+			If lPeriod
+				cPerAnt := CNF->CNF_PERIOD
+				nDiaPar := CNF->CNF_DIAPAR
+			EndIf 
+	
+			If lCondicao
+				cCondPG   := CNF->CNF_CONDPG
+			EndIf
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Cria arquivo temporario para os cronogramas          ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			cArqCNF := CriaTrab(aStruCNF)
+			dbUseArea(.T.,,cArqCNF,"TRBCNF",.F.,.F.)
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Carrega saldo do contrato                            ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			dbSelectArea("CN9")
+			dbSetOrder(1)
+			If dbSeek(xFilial("CN9")+cContra+cRevisa)
+				nSaldCont := CN9->CN9_SALDO
+				cCond     := CN9->CN9_CONDPG
+			EndIf
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³Permite exclusao de cronograma quando nas seguintes situacoes de contrato: ³
+			//³ - Elaboracao                                                              ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If nOpcX == 5 .And. AllTrim(CN9->CN9_SITUAC) != DEF_SELAB//Exclusao
+				Help(" ",1,"CNTA110EXC") //"A situação atual do contrato não permite a exclusão do cronograma"
+				lRet := .F.
+			ElseIf nOpcX == 5 .And. !Empty(CN9->CN9_REVATU)
+				Help(" ",1,"CNTA110ATU") //"O cronograma não pode ser alterado/excluído pois o contrato possui uma revisão pendente"
+				lRet := .F.
+			EndIf
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³Permite alteracao de cronograma quando nas seguintes situacoes de contrato:³
+			//³ - Elaboracao                                                              ³
+			//³ - Revisao                                                                 ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If nOpcX == 4 .And. lC110vsit
+				lRet := If( ValType(lRetUsr:=ExecBlock("C110VSIT",.F.,.F.)) == "L" , lRetUsr , lRet)
+			ElseIf nOpcX == 4 .And. AllTrim(CN9->CN9_SITUAC) != DEF_SELAB .And. AllTrim(CN9->CN9_SITUAC) != DEF_SREVS//Alteracao
+				Help(" ",1,"CNTA110ALT") //"A situação atual do contrato não permite a alteração de cronograma"
+				lRet := .F.
+			ElseIf nOpcX == 4 .And. !Empty(CN9->CN9_REVATU)
+				Help(" ",1,"CNTA110ATU") //"O cronograma não pode ser alterado/excluído pois o contrato possui uma revisão pendente"
+				lRet := .F.
+			EndIf
+		EndIF
+		
+		If lRet
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Definicao de Fontes e Cores                         ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			DEFINE FONT oFont NAME "Verdana" SIZE 6,-11 BOLD
+			DEFINE FONT oFnt  NAME "Arial" SIZE 6,-11 BOLD
+			
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Wizard - Sequencia                 	              ³
+			//³                                    	              ³
+			//³ Inclusao                                          ³
+			//³ Painel 1 - Apresentacao                           ³
+			//³ Painel 2 - Contrato                	              ³
+			//³ Painel 3 - Planilha                	              ³
+			//³ Painel 5 - Configuracao            	              ³
+			//³ Painel 6 - Parcelas                	              ³
+			//³                                    	              ³
+			//³ Edicao                             	              ³
+			//³ Painel 1 - Apresentacao            	              ³
+			//³ Painel 4 - Cronograma              	              ³
+			//³ Painel 6 - Parcelas                	              ³
+			//³                                    	              ³
+			//³ Visualizacao                       	              ³
+			//³ Painel 1 - Apresentacao            	              ³
+			//³ Painel 6 - Parcelas                	              ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Painel 1 - Tela inicial do Wizard 	                ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			DEFINE WIZARD oWizard;
+			TITLE OemToAnsi("Assistente - Cronograma Financeiro"); //"Assistente - Cronograma Financeiro"
+			HEADER OemToAnsi("Manutencao de Cronograma Financeiro");//"Manutencao de Cronograma Financeiro"
+			TEXT OemToAnsi("Assistente responsável pela configuração dos Cronogramas Financeiro")+CRLF+CRLF+OemToAnsi("Clique em avancar e inicie o processo");//"Assistente responsável pela configuração dos Cronogramas Financeiro"##"Clique em avancar e inicie o processo"
+			PANEL NEXT {|| xCN110VlPn1(nOpcX,cContra,cRevisa,cCronog,@nSaldPlan,lAtuPlan,lPlanReg,aColsParc,aHeadParc,aItVl,oBtnFsc) };
+			FINISH {|| CNTA110Fin(lAtuPlan) }
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Painel 2 - Contratos              		              ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			CREATE PANEL oWizard;
+			HEADER OemToAnsi("Contratos");//"Contratos"
+			MESSAGE OemToAnsi("Selecione o contrato");//"Selecione o contrato"
+			PANEL BACK {|| CN110BckPnl(nOpcX,@cContra,@cCond,@cCronog,@aPlanilha,lAtuPlan,lPlanReg) };
+			NEXT {|| CN110VlPn2(cContra,cRevisa,@cCompete,@dPrevista,aColsParc,aHeadParc,oBtnFsc,nOpcX)};
+			FINISH {|| CNTA110Fin(lAtuPlan) }
+			
+			If(!Empty(cArqCN9))
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//³ Configura browse com arquivo temporario CN9         ³
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+				oBrowse	  := TWBrowse():New( 000, 000, __DlgWidth(oWizard:oMPanel[2]), __DlgHeight(oWizard:oMPanel[2])-27,,;
+				{ "",RetTitle("CN9_NUMERO"),RetTitle("CN9_REVISA"),RetTitle("CN9_DTINIC"),RetTitle("CN9_DTFIM"),RetTitle("CN9_CONDPG"),RetTitle("CN9_SITUAC"),RetTitle("CN9_SALDO") },;
+				{ 030,090,030,030,030,030,030,030 }, oWizard:oMPanel[2],,,,,,,,,,,,,"TRBCN9", .T. )
+				oBrowse:bLine := {|| { If((cContra==TRBCN9->CN9_NUMERO),(CN110MkContra(@cContra,@cRevisa,@cCond,@nSaldCont),oOk),oNo),TRBCN9->CN9_NUMERO,TRBCN9->CN9_REVISA,TRBCN9->CN9_DTINIC,TRBCN9->CN9_DTFIM,TRBCN9->CN9_CONDPG,TRBCN9->CN9_SITUAC,Transform(TRBCN9->CN9_SALDO,PesqPict("CN9","CN9_SALDO"))}}
+				oBrowse:bLDblClick := {|| CN110MkContra(@cContra,@cRevisa,@cCond,@nSaldCont), oBrowse:Refresh() }
+			EndIf
+			
+			DEFINE SBUTTON FROM 128,010 TYPE 15 ACTION CN110Visual("CN9",oBrowse:NROWPOS) ENABLE OF oWizard:oMPanel[2]
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Painel 3 - Planilhas              		            ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			CREATE  PANEL oWizard;
+			HEADER OemToAnsi("Planilhas");//"Planilhas"
+			MESSAGE OemToAnsi("Selecione a(s) planilha(s) referente(s) ao contrato");//"Selecione a(s) planilha(s) referente(s) ao contrato"
+			PANEL BACK {|| CN110BckPnl(nOpcX,@cContra,@cCond,@cCronog,@aPlanilha,lAtuPlan,lPlanReg) };
+			NEXT {|| CN110VlPn3(aPlanilha) };
+			FINISH {|| CNTA110Fin(lAtuPlan) }
+			
+			If(!Empty(cArqCN9))
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//³ Configura browse com arquivo temporario CNA         ³
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+				oBrowse2	  := TWBrowse():New( 000, 000, __DlgWidth(oWizard:oMPanel[3]), __DlgHeight(oWizard:oMPanel[3])-27,,;
+				{ "",RetTitle("CNA_NUMERO"),RetTitle("CNA_CONTRA"),RetTitle("CNA_REVISA"),RetTitle("CNA_TIPPLA"),RetTitle("CNA_FORNEC"),RetTitle("CNA_LJFORN"),RetTitle("CNA_VLTOT") }, ;
+				{ 030,060,090,030,030,040,030,050 }, oWizard:oMPanel[3], , , ,,,,,,,,,,"TRBCNA", .T. )
+				oBrowse2:bLine := {|| { If((Ascan(aPlanilha,{|x| x[2]==TRBCNA->CNA_NUMERO}) > 0),oOk,oNo), TRBCNA->CNA_NUMERO,TRBCNA->CNA_CONTRA,TRBCNA->CNA_REVISA,TRBCNA->CNA_TIPPLA,TRBCNA->CNA_FORNEC,TRBCNA->CNA_LJFORN,Transform(TRBCNA->CNA_VLTOT,PesqPict("CNA","CNA_VLTOT")) } }
+				oBrowse2:bLDblClick := {|| CN110MkPlani(@aPlanilha,@nSaldPlan), oBrowse2:Refresh() }
+			EndIf
+			
+			DEFINE SBUTTON FROM 128,010 TYPE 15 ACTION CN110Visual("CNA",oBrowse2:NROWPOS) ENABLE OF oWizard:oMPanel[3]
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Painel 4 - Cronogramas            		            ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			CREATE  PANEL oWizard;
+			HEADER OemToAnsi("Cronogramas - Alteracao");//"Cronogramas - Alteracao"
+			MESSAGE OemToAnsi("Selecione o cronograma e informe os dados de alteração do cronograma");//"Selecione o cronograma e informe os dados de alteração do cronograma"
+			PANEL BACK {|| CN110BckPnl(nOpcX,@cContra,@cCond,@cCronog,@aPlanilha,lAtuPlan,lPlanReg) };
+			NEXT {|| CN110VlPn4(cCronog,lArrasto,lDist,nParcel,if(aScan(aTpCron,oTpCron)==1,.T.,.F.),@nSaldPlan,cCond,lAtuPlan,lPlanReg,nOpcX,aColsParc,aHeadParc,aItVl,oBtnFsc,cPerAnt) };
+			FINISH {|| CNTA110Fin(lAtuPlan) }
+			
+			If(!Empty(cArqCNF))
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//³ Configura browse com arquivo temporario CNF         ³
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+				@ 110,150 Say "Tipo" Of oWizard:oMPanel[4] PIXEL
+				oBrowse3 := TWBrowse():New( 000, 000, __DlgWidth(oWizard:oMPanel[4]), __DlgHeight(oWizard:oMPanel[4])-50,,;
+				{ "",RetTitle("CNF_CONTRA"),RetTitle("CNF_REVISA"),RetTitle("CNF_NUMERO"),RetTitle("CNF_COMPET"),RetTitle("CNF_SALDO") }, ;
+				{ 050,050,050,050,050 }, oWizard:oMPanel[4], , , ,,,,,,,,,,"TRBCNF", .T. )
+				oBrowse3:bLine := {|| { If((cCronog==TRBCNF->CNF_NUMERO),oOk,oNo), TRBCNF->CNF_CONTRA,TRBCNF->CNF_REVISA,TRBCNF->CNF_NUMERO,TRBCNF->CNF_COMPET,Transform(TRBCNF->CNF_SALDO,PesqPict("CNF","CNF_SALDO")) } }
+				oBrowse3:bLDblClick := {|| cCronog:=TRBCNF->CNF_NUMERO, oBrowse3:Refresh(), lRecCronog := .F. }
+			EndIf
+			
+			// Considera o ultimo dia do mês, quando não houver o dia do vencimento da parcela
+			@ 110,030 Checkbox oUltimoDia VAR lUltimoDia PROMPT "Último dia do mês" OF oWizard:oMPanel[4] PIXEL SIZE 60,09 WHEN oTpPeriod:nat == 1 //"Último dia do mês"
+			
+			If cFunName <> "CNTA110"
+				@ 120,030 CheckBox oArrasto VAR lArrasto PROMPT "Arrasto" OF oWizard:oMPanel[4] WHEN (!lAtuPlan) PIXEL SIZE 60,09 ON CLICK( ( oDist:lActive := lArrasto ))//"Arrasto"
+				@ 130,030 CheckBox oDist VAR lDist PROMPT "Redistribuir Saldos" OF oWizard:oMPanel[4] PIXEL SIZE 60,09 WHEN lArrasto//"Redistribuir Saldos"
+			EndIF
+			@ 110,150 Say "Tipo" Of oWizard:oMPanel[4] PIXEL
+			@ 110,185 MsComboBox oTpCron ITEMS aTpCron ON CHANGE lTpCron := .T. SIZE 60,5 OF oWizard:oMPanel[4] PIXEL
+		
+			@ 125,147 Say "Nro. de Parcelas" Of oWizard:oMPanel[4] PIXEL//"Nro. de Parcelas"
+			@ 125,185 MsGet nParcel Picture "999" When (!(lAtuPlan .And. lPlanReg)) Size 60,5 Of oWizard:oMPanel[4] PIXEL
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Painel 5 - Configuracao do cronograma               ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			CREATE  PANEL oWizard;
+			HEADER OemToAnsi("Configuração do Cronograma");//"Configuração do Cronograma"
+			MESSAGE OemToAnsi("Informe os dados para montar o cronograma");//"Informe os dados para montar o cronograma"
+			PANEL BACK {|| CN110BckPnl(nOpcX,@cContra,@cCond,@cCronog,@aPlanilha,lAtuPlan,lPlanReg) };
+			NEXT {|| CN110VlPn5(cCompete,dPrevista,nParcelas,cCond,aPlanilha,cContra,cRevisa,lAtuPlan,lPlanReg,nOpcX,aColsParc,aHeadParc,aItVl,cCondPg) };
+			FINISH {|| CNTA110Fin(lAtuPlan) }
+			
+			If !lCondicao
+				@ 010,010 To 100,275 Of oWizard:oMPanel[5] PIXEL
+				
+				@ 020,015 Say "Competência de Início:" Of oWizard:oMPanel[5] PIXEL//"Competência de Início:"
+				@ 020,120 MsGet cCompete Valid CN110Compet(@cCompete) PICTURE "99/9999" When .T. Size 33,8 Of oWizard:oMPanel[5] PIXEL
+				
+				@ 040,015 Say "Data prevista da primeira medição:" Of oWizard:oMPanel[5] PIXEL//"Data prevista da primeira medição:"
+				@ 040,120 MsGet dPrevista When .T. PICTURE "@D" Size 40,8 Of oWizard:oMPanel[5] PIXEL
+				
+				@ 060,015 Say "Nº de Parcelas:" Of oWizard:oMPanel[5] PIXEL//"Nº de Parcelas:"
+				@ 060,120 MsGet nParcelas Picture "999" When .T. Size 15,8 Of oWizard:oMPanel[5] PIXEL
+				
+				If lPeriod
+					@ 080,015 Say "Periodicidade:" Of oWizard:oMPanel[5] PIXEL//"Periodicidade:"
+					@ 080,120 MsComboBox oTpPeriod VAR cPeriod ITEMS aTpPeriod ON CHANGE CN110Perio(@lAtCronog,@cCondPg,@nParcelas,@dPrevista,@cCompete) Size 42,4 OF oWizard:oMPanel[5] PIXEL
+					@ 080,162 MsGet nDiaPar Picture "999" When lDias Size 15,8 Of oWizard:oMPanel[5] PIXEL
+					@ 083,179 Say "dia(s)" Of oWizard:oMPanel[5] PIXEL
+					
+					// Considera o ultimo dia do mês, quando não houver o dia do vencimento da parcela
+					@ 080,198 Checkbox oUltimoDia VAR lUltimoDia PROMPT "Último dia do mês" OF oWizard:oMPanel[5] PIXEL SIZE 60,09 WHEN oTpPeriod:nat == 1 //"Último dia do mês"
+				EndIf
+			Else
+				@ 010,010 To 120,275 Of oWizard:oMPanel[5] PIXEL                                      
+	
+				If lPeriod
+					@ 020,015 Say "Periodicidade:" Of oWizard:oMPanel[5] PIXEL//"Periodicidade:"
+					@ 020,120 MsComboBox oTpPeriod VAR cPeriod ITEMS aTpPeriod ON CHANGE CN110Perio(@lAtCronog,@cCondPg,@nParcelas,@dPrevista,@cCompete) Size 42,4 OF oWizard:oMPanel[5] PIXEL
+					@ 020,162 MsGet nDiaPar Picture "999" When lDias Size 15,8 Of oWizard:oMPanel[5] PIXEL
+					@ 023,179 Say "dia(s)" Of oWizard:oMPanel[5] PIXEL
+					
+					// Considera o ultimo dia do mês, quando não houver o dia do vencimento da parcela
+					@ 020,198 Checkbox oUltimoDia VAR lUltimoDia PROMPT "Último dia do mês" OF oWizard:oMPanel[5] PIXEL SIZE 60,09 WHEN oTpPeriod:nat == 1 //"Último dia do mês"
+				EndIf
+				
+				@ 040,015 Say "Competência de Início:" Of oWizard:oMPanel[5] PIXEL//"Competência de Início:"
+				@ 040,120 MsGet cCompete Valid CN110Compet(@cCompete) When lAtCronog   PICTURE "99/9999" When .T. Size 33,8 Of oWizard:oMPanel[5] PIXEL
+				
+				@ 060,015 Say "Data prevista da primeira medição:" Of oWizard:oMPanel[5] PIXEL//"Data prevista da primeira medição:"
+				@ 060,120 MsGet dPrevista When lAtCronog PICTURE "@D" Size 40,8 Of oWizard:oMPanel[5] PIXEL
+				nParcelas := 1
+				@ 080,015 Say "Nº de Parcelas:" Of oWizard:oMPanel[5] PIXEL//"Nº de Parcelas:"
+				@ 080,120 MsGet nParcelas Picture "999" When !lAtCronog Size 15,8 Of oWizard:oMPanel[5] PIXEL		
+				
+				@ 100,015 Say "Cond. de Pagamento" Of oWizard:oMPanel[5] PIXEL//"Cond. de Pagamento"
+				@ 100,120 MsGet cCondPG Picture PesqPict("CNF","CNF_CONDPG") Valid Vazio(cCondPG) .Or. ExistCpo('SE4',cCondPG) When !lAtCronog  F3 CpoRetF3("CNF_CONDPG") Size 23,8 Of oWizard:oMPanel[5] PIXEL		
+			EndIf		
+	
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Painel 6 - Configuracao do cronograma               ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			CREATE  PANEL oWizard;
+			HEADER OemToAnsi("Finalizacao");//"Finalizacao"
+			MESSAGE OemToAnsi("Parcelas e confirmacao do cronograma");//"Parcelas e confirmacao do cronograma"
+			PANEL BACK {|| CN110BckPnl(nOpcX,@cContra,@cCond,@cCronog,@aPlanilha,lAtuPlan,lPlanReg) };
+			FINISH {|| CN110Grava(aPlanilha,cContra,cRevisa,cCronog,!Empty(nParcel),lAtuPlan,lPlanReg,nOpcX,aColsParc,aHeadParc,aItVl,cCond,cCondPg) }
+			
+			@ 005,005 GROUP oGroup To 020,090 Label "Montante das Planilhas " Of oWizard:oMPanel[6] PIXEL//"Montante das Planilhas "
+			oGroup:SetFont(oFnt)
+			@ 010,040 Say nTotPlan Picture PesqPict("CNA","CNA_VLTOT") Of oWizard:oMPanel[6] PIXEL
+			
+			@ 005,100 GROUP oGroup To 020,190 Label "Montante do Cronograma " Of oWizard:oMPanel[6] PIXEL//"Montante do Cronograma "
+			oGroup:SetFont(oFnt)
+			@ 010,140 Say oTotCronog Var nTotCronog Size 50,8 Picture PesqPict("CNF","CNF_VLPREV") Of oWizard:oMPanel[6] PIXEL
+			
+			@ 005,200 GROUP oGroup To 020,285 Label "Saldo a Distribuir " Of oWizard:oMPanel[6] PIXEL//"Saldo a Distribuir "
+			oGroup:SetFont(oFnt)
+			@ 010,240 Say oSaldDist Var nTotPlan-nTotCronog Size 50,8 Picture PesqPict("CNA","CNA_VLTOT") Of oWizard:oMPanel[6] PIXEL
+			
+			@ 102,005 GROUP oGroup To 117,090 Label "Saldo do Contrato" Of oWizard:oMPanel[6] PIXEL//"Saldo do Contrato"
+			oGroup:SetFont(oFnt)
+			@ 107,040 Say oSaldCont Var nSaldCont Size 50,8 Picture PesqPict("CN9","CN9_VLATU") Of oWizard:oMPanel[6] PIXEL
+			
+			@ 120,005 GROUP oGroup To 135,090 Label "Saldo das Planilhas" Of oWizard:oMPanel[6] PIXEL//"Saldo das Planilhas"
+			oGroup:SetFont(oFnt)
+			@ 125,040 Say oSaldPlan Var nSaldPlan Size 50,8 Picture PesqPict("CN9","CN9_VLATU") Of oWizard:oMPanel[6] PIXEL
+	
+			@ 102 ,256 BUTTON oBtnFsc Prompt OemToAnsi("Fisico") SIZE 29 ,13 ACTION (If(len(aHeadParc) > 0,(CN110Fisico(nOpcX,oGetDados:aCols,oGetDados:nAt,aColsParc,aHeadParc,aItVl),CN110AtuVal(),oGetDados:oBrowse:Refresh()),Aviso("CNTA110",OemToAnsi("O contrato nao possui controle físico"),{"OK"}))) OF oWizard:oMPanel[6] PIXEL//Fisico
+					
+			ACTIVATE WIZARD oWizard CENTERED
+		EndIf
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Apaga arquivos temporario                           ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		If nOpcX == 3
+			TRBCN9->(dbCloseArea())
+			FErase(cArqCN9 + ".DBF")
+			FErase(cArqCN9 + OrdBagExt() )
+			
+			TRBCNA->(dbCloseArea())
+			FErase(cArqCNA + ".DBF")
+			FErase(cArqCNA + OrdBagExt() )
+		Else
+			TRBCNF->(dbCloseArea())
+			FErase(cArqCNF + ".DBF")
+			FErase(cArqCNF + OrdBagExt() )
+		EndIF
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Finaliza lancamentos do PCO  ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		PcoFinLan("000357")  
+		PcoFreeBlq("000357",,,,,(nOpcX == 4))
+	
+	Else
+		lRet := .F.
+	EndIf
+	RestArea(aArea)
+
+Return
+
+/*/{Protheus.doc} xCN110VlPn1
+(long_description)
+@author j2a.luizjunior
+@since 12/06/2017
+@version 1.0
+@param nOpc, numérico, (Descrição do parâmetro)
+@param cContra, character, (Descrição do parâmetro)
+@param cRevisa, character, (Descrição do parâmetro)
+@param cCronog, character, (Descrição do parâmetro)
+@param nSaldPlan, numérico, (Descrição do parâmetro)
+@param lAtuPlan, ${param_type}, (Descrição do parâmetro)
+@param lPlanReg, ${param_type}, (Descrição do parâmetro)
+@param aColsParc, array, (Descrição do parâmetro)
+@param aHeadParc, array, (Descrição do parâmetro)
+@param aItVl, array, (Descrição do parâmetro)
+@param oBtnFsc, objeto, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function xCN110VlPn1(nOpc,cContra,cRevisa,cCronog,nSaldPlan,lAtuPlan,lPlanReg,aColsParc,aHeadParc,aItVl,oBtnFsc)
+
+Local   cQuery   := ""
+Local   cQueryPE := ""
+Local   aArea    := GetArea()
+Local   lRet     := .T. 
+Local   cConVen  := "" 
+Default cContra  := ""
+Default cRevisa  := ""
+
+If nOpc == 3//Inclusao
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Filtra contratos com planilhas sem cronograma       ³
+	//³ e que nao possuam medicao eventual                  ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ 
+	dbSelectArea("CN9")
+	cQuery := "SELECT DISTINCT CN9.CN9_FILIAL, CN9.CN9_NUMERO, CN9.CN9_REVISA, CN9.CN9_DTINIC, CN9.CN9_DTFIM, "
+	cQuery += "                CN9.CN9_CONDPG, CN9.CN9_SITUAC, CN9.CN9_SALDO, CN9.CN9_TPCTO "
+	cQuery += "  FROM " + RetSqlName("CN9") + " CN9 ," + RetSqlName("CNA") + " CNA ," + RetSqlName("CN1") + " CN1 "
+	cQuery += " WHERE CN9.CN9_FILIAL = '" + xFilial("CN9") + "'"
+	cQuery += "   AND CNA.CNA_FILIAL = '"+ xFilial("CNA") + "'"
+	cQuery += "   AND CN1.CN1_FILIAL = '"+ xFilial("CN1") + "'"
+	cQuery += "   AND CN9.CN9_NUMERO = CNA.CNA_CONTRA "
+	cQuery += "   AND CN9.CN9_REVISA = CNA.CNA_REVISA "
+	cQuery += "   AND CN9.CN9_TPCTO  = CN1.CN1_CODIGO "
+	cQuery += "   AND "
+	If !Empty(cContra)
+		cQuery += " CN9.CN9_NUMERO = '" + cContra + "' AND CN9.CN9_REVISA = '" + cRevisa + "' AND "
+	EndIf
+	cQuery += "     CN9.CN9_SITUAC in ('"+ DEF_SELAB +"','" + DEF_SCTB + "','" + DEF_SEMIT +"','"+ DEF_SAPRO +"') "
+	cQuery += " AND CN9.CN9_REVATU = ' ' "
+	cQuery += " AND CNA.CNA_CRONOG = ' ' "
+	If CN9->CN9_XCONVE != "S"
+		cQuery += " AND CN1.CN1_MEDEVE = '2' "
+	EndIf	
+	cQuery += " AND CN9.D_E_L_E_T_ = ' ' "
+	cQuery += " AND CNA.D_E_L_E_T_ = ' ' "
+	cQuery += " AND CN1.D_E_L_E_T_ = ' ' "
+	If Existblock('CN110QRY')
+		cQueryPE := Execblock('CN110QRY', .F., .F., {cQuery})
+		cQuery   := If(ValType(cQueryPE)=='C', cQueryPE, cQuery)
+	Endif
+	cQuery += "ORDER BY "+SqlOrder(CN9->(IndexKey()))
+	
+	dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),"TRB",.F.,.T.)
+	
+	//Configura campos especificos
+	TCSetField("TRB","CN9_DTINIC","D",08,0)
+	TCSetField("TRB","CN9_DTFIM" ,"D",08,0)
+	TCSetField("TRB","CN9_SALDO" ,"N",TamSX3("CN9_SALDO")[1],TamSX3("CN9_SALDO")[1])
+	
+	dbSelectArea("TRB")
+	dbGoTop()
+	
+	If !TRB->(Eof())
+		dbSelectArea("TRBCN9")
+		If RecCount() > 0
+			Zap
+		Endif
+		
+		dbSelectArea("TRB")
+		While !Eof()
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Adiciona registros filtrados ao arquivo temporario  ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			RecLock("TRBCN9",.T.)
+			TRBCN9->CN9_NUMERO := TRB->CN9_NUMERO
+			TRBCN9->CN9_REVISA := TRB->CN9_REVISA
+			TRBCN9->CN9_DTINIC := TRB->CN9_DTINIC
+			TRBCN9->CN9_DTFIM  := TRB->CN9_DTFIM
+			TRBCN9->CN9_CONDPG := TRB->CN9_CONDPG
+			TRBCN9->CN9_SITUAC := TRB->CN9_SITUAC
+			TRBCN9->CN9_SALDO  := TRB->CN9_SALDO
+			MsUnlock()
+			dbSelectArea("TRB")
+			dbSkip()
+		Enddo
+		TRBCN9->(dbGoTop())
+	Else
+		Aviso(OemToAnsi("Atenção"),OemToAnsi("Não há contratos com planilhas em aberto"),{"Ok"}) //"Não há contratos com planilhas em aberto"##"Atenção"
+		lRet := .F.
+	Endif
+	TRB->(dbCloseArea())
+	
+ElseIf nOpc == 2 .Or. nOpc == 5//Visualizacao
+	//-- Zerar o Saldo da variavel nSaldPlan para nao acumular o saldo 
+	//-- toda vez que o usuario clicar no botao "<< Voltar"
+	nSaldPlan := 0 
+	CN110VisCro(cCronog,@nSaldPlan,nOpc,cContra,cRevisa,aColsParc,aHeadParc,aItVl,oBtnFsc)
+Else
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Filtra os cronogramas do contrato - Visualizacao/Edicao ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	cQuery := "SELECT CNF.CNF_FILIAL, CNF.CNF_NUMERO, CNF.CNF_CONTRA, CNF.CNF_REVISA, Min(CNF.CNF_COMPET) as CNF_COMPET,"
+	cQuery += "       Sum(CNF.CNF_SALDO) as CNF_SALDO "
+	cQuery += "  FROM " + RetSqlName("CNF") + " CNF "
+	cQuery += " WHERE CNF.CNF_FILIAL   = '" + xFilial("CNF") + "'"
+	cQuery += "   AND CNF.CNF_CONTRA   = '" + cContra + "' "
+	cQuery += "   AND CNF.CNF_REVISA   = '" + cRevisa + "' AND "
+	If lAtuPlan
+		cQuery += "CNF.CNF_NUMERO = '" + cCronog + "' AND "
+	EndIf
+	cQuery += " CNF.D_E_L_E_T_ = ' ' "
+	cQuery += " GROUP BY CNF.CNF_FILIAL, CNF.CNF_NUMERO, CNF.CNF_CONTRA, CNF.CNF_REVISA"
+	
+	cQuery := ChangeQuery(cQuery)
+	dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),"TRB",.F.,.T.)
+	
+	TCSetField("TRB","CNF_SALDO","N",TamSX3("CNF_SALDO")[1],TamSX3("CNF_SALDO")[2])
+	dbSelectArea("TRB")
+	dbGoTop()
+	
+	If !Eof()
+		dbSelectArea("TRBCNF")
+		If RecCount() > 0
+			Zap
+		Endif
+		
+		dbSelectArea("TRB")
+		While !Eof()
+			RecLock("TRBCNF",.T.)
+			TRBCNF->CNF_NUMERO := TRB->CNF_NUMERO
+			TRBCNF->CNF_CONTRA := TRB->CNF_CONTRA
+			TRBCNF->CNF_REVISA := TRB->CNF_REVISA
+			TRBCNF->CNF_COMPET := TRB->CNF_COMPET
+			TRBCNF->CNF_SALDO  := TRB->CNF_SALDO
+			MsUnlock()
+			dbSelectArea("TRB")
+			dbSkip()
+		Enddo
+		TRBCNF->(dbGoTop())
+	Else
+		Aviso(OemToAnsi("Atenção"),OemToAnsi("Não há cronogramas para o contrato."),{"Ok"}) //"Não há cronogramas para o contrato."##"Atenção"
+		lRet := .F.
+	Endif
+	
+	TRB->(dbCloseArea())
+	//Segue para o painel de cronogramas
+	oWizard:NPanel:=3
+EndIf
+
+RestArea(aArea)
+
+Return lRet

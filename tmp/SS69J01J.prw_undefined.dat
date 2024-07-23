@@ -1,0 +1,255 @@
+#Include 'Protheus.ch'
+#Include 'Topconn.ch'
+#Include 'Tbiconn.ch'
+
+/*/{Protheus.doc} SS69J01J
+Funcao de Job responsavel por verificar contratos emitidos e 
+sem movimentacao altere a situacao para em elaboracao. 
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	14/06/2016
+@version 	1.0
+@return 	Nil, Nulo
+/*/
+User Function SS69J01J( _aParams )
+	
+	Local _aArea	:= GetArea()
+
+	ConOut(" ")
+  	ConOut(Replicate("=",80))
+  	ConOut('SS69J01J: Iniciando Job')
+	
+	If Valtype( _aParams ) != "U"
+		//+--------------------------------------------------------------+
+		//| Se for SCHEDULE prepara o ambiente                           |
+		//+--------------------------------------------------------------+
+		//PREPARE ENVIRONMENT EMPRESA _aParams[1] FILIAL _aParams[2]
+		
+		RpcClearEnv()
+		RpcSetType(3)
+		RpcSetEnv(_aParams[1],_aParams[2],"job.imp","abcd1234","GCT",GetEnvServer(),)
+		
+		If _aParams != Nil
+			ConOut("SS69J01J: Empresa: "+ _aParams[1])   
+			ConOut("SS69J01J: Filial: "+ _aParams[2])
+		EndIf
+		 
+	EndIf
+	
+	If JobAtivo()
+ 		Conout("SS69J01J: JobAtivo - Job ja esta sendo executada.")
+ 	Else
+		
+		//Bloqueia a tabela de importacao
+	  	AtuaZZA('N')
+	  		
+		/* Realiza a alteracao da situacao dos contratos */	
+		fAltSitCtr()
+		
+		//Desbloqueia a tabela de importacao
+	  	AtuaZZA('S')
+		
+		ConOut('SS69J01J: Finalizando Job')
+		ConOut(Replicate("=",80))
+		ConOut(" ")
+	EndIf
+	
+	If Valtype( _aParams ) != "U"
+		RpcClearEnv()
+		Conout("SS69J01J: Finalizou Ambiente")
+	EndIf
+	
+	Conout(Replicate("-", 80))
+		
+	RestArea( _aArea )
+	
+Return
+
+
+/*/{Protheus.doc} fAltSitCtr
+Função que seleciona os contratos e realiza a mudanca da situacao.
+
+@author 	Jose Leite de Barros Neto
+@since 	14/06/2016
+@version 	1.0
+
+@return lRet, Logico
+
+/*/
+Static Function fAltSitCtr()
+	
+	Local cFilOld 	:= cFilAnt	
+	Local cQuery 	:= ""
+	Local nDiasCtr 	:= GetNewPar("MV_XDALCTR",17) 
+	Local nCont		:= 0
+	Local cNewSit	:= "02" //Em Elaboração
+	Local cFilCtr	:= ""
+	Local cCtrCRM 	:= ""
+	Local cRevCTR 	:= ""
+	
+	If Select("TRA") > 0
+		DbSelectarea("TRA")
+		TRA->(DbCloseArea())
+	EndIf
+	
+	cQuery := "SELECT CN9_FILIAL,	" + CRLF
+	cQuery += "	CN9_NUMERO, 			" + CRLF	
+	cQuery += "	CN9_REVISA, 			" + CRLF
+	cQuery += "	CN9_DTINIC, 			" + CRLF
+	cQuery += "	CN9_DTFIM, 			" + CRLF
+	cQuery += "	CN9_DTASSI,			" + CRLF
+	cQuery += "	CN9_CLIENT,			" + CRLF
+  	cQuery += "	CN9_LOJACL,			" + CRLF
+  	cQuery += "	CN9_XNROCV,			" + CRLF
+  	cQuery += "	CN9_XDTINI,			" + CRLF
+  	cQuery += "	CN9_XDTFIM,			" + CRLF
+  	cQuery += "	CN9_SITUAC,			" + CRLF
+  	cQuery += "	ROUND(TO_DATE(CN9_DTINIC, 'YYYY-MM-DD') - SYSDATE,2) * -1 CN9_DATA		" + CRLF
+  	cQuery += "FROM " + RetSqlName("CN9") + " CN9 		" + CRLF
+  	cQuery += "WHERE	
+  	If cFilAnt == '02MT0001'
+  		cQuery += "SUBSTR(CN9_FILIAL,1,4) = '02MT'		" + CRLF
+  	ElseIf cFilAnt == '03MT0001'
+  		cQuery += "SUBSTR(CN9_FILIAL,1,4) = '03MT'		" + CRLF
+  	EndIf
+  	cQuery += "			AND CN9_SITUAC    = '03'			" + CRLF
+  	cQuery += "			AND CN9_XOPORT <> ' '				" + CRLF
+  	cQuery += "			AND CN9_XREVOP <> ' '				" + CRLF 
+  	cQuery += "			AND CN9.D_E_L_E_T_ <> '*'		" + CRLF
+  	cQuery += "ORDER BY CN9_DATA							" + CRLF
+	
+	TCQUERY cQuery NEW ALIAS "TRA"
+	
+	DbSelectArea("TRA")
+	TRA->(DbGoTop())
+	While .Not. TRA->( EoF() )
+		
+		If TRA->CN9_DATA > nDiasCtr
+			
+			cFilAnt := TRA->CN9_FILIAL
+			cFilCtr := cFilAnt
+			cCtrCRM := TRA->CN9_NUMERO
+			cRevCTR := TRA->CN9_REVISA
+			
+			Conout("SS69J01J: fAltSitCtr - Atualizando - Filial: "+ cFilCtr +" Contrato: "+ cCtrCRM +" - Revisao: " + cRevCTR + " / CTR Venda: " + TRA->CN9_XNROCV)
+			
+			Begin Transaction		
+				
+				DbSelectArea('CN9')
+				CN9->(DbSetOrder(1))
+				CN9->(DbGotop())
+				ConOut('xFilialCN9:' + xFilial('CN9'))	
+				If CN9->( DbSeek( xFilial('CN9') + cCtrCRM + cRevCTR ) )
+					
+					DbSelectArea('SA1')
+					SA1->(DbSetOrder(1))
+					SA1->(DbSeek(xFilial('SA1') + CN9->CN9_CLIENT + CN9->CN9_LOJACL))
+								
+					If CN100SitCh(cCtrCRM,cRevCTR,cNewSit)
+						ConOut("SS69J01J: CN100SitCh - Alteracao da situacao do contrato realizada com sucesso!")
+						nCont++
+						If RecLock('CN9',.F.)
+							CN9->CN9_XDASIT := dDataBase
+							CN9->( MsUnlock() )
+						EndIf
+					Else
+						ConOut("SS69J01J: CN100SitCh - Alteracao da situacao do contrato nao realizada, favor verificar!")
+						DisarmTransaction()
+					EndIf
+					
+					SA1->(DbCloseArea())
+					
+				Else
+					Conout("SS69J01J: DbSeek_CN9 - Contrato nao Localizado, favor verificar!")
+				EndIf
+				
+				CN9->(DbCloseArea())
+				
+			End Transaction
+			
+		EndIf
+		
+		TRA->( DbSkip() )
+	End
+	
+	cFilAnt := cFilOld
+		
+	If nCont > 0
+		Conout("SS69J01J: fAltSitCtr - Foram atualizados: "+ cValToChar(nCont) + " contratos")
+	Else
+		Conout("SS69J01J: fAltSitCtr - Nao existem contratos a serem atualizados!")
+	EndIf
+	
+Return
+
+
+/*/{Protheus.doc} JobAtivo
+Função que verifica se o job está ativo.
+
+@author 	Jose Leite de Barros Neto
+@since 	14/06/2016
+@version 	1.0
+
+@return lRet, Logico
+
+/*/
+Static function JobAtivo()
+  
+	Local cQuery := ''
+	Local lRet := .F.
+  
+	If Select('TMP') > 0
+		DbSelectarea("TMP")
+		TMP->(DbCloseArea())
+	EndIf
+ 
+	cQuery := " SELECT ZZA_STATUS "
+	cQuery += " FROM "+RetSqlName("ZZA")
+	cQuery += " WHERE D_E_L_E_T_ != '*' "
+	cQuery += " AND   ZZA_TIPO    = '7' "
+ 
+	TcQuery cQuery New Alias 'TMP'
+ 
+	If TMP->ZZA_STATUS == 'S'
+		lRet := .T. 
+	EndIf
+	
+	TMP->(DbCloseArea())
+
+Return( lRet )
+
+
+/*/{Protheus.doc} AtuaZZA
+Função responsável por bloquear/desbloquear a tabela de importacao
+
+@author 	Jose Leite de Barros Neto
+@since 	14/06/2016
+@version 	1.0
+
+@return Nil
+/*/
+Static Function AtuaZZA(p_cBloq)
+	
+	Local cMsg := If(p_cBloq == 'N','SS69J01J: Bloqueando ZZA.','SS69J01J: Liberando ZZA.')
+	
+	Begin Transaction
+		
+		DbSelectArea("ZZA")
+		ZZA->( DbSetOrder(1) )
+		If ZZA->( DbSeek(xFilial("ZZA") + p_cBloq + "7") )
+	   		If RecLock("ZZA",.F.)
+				ZZA->ZZA_STATUS := IIF( p_cBloq == 'N','S','N')
+				ZZA->ZZA_DATA   := dDataBase
+				ZZA->ZZA_HORA   := Time()
+				ZZA->( MsUnlock() )
+		   EndIf
+		EndIf
+		
+		ZZA->( DbCloseArea() )
+		
+	End Transaction
+	
+	ConOut(cMsg)
+	
+Return( Nil )

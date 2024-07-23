@@ -1,0 +1,497 @@
+#Include 'Protheus.ch'
+#Include 'TopConn.ch'
+#Include 'FWPrintSetup.ch'
+#Include 'RptDef.ch'
+
+/*/{Protheus.doc} SF01R01X
+	Relatório de Baixa de Ativo Fixo
+
+@author	Walmir Gonçalves da Silva Junior
+@since	06/04/2017
+@version 1.0
+
+@return Nil
+
+/*/
+
+User Function SF01R01X(_aMovs)
+Local aOrdem		:= {"Padrão"}															//Array com ordem de impressão do relatório
+Local aDevice		:= {"DISCO","SPOOL","EMAIL","EXCEL","HTML","PDF"}						//Array com dispositivos para impressão do relatório
+Local cDevice		:= ""																	//Dispositivo selecionado para impressão
+Local cPathDest		:= GetSrvProfString("StartPath","\system\")								//Caminho da pasta \system\
+Local cRelName		:= "SF01R01X"															//Nome do relatório
+Local cSession		:= GetPrinterSession()													//Sessão do usuário logado
+Local lAdjust		:= .F.																	//Possibilita ajustes de impressão
+Local nFlags		:= PD_ISTOTVSPRINTER+PD_DISABLEORIENTATION+PD_DISABLEPAPERSIZE			//Opções para setup de impressão
+Local nLocal		:= 1																	//Local de impressão
+Local nOrdem		:= 1																	//Ordem de impressão	
+Local nOrient		:= 1																	//Orientação da impressão
+Local nPrintType	:= 6																	//Tipo da impressora
+Local oPrinter		:= Nil																	//Objeto de impressão			
+Local oSetup		:= Nil																	//Objeto de configuração da impressão
+
+Private nMaxLin		:= 800																	//Numero máximo de linhas
+Private nMaxCol		:= 600																	//Numero máximo de colunas
+
+Private _cRazCli	:= ""
+Private _cCNPJ		:= ""
+//Private _dDataMv	:= dDataBase
+Private _cObDevPr	:= "" //fCarObs()
+Private _lTrans		:= .T.
+Private _cAlias		:= GetNextAlias()
+Private _aMovSel	:= _aMovs
+Private _nVRTot		:= 0.00
+
+Private _nColSix	:= 500
+Private _nColFnl	:= 580
+
+	If IsInCallStack("MATA240")
+	
+		Aviso("Atenção!", "Esta é uma rotina exclusiva para TM do tipo devolução e perda.", {"Ok"})
+	
+	Else
+	
+		cSession	:= GetPrinterSession()
+		cDevice		:= If(Empty(fwGetProfString(cSession,"PRINTTYPE","SPOOL",.T.)),"PDF",fwGetProfString(cSession,"PRINTTYPE","SPOOL",.T.))
+		nLocal		:= If(fwGetProfString(cSession,"LOCAL","SERVER",.T.)=="SERVER",1,2 )
+		nPrintType	:= aScan(aDevice,{|x| x == cDevice })     
+	
+		oPrinter	:= FWMSPrinter():New(cRelName, nPrintType, lAdjust, /*cPathDest*/, .T.)
+		oSetup		:= FWPrintSetup():New (nFlags,cRelName)
+	
+		oSetup:SetPropert(PD_PRINTTYPE   	, nPrintType)
+		oSetup:SetPropert(PD_ORIENTATION 	, nOrient)
+		oSetup:SetPropert(PD_DESTINATION 	, nLocal)
+		oSetup:SetPropert(PD_MARGIN			, {0,0,0,0})
+		oSetup:SetPropert(PD_PAPERSIZE		, 2)
+		oSetup:SetOrderParms(aOrdem,@nOrdem)
+	
+		If oSetup:Activate() == PD_OK 
+	
+			oPrinter:lServer			:= oSetup:GetProperty(PD_DESTINATION) == AMB_SERVER	
+			oPrinter:SetDevice(oSetup:GetProperty(PD_PRINTTYPE))
+			oPrinter:SetPortrait()
+			oPrinter:SetPaperSize(oSetup:GetProperty(PD_PAPERSIZE))
+			oPrinter:setCopies(Val(oSetup:cQtdCopia))
+			
+			If oSetup:GetProperty(PD_PRINTTYPE) == IMP_SPOOL
+	
+				oPrinter:nDevice		:= IMP_SPOOL
+				oPrinter:cPrinter		:= oSetup:aOptions[PD_VALUETYPE]
+	
+			Else 
+	
+				oPrinter:nDevice		:= IMP_PDF
+				oPrinter:cPathPDF		:= oSetup:aOptions[PD_VALUETYPE]
+				oPrinter:SetViewPDF(.T.)
+	
+			Endif
+			
+			RptStatus({|lEnd| SF0101FImp(@lEnd,@oPrinter)},"Imprimindo Relatorio...")
+	
+		Else 
+	
+			MsgInfo("Relatório cancelado pelo usuário.")
+			oPrinter:Cancel()
+	
+		EndIf
+	
+		oSetup		:= Nil
+		oPrinter	:= Nil
+		
+	EndIf
+
+Return (Nil)
+
+/*/{Protheus.doc} SF0101FImp
+	Função para impressão do relatório.
+
+@author Franklin de Brito de Oliveira
+@since 26/06/2015
+@version 1.0
+@param lEnd, logico 
+@param oPrinter, objeto, Objeto de impressão
+
+@return Nil
+
+/*/
+//-------------------------------------------------------------------------
+/*
+Modificações:
+	14/10/2015 - Franklin B Oliveira:
+	->Adicionado tratamento para impressão quando o programa de origem for 
+	transferência multipla. 
+
+*/
+//--------------------------------------------------------------------------
+Static Function SF0101FImp(lEnd,oPrinter)
+
+Local nMaxLinha		:= 60												
+Local nLinCount		:= 0
+Local aArea			:= GetArea()
+Local cQuery		:= ""
+
+Private _cAliasTMP	:= GetNextAlias()
+Private dDataEmi	:= dDataBase
+Private nMargDir	:= 15
+Private nMargEsq	:= 20
+Private nColPro		:= nMargEsq+30
+Private nColDes		:= nColPro+80
+Private nColQtd		:= nColDes+80
+Private nColDtA		:= nColQtd+190
+Private nColVlA		:= nColDtA+100
+Private nColFim		:= nColVlA+80
+Private nLiItm		:= 0
+Private nPag		:= 0
+Private nWidtLin	:= 0
+Private nNumItem	:= 0
+Private nColLeft	:= nMargDir
+Private nColRigh	:= nColLeft+270
+Private oFontA7		:= TFont():New('Arial',,7,.T.)
+Private oFontA12	:= TFont():New('Arial',,12,.T.)
+Private oFontC8		:= TFont():New('Courier new',,9,.T.)
+Private _oFnt9N		:= TFont():New('Courier new',,9,.T.)
+Private _oFntC8		:= TFont():New('Courier new',,8,.T.)
+Private li			:= 10
+ 
+oFontA12:Bold := .T.
+_oFnt9N:Bold := .T.
+
+_cAliasTMP := GerQuery()
+
+_lTrans := (_cAliasTMP)->NM_TIPOSOL = '2'
+
+SetRegua((_cAliasTMP)->(LastRec()))
+	 
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Inicia a impressao do relatorio ³ 
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If !(_cAliasTMP)->(Eof())
+	
+	IncRegua()
+	nLiItm		:= 55 //140
+	nLinCount	:= 0
+	nPag++
+	
+	oPrinter:StartPage()
+	CabPagina(@oPrinter)
+	CabItem(@oPrinter)
+
+	nWidtLin = 15 //MlCount( (cAliasTMP)->B1_DESC )
+	
+	While !(_cAliasTMP)->(Eof())
+		// Imprime os itens
+		nNumItem++
+		ImpItem(@oPrinter)
+		li += 15
+		(_cAliasTMP)->(DBSkip())
+	EndDo
+		
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Finaliza a pagina se a quantidade de itens for diferente da quantidade ³ 
+	//³ maxima, para evitar que a pagina seja finalizada mais de uma vez.      ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	
+	If nLinCount <> nMaxLinha
+		oPrinter:Line(750,nMargDir, 750, nMaxCol-nMargEsq,, "-2")
+		oPrinter:EndPage()
+	EndIf
+
+Else
+	Aviso("Atenção", "Nenhum registro encontrado, verifique as informações de contrato.", {"Ok"})
+	Return (Nil)
+EndIf
+
+fCarObs()
+/* Impressão do VALOR RESIDUAL */
+oPrinter:Box(li+nLiItm	, nMargDir			, li+70	, _nColSix)
+oPrinter:Box(li+nLiItm	, _nColSix			, li+70	, _nColFnl)
+oPrinter:SayAlign(li+nLiItm+2, nMargDir+5, "VALOR RESIDUAL TOTAL"								, oFontC8,  nMaxCol-nMargEsq-60	, 15, 2, 2)
+oPrinter:SayAlign(li+nLiItm+2, nMargDir+455, Alltrim(Transform(_nVRTot,X3PICTURE("N1_VLAQUIS")))	, oFontC8, 80	, 15, 2, 1) 
+
+nLiItm += 15
+
+/* Impressão do rodapé - Observação */
+oPrinter:Box(li+nLiItm, nMargDir, li+nLiItm+20 + (MlCount(_cObDevPr) * 7), nMaxCol-nMargEsq)
+oPrinter:SayAlign(li+nLiItm+5, nMargDir+5, "Justificativa :"			, oFontA7,  nMaxCol-nMargEsq, 200, 2, 0)
+oPrinter:SayAlign(li+nLiItm+5, nMargDir+50, _cObDevPr					, oFontA7,  nMaxCol-nMargEsq, 200, 2, 0) 
+
+nLiItm += 30
+
+While li < 430
+		li += 15
+EndDo
+
+/* Impressão do rodapé - Assinatura */
+oPrinter:Box(li+nLiItm, nColLeft, li+nLiItm+95, nColRigh)
+oPrinter:SayAlign(li+nLiItm+12	, nColLeft		, "_____/_____/_____"				, oFontA7, 270, 10, , 2, 1) 
+oPrinter:SayAlign(li+nLiItm+72	, nColLeft		, "Solicitante"						, oFontA7, 270, 10, , 2, 2) 
+oPrinter:SayAlign(li+nLiItm+82	, nColLeft		, "(assinatura e identificação)"	, oFontA7, 270, 10, , 2, 2) 
+
+oPrinter:Box(li+nLiItm, nColRigh, li+nLiItm+95, nMaxCol-nMargEsq)
+oPrinter:SayAlign(li+nLiItm+2	, nColRigh		, "De acordo,"						, oFontA7, 270, 10, , 2, 1)
+oPrinter:SayAlign(li+nLiItm+12	, nColRigh		, "Data: _____/_____/_____"			, oFontA7, 270, 10, , 2, 1)
+oPrinter:SayAlign(li+nLiItm+72	, nColRigh		, "Gerente Unidade/Coordenador DR"	, oFontA7, 270, 10, , 2, 2) 
+oPrinter:SayAlign(li+nLiItm+82	, nColRigh		, "(assinatura e identificação)"	, oFontA7, 270, 10, , 2, 2) 
+
+/* Linha 2 Impressão do rodapé - Assinatura */
+oPrinter:Box(li+nLiItm+105, nColLeft, li+nLiItm+200, nColRigh)
+oPrinter:SayAlign(li+nLiItm+107	, nColLeft		, "Autorizo a Abertura de Processo,"			, oFontA7, 270, 10, , 2, 1) 
+oPrinter:SayAlign(li+nLiItm+117	, nColLeft		, "_____/_____/_____"							, oFontA7, 270, 10, , 2, 1) 
+oPrinter:SayAlign(li+nLiItm+179	, nColLeft		, "Superintendente/Diretor Regional/Síndico"	, oFontA7, 270, 10, , 2, 2) 
+oPrinter:SayAlign(li+nLiItm+189	, nColLeft		, "(assinatura e identificação)"				, oFontA7, 270, 10, , 2, 2) 
+
+oPrinter:Box(li+nLiItm+105, nColRigh, li+nLiItm+200, nMaxCol-nMargEsq)
+oPrinter:SayAlign(li+nLiItm+107	, nColRigh		, "Ciente,"							, oFontA7, 270, 10, , 2, 1)
+oPrinter:SayAlign(li+nLiItm+117	, nColRigh		, "Data: _____/_____/______"		, oFontA7, 270, 10, , 2, 1)
+oPrinter:SayAlign(li+nLiItm+179	, nColRigh		, "Técnico da CALOG/Patrimônio:"	, oFontA7, 270, 10, , 2, 2) 
+oPrinter:SayAlign(li+nLiItm+189	, nColRigh		, "(assinatura e identificação)"	, oFontA7, 270, 10, , 2, 2) 
+
+//Ultima Sessão
+/*
+oPrinter:SayAlign(li+nLiItm+65	, nColLeft+1	, "Ciência da CALOG/Patrimônio"				, oFontA7, 180, 10, , 0, 1) 	
+oPrinter:Box(li+nLiItm+75, nColLeft, li+nLiItm+105, nMaxCol-nMargEsq)
+oPrinter:SayAlign(li+nLiItm+95	, nColLeft+1	, "Data: __/__/__"							, oFontA7, 180, 10, , 0, 1) 	
+oPrinter:SayAlign(li+nLiItm+95	, nColLeft		, "Assinatura e identificação:"				, oFontA7, 180, 10, , 2, 2) 	
+*/
+
+
+oPrinter:Print()
+
+(_cAliasTMP)->(dbCloseArea())
+RestArea(aArea)
+	
+Return (Nil)
+
+Static Function fCarObs()
+Local _cAuxObs	:= ""
+Local _aSYP		:= SYP->(GetArea())
+Local _nx		:= 1
+Local _lRe		:= .F.
+
+(_cAliasTMP)->(DBGoTop())
+
+While (_cAliasTMP)->(!Eof())
+	If !Empty((_cAliasTMP)->NM_CDHSOL)
+		_lRe		:= .F.
+		DBSelectArea("SYP")
+		SYP->(DBSetOrder(1))
+		If SYP->(DBSeek(SubStr((_cAliasTMP)->NM_FILIAL,1,4) + Space(4) + (_cAliasTMP)->NM_CDHSOL))
+			If !(AllTrim(SYP->YP_TEXTO) $ AllTrim(_cAuxObs))
+				_cAuxObs += /*Str(_nx) + ". " +*/  AllTrim(SYP->YP_TEXTO)
+				SYP->(DBSkip())
+				While SYP->YP_CHAVE = (_cAliasTMP)->NM_CDHSOL
+					_cAuxObs += " " + AllTrim(SYP->YP_TEXTO)
+					SYP->(DBSkip())
+				EndDo
+				_lRe		:= .T.
+			EndIf
+		EndIf
+		_nx++
+		_cAuxObs += Iif( _lRe, CRLF, "")
+	EndIf
+	(_cAliasTMP)->(DBSkip())
+EndDo
+
+_cObDevPr := Iif(Empty(_cAuxObs), _cObDevPr, _cAuxObs)
+
+RestArea(_aSYP)
+
+Return
+
+/*/{Protheus.doc} ImpItem
+	Função para imprimir os itens do relatório, na seguinte ordem:
+	 	
+@author Walmir Junior
+@since 22/04/2016
+@version 1.00
+@param oPrinter, objeto de impressão instanciado
+
+@return Nil
+
+/*/
+Static Function ImpItem(oPrinter)
+
+	oPrinter:Box(li+nLiItm, nMargDir, li+nLiItm+nWidtLin	, nColPro)
+	oPrinter:SayAlign(li+nLiItm, nMargDir+5	, StrZero(nNumItem, 3)				, oFontC8, 200					, nWidtLin, , 0, 2)
+
+	oPrinter:Box(li+nLiItm, nColPro	, li+nLiItm+nWidtLin	, nColQtd)
+	oPrinter:SayAlign(li+nLiItm, nColPro		, (_cAliasTMP)->N1_CBASE		, oFontC8, 150					, nWidtLin, , 2, 2)
+	
+	//oPrinter:Box(li+nLiItm, nColDes	, li+nLiItm+nWidtLin	, nColQtd)
+	//oPrinter:SayAlign(li+nLiItm, nColDes		, (_cAliasTMP)->N1_XSERIEP		, oFontC8		, nColQtd-nColDes-10	, nWidtLin, , 0, 2)
+
+	oPrinter:Box(li+nLiItm, nColQtd	, li+nLiItm+nWidtLin	, nColDtA)
+	oPrinter:SayAlign(li+nLiItm, nColQtd		, (_cAliasTMP)->N1_DESCRIC		, oFontC8, 200					, nWidtLin, , 0, 2)
+	
+	oPrinter:Box(li+nLiItm, nColDtA	, li+nLiItm+nWidtLin	, nColVlA)
+	oPrinter:SayAlign(li+nLiItm, nColDtA		, DToC(StoD((_cAliasTMP)->N1_AQUISIC)), oFontC8, 100					, nWidtLin, , 2, 2)
+	
+	oPrinter:Box(li+nLiItm, nColVlA	, li+nLiItm+nWidtLin	, nColFim)
+	oPrinter:SayAlign(li+nLiItm, nColVlA		, Alltrim(Transform(((_cAliasTMP)->N3_VORIG1 + (_cAliasTMP)->N3_AMPLIA1 - (_cAliasTMP)->N3_VRDACM1),X3PICTURE("N1_VLAQUIS")))		, oFontC8, 80					, nWidtLin, , 2, 2)
+
+ 	_nVRTot := _nVRTot + ((_cAliasTMP)->N3_VORIG1 + (_cAliasTMP)->N3_AMPLIA1 - (_cAliasTMP)->N3_VRDACM1)
+Return (Nil)
+
+/*/{Protheus.doc} CabPagina
+	Função para impressão do cabeçalho da página
+
+@author Franklin de Brito de Oliveira
+@since 26/06/2015
+@version 1.0
+@param oPrinter, objeto, Objeto de impressão
+
+@return Nil
+
+/*/
+Static Function CabPagina(oPrinter)
+
+Private nCol1Dir	:= 498-nMargDir   
+Private nCol2Dir	:= 540-nMargDir
+
+oPrinter:Box(li+5, nMargDir, li+50, nMargDir+75)
+oPrinter:SayBitmap(li+6, nMargDir+1, "lgrl01.bmp", 70, 40 )
+
+oPrinter:Box(li+5, nMargDir+75, li+50, nCol1Dir-5)
+oPrinter:SayAlign(li+20, nMargDir+200, Iif(_lTrans, "Transferência Definitiva", "Solicitação de Baixa de Bens Patrimoniais"), oFontA12, nMaxCol-nMargEsq, 200, 2, 0)
+
+oPrinter:Box(li+5, nCol1Dir-5, li+50, nMaxCol-nMargEsq)
+oPrinter:SayAlign(li+10, nCol1Dir, "Mov. Código : "	, oFontA7, 200, 200, , 0)
+oPrinter:SayAlign(li+20, nCol1Dir, "Dt. Emissão : "	, oFontA7, 200, 200, , 0)
+oPrinter:SayAlign(li+30, nCol1Dir, "Emissor ....: "	, oFontA7, 200, 200, , 0)
+oPrinter:SayAlign(li+40, nCol1Dir, "Folha ......: "	, oFontA7, 200, 200, , 0)
+
+oPrinter:SayAlign(li+10, nCol2Dir, (_cAliasTMP)->NM_XSOLIC		, oFontA7, 200, 200, , 0)
+oPrinter:SayAlign(li+20, nCol2Dir, DToC( dDataEmi )				, oFontA7, 200, 200, , 0)
+oPrinter:SayAlign(li+30, nCol2Dir, UsrRetName( RetCodUsr() )	, oFontA7, 200, 200, , 0)
+oPrinter:SayAlign(li+40, nCol2Dir, AllTrim(STR(nPag))			, oFontA7, 200, 200, , 0)
+
+oPrinter:Line(li+50, nMargDir, li+50, nMaxCol-nMargEsq, , "-8")
+
+Return (Nil)
+
+/*/{Protheus.doc} CabItem
+	Função para impressão do cabeçalho dos itens
+
+@author Franklin de Brito de Oliveira
+@since 26/06/2015
+@version 1.0
+@param oPrinter, objeto, Objeto de impressão
+
+@return Nil
+
+/*/
+//-------------------------------------------------------------------------
+/*
+Modificações:
+	14/10/2015 - Franklin B Oliveira:
+	->Adicionado tratamento para impressão da Unidade Destino, quando o programa
+	de origem for transferência multipla.
+
+*/
+//--------------------------------------------------------------------------
+Static Function CabItem(oPrinter)
+//Tabela
+Local _nColTwo	:= 50
+Local _nColThree:= 130
+Local _nColFour	:= 210
+Local _nColFive	:= 400
+//Colunas Seis e Final como private na sequencia.
+/*
+Private _nColSix	:= 500
+Private _nColFnl	:= 580
+*/
+Local _nWidtLi	:= 13
+Local _nPLin	:= 135 //220
+//Entidade...
+Local _nHeigC1	:= 30
+//Unid Dest...
+//Tit Tabela
+//Local _nLi0C3	:= 145
+Local _nLinC3	:= 75
+Local _nLi2C3	:= 100 //185
+Local _nCl1C3	:= 205
+Local _nCl2C3	:= 395
+Local _nHeigC3	:= 20
+//Variaveis Informações
+Local _cMotBx	:= Iif(_lTrans,"DEFINITIVA", AllTrim((_cAlias)->X5_DESCRI))
+Local _cInfo	:= Iif(_lTrans,	"Os Bens Patrimoniais abaixo relacionados estão sendo transferidos"+;
+								", delegando assim a responsabilidade pelos mesmos ao destinatário.";
+						,"Relação dos Bens a Serem Baixados.")
+Local _nLinC2	:= 53
+Local _nCl1C2	:= 580
+
+li += 5
+						
+//*************************************
+// Filial Cedente / Filial de Destino *
+//*************************************
+oPrinter:Box(li+_nLinC2	, nMargDir	, li+_nLinC2+20	, _nCl1C2)
+oPrinter:SayAlign(li+_nLinC2 + 5 , nMargDir+10	, "Filial Cedente: "		, _oFntC8, 260, 200, , 0)
+oPrinter:SayAlign(li+_nLinC2 + 5 , nMargDir+90	, AllTrim((_cAlias)->NM_FILIAL + " - " + FWFilialName(cEmpAnt, (_cAlias)->NM_FILIAL, 1)) , _oFntC8, 270, 10, , 0,1)
+
+
+//Sessao Tit Tabela / Motivo
+
+oPrinter:Box(li+_nLinC3	, _nCl1C3	, li+_nLinC3+_nHeigC3	, _nCl2C3)
+oPrinter:SayAlign(li+_nLinC3+5, _nCl1C3	, _cMotBx	, _oFnt9N, 195, 20, 2, 2)
+
+oPrinter:Box(li+_nLi2C3, nMargDir	, li+_nLi2C3+_nHeigC1	, 580)
+oPrinter:SayAlign(li+_nLi2C3+5, nMargDir+5	, _cInfo	, _oFnt9N, 550, 200, , 2)
+
+// Títulos Tabela //
+oPrinter:Box(li+_nPLin	, nMargDir			, li+_nPLin+_nWidtLi	, _nColTwo)
+oPrinter:SayAlign(li+_nPLin+2, nMargDir		, "Item "				, _oFntC8, 40, 200, , 2)
+
+oPrinter:Box(li+_nPLin	, _nColTwo			, li+_nPLin+_nWidtLi	, _nColFour)
+oPrinter:SayAlign(li+_nPLin+2, nMargDir+35	, "Registro Patrimonial "	, _oFntC8, 160, 200, , 2)
+
+/*oPrinter:Box(li+_nPLin	, _nColThree		, li+_nPLin+_nWidtLi	, _nColFour)
+oPrinter:SayAlign(li+_nPLin+2, nMargDir+115	, "Série "		, _oFntC8, 160, 200, , 0)*/
+
+oPrinter:Box(li+_nPLin	, _nColFour			, li+_nPLin+_nWidtLi	, _nColFive)
+oPrinter:SayAlign(li+_nPLin+2, nMargDir+195	, "Descrição "			, _oFntC8, 160, 260, , 2)
+
+oPrinter:Box(li+_nPLin	, _nColFive			, li+_nPLin+_nWidtLi	, _nColSix)
+oPrinter:SayAlign(li+_nPLin+2, nMargDir+385	, "Dt Aquisição "			, _oFntC8, 100, 200, , 2)
+
+oPrinter:Box(li+_nPLin	, _nColSix			, li+_nPLin+_nWidtLi	, _nColFnl)
+oPrinter:SayAlign(li+_nPLin+2, nMargDir+485	, "Vlr Residual "			, _oFntC8, 80, 200, , 2)
+
+li += 93
+
+Return (Nil)
+
+Static Function GerQuery()
+Local _cQuery	:= ""
+Local _nx		:= 0
+Local _nCnt		:= .F.
+
+_cQuery := " Select SNM.NM_FILIAL, SNM.NM_CODIGO, SN1.N1_CBASE, SN1.N1_DESCRIC, SNM.NM_CDHSOL, SN3.N3_CCUSTO " + CRLF
+_cQuery += " , SNM.NM_FILDEST, SNM.NM_CCUSTO, SNL.NL_DESCRIC, SNM.NM_CDHSOL, SX5.X5_DESCRI, SNM.NM_TIPOSOL " + CRLF
+_cQuery += " , SN1.N1_AQUISIC, SN1.N1_VLAQUIS, SN1.N1_XSERIEP, SN3.N3_VORIG1, SN3.N3_AMPLIA1, SN3.N3_VRDACM1, NM_XSOLIC " + CRLF
+_cQuery += " From "+RetSQLName("SNM")+" SNM INNER JOIN " + CRLF
+_cQuery += " "+RetSQLName("SN1")+" SN1 ON SNM.NM_FILIAL = SN1.N1_FILIAL AND SNM.NM_CBASE = SN1.N1_CBASE INNER JOIN" + CRLF
+_cQuery += " "+RetSQLName("SN3")+" SN3 ON SN3.N3_FILIAL = SN1.N1_FILIAL AND SN3.N3_CBASE = SN1.N1_CBASE AND SN3.N3_ITEM = SN1.N1_ITEM LEFT JOIN" + CRLF
+_cQuery += " "+RetSQLName("SNL")+" SNL ON SNM.NM_FILIAL = SNL.NL_FILIAL AND SNM.NM_TIPOSOL = '2' AND SNM.NM_LOCAL	= SNL.NL_CODIGO LEFT JOIN" + CRLF
+_cQuery += " "+RetSQLName("SX5")+" SX5 ON Trim(SX5.X5_FILIAL) = SubStr(SNM.NM_FILIAL,1,4) AND SX5.X5_TABELA = '16    ' AND SX5.X5_CHAVE = SNM.NM_MOTBX " + CRLF
+_cQuery += " WHERE " + CRLF
+_cQuery += " ( " + CRLF
+For _nx := 1 To Len(_aMovSel)
+	_cQuery += Iif( !_nCnt, " ( ", " Or ( ")
+	_cQuery += " 	SNM.NM_FILIAL	= '"+ _aMovSel[_nx, 1]+"' AND "
+	_cQuery += " 	SNM.NM_XSOLIC	= '"+ _aMovSel[_nx, 2]+"' "
+	_cQuery += " ) " + CRLF
+	_nCnt := .T.
+Next
+_cQuery += " ) AND " + CRLF
+_cQuery += " 	SNM.D_E_L_E_T_ = ' ' AND " + CRLF
+_cQuery += " 	SN1.D_E_L_E_T_ = ' ' AND" + CRLF
+_cQuery += " 	SN3.D_E_L_E_T_ = ' ' " + CRLF
+_cQuery += " Order By	1,2,3 "
+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+
+DBUseArea(.T., "TOPCONN", TcGenQry(,,ChangeQuery(_cQuery)),_cAlias, .F.,.F.)
+
+Return (_cAlias)

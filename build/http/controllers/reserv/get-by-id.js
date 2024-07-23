@@ -41,7 +41,6 @@ __export(get_by_id_exports, {
   getReservByPrwAndId: () => getReservByPrwAndId
 });
 module.exports = __toCommonJS(get_by_id_exports);
-var import_zod2 = require("zod");
 
 // src/entities/reserv.entity.ts
 var import_typeorm = require("typeorm");
@@ -690,11 +689,7 @@ function makeGetReservByPrwAndIdUseCase() {
 
 // src/http/controllers/reserv/get-by-id.ts
 async function getReservByPrwAndId(request, reply) {
-  const paramsSchema = import_zod2.z.object({
-    id: import_zod2.z.string(),
-    prw: import_zod2.z.string()
-  });
-  const { id, prw } = paramsSchema.parse(request.params);
+  const { id, prw } = request.params;
   const getReservByPrwAndIdUseCase = makeGetReservByPrwAndIdUseCase();
   const results = await getReservByPrwAndIdUseCase.handler(prw, id);
   reply.send(results);

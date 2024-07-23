@@ -1,0 +1,578 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "MSOLE.CH"
+
+#DEFINE oleWdFormatDocument "0"
+#DEFINE oleWdFormatHTML "102"
+#DEFINE oleWdFormatPDF "17"
+
+/*/{Protheus.doc} User Function SF69R04X
+    Impressão do Contrato de Empreendedor Individual - SENAI/SESI
+    Filial 03
+    @type  Function
+    @author Daniel Castro - TOTVS
+    @since 30/10/2020
+    @version version
+    /*/
+
+
+User Function SF69R04X(lCont, lCanc) //lCont = Contrato , lCanc = Distrato
+
+	Local cTpCto	:= Alltrim(SUPERGETMV("MV_XTPCTDC", .f., "024"))
+	Local cGerCTR   := ""
+	Local cGerRG    := ""
+	Local cGerCPF   := ""
+	Local _nLinha   := 0
+	Local _nLin		:= 0
+	Local _cCtrAsDtE	:= fDtExt(CN9->CN9_DTULST)
+	Local _cCtrVDtAs	:= ""
+	Local _aArea    := GetArea()
+	Local nValTot 	:= 0
+	Local cCompCND	:= ""
+	Local nValTotCND := 0
+	Local nDiasCND	:= 0
+	Local aPrdTot	:= {}
+	Local lPF		:= .F.
+	Local lRet 		:= .T.
+	Local nDias     :=  GetNewPar("ES_REIMP", 90 )
+
+	Private _hWord
+	Private _cArqDOT    := ""
+	Private _cPathDOT	:= SuperGetMv("MV_XGCTDOT",,"")
+	Private _cPathDOC	:= SuperGetMv("MV_XGCTDOC",,"")
+	Private _cPathREP	:= SuperGetMv("MV_XGCTREP",,"")
+	Private _cArqNome   := Alltrim(CN9->CN9_NUMERO)
+	Private _cCtrDtPg	:= cValtoChar(SuperGetMv("MV_XGCTPG",,30))
+	Private aRet 		:= {}
+
+	//Valida Se o programa foi chamado pela Mudança da Status
+	If ISINCALLSTACK("U_CN100SIT")
+		lRet := .T.
+	ElseIf FunName() == "CNTA300" .And.  lCanc // Distrato
+		If  CN9->CN9_SITUAC <> "01"  
+			Help(NIL,NIL,"Reimpressão de Contrato Distrato",	NIL,;
+			'Só é possivel Reimprimir o Contrato de Distrato com o Status "Cancelado" (CN9_SITUAC = "01")',;
+				1,0,NIL,NIL,NIL,NIL,NIL,{"Operação Cancelada"} )
+			lRet := .F.
+		ElseIf Date() > CN9->CN9_DTULST + nDias  
+			Help(NIL,NIL,"Reimpressão de Contrato Distrato Data",	NIL,;
+			'Só é possivel Reimprimir o Contrato de Distrato com ate 90 dias da data de ultima atualizacao do contrato ( CN9_DTULST = "' +;
+			 DtoC(CN9->CN9_DTULST) + '" )' , ;
+				1,0,NIL,NIL,NIL,NIL,NIL,{"Operação Cancelada"} )
+			lRet := .F.
+
+		EndIf
+	Else
+	// Valida se Contrato está aprovado.
+		If !(Alltrim(CN9->CN9_SITUAC) $ ("05|03"))  //Status Aprovado/Emitido.
+			Help(NIL,NIL,"Reimpressão de Contrato",	NIL,"Não é possivel Reimprimir o Contrato com o Status atual.",;
+				1,0,NIL,NIL,NIL,NIL,NIL,{"Operação Cancelada"} )
+			lRet := .F.
+		EndIf
+	EndIf
+
+	If lRet
+		If 	_Posic() .And. lCont .And.;
+		 	( cFilAnt == '03MT0017' .Or. CN9->CN9_FILIAL == '03MT0017' ) .And.; //  Filial FATEC, contrato Pessoa Fisica  
+			SA2->A2_TIPO = "F"
+				lPF := .T.        
+				_cArqDOT    := GetNewPar("MV_XCTPFFA","CONTRATOS_FF_008_FATEC_PF.dot") //Termo de Inclusão
+				_cArqNome := "CTR_PF_FATEC_" + Alltrim(CN9->CN9_NUMERO) + "_" + DtoS(dDataBase)
+		ElseIf lCont
+			If SA2->A2_TIPO = "J"
+				_cArqDOT    := SuperGetMv("MV_XCTPJDC",,"") //Termo de Inclusão
+				_cArqNome := "CTR_PJ_" + Alltrim(CN9->CN9_NUMERO) + "_" + DtoS(dDataBase)
+			ElseIf SubStr(xFilial("CN9"),2,1) == "3"
+				lPF := .T.
+				_cArqDOT    := SuperGetMv("MV_XCTPFDC",," ") //Termo de Inclusão
+				_cArqNome := "CTR_PF_" + Alltrim(CN9->CN9_NUMERO) + "_" + DtoS(dDataBase)
+			EndIf
+		ElseIf lCanc
+			_cArqDOT    := SuperGetMv("MV_XDISTDC",,"") //Termo de Distrato
+			_cArqNome := "DISTRATO " +  Alltrim(CN9->CN9_NUMERO) + "_" + DtoS(dDataBase)
+		EndIf
+
+		If Alltrim(cTpCto) == Alltrim(CN9->CN9_TPCTO)
+
+			//+---------------------------------------------------------------------+
+			//| Cria a conexão com Word
+			//+---------------------------------------------------------------------+
+			_hWord  := OLE_CreateLink()
+
+			//+---------------------------------------------------------------------+
+			//| Exibe ou oculta a janela principal da aplicacao Word  			    |
+			//+---------------------------------------------------------------------+
+			OLE_SetProperty( _hWord, oleWdVisible, .F. )
+
+			//+---------------------------------------------------------------------+
+			//| Verifica se foi possível conectar ao Microsoft Word				    |
+			//+---------------------------------------------------------------------+
+			If _hWord == "-1"
+				Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel estabelecer comunicação com o Microsoft Word",{"OK"})
+
+				RestArea(_aArea)
+
+				Return .F.
+			EndIf
+
+			//+---------------------------------------------------------------------+
+			//| Verifica se o arquivo existe na estacao. Se existir APAGA           |
+			//+---------------------------------------------------------------------+
+			If File(_cPathREP+_cArqDOT)
+				FErase(_cPathREP+_cArqDOT)
+			Endif
+
+			//+---------------------------------------------------------------------+
+			//| Copia o TEMPLATE "DOT" para repositorio LOCAL                       |
+			//+---------------------------------------------------------------------+
+			If !CpyS2T(_cPathDOT+_cArqDOT,_cPathREP,.T.)
+				Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel copiar TEMPLATE para gerar a integração!",{"OK"})
+
+				RestArea(_aArea)
+
+				Return .F.
+			Endif
+
+			//+---------------------------------------------------------------------+
+			//| Abre o NOVO documento do WORD para preencher as Variaveis           |
+			//+---------------------------------------------------------------------+
+			OLE_NewFile(_hWord,_cPathREP+_cArqDOT)
+
+			//+---------------------------------------------------------------------+
+			// Inserindo os dados do Contrato
+			//+---------------------------------------------------------------------+
+			OLE_SetDocumentVar(_hWord,"Doc_ContratoNr"						, Alltrim(CN9->CN9_NUMERO)		)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratadoNome"					, Alltrim(SM0->M0_FILIAL)		)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratadoCNPJ"					, Alltrim(SM0->M0_CGC)		    )
+			OLE_SetDocumentVar(_hWord,"Doc_ContratadoEndere"				, Alltrim(SM0->M0_ENDCOB)		)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratadoCidade"				, Alltrim(SM0->M0_CIDCOB)		)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratadoCEP"			    	, Alltrim(SM0->M0_CEPCOB)		)
+
+			_cCtrEDtIn	:= CN9->CN9_XDTINI
+			_cCtrEDtFi	:= CN9->CN9_XDTFIM
+			_cCtrVDtIn	:= dToC(CN9->CN9_DTINIC)	//Data inicial da vigência do Contrato
+			_cCtrVDtFi	:= dToC(CN9->CN9_DTFIM)		//Data final da vigência do Contrato
+			_cCtrVDtAs	:= dToC(CN9->CN9_DTASSI)	//Data de assinatura do contrato
+
+			OLE_SetDocumentVar(_hWord,"Doc_ContratoExecucaoDtIni"		, _cCtrVDtIn)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratoExecucaoDtFim"		, _cCtrVDtFi)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratoVigenciaDtIni"		, _cCtrVDtIn	)
+			_cCtrVDtFi := CtoD(_cCtrVDtFi) + 30 // Adiciona 30 dias ao fim da vigencia do contrato, 
+												// solicitado por Bianca em 05/07/2022
+			OLE_SetDocumentVar(_hWord,"Doc_ContratoVigenciaDtFim"		, DtoC( _cCtrVDtFi )	)
+
+			OLE_SetDocumentVar(_hWord,"Doc_ContratoMunicipioForo"	    , SubStr(Alltrim(SM0->M0_CIDENT),1,1) + SubStr(Lower(Alltrim(SM0->M0_CIDENT)),2,Len(Alltrim(SM0->M0_CIDENT))))
+			OLE_SetDocumentVar(_hWord,"Doc_ContratoAssinaturaDataExtenso"	, _cCtrAsDtE	)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratoAssinaturaData"		, _cCtrVDtAs	)
+			OLE_SetDocumentVar(_hWord,"Doc_ContratoDtLimitePg"		    , _cCtrDtPg	)
+
+			//===============================================================================================
+			//Ajuste Temporário para a Clausula 1 do termo de PF, somente para entrar em produção.
+			//Autor: Daniel Castro - TOTVS
+			//Data: 01/07/2021
+			If lPF
+				// Bianca pediu para retirar parametros de impressao para Pessoa Fisica
+				// data 25/07/2022
+				lRet := Pergunta()
+				If !lRet
+					lRet := .T.
+					While lRet
+						lRet := !(Pergunta())
+					EndDo
+				EndIF				
+				
+				OLE_SetDocumentVar(_hWord,"Cl1_Cur"	, Alltrim(aRet[1]) )
+				
+				fTurma(.T.)
+			EndIf
+		EndIf
+		//===============================================================================================
+
+		//+---------------------------------------------------------------------+
+		// Inserindo os dados Gerente
+		//+---------------------------------------------------------------------+
+		dbSelectArea("ZCO")
+		ZCO->(dbSetOrder(2))
+		If ZCO->(dbSeek(xFilial("ZCO") + cTpCto))
+			cGerCTR := ZCO->ZCO_NOMREP
+			cGerRG  := ZCO->ZCO_RGREPR
+			cGerCPF := ZCO->ZCO_CPFREP
+		EndIf
+
+		OLE_SetDocumentVar(_hWord,"Doc_ContratadoGer"				, Alltrim(cGerCTR)		)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratadoGerRG"				, Alltrim(cGerRG)		)
+		OLE_SetDocumentVar(_hWord,"Doc_ContratadoGerCpf"			, Alltrim(cGerCPF)		)
+
+		//+---------------------------------------------------------------------+
+		// Inserindo os dados Contratante
+		//+---------------------------------------------------------------------+
+		dbSelectArea("CNA")
+		CNA->(dbSetOrder(1))
+		CNA->(dbSeek(xFilial("CNA") + CN9->CN9_NUMERO + CN9->CN9_REVISA))
+
+		dbSelectArea("SA2")
+		SA2->(dbSetOrder(1))
+		SA2->(dbSeek(xFilial("SA2") + CNA->CNA_FORNEC + CNA->CNA_LJFORN))
+		//+---------------------------------------------------------------------+
+		// Inserindo os dados Contratante
+		//+---------------------------------------------------------------------+
+
+		OLE_SetDocumentVar(_hWord,"Doc_ContratanteNome"	 , Alltrim(SA2->A2_NOME))
+		OLE_SetDocumentVar(_hWord,"Doc_ContratanteNreduz"	 , Alltrim(SA2->A2_NREDUZ))
+		If SA2->A2_TIPO = "J"
+			OLE_SetDocumentVar(_hWord, "Doc_ContratanteRG", Alltrim(SA2->A2_XRGDOCE))
+			OLE_SetDocumentVar(_hWord, "Doc_ContratanteCNPJ", Alltrim(Transform(SA2->A2_CGC, "@R 99.999.999/9999-99")))
+			OLE_SetDocumentVar(_hWord, "Doc_ContratanteCPF", Alltrim(Transform(SA2->A2_XCPFDOC, "@R 999.999.999-99")))
+		else
+			OLE_SetDocumentVar(_hWord,"Doc_ContratanteRG"	 , Alltrim(SA2->A2_PFISICA))
+			OLE_SetDocumentVar(_hWord,"Doc_ContratanteCPF"	 , Alltrim(SA2->A2_CGC))
+		endif
+		OLE_SetDocumentVar(_hWord,"Doc_ContratanteBairro"	 , Alltrim(SA2->A2_BAIRRO))
+		OLE_SetDocumentVar(_hWord,"Doc_ContratanteEnd"	 , Alltrim(SA2->A2_END))
+		OLE_SetDocumentVar(_hWord,"Doc_ContratanteMun"	 , Alltrim(SA2->A2_MUN))
+		OLE_SetDocumentVar(_hWord,"Doc_ContratanteEst"	 , Alltrim(SA2->A2_EST))
+
+		If lCanc
+			OLE_SetDocumentVar(_hWord,"PF_PJ_1"	 , Iif(SA2->A2_TIPO = "F", "FÍSICA","JURÍDICA"))
+			OLE_SetDocumentVar(_hWord,"PF_PJ_2"	 , Iif(SA2->A2_TIPO = "F", "CPF","CNPJ"))
+		EndIf
+
+		//Valor Total do Contrato
+		OLE_SetDocumentVar(_hWord, "Doc_ContratanteVlTot"	   , AllTrim(Transform(CNA->CNA_VLTOT, "@E 999,999,999.99")))
+
+
+		//+---------------------------------------------------------------------+
+		// Inserindo os dados Produto
+		//+---------------------------------------------------------------------+
+
+		dbSelectArea("CNB")
+		CNB->(dbSetOrder(1))
+		CNB->(dbSeek(xFilial("CNB") + CN9->CN9_NUMERO + CN9->CN9_REVISA))
+
+		While CNB->(!EOF()) .And. CN9->CN9_NUMERO == CNB->CNB_CONTRA .And. CN9->CN9_REVISA == CNB->CNB_REVISA
+			_nLinha++
+
+			OLE_SetDocumentVar(_hWord, "NomeProd"+Alltrim(str(_nLinha)), AllTrim(CNB->CNB_DESCRI))
+			OLE_SetDocumentVar(_hWord, "Qtd"+Alltrim(str(_nLinha))	   , AllTrim(Transform(CNB->CNB_QUANT, "@E 999,999,999.99")))
+			OLE_SetDocumentVar(_hWord, "Vlr"+Alltrim(str(_nLinha))	   , AllTrim(Transform(CNB->CNB_VLTOT, "@E 999,999,999.99")))
+
+			aAdd(aPrdTot,{CNB->CNB_PRODUT, CNB->CNB_VLUNIT})
+
+			nValTot += CNB->CNB_VLTOT
+
+			CNB->(dbSkip())
+		EndDo
+
+		OLE_SetDocumentVar(_hWord,"TbProd_QtdItens", _nLinha)
+		OLE_SetDocumentVar(_hWord,"VlTot", AllTrim(Transform(nValTot, "@E 999,999,999.99")))
+		OLE_SetDocumentVar(_hWord,"VlTotExtenso", Extenso(nValTot))
+
+		//+---------------------------------------------------------------------+
+		// Inserindo os dados da Medição
+		//+---------------------------------------------------------------------+
+		If !lCont
+			dbSelectArea("CND")
+			CND->(dbSetOrder(1))
+			If CND->(dbSeek(xFilial("CNB") + CN9->CN9_NUMERO + CN9->CN9_REVISA))
+
+				While CND->(!EOF()) .And. CN9->CN9_NUMERO == CND->CND_CONTRA .And. CN9->CN9_REVISA == CND->CND_REVISA
+
+					If Alltrim(CND->CND_SITUAC) == "E"
+						cCompCND := fDtExt(CtoD("01/"+CND->CND_COMPET))
+						nValTotCND := CND->CND_VLTOT
+
+						dbSelectArea("CNE")
+						CNE->(dbSetOrder(4)) //Filial + Medição
+						CNE->(dbSeek(xFilial("CNE") + CND->CND_NUMMED))
+						nDiasCND := CNE->CNE_QUANT
+					EndIf
+
+					CND->(dbSkip())
+				EndDo
+
+			EndIf
+
+			If Empty(cCompCND)
+				cCompCND := SubStr(fDtExt(dDataBase),6,50)
+			EndIf
+
+
+			OLE_SetDocumentVar(_hWord,"Doc_MedicaoCompet", cCompCND)
+			OLE_SetDocumentVar(_hWord,"Doc_MedicaoValor", AllTrim(Transform(nValTotCND, "@E 999,999,999.99")))
+			OLE_SetDocumentVar(_hWord,"Doc_MedicaoValorExtenso", Extenso(nValTotCND))
+			OLE_SetDocumentVar(_hWord,"Doc_MedicaoDias", cValtoChar(nDiasCND))
+
+		EndIf
+
+		//+---------------------------------------------------------------------+
+		// Inserindo os dados da TURMA
+		//+---------------------------------------------------------------------+
+		fTurma()
+
+		While ZBH->(!EOF()) .And. ZBH->ZBH_CODNEC == ZBB->ZBB_CODIGO
+
+			nPosPrd := aScan(aPrdTot,{ |x| X[1] == ZBH->ZBH_PRODUT})
+			If nPosPrd > 0
+
+				_nLin++
+	
+				OLE_SetDocumentVar(_hWord, "TipoPrd"+Alltrim(str(_nLin)), AllTrim(Posicione("SB1",1,xFilial("SB1") + ZBH->ZBH_PRODUT,"B1_DESC")))
+				OLE_SetDocumentVar(_hWord, "CodTurma"+Alltrim(str(_nLin)), AllTrim(ZBH->ZBH_TURMA))
+				OLE_SetDocumentVar(_hWord, "UniCurric"+Alltrim(str(_nLin)), AllTrim(ZBH->ZBH_UNICUR))
+				OLE_SetDocumentVar(_hWord, "QtdAula"+Alltrim(str(_nLin)), cValtoChar(ZBH->ZBH_QTD))
+	
+				//Valor Total
+				OLE_SetDocumentVar(_hWord, "VlAulaUni"+Alltrim(str(_nLin)), AllTrim(Transform(aPrdTot[nPosPrd,2], "@E 999,999,999.99")))
+				OLE_SetDocumentVar(_hWord, "VlAulaTot"+Alltrim(str(_nLin)), AllTrim(Transform(aPrdTot[nPosPrd,2] * ZBH->ZBH_QTD, "@E 999,999,999.99")))
+			EndIf
+			ZBH->(dbSkip())
+		EndDo
+
+		OLE_SetDocumentVar(_hWord,"TbTurma_QtdItens", _nLin)
+
+		If lCont
+			OLE_ExecuteMacro(_hWord,"TbTurma01")	//Executa macro contida no documento do Word.
+		EndIf
+
+
+		//+---------------------------------------------------------------------+
+		//| Atualizando as variaveis do documento do Word                       |
+		//+---------------------------------------------------------------------+
+		OLE_UpdateFields(_hWord)
+		//Ole_PrintFile(_hWord,"ALL",,,1)
+		//+---------------------------------------------------------------------+
+		//| Verifica se o arquivo a ser gerado ja existe no repositorio, se     |
+		//| existir apaga                                                       |
+		//+---------------------------------------------------------------------+
+		If File(_cPathREP+_cArqNome)
+			FErase(_cPathREP+_cArqNome)
+		Endif
+		//+---------------------------------------------------------------------+
+		//| Salva no repositorio LOCAL o arquivo gerado                         |
+		//+---------------------------------------------------------------------+
+		//+---------------------------------------------------------------------+
+		//| José Leite 				                                 09/09/2015 |
+		//| Ajuste necessário para Imprimir PDF ao invês de DOC (Word).         |
+		//+---------------------------------------------------------------------+
+		//OLE_SaveAsFile(_hWord, _cPathREP+_cArqNome+".pdf")
+		OLE_SaveAsFile(_hWord, _cPathREP+_cArqNome+".pdf", '', '', .F., oleWdFormatPDF)
+		//+---------------------------------------------------------------------+
+		//| Verifica se o arquivo existe no repositorio de AUDITORIA, se existir|
+		//| apaga.                                                              |
+		//+---------------------------------------------------------------------+
+		If File(_cPathDOC+_cArqNome)
+			FErase(_cPathDOC+_cArqNome)
+		Endif
+		//+---------------------------------------------------------------------+
+		//| Gera copia para AUDITORIA.                                          |
+		//+---------------------------------------------------------------------+
+		CpyT2S(_cPathREP+_cArqNome+".*", _cPathDOC, .T.)
+		//+---------------------------------------------------------------------+
+		//| Fecha o TEMPLATE utilizado para Gerar o Arquivos de Remessa         |
+		//+---------------------------------------------------------------------+
+		OLE_CloseFile(_hWord)
+		//+---------------------------------------------------------------------+
+		//| Fecha o Link com Arquivo de Remessa "Impressao"                     |
+		//+---------------------------------------------------------------------+
+		OLE_CloseLink(_hWord)
+		//+---------------------------------------------------------------------+
+		//| Apaga na unidade LOCAL o TEMPLATE utilizado para gerar o documento. |
+		//+---------------------------------------------------------------------+
+		If File(_cPathREP+_cArqDOT)
+			FErase(_cPathREP+_cArqDOT)
+		Endif
+		If Aviso(FunName()+"/"+ProcName(),"Integração finalizada!"+CRLF+"Gerado documento WORD ["+_cArqNome+"]."+CRLF+"Disponivel em ["+_cPathREP+"].",{"OK","Abrir pasta"}) == 2
+			WinExec('explorer /select, "' + _cPathREP + _cArqNome + '.pdf"' )
+		EndIf
+		RestArea(_aArea)
+	EndIf
+
+Return
+
+//======================================================================================
+Static Function fDtExt(_dVal)
+	Local _cDtExt	:= ""
+	Local _cMes		:= ""
+
+	Do Case
+	Case Month(_dVal) == 1
+		_cMes := "Janeiro"
+	Case Month(_dVal) == 2
+		_cMes := "Fevereiro"
+	Case Month(_dVal) == 3
+		_cMes := "Março"
+	Case Month(_dVal) == 4
+		_cMes := "Abril"
+	Case Month(_dVal) == 5
+		_cMes := "Maio"
+	Case Month(_dVal) == 6
+		_cMes := "Junho"
+	Case Month(_dVal) == 7
+		_cMes := "Julho"
+	Case Month(_dVal) == 8
+		_cMes := "Agosto"
+	Case Month(_dVal) == 9
+		_cMes := "Setembro"
+	Case Month(_dVal) == 10
+		_cMes := "Outubro"
+	Case Month(_dVal) == 11
+		_cMes := "Novembro"
+	Case Month(_dVal) == 12
+		_cMes := "Dezembro"
+	EndCase
+
+	_cDtExt := cValToChar(Day(_dVal))+" de "+_cMes+" de "+cValToChar(Year(_dVal))
+
+Return _cDtExt
+
+//====================================================================================================
+Static Function Pergunta()
+
+	Local aPergs := {}
+	Local lRet	:= .F.
+
+	aAdd(aPergs, {1, "Curso", Space(100),  "", ".T.", "", ".T.", 150,  .T.})
+	// aAdd(aPergs, {1, "Periodo Letivo", Space(100),  "", ".T.", "", ".T.", 150,  .T.})
+	// aAdd(aPergs, {1, "Calendario Letivo", Space(100),  "", ".T.", "", ".T.", 150,  .T.})
+	// aAdd(aPergs, {1, "Unidade Curricular", Space(100),  "", ".T.", "", ".T.", 150,  .T.})
+	// aAdd(aPergs, {1, "Turma", Space(100),  "", ".T.", "", ".T.", 150,  .T.})
+	// aAdd(aPergs, {1, "Turno", Space(100),  "", ".T.", "", ".T.", 150,  .T.})
+	// aAdd(aPergs, {1, "Carga Horaria", Space(100),  "", ".T.", "", ".T.", 150,  .T.})
+
+	If ParamBox(aPergs, "Parametros do Contrato", aRet)
+		lRet := .T.
+	EndIf
+
+Return(lRet)
+
+/*/{Protheus.doc} fTurma
+	(Dados da Turma para gravar no contrato)
+	@type  Static Function
+	@author user
+	@since 25/07/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+/*/
+Static Function fTurma(lGrava)	
+	Local aAreaZBB 
+	Local aAreaZBH 
+	Local cDesc := ""
+	Local cPer  := ""
+
+	Default lGrava := .F.
+	//+---------------------------------------------------------------------+
+	// Inserindo os dados da TURMA
+	//+---------------------------------------------------------------------+
+	If lGrava
+		aAreaZBB := ZBB->(Getarea())
+		aAreaZBH := ZBH->(Getarea())
+	EndIf 
+
+	dbSelectArea("ZBB")
+	ZBB->(dbSetOrder(2))
+	If ZBB->(dbSeek(xFilial("ZBB") + CN9->CN9_NUMERO ))
+
+		dbSelectArea("ZBH")
+		ZBH->(dbSetOrder(1))
+		If ZBH->(dbSeek(xFilial("ZBH") + ZBB->ZBB_CODIGO ))
+			If lGrava
+				fZBH( @cDesc, @cPer, xFilial("ZBH") , ZBB->ZBB_CODIGO )
+//				OLE_SetDocumentVar(_hWord,"Cl1_Cur"	, Alltrim( cDesc ) )
+				OLE_SetDocumentVar(_hWord,"Cl1_Per"	, Alltrim( cPer ) )
+			EndIf 
+		EndIf
+	EndIf
+	If lGrava
+		RestArea(aAreaZBB)
+		RestArea(aAreaZBH)
+	EndIf
+Return
+
+/*/{Protheus.doc} fZBH
+	(Funcao para trazer a descricao e periodo letivo dos cursos.)
+	@type  Static Function
+	@author Jorge Elias Tavares ( TOTVS )
+	@since 28/07/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+/*/
+Static Function fZBH( cDesc, cPer, _cFil, cCod )
+
+	Local cAlias 	:= GetnextAlias()
+	Local aAreaZBH  := ZBH->(Getarea())
+	Local aArea 	:= GetArea()
+
+	ZBH->(DbSetOrder(3))
+
+	BEGINSQL alias cAlias
+		SELECT R_E_C_N_O_ REC 
+		FROM %Table:ZBH%
+		WHERE 
+			ZBH_FILIAL 		= %exp:_cFil%
+		AND ZBH_CODNEC		= %exp:cCod%
+		AND %NOTDEL%
+		ORDER BY %ORDER:ZBH% 
+
+	ENDSQL
+
+	Do while !(cAlias)->(Eof())
+		ZBH->(DbGoto( (cAlias)->REC ))
+			cDesc_ := Alltrim(ZBH->ZBH_DESC)
+			cPer_  := Alltrim(ZBH->ZBH_PERLET)
+
+		If !Empty(cDesc_) .And. !( cDesc_ $ cDesc )  
+			cDesc += Alltrim(ZBH->ZBH_DESC) + ", "
+		EndIf
+		If !Empty(cPer_) .And. !( cPer_ $ cPer )  
+			cPer  += Alltrim(ZBH->ZBH_PERLET) + ", "
+		EndIf
+
+		(cAlias)->(DBSKIP())	
+	ENDDO
+	If Right(Alltrim(cDesc),1) == ","
+		cDesc := Subs(Alltrim(cDesc), 1 , Len(Alltrim(cDesc)) -1 ) 
+	EndIf 
+	If Right(Alltrim(cPer),1) == ","
+		cPer := Subs(Alltrim(cPer), 1 , Len(Alltrim(cPer)) -1 ) 
+	EndIf 
+
+	(cAlias)->(DBCLOSEAREA())
+
+	RestArea(aAreaZBH)
+	RestArea(aArea)
+Return
+
+ /*/{Protheus.doc} _Posic
+	(Posiciona no Fornecedor)
+	@type  Function
+	@author user
+	@since 27/10/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+	/*/
+Static Function _Posic
+	Local lRet := .F.
+
+ 	dbSelectArea("CNA")
+	CNA->(dbSetOrder(1))
+	CNA->(dbSeek(xFilial("CNA") + CN9->CN9_NUMERO + CN9->CN9_REVISA))
+
+	dbSelectArea("SA2")
+	SA2->(dbSetOrder(1))
+	If SA2->(dbSeek(xFilial("SA2") + CNA->CNA_FORNEC + CNA->CNA_LJFORN))
+		lRet := .T.
+	EndIf 
+
+Return lRet

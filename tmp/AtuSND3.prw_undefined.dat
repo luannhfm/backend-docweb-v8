@@ -1,0 +1,281 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} AtuSND3
+Rotina de Importacao dos Responsaveis pelos Bens - SND.
+	
+@author 	Jose Leite de Barros Neto
+@since 	03/02/2015
+@version 	1.0		
+
+@return 	Nil, Nulo
+
+/*/
+User Function AtuSND3()
+	
+	Local _cDirImp	:= ""
+	
+	Private _nTotal		:= 0
+	Private _aItens		:= {}
+	Private cCadastro	:= "Inclusão dos Responsáveis Pelos Bens"
+	Private aSays		:= {}
+	Private aButtons	:= {}
+	Private nOpca 		:= 0
+	
+	AADD(aSays,"Este programa irá realizar a inclusão dos Responsáveis Pelos Bens." )
+	
+	AADD(aButtons, { 1,.T.,{|o| nOpca := 1,FechaBatch()}})
+	AADD(aButtons, { 2,.T.,{|o| FechaBatch() }} )
+
+	FormBatch( cCadastro, aSays, aButtons )
+
+	If nOpca == 1
+		
+		_cDirImp	:= U_SFXX01J('Importação x Protheus','Arquivos csv (*.csv) |*.csv|')
+		_aItens 	:= LerCSV(_cDirImp)
+		_nTotal	:= Len(_aItens) - 1
+			
+		If ApMsgYesNo("Confirma a Importação ?","Confirmar")
+			Processa( {|| GravaSND() }, "Aguarde...", "Iniciando Processamento",.F.)
+		EndIf
+	
+	EndIf
+		
+Return( Nil )
+
+/** {Protheus.doc} LerCSV
+Funcao que realiza a Leitura do arquivo CSV
+
+@param: 	cArquivo, Caminho do arquivo que sera lido
+@author: 	Jose Leite de Barros Neto
+@since: 	28/03/2014
+@Uso: 		SFIEMT
+*/
+Static Function LerCSV(cArquivo)
+	
+	Local cBuffer     := ""
+	Local cAux        := ""
+	Local cString     := ""
+	Local cSeparador  := ""  //Verifica o tipo de separador do arquivo texto
+	Local aTmp        := {}
+	Local aEstrutura  := {}
+	Local nCont       := 0
+	Local cEof        := Chr(10)+ Chr(13)
+	Local nRec        := 0
+	Local lAspa       := .F.
+
+	//Leitura da quantidade de Registros do Arquivo
+	FT_FUSE(cArquivo)
+	FT_FGOTOP()
+	
+	While !FT_FEOF()
+		nRec++
+		FT_FSKIP()
+	End
+
+	//Leitura do arquivo e verificacao do ultimo caracter da linha lida para  consistencia da pesquisa
+	FT_FGOTOP()
+
+	While !FT_FEOF()
+	
+		cBuffer:= AllTrim(FT_FREADLN())
+	
+		If At(";",cBuffer) > 0
+			cSeparador:= ";" 
+		Else //linha de arquivo incorreta.
+			FT_FSKIP()
+			Loop
+		Endif
+	
+		If (SubStr(cBuffer,Len(cBuffer),1)<>cSeparador)
+			cBuffer += cSeparador + cEof + cSeparador
+		Else
+			cBuffer += cEof + cSeparador
+		Endif
+	
+		//Carrega o array aEstrutura com o resultado da Importacao
+		cLinha:= fTAcento(cBuffer)
+		lAspa := .F.
+
+		For nCont := 1 To Len(cBuffer)
+		
+			cAux   := SubStr(cLinha,1,1)
+			cLinha := SubStr(cLinha,2)
+			
+			If (cAux == cEof)
+				Exit
+			Endif
+		
+			//Sao verificadas as marcacoes feitas pelo Excel para concatenacao de strings
+			Do Case
+			
+				Case cAux == '"'
+					lAspa := !lAspa
+					
+				Case cAux == cSeparador .And. !lAspa
+					aAdd(aTmp,cString)
+					cString := ""
+					
+				OtherWise
+					cString += cAux
+					
+			EndCase
+		
+		Next nCont
+	
+		For nCont := Len(aTmp)+1 To 11
+			aAdd(aTmp,"")
+		Next nCont
+	
+		//Validacao para nao salvar registros sem entidades
+		If !Empty(aTmp[1]) .OR. !Empty(aTmp[2])
+			aAdd(aEstrutura,aTmp)
+			aTmp := {}
+		Endif
+		
+		FT_FSKIP()
+	End
+
+	FT_FUSE()
+
+Return( aEstrutura )
+
+/** {Protheus.doc} GravaSND
+Funcao que realiza a gravacao do Responsaveis pelos Bens (SND)
+
+@param: 	nil,Nulo
+@author: 	Jose Leite de Barros Neto
+@since: 	03/02/2015
+@Uso: 		SFIEMT
+*/
+/*
+--------------------------------------------------------------
+Franklin B. Oliveira                                18/08/2016
+	Incuído tratamento para bloquear os cadastros existentes e
+	e ativos.
+	Nova função para gerar o código sequencial "ND_SEQUENC". 
+--------------------------------------------------------------
+*/
+Static Function GravaSND()
+	
+	Local _cFilial 		:= ""
+	Local _cCodBem 		:= ""
+	Local _cItem		:= ""
+	Local _cResp		:= ""
+	Local _lFound		:= .F.
+	Local _lJaExiste	:= .F.
+	Local _cChave		:= ""
+	
+	ProcRegua(_nTotal)
+
+	For _i := 2 To Len(_aItens)
+		
+		IncProc("Processando: " + cValtoChar(_i-1) + " de " + cValtoChar(_nTotal))
+		
+		_lFound 	:= .F.
+		_lJaExiste	:= .F.
+		
+		_cFilial := AllTrim(_aItens[_i][1])
+		
+		_cCodBem := Padr(AllTrim(_aItens[_i][2]),TamSX3("ND_CBASE")[1])
+		
+		_cItem := StrZero(Val(AllTrim(_aItens[_i][3])),TamSX3("ND_ITEM")[1]) 
+		
+		_cResp := AllTrim(_aItens[_i][4])
+		
+		//Posiciona na SND  - Responsáveis
+		DbSelectArea("SND")
+		DbSetOrder(3) //ND_FILIAL+ND_CBASE+ND_ITEM+ND_SEQUENC 
+		_cChave := _cFilial+_cCodBem+_cItem
+		If Msseek( _cChave ) 
+			_lFound   := .T.
+			
+			// Atualização dos Responsáveis Atuais
+			While .Not. SND->( EoF() ) .And. _cChave == SND->(ND_FILIAL + ND_CBASE + ND_ITEM)
+				//Status Ativo e responsável diferente
+				If (SND->ND_STATUS == "1") .And. (SND->ND_CODRESP <> _cResp)
+					If RecLock("SND",.F.)
+						SND->ND_STATUS    := "2"
+						SND->ND_DTFIM     := dDataBase
+						SND->( MsUnLock() )   
+					EndIf
+				//Status Ativo e mesmo responsável
+				ElseIf (SND->ND_STATUS == "1") .And. (SND->ND_CODRESP == _cResp)
+					_lJaExiste := .T.
+				EndIf
+				SND->( DbSkip() )
+			EndDo
+		Endif
+			
+		// Criação da nova linha de responsável se não existir
+		If .Not. _lJaExiste
+			If RecLock("SND",.T.)
+				SND->ND_FILIAL	:= _cFilial
+				SND->ND_CBASE  	:= _cCodBem
+				SND->ND_ITEM   	:= _cItem
+				SND->ND_CODRESP	:= _cResp
+				SND->ND_STATUS 	:= "1"
+				SND->ND_DTINI  	:= dDataBase
+				SND->ND_DTFIM  	:= CtoD(" / / ")
+				SND->ND_SEQUENC	:= ProxSNDSEQ(_cFilial, _cCodBem, _cItem)
+				SND->ND_RESPDES	:= ""
+				SND->( MsUnLock() )
+			EndIf
+		EndIf
+		SND->(DbCloseArea())
+	Next
+	
+	If Select("SND") > 0
+		DbSelectArea("SND")
+		SND->(DbCloseArea())
+	EndIf
+	
+Return( Nil )
+
+
+/*/{Protheus.doc} ProxSNDSEQ
+	Função para gerar o sequencial do campo "ND_SEQUENC"
+
+@author franklin.oliveira
+@since 18/08/2016
+
+@param cFilBem, characters, Filial do bem
+@param cCodBem, characters, Código do bem
+@param cItem, characters, Item do bem
+
+@Return cNDSEQUENC, characters, Código sequencial
+/*/
+Static Function ProxSNDSEQ(cFilBem, cCodBem, cItem)
+
+Local aAreaOri  	:= GetArea()
+Local cNDSEQUENC	:= ""
+Local cQuerySND 	:= ""
+
+	dbSelectArea("SND")
+	
+	cQuerySND := " SELECT MAX(ND_SEQUENC) ND_SEQUENC "
+	cQuerySND += " FROM " + RetSqlName("SND")
+	cQuerySND += " WHERE ND_FILIAL = '" + cFilBem + "' "
+	cQuerySND += " AND ND_CBASE = '" + cCodBem + "' "
+	cQuerySND += " AND ND_ITEM = '" + cItem + "' "
+	cQuerySND += " AND D_E_L_E_T_ = '' "
+	cQuerySND := ChangeQuery(cQuerySND)
+	
+	If Select("MAXSND") > 0
+		dbSelectArea("MAXSND")
+		dbCloseArea()
+	Endif
+	
+	dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuerySND),"MAXSND")	
+	
+	dbSelectArea("MAXSND")
+	dbGoTop()
+	
+	If Empty(MAXSND->ND_SEQUENC)
+		cNDSEQUENC := STRZERO(1,LEN(SND->ND_SEQUENC))	
+	Else
+		cNDSEQUENC := Soma1(MAXSND->ND_SEQUENC)
+	EndIf
+
+	RestArea(aAreaOri)
+
+Return(cNDSEQUENC)

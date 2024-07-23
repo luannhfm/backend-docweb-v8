@@ -1,0 +1,247 @@
+#INCLUDE "PROTHEUS.CH" 
+
+STATIC cCodProd := ""
+
+/*/{Protheus.doc} SF0531X
+(long_description)
+@author j2a.luizjunior
+@since 25/01/2018
+@history 28/10/2019, Franklin de Brito de Oliveira, tratamento para considerar filial logada
+/*/
+
+User Function SF0531X
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0531X")
+	Local   cTitulo	   := "Tabela de Preços"
+	Local   cQuery	   := "" 								//obrigatorio
+	Local   cAlias	   := "SLQ"							//obrigatorio
+	Local   cCpoChave  := "LR_PRODUTO" 					//obrigatorio
+	Local   cTitCampo  := RetTitle(cCpoChave)		     	//obrigatorio
+	Local   cMascara   := PesqPict(cAlias,cCpoChave)	    //obrigatorio
+	Local   nTamCpo	   := TamSx3(cCpoChave)[1]		
+	Local   cRetCpo	   := "M->LR_PRODUTO"				    //obrigatorio
+	Local   nColuna	   := 1	
+	Local   cCodigo	   := ""                     		    //pego o conteudo e levo para minha consulta padrÃ£o
+	Local   cTabPrecos := ""		
+ 	Private bRet 	   := .F.
+	
+   	//Monto minha consulta, neste caso quero retornar apenas uma coluna, mas poderia inserir outros campos para compor outras colunas no grid, lembrando que nÃ£o posso utilizar um alias para o nome do campo, deixar o nome real.
+   	//Posso fazer qualquer tipo de consulta, usando INNER, GROUPY BY, UNION's etc..., desde que mantenha o nome dos campos no SELECT.
+	
+	cQuery     := " SELECT DA1_CODPRO, "
+	cQuery     += "        B1_DESC " 
+	cQuery     += " FROM " + RetSQLName("DA1")        + " DA1 "
+	cQuery     += " INNER  JOIN " + RetSQLName("SB1") + " B1 "
+	cQuery     += " ON     B1.D_E_L_E_T_  != '*' "
+	cQuery     += " AND    B1_COD          = DA1_CODPRO "
+	cQuery     += " WHERE  DA1.D_E_L_E_T_ != '*' "
+	cQuery     += " AND  DA1.DA1_FILIAL = '" + xFilial("DA1") + "' "
+	
+	If Funname() != "CNTA100"
+		If	Empty(M->LQ_XTAB)
+			cTabPrecos := LjXETabPre(M->LQ_CLIENTE, M->LQ_LOJA)
+		Else
+			cTabPrecos := M->LQ_XTAB
+		EndIf
+	Else
+		cTabPrecos := M->CNA_XCODTB
+	EndIf	
+	
+	cQuery += " AND    DA1_CODTAB      = '" + cTabPrecos + "' "
+	
+ 	bRet := FiltroF3(cTitulo,cQuery,nTamCpo,cAlias,cCodigo,cCpoChave,cTitCampo,cMascara,cRetCpo,nColuna)   	
+	
+Return bRet
+
+/*/{Protheus.doc} FiltroF3
+(long_description)
+@author j2a.luizjunior
+@since 25/01/2018
+@version 1.0
+@param cTitulo, character, (Descrição do parâmetro)
+@param cQuery, character, (Descrição do parâmetro)
+@param nTamCpo, numérico, (Descrição do parâmetro)
+@param cAlias, character, (Descrição do parâmetro)
+@param cCodigo, character, (Descrição do parâmetro)
+@param cCpoChave, character, (Descrição do parâmetro)
+@param cTitCampo, character, (Descrição do parâmetro)
+@param cMascara, character, (Descrição do parâmetro)
+@param cRetCpo, character, (Descrição do parâmetro)
+@param nColuna, numérico, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function FiltroF3(cTitulo,cQuery,nTamCpo,cAlias,pCodigo,cCpoChave,cTitCampo,cMascara,cRetCpo,pColuna)
+	
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0531X")
+	Local   cTabela
+	Local   nLista  
+	Local   cCampos    := ""
+	Local   bCampo	   := {}
+	Local   nCont	   := 0
+	Local   bTitulos   := {}
+	Local   aCampos    := {}	 
+	Local   cCSSGet	   := "QLineEdit{ border: 1px solid gray;border-radius: 3px;background-color: #ffffff;selection-background-color: #3366cc;selection-color: #ffffff;padding-left:1px;}"
+	Local   cCSSButton := "QPushButton{background-repeat: none; margin: 2px;background-color: #ffffff;border-style: outset;border-width: 2px;border: 1px solid #C0C0C0;border-radius: 5px;border-color: #C0C0C0;font: bold 12px Arial;padding: 6px;QPushButton:pressed {background-color: #ffffff;border-style: inset;}"
+	Local   cCSSButF3  := "QPushButton {background-color: #ffffff;margin: 2px;border-style: outset;border-width: 2px;border: 1px solid #C0C0C0;border-radius: 3px; border-color: #C0C0C0;font: Normal 10px Arial;padding: 3px;} QPushButton:pressed {background-color: #e6e6f9;border-style: inset;}"
+	Local   cCodigo    := ""	
+	Local   nTamCpo    := 30
+	Local   nColuna    := 1
+	Local   cTitCampo  := RetTitle(cCpoChave)
+	Local   cMascara   := PesqPict('"'+cAlias+'"',cCpoChave)
+	Private oCodigo
+	Private cCodigo 	
+	Private oLista	   := nil
+	Private oDlg 	   := nil
+	Private aDados     := {}
+	Private nColuna    := 0
+
+	nColuna	           := pColuna
+
+	If Empty(cAlias) .OR. Empty(cCpoChave) .OR. Empty(cRetCpo) .OR. Empty(cQuery)
+		MsgStop("Os parametro cQuery, cCpoChave, cRetCpo e cAlias sÃ£o obrigatÃ³rios!","Erro")
+		Return
+	Endif
+
+	cCodigo := Space(nTamCpo)
+	cCodigo := pCodigo
+
+	cTabela := CriaTrab(Nil,.F.)
+	DbUseArea(.T.,"TOPCONN", TCGENQRY(,,cQuery),cTabela, .F., .T.)
+     
+	(cTabela)->(DbGoTop())
+	If (cTabela)->(Eof())
+		MsgStop("Não ha registros para serem exibidos!","AtenÃ§Ã£o")
+		Return
+	Endif
+   
+	Do While (cTabela)->(!Eof())
+		/*Cria o array conforme a quantidade de campos existentes na consulta SQL*/
+		cCampos	:= ""
+		aCampos := {}
+		For nX  := 1 TO FCount()
+			bCampo := {|nX| Field(nX) }
+			If ValType((cTabela)->&(EVAL(bCampo,nX)) ) <> "M" .OR. ValType((cTabela)->&(EVAL(bCampo,nX)) ) <> "U"
+				if ValType((cTabela)->&(EVAL(bCampo,nX)) )=="C"
+					cCampos += "'" + (cTabela)->&(EVAL(bCampo,nX)) + "',"
+				ElseIf ValType((cTabela)->&(EVAL(bCampo,nX)) )=="D"
+					cCampos +=  DTOC((cTabela)->&(EVAL(bCampo,nX))) + ","
+				Else
+					cCampos +=  (cTabela)->&(EVAL(bCampo,nX)) + ","
+				Endif
+					
+				aadd(aCampos,{EVAL(bCampo,nX),Alltrim(RetTitle(EVAL(bCampo,nX))),"LEFT",30})
+			Endif
+		Next
+     
+     	If !Empty(cCampos) 
+     		cCampos 	:= Substr(cCampos,1,len(cCampos)-1)
+     		aAdd( aDados,&("{"+cCampos+"}"))
+     	Endif
+     	
+		(cTabela)->(DbSkip())     
+	Enddo
+   
+	DbCloseArea(cTabela)
+	
+	If Len(aDados) == 0
+		MsgInfo("Nao ha dados para exibir!","Aviso")
+		Return
+	Endif
+   
+	nLista := aScan(aDados, {|x| alltrim(x[1]) == alltrim(cCodigo)})
+     
+	iif(nLista = 0,nLista := 1,nLista)
+     
+	Define MsDialog oDlg Title "Consulta Padrao" + IIF(!Empty(cTitulo)," - " + cTitulo,"") From 0,0 To 280, 500 Of oMainWnd Pixel
+	
+	oCodigo:= TGet():New( 003, 005,{|u| if(PCount()>0,cCodigo:=u,cCodigo)},oDlg,205, 010,cMascara,{|| /*Processa({|| FiltroF3P(M->_cCodigo)},"Aguarde...")*/ },0,,,.F.,,.T.,,.F.,,.F.,.F.,,.F.,.F.,"",cCodigo,,,,,,,cTitCampo + ": ",1 )
+	oCodigo:SetCss(cCSSGet)	
+	oButton1 := TButton():New(010, 212," &Pesquisar ",oDlg,{|| Processa({|| FiltroF3P(M->_cCodigo) },"Aguarde...") },037,013,,,.F.,.T.,.F.,,.F.,,,.F. )
+	oButton1:SetCss(cCSSButton)	
+	    
+	oLista:= TCBrowse():New(26,05,245,90,,,,oDlg,,,,,{|| oLista:Refresh()},,,,,,,.F.,,.T.,,.F.,,,.f.)
+	nCont := 1
+    //Para ficar dinÃ¢mico a criaÃ§Ã£o das colunas, eu uso macro substituiÃ§Ã£o "&"
+	For nX := 1 to len(aCampos)
+		cColuna := &('oLista:AddColumn(TCColumn():New("'+aCampos[nX,2]+'", {|| aDados[oLista:nAt,'+StrZero(nCont,2)+']},PesqPict("'+cAlias+'","'+aCampos[nX,1]+'"),,,"'+aCampos[nX,3]+'", '+StrZero(aCampos[nX,4],3)+',.F.,.F.,,{|| .F. },,.F., ) )')
+		nCont++
+	Next
+	oLista:SetArray(aDados)
+	oLista:bWhen 		 := { || Len(aDados) > 0 }
+	oLista:bLDblClick  := { || FiltroF3R(oLista:nAt,aDados, cRetCpo)  }
+	oLista:Refresh()
+
+	oButton2 := TButton():New(122, 005," OK "			,oDlg,{|| Processa({|| FiltroF3R(oLista:nAt, aDados, cRetCpo) },"Aguarde...") },037,012,,,.F.,.T.,.F.,,.F.,,,.F. )
+	oButton2:SetCss(cCSSButton)	
+	oButton3 := TButton():New(122, 047," Cancelar "	,oDlg,{|| oDlg:End() },037,012,,,.F.,.T.,.F.,,.F.,,,.F. )
+	oButton3:SetCss(cCSSButton)	
+
+	Activate MSDialog oDlg Centered	
+	
+Return bRet
+
+/*/{Protheus.doc} FiltroF3P
+(long_description)
+@author j2a.luizjunior
+@since 25/01/2018
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function FiltroF3P(cBusca)
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0531X")
+	Local i := 0
+
+	If !Empty(cBusca)
+		For i := 1 to len(aDados)
+			//Aqui busco o texto exato, mas pode utilizar a funÃ§Ã£o AT() para pegar parte do texto
+			If UPPER(Alltrim(aDados[i,nColuna]))==UPPER(Alltrim(cBusca))
+				//Se encontrar me posiciono no grid e saio do "For"			
+				oLista:GoPosition(i)
+				oLista:Setfocus()
+				exit
+			EndIf
+		Next
+	EndIf
+	
+Return
+
+/*/{Protheus.doc} FiltroF3R
+(long_description)
+@author j2a.luizjunior
+@since 25/01/2018
+@version 1.0
+@param nLinha, numérico, (Descrição do parâmetro)
+@param aDados, array, (Descrição do parâmetro)
+@param cRetCpo, character, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function FiltroF3R(nLinha,aDados,cRetCpo)
+	
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0531X")
+	Local nColProd    := 1
+	Local nPosCod     := aScan(aHeader,{|x| AllTrim(x[2]) == "LR_PRODUTO"})
+	
+	cCodProd := aDados[nLinha,nColProd]
+			
+	bRet              := .T.
+	oDlg:End()    
+	
+Return
+
+User Function SF0532X()
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0531X")
+	
+Return(cCodProd)

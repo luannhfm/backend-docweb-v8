@@ -1,0 +1,1629 @@
+#Include "Protheus.ch"
+#Include "TopConn.ch"
+
+/*/{Protheus.doc} SIFINA14
+@description Rotina de Transferência de Títulos entre Filiais.
+@author Felipe Alves
+@since 21/02/2013
+@version 11.0
+
+@type function
+@history 07/03/2019, Alan Teles de Oliveira, alterado pesquisa padrão da variável cFilDes de SM0FIL para SM0.
+/*/
+User Function SIFINA14()
+
+	Local aArea := {GetArea(), SX3->(GetArea())}
+	Local lRet := .T.
+	Local aMotBx := ReadMotBx()
+	Local lMotBx := .F.
+	Local nI := 0
+	Local aPerg := {}
+	Local aRet := {}
+	Local cAlias := ""
+	Local cPerg := ""
+	Local aYesFields := {}
+	Local cTitulos := ""
+	Local cVirgula := ""
+	Local aCampos := {}
+	Local cCampos := "E2_PREFIXO, E2_NUM, E2_PARCELA, E2_TIPO, E2_NATUREZ, E2_FORNECE, E2_LOJA, E2_NOMFOR, E2_VENCTO, E2_VENCREA, E2_VALOR, E2_HIST," + ;
+	"E1_PREFIXO, E1_NUM, E1_PARCELA, E1_TIPO, E1_NATUREZ, E1_CLIENTE, E1_LOJA, E1_NOMCLI, E1_VENCTO, E1_VENCREA, E1_VALOR, E1_HIST"
+	Local oDlg
+	Local oPanel
+	Local oPanel1
+	Local oPanel2
+	Local oPanel3
+	Local oFolder
+	Local oFolder1
+	Local oList
+	Local cList := ""
+	Local oOk := LoadBitmap(GetResources(), "LBOK")
+	Local oNo := LoadBitmap(GetResources(), "LBNO")
+	Local oBrw
+	Local oSobe
+	Local oDesce
+	Local oFilOri
+	Local oFilDes
+	Local cFilDes := Space(8)
+	Local aButtons := {}
+	Local bSet16
+	Local nOpc := 0
+	Local aTela[0][0]
+	Local aGets[0]
+
+	Private aDados := {}
+	Private cCadastro := "Transferência Entre Filiais"
+	Private aHeader := {}
+	Private aCols := {}
+
+	For nI := 1 To Len(aMotBx)
+		If (SubStr(aMotBx[nI], 1, 3) == "LOJ")
+			lMotBx := .T.
+		Endif
+	Next nI
+
+	If !(lMotBx)
+		Aviso("Atenção", "O Motivo de Baixa (TEF - Transferência Entre Filiais) não cadastrado no Protheus. Favor cadastrá-lo antes.", {"Ok"}, 1)
+		lRet := .F.
+	Endif
+
+	If (lRet)
+		aAdd(aPerg, {2, "Selecione a Carteira", Nil, {"Pagar", "Receber"}         , 65, "", .F.})
+		//	aAdd(aPerg, {2, "Selecione a Carteira", Nil, {"Pagar"}                    , 65, "", .F.})
+		aAdd(aPerg, {3, "Selecione a Ação"    , 1  , {"Transferência", "Consulta"}, 65, "", .F., ""})
+
+		If !(ParamBox(aPerg, "Transferência de Títulos", @aRet, , , , , , , , .T., .T.))
+			lRet := .F.
+		Else
+			cAlias := Iif("Pagar" $ aRet[1], "SE2", "SE1")
+		Endif
+
+		If (lRet)
+			If (aRet[2] == 1)
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//³Transferência³
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+				AtuSX1()
+
+				If (cAlias == "SE2")
+					cPerg := "SIFINA14E2"
+					aYesFields := {"E2_PREFIXO", "E2_NUM", "E2_PARCELA", "E2_TIPO", "E2_NATUREZ", "E2_FORNECE", ;
+					"E2_LOJA", "E2_NOMFOR", "E2_VENCTO", "E2_VENCREA", "E2_VALOR", "E2_HIST"}
+				Elseif (cAlias == "SE1")
+					cPerg := "SIFINA14E1"
+					aYesFields := {"E1_PREFIXO", "E1_NUM", "E1_PARCELA", "E1_TIPO", "E1_NATUREZ", "E1_CLIENTE", ;
+					"E1_LOJA", "E1_NOMCLI", "E1_VENCTO", "E1_VENCREA", "E1_VALOR", "E1_HIST"}
+				Endif
+
+				If !(Pergunte(cPerg, .T.))
+					lRet := .F.
+				Endif
+
+				If (lRet)
+					SX3->(DbSetOrder(1))
+					SX3->(DbSeek(cAlias))
+
+					While ((SX3->(!Eof())) .And. (SX3->X3_ARQUIVO == cAlias))
+						If ((X3USO(SX3->X3_USADO)) .And. (cNivel >= SX3->X3_NIVEL) .And. (SX3->X3_CONTEXT <> "V") .And. (AllTrim(SX3->X3_CAMPO) $ cCampos))
+							cTitulos += cVirgula + "'" + AllTrim(SX3->X3_TITULO) + "'"
+							cVirgula := ","
+							aAdd(aCampos, {SX3->X3_CAMPO, SX3->X3_TITULO, SX3->X3_PICTURE, SX3->X3_TIPO, SX3->X3_TAMANHO, SX3->X3_DECIMAL})
+						Endif
+
+						SX3->(DbSkip())
+					Enddo
+
+					If !(fQuery(cAlias, aCampos))
+						Aviso("Atenção", "Nenhum registro encontrado! Por favor, verifique os parâmetros.", {"Ok"}, 1)
+						lRet := .F.
+					Endif
+
+					If (lRet)
+						oDlg := MsDialog():New(000, 000, 600, 900, cCadastro, , , , , , , , , .T.)
+
+						oPanel := TPanel():New(000, 000, "", oDlg, , .T., .T., , , 025, 025, .T., .T.)
+						oPanel:Align := CONTROL_ALIGN_TOP
+
+						oPanel1 := TPanel():New(000, 000, "", oDlg, , .T., .T., , , 120, 120, .T., .T.)
+						oPanel1:Align := CONTROL_ALIGN_TOP
+
+						oPanel2 := TPanel():New(000, 000, "", oDlg, , .T., .T., , , 020, 020, .T., .T.)
+						oPanel2:Align := CONTROL_ALIGN_TOP
+
+						oPanel3 := TPanel():New(000, 000, "", oDlg, , .T., .T., , , 030, 030, .T., .T.)
+						oPanel3:Align := CONTROL_ALIGN_ALLCLIENT
+
+						oFolder := TFolder():New(121, 002, {"Origem"} , {}, oPanel1, , , , .T., .T., 200, 110)
+						oFolder:Align := CONTROL_ALIGN_TOP
+
+						oFolder1 := TFolder():New(121, 002, {"Destino"}, {}, oPanel3, , , , .T., .T., 290, 110)
+						oFolder1:Align := CONTROL_ALIGN_ALLCLIENT
+
+						@ 000, oDlg:nLeft ListBox oList Var cList Fields Header " ", "Prefixo", "Nro. Título", "Parcela", "Tipo", "Natureza", ;
+						Iif(cAlias == "SE2", "Fornecedor", "Cliente"), "Loja", "Nome " + Iif(cAlias == "SE2", "Fornecedor", "Cliente"), ;
+						"Dt. Vencto.", "Dt. Venc. Real", "Valor", "Histórico" Size 451, 090 Of oFolder:aDialogs[1] Pixel On DblClick fMarca(@oList, cAlias, cFilDes)
+
+						oList:SetArray(aDados)
+						oList:bLine := {|| {Iif(aDados[oList:nAt][1], oOk, oNo), aDados[oList:nAt][2], aDados[oList:nAt][3], ;
+						aDados[oList:nAt][4], aDados[oList:nAt][5], aDados[oList:nAt][6], aDados[oList:nAt][7], ;
+						aDados[oList:nAt][8], aDados[oList:nAt][9], aDados[oList:nAt][10], aDados[oList:nAt][11], ;
+						aDados[oList:nAt][12], aDados[oList:nAt][13]}}
+						oList:bGotFocus := {|| oDesce:lActive := .T., oSobe:lActive := .F.}
+
+						FillGetDados(3, cAlias, 1, , , , , aYesFields, , , , .T., aHeader, aCols, , , )
+
+						oBrw := MsNewGetDados():New(1, 1, 1, 1, 0, "AllwaysTrue", "AllwaysTrue", , , , 9999, ;
+						"AllwaysTrue", "", "AllwaysTrue", oFolder1:aDialogs[1], aHeader, aCols)
+						oBrw:oBrowse:Align := CONTROL_ALIGN_ALLCLIENT
+						oBrw:oBrowse:blDblClick := {|| Iif(oBrw:oBrowse:nColPos == GdFieldPos(Iif(cAlias == "SE2", "E2_NATUREZ", "E1_NATUREZ"), oBrw:aHeader), xFIN14Nat(oBrw:oBrowse:nAt, @oBrw, cAlias, cFilDes), )}
+						oBrw:oBrowse:bGotFocus := {|| oDesce:lActive := .F., oSobe:lActive := .T.}
+
+						@ 006, 005 BtnBmp oDesce Resource "PMSSETADOWN" Size 030, 030 Design Action xFIN14Mov(1, cAlias, cFilDes, @oBrw, @oList) Of oPanel2
+						@ 006, 050 BtnBmp oSobe  Resource "PMSSETAUP"   Size 030, 030 Design Action xFIN14Mov(2, cAlias, cFilDes, @oBrw, @oList) Of oPanel2
+
+						@ 009, 005 Say "Filial Origem:" Of oPanel Pixel Size 038, 006
+						_cFilAnt := cFilAnt +" - "+ AllTrim(FwFilialName(cEmpAnt, cFilAnt))
+						@ 008, 040 MsGet oFilOri Var _cFilAnt  Size 130, 008 ReadOnly Pixel Of oPanel
+						
+						@ 009, 190 Say "Filial Destino:" Of oPanel Pixel Size 038, 006
+						@ 008, 225 MsGet oFilDes Var cFilDes Valid (Empty(cFilDes) .OR. ((cFilDes <> cFilAnt) .And. (ExistCpo("SM0", cEmpAnt + cFilDes)) .And. (verEmp(cFilDes)))) Size 030, 008 F3 "SM0" HASBUTTON Pixel Of oPanel
+
+						aButtons := {{"DBG10", {|| fLocaliza(cAlias, @oList)}, "Pesquisar... (CTRL - P)", "Procurar"}}
+						bSet16 := SetKey(16, {|| fLocaliza(cAlias, @oList)})
+						SetKey(16, bSet16)
+						oFilDes:SetFocus()
+
+						oDlg:bInit := {|| EnchoiceBar(oDlg, {|| nOpc := 1, Iif(oBrw:TudoOk() .And. U_VldNat(cAlias, @oBrw, cFilDes) .And. ;
+						Obrigatorio(aGets, aTela), oDlg:End(), nOpc := 0)}, {|| nOpc := 0, oDlg:End()}, , aButtons)}
+						oDlg:lCentered := .T.
+						oDlg:Activate()
+
+						If (nOpc == 1)
+							Pergunte("FIN090", .F.)
+							mv_par03 := 2
+
+							Processa({|| xFIN14GRV(@oBrw, cAlias, cFilDes)}, "Efetuando transferência...")
+							Aviso("Atenção", "Processamento concluído.", {"Ok"}, 1)
+
+							Pergunte("FIN050", .F.)
+						Endif
+					Endif
+				Endif
+			Elseif (aRet[2] == 2)
+				//ÚÄÄÄÄÄÄÄÄ¿
+				//³Consulta³
+				//ÀÄÄÄÄÄÄÄÄÙ
+				If ((SE2->(FieldPos("E2_XNUMTRF")) == 0) .Or. (SE2->(FieldPos("E2_XTPTRF")) == 0) .Or. (SE2->(FieldPos("E2_XFILDES")) == 0))
+					Aviso("Validação", "Para utilizar esta rotina é necessária a criação dos campos 'E2_XNUMTRF', 'E2_XTPTRF' e 'E2_XFILDES'.", {""}, 1)
+				Else
+					SIFIN14A(cAlias)
+				Endif
+			Endif
+		Endif
+	Endif
+
+	aEval(aArea, {|x| RestArea(x)})
+Return(lRet)
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIFINA14  ºAutor  ³Felipe Alves        º Data ³  21/02/13   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Rotina de Transferência de Títulos entre Filiais.          º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function fQuery(cAlias, aCampos)
+	Local lRet := .T.
+	Local cQuery := ""
+	Local cTab := ""
+	Local nI := 0
+	Local aLinha := {}
+
+	aDados := {}
+
+	If (cAlias == "SE2")
+		cQuery := "SELECT" + CRLF
+		cQuery += "E2_PREFIXO," + CRLF
+		cQuery += "E2_NUM," + CRLF
+		cQuery += "E2_PARCELA," + CRLF
+		cQuery += "E2_TIPO," + CRLF
+		cQuery += "E2_NATUREZ," + CRLF
+		cQuery += "E2_FORNECE," + CRLF
+		cQuery += "E2_LOJA," + CRLF
+		cQuery += "E2_NOMFOR," + CRLF
+		cQuery += "E2_VENCTO," + CRLF
+		cQuery += "E2_VENCREA," + CRLF
+		cQuery += "E2_VALOR," + CRLF
+		cQuery += "E2_SALDO," + CRLF
+		cQuery += "E2_HIST," + CRLF
+		cQuery += "R_E_C_N_O_" + CRLF
+		cQuery += "FROM " + RetSQLName("SE2") + "" + CRLF
+		cQuery += "WHERE E2_FILIAL = '" + xFilial("SE2") + "'" + CRLF
+		cQuery += "AND E2_PREFIXO BETWEEN '" + mv_par01 + "' AND '" + mv_par02 + "'" + CRLF
+		cQuery += "AND E2_NUM BETWEEN '" + mv_par03 + "' AND '" + mv_par04 + "'" + CRLF
+		cQuery += "AND E2_PARCELA BETWEEN '" + mv_par05 + "' AND '" + mv_par06 + "'" + CRLF
+		cQuery += "AND E2_TIPO BETWEEN '" + mv_par07 + "' AND '" + mv_par08 + "'" + CRLF
+		If (TcGetDB() == "ORACLE")
+			cQuery += "AND E2_FORNECE || E2_LOJA BETWEEN '" + mv_par09 + mv_par11 + "' AND '" + mv_par10 + mv_par12 + "'" + CRLF
+		Else                                                                                                                    
+			cQuery += "AND E2_FORNECE + E2_LOJA BETWEEN '" + mv_par09 + mv_par11 + "' AND '" + mv_par10 + mv_par12 + "'" + CRLF
+		Endif
+		cQuery += "AND E2_VALOR BETWEEN '" + Str(mv_par13) + "' AND '" + Str(mv_par14) + "'" + CRLF
+		cQuery += "AND E2_NATUREZ BETWEEN '" + mv_par15 + "' AND '" + mv_par16 + "'" + CRLF
+		cQuery += "AND E2_SALDO = E2_VALOR" + CRLF
+		cQuery += "AND E2_VENCTO BETWEEN '" + DToS(mv_par17) + "' AND '" + DToS(mv_par18) + "'" + CRLF
+		cQuery += "AND D_E_L_E_T_ = ''"
+	Elseif (cAlias == "SE1")
+		cQuery := "SELECT" + CRLF
+		cQuery += "E1_PREFIXO," + CRLF
+		cQuery += "E1_NUM," + CRLF
+		cQuery += "E1_PARCELA," + CRLF
+		cQuery += "E1_TIPO," + CRLF
+		cQuery += "E1_NATUREZ," + CRLF
+		cQuery += "E1_CLIENTE," + CRLF
+		cQuery += "E1_LOJA," + CRLF
+		cQuery += "E1_NOMCLI," + CRLF
+		cQuery += "E1_VENCTO," + CRLF
+		cQuery += "E1_VENCREA," + CRLF
+		cQuery += "E1_VALOR," + CRLF
+		cQuery += "E1_SALDO," + CRLF
+		cQuery += "E1_HIST," + CRLF
+		cQuery += "R_E_C_N_O_" + CRLF
+		cQuery += "FROM " + RetSQLName("SE1") + "" + CRLF
+		cQuery += "WHERE E1_FILIAL = '" + xFilial("SE1") + "'" + CRLF
+		cQuery += "AND E1_PREFIXO BETWEEN '" + mv_par01 + "' AND '" + mv_par02 + "'" + CRLF
+		cQuery += "AND E1_NUM BETWEEN '" + mv_par03 + "' AND '" + mv_par04 + "'" + CRLF
+		cQuery += "AND E1_PARCELA BETWEEN '" + mv_par05 + "' AND '" + mv_par06 + "'" + CRLF
+		cQuery += "AND E1_TIPO BETWEEN '" + mv_par07 + "' AND '" + mv_par08 + "'" + CRLF
+		If (TcGetDB() == "ORACLE")
+			cQuery += "AND E1_CLIENTE || E1_LOJA BETWEEN '" + mv_par09 + mv_par11 + "' AND '" + mv_par10 + mv_par12 + "'" + CRLF
+		Else
+			cQuery += "AND E1_CLIENTE + E1_LOJA BETWEEN '" + mv_par09 + mv_par11 + "' AND '" + mv_par10 + mv_par12 + "'" + CRLF
+		Endif
+		cQuery += "AND E1_VALOR BETWEEN '" + Str(mv_par13) + "' AND '" + Str(mv_par14) + "'" + CRLF
+		cQuery += "AND E1_NATUREZ BETWEEN '" + mv_par15 + "' AND '" + mv_par16 + "'" + CRLF
+		//	cQuery += "AND E1_SALDO = E1_VALOR" + CRLF
+		cQuery += "AND E1_SALDO > 0" + CRLF
+		cQuery += "AND E1_VENCTO BETWEEN '" + DToS(mv_par17) + "' AND '" + DToS(mv_par18) + "'" + CRLF
+		cQuery += "AND D_E_L_E_T_ = ''"
+	Endif
+
+	cQuery := ChangeQuery(cQuery)
+
+	cTab := GetNextAlias()
+
+	TcQuery cQuery NEW ALIAS ((cTab))
+
+	For nI := 1 To Len(aCampos)
+		If (aCampos[nI][4] $ "DN")
+			TcSetField((cTab), aCampos[nI][1], aCampos[nI][4], aCampos[nI][5], aCampos[nI][6])
+		Endif
+	Next nI
+
+	TcSetField((cTab), "R_E_C_N_O_", "N", 10, 00)
+
+	lRet := !((cTab)->((Bof()) .And. (Eof())))
+
+	If (lRet)
+		DbSelectArea((cTab))
+		(cTab)->(DbGoTop())
+
+		While ((cTab)->(!Eof()))
+			aLinha := {.F.}
+
+			For nI := 1 To Len(aCampos)
+				If (aCampos[nI][4] $ "N")
+					(cTab)->(aAdd(aLinha, Transform(&(aCampos[nI][1]), aCampos[nI][3])))
+				Else
+					(cTab)->(aAdd(aLinha, &(aCampos[nI][1])))
+				Endif
+			Next nI
+
+			(cTab)->(aAdd(aLinha, R_E_C_N_O_))
+
+			aAdd(aDados, aLinha)
+
+			(cTab)->(DbSkip())
+		Enddo
+	Endif
+Return(lRet)
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIFINA14  ºAutor  ³Felipe Alves        º Data ³  21/02/13   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Rotina de Transferência de Títulos entre Filiais.          º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function fMarca(oList, cAlias, cFilDes)
+	Local aArea := {GetArea(), (cAlias)->(GetArea())}
+	Local lRet := .T.
+	Local nI := 0
+
+	If ((Len(oList:aArray) > 0) .And. ((!Empty(aDados[oList:nAt][2])) .Or. (!Empty(aDados[oList:nAt][3])) .Or. (!Empty(aDados[oList:nAt][4]))))
+
+		DbSelectArea((cAlias))
+		(cAlias)->(DbSetOrder(1))
+
+		If ((cAlias)->(DbSeek(cFilDes + aDados[oList:nAt][2] + aDados[oList:nAt][3] + aDados[oList:nAt][4] + ;
+		aDados[oList:nAt][5] + aDados[oList:nAt][6] + aDados[oList:nAt][7])))
+			Aviso("Atenção", "Este título já existe na Filial Destino. Não poderá ser transferido.", {"Ok"}, 1)
+			lRet := .F.
+		Else
+			If cAlias == 'SE1'
+				/* Jose Leite - CSI - 20-03-15
+				OBS: Realiza verificacao se algum titulo que esta sendo transferido, esta no SPC/SERASA.
+				Solicitante: Jorge Ascencio
+				*/
+				(cAlias)->(DbGoTo(aDados[oList:nAt][Len(aDados[oList:nAt])]))
+				// Walmir Junior 07/08/2018 - Tratativa para evitar liberação no caso específico de títulos 
+				// a serem transferidos da Filial 02MT0010 para 02MT0012. Remover trecho após solução.
+				If GetNewPar("MV_XDESF14",.F.) == .T. .AND. cFilDes == "02MT0012" .AND. (SE1->E1_FILIAL = '02MT0010' .AND. ;
+				SE1->E1_SALDO > 0 .AND. SE1->E1_PREFIXO = 'RMC' .AND. SE1->E1_XSPC == "S")
+
+				ElseIf SE1->E1_XSPC == "S"
+					_cTitSpc := AllTrim(SE1->E1_FILIAL) +"|"+ AllTrim(SE1->E1_PREFIXO) + "|" + AllTrim(SE1->E1_NUM) + "|" + AllTrim(SE1->E1_PARCELA) + "|" + AllTrim(SE1->E1_TIPO)
+					Alert("O Título "+ _cTitSpc +" é de SPC/SERASA, logo, não é possível realizar a negociação, favor verificar!")
+					lRet := .F.
+				EndIf
+			EndIf
+		EndIf
+
+		If lRet
+			aDados[oList:nAt][1] := !(aDados[oList:nAt][1])
+			oList:Refresh()
+		Endif
+
+	Else
+		Aviso("Atenção", "Nenhum título para transferir.", {"Ok"}, 1)
+		lRet := .F.
+	Endif
+
+	aEval(aArea, {|x| RestArea(x)})
+Return(lRet)
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIFINA14  ºAutor  ³Felipe Alves        º Data ³  21/02/13   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Rotina de Transferência de Títulos entre Filiais.          º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function xFIN14Nat(nRow, oBrw, cAlias, cFilDes)
+	Local lRet := .T.
+	Local lContinua := .T.
+	Local cCpoNat := Iif(cAlias == "SE2", "E2_NATUREZ", "E1_NATUREZ")
+	Local nPosNat := GdFieldPos(cCpoNat, oBrw:aHeader)
+	Local cFilBkp := cFilAnt
+
+	If (oBrw:oBrowse:nColPos <> nPosNat)
+		lContinua := .F.
+	Elseif (Empty(GdFieldGet(Iif(cAlias == "SE2", "E2_NUM", "E1_NUM"), oBrw:oBrowse:nAt, , oBrw:aHeader, oBrw:aCols)))
+		Aviso("Atenção", "Não há título para ser alterada a Natureza.", {"Ok"}, 1)
+		lContinua := .F.
+	Endif
+
+	If (lContinua)
+		cFilAnt := cFilDes
+
+		ConPad1(, , , "SED", , , .F.)
+
+		cFilAnt := cFilBkp
+
+		GdFieldPut(cCpoNat, SED->ED_CODIGO, oBrw:oBrowse:nAt, oBrw:aHeader, oBrw:aCols)
+		oBrw:oBrowse:Refresh()
+	Endif
+Return(lRet)
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIFINA14  ºAutor  ³Felipe Alves        º Data ³  21/02/13   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Rotina de Transferência de Títulos entre Filiais.          º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function xFIN14Mov(nOper, cAlias, cFilDes, oBrw, oList)
+	Local lRet := .T.
+	Local nPosPre := Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_PREFIXO"}), ;
+	aScan(aHeader, {|x| AllTrim(x[2]) == "E1_PREFIXO"}))
+	Local nPosNum := Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_NUM"})    , ;
+	aScan(aHeader, {|x| AllTrim(x[2]) == "E1_NUM"}))
+	Local nPosPar := Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_PARCELA"}), ;
+	aScan(aHeader, {|x| AllTrim(x[2]) == "E1_PARCELA"}))
+	Local nPosTip := Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_TIPO"})   , ;
+	aScan(aHeader, {|x| AllTrim(x[2]) == "E1_TIPO"}))
+	Local nPosNat := Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_NATUREZ"}), ;
+	aScan(aHeader, {|x| AllTrim(x[2]) == "E1_NATUREZ"}))
+	Local nPosFor := Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_FORNECE"}), ;
+	aScan(aHeader, {|x| AllTrim(x[2]) == "E1_CLIENTE"}))
+	Local nPosLoja := Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_LOJA"})   , ;
+	aScan(aHeader, {|x| AllTrim(x[2]) == "E1_LOJA"}))
+	Local nPosNome := Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_NOMFOR"}) , ;
+	aScan(aHeader, {|x| AllTrim(x[2]) == "E1_NOMCLI"}))
+	Local nPosVenc := Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_VENCTO"}) , ;
+	aScan(aHeader, {|x| AllTrim(x[2]) == "E1_VENCTO"}))
+	Local nPosReal := Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_VENCREA"}), ;
+	aScan(aHeader, {|x| AllTrim(x[2]) == "E1_VENCREA"}))
+	Local nPosValor := Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_VALOR"})  , ;
+	aScan(aHeader, {|x| AllTrim(x[2]) == "E1_VALOR"}))
+	Local nPosHist := Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_HIST"})   , ;
+	aScan(aHeader, {|x| AllTrim(x[2]) == "E1_HIST"}))
+	Local aCopia := {}
+	Local nI := 0
+	Local nPos := 0
+	Local cNatTrf := ""
+	Local aLinha := {}
+	Local aColsBkp := {}
+	Local oOk := LoadBitmap(GetResources(), "LBOK")
+	Local oNo := LoadBitmap(GetResources(), "LBNO")
+	Local lEnc := .F.
+
+	If ((nOper == 1))
+
+		If ((Empty(aDados[1][1])) .And. (Empty(aDados[1][2])) .And. (Empty(aDados[1][3])))
+			Aviso("Atenção", "Não há título para ser transferido.", {"Ok"}, 1)
+			lRet := .F.
+		Elseif (Len(aDados) < 1)
+			Aviso("Atenção", "Não há título para ser transferido.", {"Ok"}, 1)
+			lRet := .F.
+
+		Elseif !(Empty(cFilDes))
+			If (Aviso("Atenção", "Confirma a transferência do(s) título(s) selecionado(s)?", {"Sim", "Não"}, 1) <> 1)
+				lRet := .F.
+			Else  
+				/*
+				For nK := 1 To Len(aDados)  //Auremar 
+				If !Empty(aDados[nK][1])
+				If Date() > aDados[nK][nPosReal]   //Título Vencido			
+				lRet := .F.		
+				Aviso("Atenção", "Data corrente: " + DtoC(Date()) + " é maior que a data do Vencimento Real:" + DtoC(aDados[nK][nPosReal]) + "." + CHR(13) + CHR (10) +;
+				"Títulos está sendo desmarcado...", {"Ok"}, 1)	
+				aDados[nK][1] := .F.
+				Endif
+				Endif
+				Next nK
+				*/
+
+				nI := 0
+
+				For nI := 1 To Len(aDados)
+					If (aDados[nI][1] <> .F.)
+						lEnc := .T.
+					Endif
+				Next nI
+
+				If !(lEnc)
+					Aviso("Validação", "Nenhum registro selecionado.", {"Ok"}, 1)
+					lRet := .F.
+				Endif
+
+			Endif
+
+			If (lRet)
+				aCopia := {}
+
+				For nI := 1 To Len(aDados)
+					If (aDados[nI][1] <> .F.)
+						DbSelectArea((cAlias))
+						(cAlias)->(DbGoTo(aDados[nI][Len(aDados[nI])]))
+
+						aAdd(aCopia, Array(Len(aHeader) + 1))
+						nPos := Len(aCopia)
+
+						cNatTrf := Space(Len(Iif(cAlias == "SE2", SE2->E2_NATUREZ, SE1->E1_NATUREZ)))
+						If (SED->(FieldPos("ED_XNATTRF")) > 0)
+							SED->(DbSetOrder(1))
+							If (SED->(DbSeek( xFilial("SED") + Iif(cAlias == "SE2", SE2->(E2_NATUREZ), SE1->(E1_NATUREZ)))))
+								cNatTrf := SED->(ED_XNATTRF)
+							Endif
+						Endif
+
+						aCopia[nPos, nPosPre]				:= Iif(cAlias == "SE2", SE2->E2_PREFIXO, SE1->E1_PREFIXO)
+						aCopia[nPos, nPosNum]				:= Iif(cAlias == "SE2", SE2->E2_NUM    , SE1->E1_NUM    )
+						aCopia[nPos, nPosPar]				:= Iif(cAlias == "SE2", SE2->E2_PARCELA, SE1->E1_PARCELA)
+						aCopia[nPos, nPosTip]				:= Iif(cAlias == "SE2", SE2->E2_TIPO   , SE1->E1_TIPO   )
+						//aCopia[nPos, nPosNat]				:= cNatTrf
+						aCopia[nPos, nPosNat]				:= Iif(cAlias == "SE2", SE2->E2_NATUREZ, SE1->E1_NATUREZ)
+						aCopia[nPos, nPosFor]				:= Iif(cAlias == "SE2", SE2->E2_FORNECE, SE1->E1_CLIENTE)
+						aCopia[nPos, nPosLoja]			:= Iif(cAlias == "SE2", SE2->E2_LOJA   , SE1->E1_LOJA   )
+						aCopia[nPos, nPosNome]			:= Iif(cAlias == "SE2", SE2->E2_NOMFOR , SE1->E1_NOMCLI )
+						aCopia[nPos, nPosVenc]			:= Iif(cAlias == "SE2", SE2->E2_VENCTO , SE1->E1_VENCTO )
+						aCopia[nPos, nPosReal]			:= Iif(cAlias == "SE2", SE2->E2_VENCREA, SE1->E1_VENCREA)
+						aCopia[nPos, nPosValor]			:= Iif(cAlias == "SE2", SE2->E2_VALOR  , SE1->E1_VALOR  )
+						aCopia[nPos, nPosHist]			:= Iif(cAlias == "SE2", SE2->E2_HIST   , SE1->E1_HIST   )
+						aCopia[nPos, Len(aHeader)]		:= aDados[nI][Len(aDados[nI])]
+						aCopia[nPos, Len(aHeader) + 1]	:= .F.
+
+						aLinha := aClone(aCopia[Len(aCopia)])
+						oBrw:oBrowse:nAt := 1
+
+						If ((Len(oBrw:aCols) > 0) .And. (Empty(oBrw:aCols[1][nPosNum])))
+							oBrw:aCols[1] := aClone(aLinha)
+						Elseif (Len(oBrw:aCols) > 0)
+							aColsBkp := aClone(oBrw:aCols)
+							aAdd(aColsBkp, aClone(aLinha))
+							oBrw:aCols := aClone(aColsBkp)
+						Else
+							aColsBkp := {}
+							aAdd(aColsBkp, Array(Len(aHeader) + 1))
+							aColsBkp[1] := aClone(aLinha)
+							oBrw:aCols := aClone(aColsBkp)
+						Endif
+
+						oBrw:oBrowse:Refresh()
+					Endif
+				Next nI
+
+				For nI := Len(aDados) To 1 Step -1
+					If (aDados[nI][1] <> .F.)
+						If (oList:nAt >= Len(aDados))
+							oList:nAt := Len(aDados) - 1
+						Endif
+
+						aDel(aDados, nI)
+						aSize(aDados, Len(aDados) - 1)
+						oList:SetArray(aDados)
+						oList:bLine := {|| {Iif(aDados[oList:nAt][1], oOk, oNo), aDados[oList:nAt][2], aDados[oList:nAt][3], ;
+						aDados[oList:nAt][4], aDados[oList:nAt][5], aDados[oList:nAt][6], aDados[oList:nAt][7], ;
+						aDados[oList:nAt][8], aDados[oList:nAt][9], aDados[oList:nAt][10], aDados[oList:nAt][11], ;
+						aDados[oList:nAt][12], aDados[oList:nAt][13]}}
+						oList:Refresh()
+					Endif
+				Next
+
+				If (Len(aDados) == 0)
+					aAdd(aDados, Array(Len(aHeader) + 1))
+					nPos := Len(aDados)
+
+					aDados[nPos, 1] := .F.
+					aDados[nPos, 2] := Space(TamSX3("E2_PREFIXO")[1])
+					aDados[nPos, 3] := Space(TamSX3("E2_NUM")[1])
+					aDados[nPos, 4] := Space(TamSX3("E2_PARCELA")[1])
+					aDados[nPos, 5] := Space(TamSX3("E2_TIPO")[1])
+					aDados[nPos, 6] := Space(TamSX3("E2_NATUREZ")[1])
+					aDados[nPos, 7] := Space(TamSX3("E2_FORNECE")[1])
+					aDados[nPos, 8] := Space(TamSX3("E2_LOJA")[1])
+					aDados[nPos, 9] := Space(TamSX3("E2_NOMFOR")[1])
+					aDados[nPos, 10] := CToD("")
+					aDados[nPos, 11] := CToD("")
+					aDados[nPos, 12] := Space(TamSX3("E2_VALOR")[1])
+					aDados[nPos, 13] := Space(TamSX3("E2_HIST")[1])
+					aDados[nPos, 14] := 0
+
+					oList:SetArray(aDados)
+					oList:nAt := 1
+					oList:bLine := {|| {"", aDados[oList:nAt][2], aDados[oList:nAt][3], ;
+					aDados[oList:nAt][4], aDados[oList:nAt][5], aDados[oList:nAt][6], aDados[oList:nAt][7], ;
+					aDados[oList:nAt][8], aDados[oList:nAt][9], aDados[oList:nAt][10], aDados[oList:nAt][11], ;
+					aDados[oList:nAt][12], aDados[oList:nAt][13]}}
+					oList:Refresh()
+				Endif
+			Endif
+		Else
+			Aviso("Atenção", "Selecione a Filial de Destino.", {"Ok"}, 1)
+			lRet := .F.
+		Endif
+	Elseif (nOper == 2)
+		If ((oBrw:oBrowse:nAt < 1) .Or. (Empty(oBrw:aCols[1][nPosNum])))
+			Aviso("Atenção", "Não há título para ser estornado", {"Ok"}, 1)
+			lRet := .F.
+		Endif
+
+		If ((lRet) .And. (Aviso("Atenção", "Confirma estorno do título posicionado?", {"Sim", "Não"}, 1) == 1))
+			If (aDados[1, 14] == 0)
+				aDados := {}
+			Endif
+
+			aLinha := {}
+			aAdd(aLinha, .F.)
+
+			(cAlias)->(DbGoTo(oBrw:aCols[oBrw:oBrowse:nAt, Len(aHeader)]))
+
+			aAdd(aLinha, Iif(cAlias == "SE2", SE2->E2_PREFIXO, SE1->E1_PREFIXO))
+			aAdd(aLinha, Iif(cAlias == "SE2", SE2->E2_NUM    , SE1->E1_NUM))
+			aAdd(aLinha, Iif(cAlias == "SE2", SE2->E2_PARCELA, SE1->E1_PARCELA))
+			aAdd(aLinha, Iif(cAlias == "SE2", SE2->E2_TIPO   , SE1->E1_TIPO))
+			aAdd(aLinha, Iif(cAlias == "SE2", SE2->E2_NATUREZ, SE1->E1_NATUREZ))
+			aAdd(aLinha, Iif(cAlias == "SE2", SE2->E2_FORNECE, SE1->E1_CLIENTE))
+			aAdd(aLinha, Iif(cAlias == "SE2", SE2->E2_LOJA   , SE1->E1_LOJA))
+			aAdd(aLinha, Iif(cAlias == "SE2", SE2->E2_NOMFOR , SE1->E1_NOMCLI))
+			aAdd(aLinha, Iif(cAlias == "SE2", SE2->E2_VENCTO , SE1->E1_VENCTO))
+			aAdd(aLinha, Iif(cAlias == "SE2", SE2->E2_VENCREA, SE1->E1_VENCREA))
+			aAdd(aLinha, Transform(Iif(cAlias == "SE2", SE2->E2_VALOR  , SE1->E1_VALOR), "@E 999,999,999,999,999.99"))
+			aAdd(aLinha, Iif(cAlias == "SE2", SE2->E2_HIST   , SE1->E1_HIST))
+			aAdd(aLinha, oBrw:aCols[oBrw:oBrowse:nAt, Len(aHeader)])
+
+			aAdd(aDados, aLinha)
+
+			If (oList:nAt <= 0)
+				oList:nAt := 1
+			Endif
+
+			oList:SetArray(aDados)
+			oList:bLine := {|| {Iif(aDados[oList:nAt][1], oOk, oNo), aDados[oList:nAt][2], aDados[oList:nAt][3], ;
+			aDados[oList:nAt][4], aDados[oList:nAt][5], aDados[oList:nAt][6], aDados[oList:nAt][7], ;
+			aDados[oList:nAt][8], aDados[oList:nAt][9], aDados[oList:nAt][10], aDados[oList:nAt][11], ;
+			aDados[oList:nAt][12], aDados[oList:nAt][13]}}
+			oList:Refresh()
+
+			aDel(oBrw:aCols, oBrw:oBrowse:nAt)
+			aSize(oBrw:aCols, Len(oBrw:aCols) - 1)
+
+			If (Len(oBrw:aCols) == 0)
+				aAdd(oBrw:aCols, Array(Len(aHeader) + 1))
+				nPos := Len(oBrw:aCols)
+
+				oBrw:aCols[nPos, 1] := Space(TamSX3("E2_PREFIXO")[1])
+				oBrw:aCols[nPos, 2] := Space(TamSX3("E2_NUM")[1])
+				oBrw:aCols[nPos, 3] := Space(TamSX3("E2_PARCELA")[1])
+				oBrw:aCols[nPos, 4] := Space(TamSX3("E2_TIPO")[1])
+				oBrw:aCols[nPos, 5] := Space(TamSX3("E2_NATUREZ")[1])
+				oBrw:aCols[nPos, 6] := Space(TamSX3("E2_FORNECE")[1])
+				oBrw:aCols[nPos, 7] := Space(TamSX3("E2_LOJA")[1])
+				oBrw:aCols[nPos, 8] := Space(TamSX3("E2_NOMFOR")[1])
+				oBrw:aCols[nPos, 9] := CToD("")
+				oBrw:aCols[nPos, 10] := CToD("")
+				oBrw:aCols[nPos, 11] := 0
+				oBrw:aCols[nPos, 12] := Space(TamSX3("E2_HIST")[1])
+				oBrw:aCols[nPos, 13] := Nil
+				oBrw:aCols[nPos, 14] := 0
+				oBrw:aCols[nPos, 15] := .F.
+			Endif
+		Endif
+	Endif
+
+	If (oList:nAt <= 0)
+		oList:nAt := 1
+	Endif
+
+	oList:SetArray(aDados)
+	oList:bLine := {|| {Iif(aDados[oList:nAt][1], oOk, oNo), aDados[oList:nAt][2], aDados[oList:nAt][3], ;
+	aDados[oList:nAt][4], aDados[oList:nAt][5], aDados[oList:nAt][6], aDados[oList:nAt][7], ;
+	aDados[oList:nAt][8], aDados[oList:nAt][9], aDados[oList:nAt][10], aDados[oList:nAt][11], ;
+	aDados[oList:nAt][12], aDados[oList:nAt][13]}}
+	oList:Refresh()
+	oBrw:oBrowse:Refresh()
+Return(lRet)
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIFINA14  ºAutor  ³Felipe Alves        º Data ³  21/02/13   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Rotina de Transferência de Títulos entre Filiais.          º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function fLocaliza(cAlias, oList)
+	Local lRet := .T.
+	Local oDlgLcl
+	Local cF3 := Iif(cAlias == "SE2", "SA2", "SA1")
+	Local oPrefixo
+	Local oNum
+	Local oParcela
+	Local oTipo
+	Local oNaturez
+	Local oFornece
+	Local oLoja
+	Local nOpc := 0
+	Local bCancel := {|| nOpc := 1, oDlgLcl:End()}
+	Local bOk := {|| nOpc := 2, oDlgLcl:End()}
+
+	Private cPrefixo := Iif(cAlias == "SE2", CriaVar("E2_PREFIXO"), CriaVar("E1_PREFIXO"))
+	Private cNum := Iif(cAlias == "SE2", CriaVar("E2_NUM")    , CriaVar("E1_NUM")    )
+	Private cParcela := Iif(cAlias == "SE2", CriaVar("E2_PARCELA"), CriaVar("E1_PARCELA"))
+	Private cTipo := Iif(cAlias == "SE2", CriaVar("E2_TIPO")   , CriaVar("E1_TIPO")   )
+	Private cNaturez := Iif(cAlias == "SE2", CriaVar("E2_NATUREZ"), CriaVar("E1_NATUREZ"))
+	Private cFornece := Iif(cAlias == "SE2", CriaVar("E2_FORNECE"), CriaVar("E1_CLIENTE"))
+	Private cLoja := Iif(cAlias == "SE2", CriaVar("E2_LOJA")   , CriaVar("E1_LOJA")   )
+
+	Define MsDialog oDlgLcl Title "Pesquisando Título" From 0, 0 To 200, 350 Of oMainWnd Pixel
+
+	@ 002, 003 To 098, 125 Of oDlgLcl Pixel
+
+	@ 010, 005 Say "Prefixo"                                      Size 040, 008 Of oDlgLcl Pixel
+	@ 022, 005 Say "Nº Título"                                    Size 040, 008 Of oDlgLcl Pixel
+	@ 034, 005 Say "Parcela"                                      Size 040, 008 Of oDlgLcl Pixel
+	@ 046, 005 Say "Tipo"                                         Size 040, 008 Of oDlgLcl Pixel
+	@ 058, 005 Say "Naturez"                                      Size 040, 008 Of oDlgLcl Pixel
+	@ 070, 005 Say Iif(cAlias == "SE2", "Fornecedor", "Cliente") Size 040, 008 Of oDlgLcl Pixel
+	@ 082, 005 Say "Loja"                                         Size 040, 008 Of oDlgLcl Pixel
+
+	@ 010, 070 MsGet oPrefixo Var cPrefixo          Size 030, 008 Of oDlgLcl Pixel
+	@ 022, 070 MsGet oNum     Var cNum              Size 040, 008 Of oDlgLcl Pixel
+	@ 034, 070 MsGet oParcela Var cParcela          Size 020, 008 Of oDlgLcl Pixel
+	@ 046, 070 MsGet oTipo    Var cTipo    F3 "05"  Size 020, 008 Of oDlgLcl Pixel
+	@ 058, 070 MsGet oNaturez Var cNaturez F3 "SED" Size 030, 008 Of oDlgLcl Pixel
+	@ 070, 070 MsGet oFornece Var cFornece F3 cF3   Size 030, 008 Of oDlgLcl Pixel
+	@ 082, 070 MsGet oLoja    Var cLoja             Size 020, 008 Of oDlgLcl Pixel
+
+	@ 022, 130 Button OemToAnsi("Localizar") Size 040, 015 Pixel Of oDlgLcl Action EVal(bOk)
+	@ 058, 130 Button OemToAnsi("Fechar")    Size 040, 015 Pixel Of oDlgLcl Action EVal(bCancel)
+
+	Activate MsDialog oDlgLcl Centered
+
+	BEGIN SEQUENCE
+
+		If (nOpc <> 2)
+			Break
+		Endif
+
+		nPos := aScan(aDados, {|x| Iif(!Empty(cPrefixo), x[2] == cPrefixo, .T.) .And. ;
+		Iif(!Empty(cNum)     , x[3] == cNum, .T.) .And. ;
+		Iif(!Empty(cParcela) , x[4] == cParcela, .T.) .And. ;
+		Iif(!Empty(cTipo)    , x[5] == cTipo, .T.) .And. ;
+		Iif(!Empty(cNaturez) , x[6] == cNaturez, .T.) .And. ;
+		Iif(!Empty(cFornece) , x[7] == cFornece, .T.) .And. ;
+		Iif(!Empty(cLoja)    , x[8] == cLoja, .T.)})
+
+		If (nPos > 0)
+			oList:nAt := nPos
+			oList:Refresh()
+		Else
+			Aviso("Atenção", "Título não encontrado!", {"Ok"}, 1)
+			lRet := .F.
+		Endif
+
+	END SEQUENCE
+Return(lRet)
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIFINA14  ºAutor  ³Felipe Alves        º Data ³  21/02/13   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Rotina de Transferência de Títulos entre Filiais.          º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function VldNat(cAlias, oBrw, cFilDes)
+	Local lRet := .T.
+	Local nPosNatur := Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_NATUREZ"}), aScan(aHeader, {|x| AllTrim(x[2]) == "E1_NATUREZ"}))
+
+	If Empty(cFilDes)
+		Aviso("Validação", "Por favor, preencha o campo Filial Destino.", {"Ok"}, 1)
+		lRet := .F.
+	ElseIf (aScan(oBrw:aCols, {|x| AllTrim(x[nPosNatur]) == ""}) > 0)
+		Aviso("Validação", "Por favor, preencha o campo NATUREZA.", {"Ok"}, 1)
+		lRet := .F.
+	Endif
+	
+	
+Return(lRet)
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIFINA14  ºAutor  ³Felipe Alves        º Data ³  21/02/13   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Rotina de Transferência de Títulos entre Filiais.          º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function xFIN14GRV(oBrw, cAlias, cFilDes)
+
+	Local lRet			:= .T.
+	Local aCopia		:= {}
+	Local lSavTTsInUse	:= __TTSInUse
+	Local nRecno		:= 0
+	Local aTabela		:= {}
+	Local nI			:= 0
+	Local nPosPref 		:= Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_PREFIXO"}), aScan(aHeader, {|x| AllTrim(x[2]) == "E1_PREFIXO"}))
+	Local nPosNum		:= Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_NUM"})    , aScan(aHeader, {|x| AllTrim(x[2]) == "E1_NUM"}))
+	Local nPosParcela	:= Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_PARCELA"}), aScan(aHeader, {|x| AllTrim(x[2]) == "E1_PARCELA"}))
+	Local nPosTipo		:= Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_TIPO"})   , aScan(aHeader, {|x| AllTrim(x[2]) == "E1_TIPO"}))
+	Local nPosNaturez	:= Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_NATUREZ"}), aScan(aHeader, {|x| AllTrim(x[2]) == "E1_NATUREZ"}))
+	Local nPosFornece	:= Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_FORNECE"}), aScan(aHeader, {|x| AllTrim(x[2]) == "E1_CLIENTE"}))
+	Local nPosLoja		:= Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_LOJA"})   , aScan(aHeader, {|x| AllTrim(x[2]) == "E1_LOJA"}))
+	Local nPosNomeFor	:= Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_NOMFOR"}) , aScan(aHeader, {|x| AllTrim(x[2]) == "E1_NOMCLI"}))
+	Local nPosVencto	:= Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_VENCTO"}) , aScan(aHeader, {|x| AllTrim(x[2]) == "E1_VENCTO"}))
+	Local nPosVencrea	:= Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_VENCREA"}), aScan(aHeader, {|x| AllTrim(x[2]) == "E1_VENCREA"}))
+	Local nPosValor		:= Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_VALOR"})  , aScan(aHeader, {|x| AllTrim(x[2]) == "E1_VALOR"}))
+	Local nPosHist		:= Iif(cAlias == "SE2", aScan(aHeader, {|x| AllTrim(x[2]) == "E2_HIST"})   , aScan(aHeader, {|x| AllTrim(x[2]) == "E1_HIST"}))
+	Local nInss			:= 0
+	Local lPCCBaixa		:= .F.
+	Local lIRPFBaixa	:= .F.
+	Local lCalcIssBx	:= .F.
+	Local nTotal		:= 0
+	Local cHist			:= ""
+	Local aStru			:= {}
+	Local nX			:= 0
+	Local cMotBx		:= "TEF"
+	Local cBanco		:= PadR("TEF", TamSX3("A6_COD")[1])
+	Local cAgencia		:= PadR("TEF", TamSX3("A6_AGENCIA")[1])
+	Local cConta		:= PadR("TEF", TamSX3("A6_NUMCON")[1])
+	Local cQuery		:= ""        
+	Local cTab			:= ""
+	Local cParcTtx		:= ""
+	Local lEhImp		:= .F.                    //Logico de Controle de Mudar Pref para TTX
+	Local cEhImp		:= GetMv("SI_IMPTRF")     //Prefixos que trocam para TTX
+	Local lEhImp2		:= .F.                    //Logico de Controle de Somar Parcelas para o Destino
+	Local cEhImp2		:= GetNewPar("SI_PRCTRF","UNIAO") //Fornecedores que somam nas parcelas
+	Local cNumTrf		:= ""
+	Local cFilBkp		:= cFilAnt
+	Local cCtrl			:= ";E2_FILIAL;E2_PREFIXO;E2_NUM;E2_PARCELA;E2_TIPO;E2_NATUREZ;E2_CCD;E2_ITEMD;" + ;
+	"E2_CLVLDB;E2_FORNECE;E2_LOJA;E2_EMISSAO;E2_VENCTO;E2_VENCREA;E2_VENCORI;E2_EMIS1;" + ;
+	"E2_MOEDA;E2_VALOR;E2_ORIGEM;E2_HIST;E2_LA;E2_XNUMTRF;E2_XTPTRF;E2_XFILDES;E2_TITPAI;" + ;
+	"E1_FILIAL;E1_PREFIXO;E1_NUM;E1_PARCELA;E1_TIPO;E1_NATUREZ;E1_CLIENTE;E1_LOJA;E1_MULTNAT;" + ;
+	"E1_NOMCLI;E1_EMISSAO;E1_VENCTO;E1_VENCREA;E1_VALOR;E1_HIST;E1_LA;E1_EMIS1;E1_VENCORI;" + ;
+	"E1_ORIGEM;E1_ACRESC;E1_DECRESC;E1_CREDIT;E1_CCC;E1_CLVLCR;E1_ITEMC;E1_XFILORI;E1_XTPTRF;E1_XNUMTRF;E1_ITEMD;E1_CCD;"+;
+	"E1_SITUACA;E1_XFILDES;E1_XNUMBOR;E1_XSITUAC;E1_XDTTER;E1_XDR;E1_XSPC;E1_XSPCDT;E1_XEXCSPC;E1_XCOBJ;E1_XCOBJDT;
+	Local _dData      := CTOD('  /  /  ')
+	Local _dDataAnt   := CTOD('  /  /  ')
+	Local _lMudouDt   := .F.
+	Local _lMudouSit  := .F.
+	Local _cSituaca   := Replicate( " ", TamSx3("E1_SITUACA")[01] )
+
+
+	Private lMsErroAuto := .F.
+	Private lMsHelpAuto := .T.
+
+	__TTSInUse := .T.
+
+	aCopia := aClone(oBrw:aCols)
+
+	If (Len(aCopia) > 0)
+		DbSelectArea((cAlias))
+		aTabela := (cAlias)->(DbStruct())
+
+		For nI := 1 To Len(aCopia)
+			(cAlias)->(DbSetOrder(1))
+
+			If (cAlias == "SE2")
+				If (SE2->(DbSeek(cFilDes + aCopia[nI][nPosPref] + aCopia[nI][nPosNum] + aCopia[nI][nPosParcela] + aCopia[nI][nPosTipo] + aCopia[nI][nPosFornece] + aCopia[nI][nPosLoja])))
+					lEhImp := ";" + AllTrim(SE2->E2_TIPO) + ";" $ cEhImp
+					/*/	  qualquer titulo sera transferido			
+					If !(lEhImp)	// nao é titulo de imposto
+					Aviso("Validação", "Transferência do Título: " + SE2->E2_NUM + "/" + SE2->E2_PREFIXO + "/" + SE2->E2_PARCELA + "/" + SE2->E2_FORNECE + " não pode ser realizada. O mesmo já existe na filial destino.", {"Ok"}, 1)
+					lRet := .F.
+					Endif
+					/*/				
+				Endif
+
+			Elseif (cAlias == "SE1")
+				If (SE1->(DbSeek(cFilDes + aCopia[nI][nPosPref] + aCopia[nI][nPosNum] + aCopia[nI][nPosParcela] + aCopia[nI][nPosTipo])))
+					Aviso("Validação", "Transferência do Título: " + SE1->E1_NUM + "/" + SE1->E1_PREFIXO + "/" + SE1->E1_PARCELA + "/" + SE1->E1_CLIENTE + " não pode ser realizada. O mesmo já existe na filial destino.", {"Ok"}, 1)
+					lRet := .F.
+				Endif
+			Endif
+
+			If (lRet)
+				If (cAlias == "SE2")
+					SE2->(DbSeek(xFilial("SE2") + aCopia[nI][nPosPref] + aCopia[nI][nPosNum] + aCopia[nI][nPosParcela] + aCopia[nI][nPosTipo] + aCopia[nI][nPosFornece] + aCopia[nI][nPosLoja]))
+
+					nRecno := SE2->(Recno())
+
+					cNumTrf := GetMv("SI_NRTRFE2")
+
+					nInss := SE2->E2_INSS
+
+					SED->(DbSetOrder(1))
+					If ((SED->(DbSeek(xFilial("SED") + SE2->E2_NATUREZ))) .And. (SED->(FieldPos("ED_DEDINSS")) > 0))
+						If (SED->ED_DEDINSS == "1")
+							nInss := 0
+						Endif
+					Endif
+
+					SA2->(DbSetOrder(1))
+					SA2->(DbSeek(xFilial("SA2") + SE2->E2_FORNECE + SE2->E2_LOJA))
+
+					lPCCBaixa := SuperGetMv("MV_BX10925",.T.,"2") == "1"  .and. (!Empty( SE5->( FieldPos( "E5_VRETPIS" ) ) ) .And. !Empty( SE5->( FieldPos( "E5_VRETCOF" ) ) ) .And. ;
+					!Empty( SE5->( FieldPos( "E5_VRETCSL" ) ) ) .And. !Empty( SE5->( FieldPos( "E5_PRETPIS" ) ) ) .And. ;
+					!Empty( SE5->( FieldPos( "E5_PRETCOF" ) ) ) .And. !Empty( SE5->( FieldPos( "E5_PRETCSL" ) ) ) .And. ;
+					!Empty( SE2->( FieldPos( "E2_SEQBX"   ) ) ) .And. !Empty( SFQ->( FieldPos( "FQ_SEQDES"  ) ) ) )
+
+					lIRPFBaixa := IIf( ! Empty( SA2->( FieldPos( "A2_CALCIRF" ) ) ), SA2->A2_CALCIRF == "2", .F.) .And. ;
+					!Empty( SE2->( FieldPos( "E2_VRETIRF" ) ) ) .And. !Empty( SE2->( FieldPos( "E2_PRETIRF" ) ) ) .And. ;
+					!Empty( SE5->( FieldPos( "E5_VRETIRF" ) ) ) .And. !Empty( SE5->( FieldPos( "E5_PRETIRF" ) ) )
+
+					lCalcIssBx :=	!Empty( SE5->( FieldPos( "E5_VRETISS" ) ) ) .and. !Empty( SE2->( FieldPos( "E2_SEQBX"   ) ) ) .and. ;
+					!Empty( SE2->( FieldPos( "E2_TRETISS" ) ) ) .and. GetNewPar("MV_MRETISS","1") == "2"
+
+					If (SA2->A2_TIPO == "F")
+						lCalcIssBx := .F.
+					Endif
+
+					nTotal := SE2->E2_VALOR + ;
+					Iif(lIRPFBaixa, SE2->E2_IRRF, 0) - ;
+					Iif(lCalcIssBx, SE2->E2_ISS , 0) + ;
+					nInss + ;
+					(SE2->E2_RETENC + SE2->E2_SEST) + ;
+					Iif(lPCCBaixa, (SE2->E2_PIS + SE2->E2_COFINS + SE2->E2_CSLL), 0) + ;
+					SE2->E2_ACRESC - ;
+					SE2->E2_DECRESC
+
+					cHist := "Transferencia de Titulo"
+
+					aStru := {}
+
+					DbSelectArea("SE2")
+					For nX := 1 To FCount()
+						aAdd(aStru, {FieldName(nX), SE2->&(FieldName(nX)), Nil})
+					Next nX
+
+					aAdd(aStru, {"AUTVLRPG"  , nTotal               , Nil})
+					aAdd(aStru, {"AUTMOTBX"  , cMotBx               , Nil})
+					aAdd(aStru, {"AUTBANCO"  , cBanco               , Nil})
+					aAdd(aStru, {"AUTAGENCIA", cAgencia             , Nil})
+					aAdd(aStru, {"AUTCONTA"  , cConta               , Nil}) 
+					aAdd(aStru, {"AUTDTBAIXA", dDataBase            , Nil})
+					aAdd(aStru, {"AUTDTDEB"  , DataValida(dDataBase), Nil})
+					aAdd(aStru, {"AUTHIST"   , cHist                , Nil})
+
+					lMsErroAuto := .F.
+					lMsHelpAuto := .T.
+
+					BEGIN TRANSACTION
+
+						MsExecAuto({|x,y| FINA080(x,y)}, aStru, 3)
+
+						If (lMsErroAuto)
+							DisarmTransaction()
+							MostraErro()
+							Aviso("Erro", "Baixa do Título: " + SE2->E2_NUM + "/" + SE2->E2_PREFIXO + "/" + SE2->E2_PARCELA + "/" + SE2->E2_FORNECE + " não pode ser realizada.", {"Ok"}, 1)
+							lRet := .F.
+						Else
+							SE2->(DbGoTo(nRecno))
+
+							cQuery := "SELECT" + CRLF
+							/*
+							Jose Leite - 03-12-14
+							Suporte:141902
+
+							Quando a parcela retorna "Vazio", esta apresentando um erro e nao deixa realizar
+							a transferencia do titulo, por isso foi comentado e adicionado a nova condicao 
+							cQuery += "ISNULL(CAST(MAX(E2_PARCELA) AS INTEGER), 0) AS E2_PARCELA" + CRLF
+							*/
+							//Inicio
+							cQuery += "MAX(E2_PARCELA) AS E2_PARCELA" + CRLF
+							//Fim
+
+							cQuery += "FROM " + RetSQLName("SE2") + "" + CRLF
+							cQuery += "WHERE E2_FILIAL = '" + cFilDes + "'" + CRLF 
+							If lEhImp 
+								cQuery += "AND E2_PREFIXO = 'TTX'" + CRLF  // Se trata TTX
+							Else
+								cQuery += "AND E2_PREFIXO = '" + SE2->E2_PREFIXO + "'" + CRLF  // Se trata Parcela
+							Endif
+							cQuery += "AND E2_NUM = '" + SE2->E2_NUM + "'" + CRLF
+							cQuery += "AND E2_TIPO = '" + SE2->E2_TIPO + "'" + CRLF
+							cQuery += "AND E2_FORNECE = '" + SE2->E2_FORNECE + "'" + CRLF
+							cQuery += "AND E2_LOJA = '" + SE2->E2_LOJA + "'" + CRLF
+							cQuery += "AND D_E_L_E_T_ = ''"
+
+							cQuery := ChangeQuery(cQuery)
+
+							cTab := GetNextAlias()
+
+							TcQUERY cQuery NEW ALIAS ((cTab))
+
+							DbSelectArea((cTab))
+							(cTab)->(DbGoTop())
+
+							/*
+							Jose Leite - 03-12-14
+							cParcTtx := Iif((cTab)->(E2_PARCELA) == 0, StrZero(1,TamSx3("E2_PARCELA")[1]), StrZero((cTab)->(E2_PARCELA) + 1, TamSx3("E2_PARCELA")[1]))
+							*/
+							//Inicio
+							cParcTtx := Iif(Empty((cTab)->(E2_PARCELA)), Replicate("1",TamSx3("E2_PARCELA")[1]), StrZero(Val((cTab)->(E2_PARCELA)) + 1, Len(AllTrim((cTab)->(E2_PARCELA)))))
+							//Fim
+
+							(cTab)->(DbCloseArea())
+
+							lEhImp  := ";" + AllTrim(SE2->E2_TIPO) + ";" $ cEhImp
+							lEhImp2 := AllTrim(SE2->E2_FORNECE) $ cEhImp2
+
+							If ((SE2->(FieldPos("E2_XNUMTRF")) > 0) .And. (SE2->(FieldPos("E2_XTPTRF")) > 0) .And. (SE2->(FieldPos("E2_XFILDES")) > 0))
+								RecLock("SE2", .F.)
+								SE2->E2_XNUMTRF := cNumTrf
+								SE2->E2_XTPTRF := "1"
+								SE2->E2_XFILDES := cFilDes
+								SE2->(MsUnlock())
+							Endif
+
+							cFilAnt := cFilDes
+							aStru := {}
+
+							cHist := "SIFINA14-Transferencia de Titulos"
+
+							DbSelectArea("SE2")   
+
+							For nX := 1 To FCount()
+								If (";" + FieldName(nX) + ";" $ cCtrl)
+									If (FieldName(nX) == "E2_FILIAL")
+										aAdd(aStru, {FieldName(nX), cFilAnt, Nil})
+									Elseif (FieldName(nX) == "E2_PREFIXO")
+										aAdd(aStru, {FieldName(nX), Iif(lEhImp, "TTX", SE2->E2_PREFIXO), Nil})
+									Elseif (FieldName(nX) == "E2_PARCELA")
+										aAdd(aStru, {FieldName(nX), Iif(lEhImp2, cParcTtx, SE2->E2_PARCELA), Nil})
+										//								aAdd(aStru, {FieldName(nX), cParcTtx, Nil})
+									Elseif (FieldName(nX) == "E2_NATUREZ")
+										aAdd(aStru, {FieldName(nX), aCopia[nI][nPosNaturez], Nil})
+									Elseif (FieldName(nX) == "E2_VALOR")
+										aAdd(aStru, {FieldName(nX), nTotal, Nil})
+									Elseif (FieldName(nX) == "E2_ORIGEM")
+										aAdd(aStru, {FieldName(nX), "FINA050", Nil})
+									Elseif (FieldName(nX) == "E2_HIST")
+										aAdd(aStru, {FieldName(nX), cHist, Nil})
+									Elseif (FieldName(nX) == "E2_LA")
+										aAdd(aStru, {FieldName(nX), "N", Nil}) //Alterado p "N" apos FINA050 - 13/09/2017
+									Elseif (FieldName(nX) == "E2_XNUMTRF")
+										aAdd(aStru, {FieldName(nX), cNumTrf, Nil})
+									Elseif (FieldName(nX) == "E2_XTPTRF")
+										aAdd(aStru, {FieldName(nX), "2", Nil})
+									Elseif (FieldName(nX) == "E2_XFILDES")
+										aAdd(aStru, {FieldName(nX), cFilBkp, Nil})
+									Elseif (FieldName(nX) == "E2_TITPAI")
+										aAdd(aStru, {FieldName(nX), "", Nil})
+									Elseif (FieldName(nX) == "E2_EMIS1")      //Auremar em 17-07-2014
+										aAdd(aStru, {FieldName(nX), DATE(), Nil})
+									Else
+										aAdd(aStru, {FieldName(nX), SE2->&(FieldName(nX)), Nil})
+									Endif
+								Endif
+							Next nX
+
+							lMsErroAuto := .F.
+							lMsHelpAuto := .T. 
+
+							MsExecAuto({|x,y,z| FINA050(x,y,z)}, aStru, 3)
+
+							If (lMsErroAuto)
+								DisarmTransaction()
+								MostraErro()
+								lRet := .F.
+							Endif
+
+							cFilAnt := cFilBkp
+
+							If (lRet)
+								PutMv("SI_NRTRFE2", StrZero(Val(cNumTrf) + 1, 6))
+							Endif
+
+						Endif
+
+					END TRANSACTION
+				Elseif (cAlias == "SE1")
+					SE1->(DbSeek(xFilial("SE1") + aCopia[nI][nPosPref] + aCopia[nI][nPosNum] + aCopia[nI][nPosParcela] + aCopia[nI][nPosTipo]))
+
+					_cChaveSEV := SE1->(E1_FILIAL+E1_PREFIXO+E1_NUM+E1_PARCELA+E1_TIPO+E1_CLIENTE+E1_LOJA)
+
+					nRecno := SE1->(Recno())
+
+					cNumTrf := GetMv("SI_NRTRFE2")
+
+					_cMultNat := SE1->E1_MULTNAT
+					nTotal := SE1->E1_VALOR + ;
+					SE1->E1_ACRESC - ;
+					SE1->E1_DECRESC
+
+					cHist := "Transferencia de Titulo"
+
+					aStru := {}
+
+					DbSelectArea("SE1")
+					For nX := 1 To FCount()
+						aAdd(aStru, {FieldName(nX), SE1->&(FieldName(nX)), Nil})
+					Next nX
+
+					_lMudouDt  := .F. 
+					_lMudouSit := .F.       
+
+					//Verifica Carteira do Título
+					//If Alltrim(SE1->E1_SITUACA) <> "0"
+					_cSituaca := SE1->E1_SITUACA 
+
+					RecLock("SE1", .F.)
+					SE1->E1_SITUACA := "0"
+					SE1->(MsUnlock())
+
+					_lMudouSit := .T.  
+					//Endif
+
+					IF SE1->E1_VENCREA >= dDataBase
+						_dData := dDataBase
+					Else
+						_dData    := SE1->E1_VENCREA
+						_dDataAnt := dDataBase
+						dDataBase := SE1->E1_VENCREA
+						_lMudouDt   := .T.
+					Endif
+
+					aAdd(aStru, {"AUTVLRPG"    , nTotal               , Nil})
+					aAdd(aStru, {"AUTMOTBX"    , cMotBx               , Nil})
+					aAdd(aStru, {"AUTBANCO"    , cBanco               , Nil})
+					aAdd(aStru, {"AUTAGENCIA"  , cAgencia             , Nil})
+					aAdd(aStru, {"AUTCONTA"    , cConta               , Nil})
+					aAdd(aStru, {"AUTDTBAIXA"  , _dData               , Nil})
+					aAdd(aStru, {"AUTDTCREDITO", _dData               , Nil})
+					//				aAdd(aStru, {"AUTDTBAIXA"  , E1_VENCREA           , Nil})    //Atualizado em 28-07-2014 - Permitir transferencias de Títulos A Vencer
+					//				aAdd(aStru, {"AUTDTCREDITO", E1_VENCREA			  , Nil})
+					aAdd(aStru, {"AUTHIST"     , cHist                , Nil})
+
+					lMsErroAuto := .F.
+					lMsHelpAuto := .T.
+
+					BEGIN TRANSACTION
+
+						MsExecAuto({|x,y| FINA070(x,y)}, aStru, 3)   //Baixa do Contas a Receber
+
+						IF _lMudouDt
+							dDataBase := _dDataAnt
+						Endif
+
+						If (lMsErroAuto)
+							lRet := .F.
+							DisarmTransaction()
+							MostraErro()
+							Aviso("Erro", "Baixa do Título: " + SE1->E1_NUM + "/" + SE1->E1_PREFIXO + "/" + SE1->E1_PARCELA + "/" + SE1->E1_CLIENTE + " não pode ser realizada.", {"Ok"}, 1)
+						Else
+							If ((SE1->(FieldPos("E1_XNUMTRF")) > 0) .And. (SE1->(FieldPos("E1_XTPTRF")) > 0) .And. (SE1->(FieldPos("E1_XFILDES")) > 0))
+								RecLock("SE1", .F.)
+								SE1->E1_XNUMTRF := cNumTrf
+								SE1->E1_XTPTRF  := "1"
+								SE1->E1_XFILDES := cFilDes
+								SE1->(MsUnlock())
+							Endif
+
+							cFilAnt := cFilDes
+							aStru := {}
+
+							cHist := "SIFINA14-Transferencia de Titulos"
+
+							DbSelectArea("SE1")
+
+							For nX := 1 To FCount()
+								If (";" + FieldName(nX) + ";" $ cCtrl)
+									If (FieldName(nX) == "E1_FILIAL")
+										aAdd(aStru, {FieldName(nX), cFilAnt, Nil})
+									Elseif (FieldName(nX) == "E1_NATUREZ")
+										aAdd(aStru, {FieldName(nX), aCopia[nI][nPosNaturez], Nil})
+									Elseif (FieldName(nX) == "E1_VALOR")
+										aAdd(aStru, {FieldName(nX), nTotal, Nil})
+									Elseif (FieldName(nX) == "E1_ORIGEM")
+										aAdd(aStru, {FieldName(nX), "FINA040", Nil})
+									Elseif (FieldName(nX) == "E1_HIST")
+										aAdd(aStru, {FieldName(nX), cHist, Nil})
+									Elseif (FieldName(nX) == "E1_LA")
+										aAdd(aStru, {FieldName(nX), "S", Nil})
+									Elseif (FieldName(nX) == "E1_XNUMTRF")
+										aAdd(aStru, {FieldName(nX), cNumTrf, Nil})
+									Elseif (FieldName(nX) == "E1_XTPTRF")
+										aAdd(aStru, {FieldName(nX), "2", Nil})
+									Elseif (FieldName(nX) == "E1_XFILDES")
+										aAdd(aStru, {FieldName(nX), cFilBkp, Nil})
+									Elseif (FieldName(nX) == "E1_EMIS1")
+										aAdd(aStru, {FieldName(nX), DATE(), Nil})
+									Elseif (FieldName(nX) == "E1_SITUACA")
+										aAdd(aStru, {FieldName(nX), _cSituaca, Nil})
+										//							Elseif (FieldName(nX) == "E1_SITUACA" .AND. _lMudouSit )
+										//								aAdd(aStru, {FieldName(nX), _cSituaca, Nil})								
+									Else
+										aAdd(aStru, {FieldName(nX), SE1->&(FieldName(nX)), Nil})
+									Endif
+								Endif
+							Next nX
+
+							lMsErroAuto := .F.
+							lMsHelpAuto := .T.
+
+							MsExecAuto({|x,y,z| FINA040(x,y,z)}, aStru, 3) //Inclusão do Contas a Receber
+
+							If (lMsErroAuto)
+								DisarmTransaction()
+								MostraErro()
+								lRet := .F.
+								Aviso("Erro", "Criação do Título de DESTINO não pode ser realizada.", {"Ok"}, 1)
+							Endif
+
+							//               If _lMudouSit  
+							/*RecLock("SE1", .F.)
+							SE1->E1_SITUACA := _cSituaca
+							SE1->(MsUnlock())*/
+							//               Endif
+
+							// Joao Carlos - Implementacao da transferencia do rateio por Multiplas Naturezas (SEV) e C.C. por Naturezas (SEZ)
+							If _cMultNat == "1"
+
+								/*DbSelectArea("SE1")
+								RecLock("SE1",.F.)
+								SE1->E1_MULTNAT := _cMultNat
+								MsUnLock()*/
+
+								// Transfere Rateio Multiplas Naturezas
+								DbSelectArea("SEV")
+								DbSetOrder(1)
+								DbSeek(_cChaveSEV)
+								While !Eof() .and. SEV->(EV_FILIAL+EV_PREFIXO+EV_NUM+EV_PARCELA+EV_TIPO+EV_CLIFOR+EV_LOJA) == _cChaveSEV
+									nRecno := Recno()
+									aDados := {}
+									For n := 1 to FCount()        
+										aAdd(aDados,FieldGet(n))
+									Next
+									RecLock("SEV",.T.)
+									For n := 1 to FCount()
+										FieldPut(n,aDados[n])
+									Next
+									SEV->EV_FILIAL := cFilDes
+									MsUnLock()
+
+									// Distribui Rateio em Centro de Custos
+									If SEV->EV_RATEICC == "1"
+										_cChaveSEZ := SEV->(cFilBkp+EV_PREFIXO+EV_NUM+EV_PARCELA+EV_TIPO+EV_CLIFOR+EV_LOJA+EV_NATUREZ)
+										DbSelectArea("SEZ")
+										DbSetOrder(1)
+										DbSeek(_cChaveSEZ)
+										While !Eof() .and. SEZ->(EZ_FILIAL+EZ_PREFIXO+EZ_NUM+EZ_PARCELA+EZ_TIPO+EZ_CLIFOR+EZ_LOJA+EZ_NATUREZ) == _cChaveSEZ
+											nRecno1 := Recno()
+											aDados := {}
+											For n := 1 to FCount()        
+												aAdd(aDados,FieldGet(n))
+											Next
+											RecLock("SEZ",.T.)
+											For n := 1 to FCount()
+												FieldPut(n,aDados[n])
+											Next
+											SEZ->EZ_FILIAL := cFilDes
+											MsUnLock()
+											DbGoto(nRecno1)
+											DbSkip()
+										End
+									Endif
+
+									DbSelectArea("SEV")
+									DbGoto(nRecno)
+									DbSkip()
+								End
+							Endif		
+							// ---------------------- Fim ------------------------------
+
+							cFilAnt := cFilBkp
+
+							If (lRet)
+								PutMv("SI_NRTRFE2", StrZero(Val(cNumTrf) + 1, 6))
+							Endif
+						Endif
+
+					END TRANSACTION
+				Endif
+			Endif
+		Next nI
+	Else
+		Aviso("Atenção", "Não há títulos para serem transferidos.", {"Ok"}, 1)
+		lRet := .F.
+	Endif
+
+	__TTSInUse := lSavTTsInUse
+Return(lRet)
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIFINA14  ºAutor  ³Felipe Alves        º Data ³  21/02/13   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Rotina de Transferência de Títulos entre Filiais.          º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function SIFIN14A(cAlias)
+	Local lRet := .T.
+	Local cFiltro := Iif(cAlias == "SE2", "E2_XNUMTRF != '      ' AND E2_XTPTRF = '1' AND E2_BAIXA != '        '", "E1_XNUMTRF != '' AND E1_XTPTRF = '1' AND E1_BAIXA != ''")
+
+	Private cCadastro := "Consulta de Transferência de títulos entre Filiais"
+	Private aRotina := {}
+
+	If (cAlias == "SE2")
+		aRotina := {{"Visualizar", "AxVisual", 0, 2}, ;
+		{"Estornar", ;
+		"MsgRun('Realizando estornos, aguarde...', 'Transferência de títulos entre Filiais', {|| CursorWait(), U_SIFIN14B(SE2->E2_XNUMTRF, SE2->E2_XFILDES, 'SE2'), CursorArrow()})", ;
+		0, 2}}
+	Elseif (cAlias == "SE1")
+		aRotina := {{"Visualizar", "AxVisual", 0, 2}, ;
+		{"Estornar", ;
+		"MsgRun('Realizando estornos, aguarde...', 'Transferência de títulos entre Filiais', {|| CursorWait(), U_SIFIN14B(SE1->E1_XNUMTRF, SE1->E1_XFILDES, 'SE1'), CursorArrow()})", ;
+		0, 2}}
+	Endif
+
+	DbSelectArea(cAlias)
+	(cAlias)->(DbSetOrder(19))
+	mBrowse(6, 1, 22, 75, cAlias, , , , , , , , , , , , , , @cFiltro)
+Return(lRet)
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIFINA14  ºAutor  ³Felipe Alves        º Data ³  21/02/13   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Rotina de Transferência de Títulos entre Filiais.          º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function SIFIN14B(cTransf, cFilDes, cAlias)
+	Local aArea := GetArea()
+	Local lRet := .T.
+	Local cQuery := ""
+	Local cTab := ""
+	Local cFilOri := Iif(cAlias == "SE2", SE2->E2_FILIAL, SE1->E1_FILIAL)
+	Local cPreTit := Iif(cAlias == "SE2", SE2->E2_PREFIXO, SE1->E1_PREFIXO)
+	Local cNumTit := Iif(cAlias == "SE2", SE2->E2_NUM, SE1->E1_NUM)
+	Local cParTit := Iif(cAlias == "SE2", SE2->E2_PARCELA, SE1->E1_PARCELA)
+	Local cTipTit := Iif(cAlias == "SE2", SE2->E2_TIPO, SE1->E1_TIPO)
+	Local cForTit := Iif(cAlias == "SE2", SE2->E2_FORNECE, SE1->E1_CLIENTE)
+	Local cLojaTit := Iif(cAlias == "SE2", SE2->E2_LOJA, SE1->E1_LOJA)
+	Local aStru := {}
+
+	Private lMsErroAuto := .F.
+
+	BEGIN TRANSACTION
+
+		aAdd(aStru, {Iif(cAlias == "SE2", "E2_FILIAL", "E1_FILIAL")  , cFilAnt , Nil})
+		aAdd(aStru, {Iif(cAlias == "SE2", "E2_XNUMTRF", "E1_XNUMTRF"), cTransf , Nil})
+		aAdd(aStru, {Iif(cAlias == "SE2", "E2_PREFIXO", "E1_PREFIXO"), cPreTit , Nil})
+		aAdd(aStru, {Iif(cAlias == "SE2", "E2_NUM", "E1_NUM")        , cNumTit , Nil})
+		aAdd(aStru, {Iif(cAlias == "SE2", "E2_PARCELA", "E1_PARCELA"), cParTit , Nil})
+		aAdd(aStru, {Iif(cAlias == "SE2", "E2_TIPO", "E1_TIPO")      , cTipTit , Nil})
+		aAdd(aStru, {Iif(cAlias == "SE2", "E2_FORNECE", "E1_CLIENTE"), cForTit , Nil})
+		aAdd(aStru, {Iif(cAlias == "SE2", "E2_LOJA", "E1_LOJA")      , cLojaTit, Nil})
+
+		lMsErroAuto := .F.
+
+		MsExecAuto({|x,y,z| Iif(cAlias == "SE2", FINA080(x,y,z), FINA070(x,y,z))}, aStru, 5)
+
+		If (lMsErroAuto)
+			lRet := .F.
+			DisarmTransaction()
+			MostraErro()
+		Endif
+
+		If (lRet)
+			aStru := {}
+
+			cFilAnt := cFilDes
+
+			DbSelectArea(cAlias)
+			If (cAlias == "SE2")
+				SE2->(DbOrderNickName("TRANSFIL"))
+			Elseif (cAlias == "SE1")
+				//		SE1->(DbSetOrder(29))
+				SE1->(DbOrderNickName("FILPED"))	//E1_FILIAL+E1_PEDIDO+E1_XNUMTRF+E1_PREFIXO+E1_NUM+E1_PARCELA+E1_TIPO+E1_CLIENTE+E1_LOJA
+				//foi necessario alterar este indice, nao era possivel a criaçao de mais indices na SE1 (1 a Z)
+			Endif
+
+			If Iif(cAlias == "SE2",((cAlias)->(DbSeek(cFilAnt + cTransf))),((cAlias)->(DbSeek(cFilAnt +Space(TamSx3("E1_PEDIDO")[1])+ cTransf))))
+				cPreTit := Iif(cAlias == "SE2", SE2->E2_PREFIXO, SE1->E1_PREFIXO)
+				cNumTit := Iif(cAlias == "SE2", SE2->E2_NUM    , SE1->E1_NUM)
+				cParTit := Iif(cAlias == "SE2", SE2->E2_PARCELA, SE1->E1_PARCELA)
+				cTipTit := Iif(cAlias == "SE2", SE2->E2_TIPO   , SE1->E1_TIPO)
+				cForTit := Iif(cAlias == "SE2", SE2->E2_FORNECE, SE1->E1_CLIENTE)
+				cLojaTit := Iif(cAlias == "SE2", SE2->E2_LOJA   , SE1->E1_LOJA)
+
+				aAdd(aStru, {Iif(cAlias == "SE2", "E2_FILIAL", "E1_FILIAL")  , cFilDes , Nil})
+				aAdd(aStru, {Iif(cAlias == "SE2", "E2_XNUMTRF", "E1_XNUMTRF"), cTransf , Nil})
+				aAdd(aStru, {Iif(cAlias == "SE2", "E2_PREFIXO", "E1_PREFIXO"), cPreTit , Nil})
+				aAdd(aStru, {Iif(cAlias == "SE2", "E2_NUM", "E1_NUM")        , cNumTit , Nil})
+				aAdd(aStru, {Iif(cAlias == "SE2", "E2_PARCELA", "E1_PARCELA"), cParTit , Nil})
+				aAdd(aStru, {Iif(cAlias == "SE2", "E2_TIPO", "E1_TIPO")      , cTipTit , Nil})
+				aAdd(aStru, {Iif(cAlias == "SE2", "E2_FORNECE", "E1_CLIENTE"), cForTit , Nil})
+				aAdd(aStru, {Iif(cAlias == "SE2", "E2_LOJA", "E1_LOJA")      , cLojaTit, Nil})
+			Else
+				Aviso("Validação", "Título Destino não encontrado. Por favor, verifique.", {"Ok"}, 1)
+				lRet := .F.
+				DisarmTransaction()
+			Endif
+
+			If (lRet)
+				lMsErroAuto := .F.
+
+				If (cAlias == "SE2")
+					MsExecAuto({|x,y,z| FINA050(x,y,z)}, aStru, , 5)
+				Elseif (cAlias == "SE1")
+					MsExecAuto({|x,y| FINA040(x,y)}, aStru, 5)
+				Endif
+
+				If (lMsErroAuto)
+					lRet := .F.
+					DisarmTransaction()
+					MostraErro()
+				Endif
+			Endif
+
+			cFilAnt := cFilOri
+
+			If (lRet)
+				Aviso("Estorno", "Estorno realizado com sucesso.", {"OK"}, 1)
+			Endif
+		Endif
+
+	END TRANSACTION
+
+	RestArea(aArea)
+Return(lRet)
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIFINA14  ºAutor  ³Felipe Alves        º Data ³  21/02/13   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Rotina de Transferência de Títulos entre Filiais.          º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function AtuSX1()
+	Local aArea := GetArea()
+	Local aAreaDic := SX1->( GetArea() )
+	Local aEstrut := {}
+	Local aStruDic := SX1->( dbStruct() )
+	Local aDados := {}
+	Local nI := 0
+	Local nJ := 0
+	Local nTam1 := Len( SX1->X1_GRUPO )
+	Local nTam2 := Len( SX1->X1_ORDEM )
+
+	aEstrut := { "X1_GRUPO"  , "X1_ORDEM"  , "X1_PERGUNT", "X1_PERSPA" , "X1_PERENG" , "X1_VARIAVL", "X1_TIPO"   , ;
+	"X1_TAMANHO", "X1_DECIMAL", "X1_PRESEL" , "X1_GSC"    , "X1_VALID"  , "X1_VAR01"  , "X1_DEF01"  , ;
+	"X1_DEFSPA1", "X1_DEFENG1", "X1_CNT01"  , "X1_VAR02"  , "X1_DEF02"  , "X1_DEFSPA2", "X1_DEFENG2", ;
+	"X1_CNT02"  , "X1_VAR03"  , "X1_DEF03"  , "X1_DEFSPA3", "X1_DEFENG3", "X1_CNT03"  , "X1_VAR04"  , ;
+	"X1_DEF04"  , "X1_DEFSPA4", "X1_DEFENG4", "X1_CNT04"  , "X1_VAR05"  , "X1_DEF05"  , "X1_DEFSPA5", ;
+	"X1_DEFENG5", "X1_CNT05"  , "X1_F3"     , "X1_PYME"   , "X1_GRPSXG" , "X1_HELP"   , "X1_PICTURE", ;
+	"X1_IDFIL"   }
+
+	//
+	// Perguntas SIFINA14E1
+	//
+	aAdd( aDados, {'SIFINA14E1','01','Prefixo De','Prefixo De','Prefixo De','MV_CH0','C',3,0,0,'G','','MV_PAR01','','','','','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E1','02','Prefixo Ate','Prefixo Ate','Prefixo Ate','MV_CH0','C',3,0,0,'G','','MV_PAR02','','','','','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E1','03','Nro Titulo De','Nro Titulo De','Nro Titulo De','MV_CH0','C',16,0,0,'G','','MV_PAR03','','','','','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E1','04','Nro Titulo Ate','Nro Titulo Ate','Nro Titulo Ate','MV_CH0','C',16,0,0,'G','','MV_PAR04','','','','','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E1','05','Parcela De','Parcela De','Parcela De','MV_CH0','C',3,0,0,'G','','MV_PAR05','','','','','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E1','06','Parcela Ate','Parcela Ate','Parcela Ate','MV_CH0','C',3,0,0,'G','','MV_PAR06','','','','','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E1','07','Tipo De','Tipo De','Tipo De','MV_CH0','C',3,0,0,'G','','MV_PAR07','','','','','','','','','','','','','','','','','','','','','','','','','05','','','','',''} )
+	aAdd( aDados, {'SIFINA14E1','08','Tipo Ate','Tipo Ate','Tipo Ate','MV_CH0','C',3,0,0,'G','','MV_PAR08','','','','','','','','','','','','','','','','','','','','','','','','','05','','','','',''} )
+	aAdd( aDados, {'SIFINA14E1','09','Cliente De','Cliente De','Cliente De','MV_CH0','C',9,0,0,'G','','MV_PAR09','','','','','','','','','','','','','','','','','','','','','','','','','SA1','','','','',''} )
+	aAdd( aDados, {'SIFINA14E1','10','Cliente Ate','Cliente Ate','Cliente Ate','MV_CH1','C',9,0,0,'G','','MV_PAR10','','','','','','','','','','','','','','','','','','','','','','','','','SA1','','','','',''} )
+	aAdd( aDados, {'SIFINA14E1','11','Loja De','Loja De','Loja De','MV_CH1','C',4,0,0,'G','','MV_PAR11','','','','','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E1','12','Loja Ate','Loja Ate','Loja Ate','MV_CH1','C',4,0,0,'G','','MV_PAR12','','','','','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E1','13','Valor De','Valor De','Valor De','MV_CH1','N',14,2,0,'G','','MV_PAR13','','','','','','','','','','','','','','','','','','','','','','','','','','','','','@E 999,999,999.99',''} )
+	aAdd( aDados, {'SIFINA14E1','14','Valor Ate','Valor Ate','Valor Ate','MV_CH1','N',14,2,0,'G','','MV_PAR14','','','','','','','','','','','','','','','','','','','','','','','','','','','','','@E 999,999,999.99',''} )
+	aAdd( aDados, {'SIFINA14E1','15','Natureza De','Natureza De','Natureza De','MV_CH1','C',10,0,0,'G','','MV_PAR15','','','','','','','','','','','','','','','','','','','','','','','','','SED','','','','',''} )
+	aAdd( aDados, {'SIFINA14E1','16','Natureza Ate','Natureza Ate','Natureza Ate','MV_CH1','C',10,0,0,'G','','MV_PAR16','','','','','','','','','','','','','','','','','','','','','','','','','SED','','','','',''} )
+	aAdd( aDados, {'SIFINA14E1','17','Vencimento De','Vencimento De','Vencimento De','MV_CH1','D',8,0,0,'G','','MV_PAR17','','','','','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E1','18','Vencimento Ate','Vencimento Ate','Vencimento Ate','MV_CH1','D',8,0,0,'G','','MV_PAR18','','','','','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+
+
+	//
+	// Perguntas SIFINA14E2
+	//
+	aAdd( aDados, {'SIFINA14E2','01','Prefixo de','','','MV_CH0','C',3,0,0,'G','','MV_PAR01','','','','FEL','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E2','02','Prefixo até','','','MV_CH0','C',3,0,0,'G','','MV_PAR02','','','','FEL','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E2','03','Nro titulo de','','','MV_CH0','C',16,0,0,'G','','MV_PAR03','','','','','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E2','04','Nro titulo até','','','MV_CH0','C',16,0,0,'G','','MV_PAR04','','','','ZZZZZZZZZZZZZZZZ','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E2','05','Parcela de','','','MV_CH0','C',3,0,0,'G','','MV_PAR05','','','','','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E2','06','Parcela até','','','MV_CH0','C',3,0,0,'G','','MV_PAR06','','','','ZZZ','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E2','07','Tipo de','','','MV_CH0','C',3,0,0,'G','','MV_PAR07','','','','','','','','','','','','','','','','','','','','','','','','','05','','','','',''} )
+	aAdd( aDados, {'SIFINA14E2','08','Tipo até','','','MV_CH0','C',3,0,0,'G','','MV_PAR08','','','','ZZZ','','','','','','','','','','','','','','','','','','','','','05','','','','',''} )
+	aAdd( aDados, {'SIFINA14E2','09','Fornecedor de','','','MV_CH0','C',9,0,0,'G','','MV_PAR09','','','','','','','','','','','','','','','','','','','','','','','','','SA2','','','','',''} )
+	aAdd( aDados, {'SIFINA14E2','10','Fornecedor até','','','MV_CH1','C',9,0,0,'G','','MV_PAR10','','','','ZZZZZZZZZ','','','','','','','','','','','','','','','','','','','','','SA2','','','','',''} )
+	aAdd( aDados, {'SIFINA14E2','11','Loja de','','','MV_CH1','C',4,0,0,'G','','MV_PAR11','','','','','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E2','12','Loja até','','','MV_CH1','C',4,0,0,'G','','MV_PAR12','','','','ZZZZ','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E2','13','Valor de','','','MV_CH1','N',14,4,0,'G','','MV_PAR13','','','','0.0000','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E2','14','Valor até','','','MV_CH1','N',14,4,0,'G','','MV_PAR14','','','','999999999.9000','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E2','15','Natureza de','','','MV_CH1','C',10,0,0,'G','','MV_PAR15','','','','','','','','','','','','','','','','','','','','','','','','','SED','','','','',''} )
+	aAdd( aDados, {'SIFINA14E2','16','Natureza até','','','MV_CH1','C',10,0,0,'G','','MV_PAR16','','','','ZZZZZZZZZZ','','','','','','','','','','','','','','','','','','','','','SED','','','','',''} )
+	aAdd( aDados, {'SIFINA14E2','17','Vencimento de','','','MV_CH1','D',8,0,0,'G','','MV_PAR17','','','','20010101','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+	aAdd( aDados, {'SIFINA14E2','18','Vencimento até','','','MV_CH1','D',8,0,0,'G','','MV_PAR18','','','','20131231','','','','','','','','','','','','','','','','','','','','','','','','','',''} )
+
+
+	//
+	// Atualizando dicionário
+	//
+	dbSelectArea( "SX1" )
+	SX1->( dbSetOrder( 1 ) )
+
+	For nI := 1 To Len( aDados )
+		If !SX1->( dbSeek( PadR( aDados[nI][1], nTam1 ) + PadR( aDados[nI][2], nTam2 ) ) )
+			RecLock( "SX1", .T. )
+			For nJ := 1 To Len( aDados[nI] )
+				If aScan( aStruDic, { |aX| PadR( aX[1], 10 ) == PadR( aEstrut[nJ], 10 ) } ) > 0
+					SX1->( FieldPut( FieldPos( aEstrut[nJ] ), aDados[nI][nJ] ) )
+				EndIf
+			Next nJ
+			MsUnLock()
+		EndIf
+	Next nI
+
+	RestArea( aAreaDic )
+	RestArea( aArea )
+
+Return NIL
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIFINA14  ºAutor  ³Felipe Alves        º Data ³  22/03/13   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³                                                            º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function verEmp(_cFil)
+	Local lRet := .T.
+
+	If (SubStr(_cFil, 1, 2) != SubStr(cFilAnt, 1, 2))
+		Aviso("Aviso", "Não é possível transferir títulos entre empresas.", {"Ok"}, 1)
+		lRet := .F.
+	Endif
+
+Return(lRet)

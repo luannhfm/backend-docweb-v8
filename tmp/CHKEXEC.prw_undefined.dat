@@ -1,0 +1,131 @@
+#INCLUDE "PROTHEUS.CH"
+
+/*/{Protheus.doc} CHKEXEC
+(Ponto de Entrada Executados sempre que executar uma rotina no menu, caso seu retorno seja .F. não executa a rotina)
+	@type  Function
+	@author Carlos Ryve Gandini
+	@since 30/10/2019
+	@version 1.0
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+	/*/
+Function u_ChkExec()
+
+	/*Tratamento para o Ativo Fixo (ATFA125)*/			
+		If FindFunction("U_ATSX3SN1") .And. cModulo $ "ATF"
+			u_AtSx3SN1(PARAMIXB)
+		Endif
+
+Return .T.
+
+/*/{Protheus.doc} CHKEXEC
+(Corrige a ordens dos campo no Browse da Solicitacao de Transferencia STFA125)
+	@type  Function
+	@author Carlos Ryve Gandini
+	@since 30/10/2019
+	@version 1.0
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(Iif(FindFunction("U_ATSX3SN1"),u_AtSx3SN1(),.T.))
+	@see (links_or_references)
+	/*/
+Function u_AtSx3SN1(__cParm)
+	Local aArea := GetArea()
+	Local aCpoNBrw := {}
+	Local aCpoOrd := {}
+	Local lATF125 := .F.
+
+	Default __cParm := ""
+
+/*
+	aAdd( aCpoNBrw , { "N1_CBASE", "V" } )
+	aAdd( aCpoNBrw , { "N1_ITEM" , "V" } )
+	aAdd( aCpoNBrw , { "N1_AQUISIC" , "V" } )
+	aAdd( aCpoNBrw , { "N1_QUANTD" , "V" } ) 
+	aAdd( aCpoNBrw , { "N1_DESCRIC" , "V" } )
+	aAdd( aCpoNBrw , { "N1_XSERIEP" , "V" } )
+	aAdd( aCpoNBrw , { "N1_PRODUTO" , "V" } )
+	aAdd( aCpoNBrw , { "N1_VLAQUIS" , "V" } )
+	aAdd( aCpoNBrw , { "N1_LOCAL" , "V" } )  
+	aAdd( aCpoNBrw , { "N1_GRUPO" , "V" } )
+*/
+	aAdd( aCpoOrd , { "N1_CBASE", "01" } )
+	aAdd( aCpoOrd , { "N1_ITEM" , "02" } )
+	aAdd( aCpoOrd , { "N1_AQUISIC" , "03" } )
+	aAdd( aCpoOrd , { "N1_QUANTD" , "04" } ) 
+	aAdd( aCpoOrd , { "N1_DESCRIC" , "05" } )
+	aAdd( aCpoOrd , { "N1_XSERIEP" , "06" } )
+	aAdd( aCpoOrd , { "N1_PRODUTO" , "07" } )
+	aAdd( aCpoOrd , { "N1_VLAQUIS" , "08" } )
+	aAdd( aCpoOrd , { "N1_LOCAL" , "09" } )  
+	aAdd( aCpoOrd , { "N1_GRUPO" , "10" } )
+
+	lATF125 := IsInCallStack("CRSOLTRLT") .Or. ( !Empty(__cParm) .And. "SF01A14X" $ __cParm )
+	
+	dbSelectArea( "SX3" )
+	SX3->(DBSetOrder(1))
+	SX3->(dbSeek("SN1"))
+
+	Do While SX3->( !EOF() ) .And. ( X3_ARQUIVO == "SN1" )
+
+		If !lATF125
+
+			If !Empty(SX3->X3_CONDSQL)
+				RecLock("SX3",.F.)
+				SX3->X3_ORDEM := SX3->X3_CONDSQL
+				MsUnLock()
+			EndIf
+
+		Else
+
+				If( nPos := Ascan( aCpoNBrw, {|x| x[1] == Alltrim( X3_CAMPO ) } ) ) > 0
+					RecLock("SX3",.F.)
+					SX3->X3_CHKSQL  := rTrim(Iif( Empty(SX3->X3_CHKSQL) .And. !lATF125 , SX3->X3_CONTEXT, SX3->X3_CHKSQL ))
+					SX3->X3_CONTEXT := Iif( lATF125 , aCpoNBrw[nPos][3], rTrim(SX3->X3_CHKSQL) )
+					MsUnLock()
+				EndIf
+
+			If( nPos := Ascan( aCpoOrd, {|x| x[1] == Alltrim( X3_CAMPO ) } ) ) > 0
+				
+				cOrdSubs := SX3->X3_ORDEM
+				
+				If Empty(SX3->X3_CONDSQL)
+					RecLock("SX3",.F.)
+						SX3->X3_CONDSQL := SX3->X3_ORDEM
+					MsUnLock()
+				EndIf
+
+				nRecSX3 := SX3->( Recno() )
+				If SX3->(dbSeek( "SN1"+aCpoOrd[nPos][2] ))
+					
+					RecLock("SX3",.F.)
+						If Empty(SX3->X3_CONDSQL)
+								SX3->X3_CONDSQL := SX3->X3_ORDEM
+						EndIf
+						SX3->X3_ORDEM := cOrdSubs
+					MsUnLock()
+
+				EndIf
+
+				SX3->(dbGoTo(nRecSX3))
+				RecLock("SX3",.F.)
+					SX3->X3_ORDEM := aCpoOrd[nPos][2]
+				MsUnLock()
+
+				EndIf
+
+			ENDIF
+
+		SX3->( dbSkip() )
+
+	EndDo
+
+	RestArea( aArea )
+
+Return .T.
+
+

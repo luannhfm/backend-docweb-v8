@@ -1,0 +1,67 @@
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "protheus.ch"
+#INCLUDE "FILEIO.CH"   
+
+/*/{Protheus.doc} LJ7030
+Esse ponto de entrada é chamado na Linok e na TudoOk na getdados da Venda Assistida. 
+Obs.: é chamado antes das validações do Protheus.
+@type function
+@author  Helitom Silva
+@since   04/09/2019
+@version 1.0
+@see http://tdn.totvs.com/display/public/mp/LJ7030
+/*/
+User Function LJ7030()
+//Local _nValid   := ParamIxb[1]    //1- LinhaOk e 2- TudoOk
+Local _nTpOp  := ParamIxb[2]    //1- Orçamento, 2- Venda e 3- Pedido
+Local lRet	      := .T.
+//Local nPosQtd := aScan(aHeader, { |x| AllTrim(x[02]) == "LR_QUANT" })
+Local wy := 1
+pRIVATE aWBrowse63 := {}
+Private lAtivControl := .T.
+Private nNegociada := 0
+Private nFolha := 0
+Private nAvista := 0
+Private lIsDinheiro := .F.
+Private lBoleto := .F.
+Private lCartaoCC := .F.
+Private lCartaoCD := .F.
+Private lOutras := .F.
+Private nQtdParcCC := SuperGetMv("MV_LJQTDPA", .F., 1)
+	//Validações para a filial 03MT0018 - SENAI IST
+	if cFilAnt $ "03MT0018"
+		for wy:=1 to len(aPgtos)
+			if alltrim(aPgtos[wy][3]) == ("R$")    		
+				lIsDinheiro := .T.
+			elseif alltrim(aPgtos[wy][3]) == ("BOL")   
+				lBoleto := .T.
+			elseif alltrim(aPgtos[wy][3]) == ("CC")
+				lCartaoCC := .T.
+			Elseif alltrim(aPgtos[wy][3]) == ("CD")
+				lCartaoCD := .T.
+			ELSE
+				lOutras := .T.
+			ENDIF	
+		next
+			
+		If _nTpOp == 2     //Validação da linha do atendimento/venda (LinhaOk).	  se for finalização como venda  
+			nPosTes 	:= aScan(aHeaderDet,{ |ExpA1| AllTrim( ExpA1[2] ) == "LR_TES" })
+			IF lIsDinheiro
+				//MsgInfo("Atenção! O cliente em questão esta liberado para compra a Vista/Cartao somente!")
+				MsgInfo("Atenção! Forma de Pagamento R$ não é permitida !")
+				lRet	:= .F.
+			endif
+			// validações para quantidade de parcela quando for cartao
+			// SE FOR DEBITO NAO deixa parcelar
+			if lCartaoCD .AND. len(aPgtos) > 1
+				MsgInfo("Atenção! Não é possivel parcelar vendas no DEBITO !")
+				lRet	:= .F. 
+			ENDIF
+			//se for credito estabelece a qtd maxima de parcelas definida no parametro 
+			if lCartaoCC .AND. len(aPgtos) > nQtdParcCC
+				MsgInfo("Atenção! O limite maximo de parcelamento no CREDITO é : "+cvaltochar(nQtdParcCC)+" Parcelas !")
+				lRet	:= .F. 
+			ENDIF
+		ENDIF
+	endif
+Return lRet

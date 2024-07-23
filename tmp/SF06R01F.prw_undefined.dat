@@ -1,0 +1,107 @@
+#include 'protheus.ch'
+
+/*/{Protheus.doc} SF06R01F
+Função para gerar relatório do envio de sms do lembrete de vencimento.
+@author Franklin Oliveira
+@since 04/05/2020
+@type user function
+/*/
+User Function SF06R01F()
+Local oReport
+	If TRepInUse()	
+		fAjustSX1("SF06R01F")
+		Pergunte("SF06R01F",.F.)	
+		oReport := ReportDef()	
+		oReport:PrintDialog()	
+	EndIf
+Return Nil
+
+/*/{Protheus.doc} ReportDef
+Função de definição do relatório no objeto TReport.
+@author Franklin Oliveira
+@since 04/05/2020
+@version 1.0
+@return oReport, objeto TReport com as definições do relatório
+@type static function
+/*/
+Static Function ReportDef()
+Local oReport
+Local oSection1
+Local oBreakDia
+	oReport := TReport():New("SF06R01F",;
+				"Relatorio do envio de SMS para lembrete de cobrança",;
+				"SF06R01F",;
+				{|oReport| PrintReport(oReport)},;
+				"Relatorio do envio de SMS para lembrete de cobrança";
+			)
+	oReport:HideParamPage()
+	oReport:HideFooter()
+	oSection1 := TRSection():New(oReport, "SMSs enviados", {"SE1","ZEF"})
+	TRCell():New(oSection1, "E1_FILIAL", "SE1", , , 12)
+	TRCell():New(oSection1, "E1_PREFIXO", "SE1")
+	TRCell():New(oSection1, "E1_NUM", "SE1")
+	TRCell():New(oSection1, "E1_PARCELA", "SE1")
+	TRCell():New(oSection1, "E1_TIPO", "SE1")
+	TRCell():New(oSection1, "A1_COD", "SA1")
+	TRCell():New(oSection1, "A1_LOJA", "SA1")
+	TRCell():New(oSection1, "A1_NOME", "SA1", , , 60)
+	TRCell():New(oSection1, "ZEF_DTENSM", "ZEF")
+	TRCell():New(oSection1, "ZEF_STSSMS", "ZEF")
+	TRCell():New(oSection1, "ZEF_CELSMS", "ZEF", , "@R (99) 9.9999-9999", 18)
+	oBreakDia := TRBreak():New(oSection1, oSection1:Cell("ZEF_DTENSM"), "Total no dia:")
+	TRFunction():New(oSection1:Cell("ZEF_DTENSM"), NIL, "COUNT", oBreakDia)
+Return oReport
+
+/*/{Protheus.doc} PrintReport
+Função de impressão do relatório
+@author Franklin Oliveira
+@since 05/05/2020
+@param oReport, object, objeto TReport com as definições de impressão
+@type static function
+/*/
+Static Function PrintReport(oReport)
+Local cAliasZEF		:= GetNextAlias()
+Local cFiltro		:= ""
+Local oSection		:= oReport:Section(1)
+	oSection:BeginQuery()	
+	cFiltro := "%AND SE1.E1_FILIAL BETWEEN '" + MV_PAR03 + "' AND '" + MV_PAR04 + "'%"
+	cFiltro := "%AND ZEF.ZEF_DTENSM BETWEEN '" + DtoS(MV_PAR01) + "' AND '" + DtoS(MV_PAR02) + "'%"
+	BeginSql alias cAliasZEF	
+		SELECT SE1.E1_FILIAL, SE1.E1_PREFIXO,SE1.E1_NUM,SE1.E1_PARCELA, SE1.E1_TIPO,
+			ZEF.ZEF_DTENSM, ZEF.ZEF_STSSMS, ZEF.ZEF_CELSMS,
+			SA1.A1_COD, SA1.A1_LOJA, SA1.A1_NOME		
+		FROM %table:ZEF% ZEF
+		INNER JOIN %table:SE1% SE1 ON SE1.%NotDel%
+			AND SE1.E1_FILIAL = ZEF.ZEF_FILIAL
+			AND SE1.E1_PREFIXO = ZEF.ZEF_PREFIX
+			AND SE1.E1_NUM = ZEF.ZEF_NUM
+			AND SE1.E1_PARCELA = ZEF.ZEF_PARCEL
+			AND SE1.E1_TIPO = ZEF.ZEF_TIPO
+		LEFT JOIN %table:SA1% SA1 ON SA1.%NotDel%
+			AND SA1.A1_FILIAL = %xfilial:SA1%
+			AND SA1.A1_COD = SE1.E1_CLIENTE
+			AND SA1.A1_LOJA = SE1.E1_LOJA
+		WHERE ZEF.%NotDel%
+			%exp:cFiltro%
+		ORDER BY ZEF.ZEF_DTENSM, SE1.E1_FILIAL, SE1.E1_PREFIXO,
+			SE1.E1_NUM,SE1.E1_PARCELA, SE1.E1_TIPO	
+	EndSql	
+	oSection:EndQuery()
+	oSection:Print()
+	(cAliasZEF)->( DbCloseArea() )
+Return Nil
+
+/*/{Protheus.doc} fAjustSX1
+Função para criar/alterar o arquivo de perguntas do relatório
+@author Franklin Oliveira
+@since 05/05/2020
+@version 1.0
+@param cPerg, characters, nome do arquivo de perguntas
+@type function
+/*/
+Static Function fAjustSX1(cPerg)
+	U_SFPUTSX1( cPerg, "01", "Data do envio de.:", "", "", "mv_ch1", "D", TamSX3("ZEF_DTENSM")[1], 0, 0, "G", , , , , "mv_par01","","","","","","","","","","","","","","","","",{},{},{})
+	U_SFPUTSX1( cPerg, "02", "Data do envio até:", "", "", "mv_ch2", "D", TamSX3("ZEF_DTENSM")[1], 0, 0, "G", , , , , "mv_par02","","","","","","","","","","","","","","","","",{},{},{})
+	U_SFPUTSX1( cPerg, "03", "Filial de.:", "", "", "mv_ch3", "C", TamSX3("E1_FILIAL")[1], 0, 0, "G", , "SM0", , , "mv_par03","","","","","","","","","","","","","","","","",{},{},{})
+	U_SFPUTSX1( cPerg, "04", "Filial até:", "", "", "mv_ch4", "C", TamSX3("E1_FILIAL")[1], 0, 0, "G", , "SM0", , , "mv_par04","","","","","","","","","","","","","","","","",{},{},{})
+Return Nil

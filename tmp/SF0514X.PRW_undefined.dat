@@ -1,0 +1,237 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "MSOLE.CH"
+
+/*/{Protheus.doc} SF0514X
+ROTINA RESPONSAVEL POR CHAMAR A IMPRESSAO DA ADESAO DO CONTRATO
+@author j2a.luizjunior
+@since 25/07/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+User Function SF0514X
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0514X")
+
+	FWMsgRun(,{||ImpAdesao()},"Gerando o doc. WORD da Adesao do PARQUE", "Aguarde")
+
+Return
+
+/*/{Protheus.doc} ImpAdesao
+GERA IMPRESSAO DA ADESAO DO CONTRATO
+@author j2a.luizjunior
+@since 25/07/2017
+@version 1.0
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ImpAdesao()
+	
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0514X")
+	Local aArea	    := GetArea()
+	Local hWord	    := OLE_CreateLink()// Cria a conecção com Word
+	Local cAlGer    := GetNextAlias()
+	Local cSavePath := GetNewPar("MV_XCRMREP","K:\Util\"                                                   )
+	Local cPathDOT  := GetNewPar("MV_XPRKREP","\system\DOT\PARQUE\"                                        ) 
+	Local cArqDOT   := GetNewPar("MV_XPRKPRO","Termo_Adesao_PF_contrato_lazer_social_rev_08_25_08_2017.dot")
+	Local cEmpres   := FWCodEmp('SX5')
+	Local cUnidad   := FWUnitBusiness('SX5')	
+	Local cFilCod   := FWFilial()
+	Local cArqNome  := "SESI"+Alltrim(ZH1->ZH1_NUMERO)+DTOS(dDataBase)+StrTran(Time(),":","")
+	Local lRet      := .T.
+	Local nValCart  := GetNewPar("MV_XVALCAR",6)
+	Local nValCa2   := GetNewPar("MV_XVALCA2",6)
+	Local cExtenso  := AllTrim(Extenso(nValCart,.T.))
+	Local cExt2via  := AllTrim(Extenso(nValCa2 ,.T.))
+	Local cDia      := Substr(DToS(dDataBase),7,2)
+	Local cMes      := Substr(DToS(dDataBase),5,2)
+	Local cAno      := Substr(DToS(dDataBase),1,4)
+	Local cProdCar  := ""
+	Local cCliCN9   := Posicione("CN9",1,xFilial("CN9") + ZH1->ZH1_NUMERO + ZH1->ZH1_REVISA,"CN9_CLIENT")
+	Local cLojCN9   := Posicione("CN9",1,xFilial("CN9") + ZH1->ZH1_NUMERO + ZH1->ZH1_REVISA,"CN9_LOJACL")
+	Local cNomeEmp  := Posicione("SA1",1,xFilial("SA1") + cCliCN9 + cLojCN9                ,"A1_NOME"   )
+	Local lImpComp  := .F.
+	Local cProdCar  := Space(50)
+	//Local cGerNome  := ""
+	//Local cGerCPF   := ""
+	Local cExtravia := ""
+	Local cGerNome  := ""
+	Local cGerCPF	:= ""
+	Local cGerRG	:= ""
+	Local cGerOrEx  := ""
+	Local cGerFunc  := ""
+	
+	If Empty(ZH1->ZH1_NUMERO)	
+		Return
+	EndIf
+	
+	If !CpyS2T(cPathDOT+cArqDOT,cSavePath,.T.)
+		Aviso(FunName()+"/"+ProcName(),"Geração ABORTADA, não foi possivel copiar TEMPLATE para gerar a adesão!",{"OK"})
+		Return .F.
+	EndIf	
+	
+	OLE_SetProperty(hWord, oleWdVisible, .F. )
+	
+	OLE_NewFile(hWord,cSavePath+cArqDOT)
+	
+	//-> DOCUMENTO
+	OLE_SetDocumentVar(hWord,"Doc_NumeroTermo"			 , ZH1->ZH1_NUMERO	)
+	OLE_SetDocumentVar(hWord,"Doc_RevTermo"			     , ZH1->ZH1_REVISA	)
+	
+	DbSelectArea("SM0")
+	SM0->(DbSetOrder(1))
+	If (SM0->(DbSeek(cEmpAnt+cFilAnt)))	
+		cUnidade := AllTrim(M0_NOMECOM)	
+		cEndEmp  := AllTrim(M0_ENDENT)
+		cNumEmp  := AllTrim(M0_COMPENT)
+		cBaiEmp  := AllTrim(M0_BAIRENT)
+		cCidEmp  := AllTrim(M0_CIDENT)
+		cCgcEmp  := AllTrim(M0_CGC)    
+	EndIf	
+	
+	RestArea(aArea)
+	
+	//-> EMPRESA
+	OLE_SetDocumentVar(hWord,"Doc_Unidade"			     , cUnidade        )
+	OLE_SetDocumentVar(hWord,"Doc_Endereco"			     , cEndEmp  	   )
+	OLE_SetDocumentVar(hWord,"Doc_Numero"			     , cNumEmp	       )
+	OLE_SetDocumentVar(hWord,"Doc_Bairro"			     , cBaiEmp         )
+	OLE_SetDocumentVar(hWord,"Doc_Municipio"			 , cCidEmp  	   )
+	OLE_SetDocumentVar(hWord,"Doc_CNPJ"			         , cCgcEmp   	   )
+	
+	//-> DADOS GERENTE
+	cEmpUni := PadR(cEmpres + cUnidad , FWSizeFilial())
+	SX5->(DbSetOrder(1))
+	If(SX5->(DbSeek(cEmpUni + 'Z5' + cFilCod)))
+		cDados  := SX5->X5_DESCRI
+		cDados  := StrTran(cDados,",","|")
+		cDados  := StrTran(cDados,";","|")
+		aGerInf := StrTokArr(cDados,'|')
+		cCPF    := AllTrim(StrTran(StrTran(aGerInf[2],".",""),"-",""))
+	Else
+		lRet := .F.
+	EndIf	
+	
+	If lRet
+		cSql := "SELECT Trim(RA_NOMECMP) RA_NOME, RA_CIC, Trim(RA_RG) RA_RG, Trim(RA_RGORG) || '/' || Trim(RA_RGUF) AS RA_RGEXP, RA_CODFUNC, RA_COMPLRG FROM " + RetSqlName("SRA") + " " + CRLF
+		cSql += "WHERE D_E_L_E_T_ = ' '" + CRLF
+		cSql += "AND RA_FILIAL = '" + xFilial("SRA") + "'" + CRLF  
+		cSql += "AND RA_CIC = '" + cCPF + "'" + CRLF
+		cSql += "AND RA_SITFOLH NOT IN ('D','T')" + CRLF
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(cSql)), cAlGer,.F.,.F.)
+		If !(cAlGer)->(EOF())
+			cGerNome := AllTrim((cAlGer)->RA_NOME)
+			cGerCPF	 := Transform((cAlGer)->RA_CIC,Iif(Len(AllTrim((cAlGer)->RA_CIC))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+			cGerRG	 := AllTrim((cAlGer)->RA_RG) + IIf(Empty(AllTrim((cAlGer)->RA_RGEXP)), "", " " + AllTrim((cAlGer)->RA_RGEXP))
+			cGerOrEx := AllTrim((cAlGer)->RA_COMPLRG)
+			cGerFunc := AllTrim(Posicione("SRJ",1,xFilial("SRJ") + (cAlGer)->RA_CODFUNC,"RJ_DESC"))
+		Else
+			 	
+		EndIf
+
+		(cAlGer)->(dbCloseArea())
+	EndIf
+	
+	OLE_SetDocumentVar(hWord,"Doc_Ato"			         , cGerNome	                                   )	
+	OLE_SetDocumentVar(hWord,"Doc_CPF"			         , cGerCPF                                     )
+	OLE_SetDocumentVar(hWord,"Doc_RG"			         , cGerRG	                                   )
+	
+	//-> EMPREGADO
+	OLE_SetDocumentVar(hWord,"Doc_Empregado_Industria"   , cNomeEmp                                    )
+	OLE_SetDocumentVar(hWord,"Doc_RG_Empresa"			 , ZH1->ZH1_RG	                               )
+	OLE_SetDocumentVar(hWord,"Doc_CPF_Empresa"			 , Transform(ZH1->ZH1_CGC,"@R 999.999.999-99") )
+	OLE_SetDocumentVar(hWord,"Doc_Residente"			 , ZH1->ZH1_END	                               )
+	OLE_SetDocumentVar(hWord,"Doc_Numero_Domiciliado"	 , ZH1->ZH1_NUMRES                             )
+	OLE_SetDocumentVar(hWord,"Doc_Bairro_Domiciliado"	 , ZH1->ZH1_BAIRRO                             )
+	OLE_SetDocumentVar(hWord,"Doc_Municipio_Domiciliado" , AllTrim(ZH1->ZH1_DESMUN)                    )
+	
+	OLE_SetDocumentVar(hWord,"Doc_Nome_Empregado"        , ZH1->ZH1_NOME                               )
+	OLE_SetDocumentVar(hWord,"Doc_Titular"               , ZH1->ZH1_NOME                               )
+	
+	OLE_SetDocumentVar(hWord,"Doc_EmpCont"               , cNomeEmp                                    )
+	//->DOCUMENTO
+	OLE_SetDocumentVar(hWord,"Doc_NomeEmp"		         , cNomeEmp                                    )
+	OLE_SetDocumentVar(hWord,"Doc_Dia"		             , cDia                                        )
+	OLE_SetDocumentVar(hWord,"Doc_Mes"			         , cMes     	                               )
+	OLE_SetDocumentVar(hWord,"Doc_Ano"			         , cAno       	                               )
+	OLE_SetDocumentVar(hWord,"Doc_ValDescontado"	     , AllTrim(Transform(ZH1->ZH1_VALCON,PesqPict("ZH1","ZH1_VLNEG"))))	
+	OLE_SetDocumentVar(hWord,"Doc_ValTaxa"			     , AllTrim(Transform(nValCart,PesqPict("ZH1","ZH1_VALOR"      ))))
+	OLE_SetDocumentVar(hWord,"Doc_ValSegundaVia"	     , AllTrim(Transform(nValCa2,PesqPict("ZH1","ZH1_VALOR"       ))))
+	OLE_SetDocumentVar(hWord,"Doc_ForoComarca"	         , cCidEmp	                                   )
+	OLE_SetDocumentVar(hWord,"Doc_MunAssinatura"	     , cCidEmp	                                   )
+	OLE_SetDocumentVar(hWord,"Doc_DiaAssinatura"	     , cDia                                        )
+	OLE_SetDocumentVar(hWord,"Doc_MesAssinatura"	     , MesExtenso(Val(cMes)))
+	OLE_SetDocumentVar(hWord,"Doc_AnoAssinatura"	     , cAno	                                       )
+	OLE_SetDocumentVar(hWord,"Doc_GerCat"        	     , cGerNome                                    )
+	
+	cOport  := Posicione("CN9",1,xFilial("CN9") + ZH1->ZH1_NUMERO + ZH1->ZH1_REVISA ,"CN9_XOPORT")
+	cPropos	:= Posicione("ADY",2,xFilial("ADY") + cOport                            ,"ADY_PROPOS")
+	
+	DbSelectArea("ADZ")
+	DbSetOrder(1)
+	If DbSeek(xFilial("ADZ") + cPropos)
+		
+		While !ADZ->(Eof()) .And. xFilial("ADZ") + cPropos == ADZ->ADZ_FILIAL + ADZ->ADZ_PROPOS
+			
+			cProCar := Posicione("SB1",1,xFilial("SB1") + ADZ->ADZ_PRODUT,"B1_XPRCART")		
+				
+			If cProCar == "S"
+				//cProdCar += "Parágrafo Primeiro - O USUÁRIO deverá se dirigir as unidades do SESI, de " 
+				//cProdCar += "segunda a sexta-feira, das 07h30 às 11h30 e 13h30 às 17h30 para fazer a "  
+				//cProdCar +=	"carteira de usuário, pagando a taxa de R$ "+ 
+				cProdCar +=	", pagando a taxa de R$ " + AllTrim(cValToChar(ZH1->ZH1_VALOR))
+				cProdCar +=	"("+cExtenso+") reais para confecção da mesma."
+				//cProdCar +=	"("+cExtenso+")reais para confecção da mesma. Caso extravie a mesma deverá arcar com o " 
+				//cProdCar +=	"valor de R$ ("+cExt2via+") " 
+				//cProdCar +=	"reais para confecção da 2ª via. "
+				//OLE_SetDocumentVar(hWord,"Doc_Prod_Carteira"        	     , cProdCar                            )
+				Exit
+			EndIf
+			
+			ADZ->(DbSkip())
+		EndDo	
+	
+	EndIf
+	
+	cExtravia += AllTrim(cValToChar(nValCa2)) + " (" + cExt2via + ") " 
+
+	OLE_SetDocumentVar(hWord,"Doc_Extravia"        	     , cExtravia                           )
+	
+	OLE_SetDocumentVar(hWord,"Doc_Prod_Carteira"         , cProdCar                            )
+	
+	//+---------------------------------------------------------------------+
+	//| Atualizando as variaveis do documento do Word                       |
+	//+---------------------------------------------------------------------+
+	OLE_UpdateFields(hWord)
+	
+	//+---------------------------------------------------------------------+
+	//| Salva no repositorio LOCAL o arquivo gerado                         | 
+	//+---------------------------------------------------------------------+
+	OLE_SaveAsFile(hWord,cSavePath+cArqNome)
+
+	//+---------------------------------------------------------------------+
+	//| Fecha o TEMPLATE utilizado para Gerar o Arquivos de Remessa         |
+	//+---------------------------------------------------------------------+
+	OLE_CloseFile(hWord)
+
+	//+---------------------------------------------------------------------+
+	//| Fecha o Link com Arquivo de Remessa "Impressao"                     |
+	//+---------------------------------------------------------------------+
+	OLE_CloseLink(hWord)
+	
+	//+---------------------------------------------------------------------+
+	//| Verifica se o arquivo a ser gerado ja existe no repositorio, se     | 
+	//| existir apaga                                                       |
+	//+---------------------------------------------------------------------+
+	If File(cSavePath+cArqDOT)
+		FErase(cSavePath+cArqDOT)
+	EndIf	
+
+	Aviso(FunName()+"/"+ProcName(),"Integração finalizada!"+CRLF+"Gerado documento WORD ["+cArqNome+"]."+CRLF+"Disponivel em ["+cSavePath+"].",{"OK"})
+	
+Return

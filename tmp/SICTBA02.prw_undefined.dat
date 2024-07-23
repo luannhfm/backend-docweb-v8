@@ -1,0 +1,1875 @@
+#INCLUDE "PROTHEUS.CH"
+
+#DEFINE SIMPLES Char( 39 )
+#DEFINE DUPLAS  Char( 34 )
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±º Programa ³ CNIX6CTB º Autor ³ TOTVS Protheus     º Data ³  12/07/2011 º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±º Descricao³ Funcao de update dos dicionários para compatibilização     ³±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±³ Uso      ³ CNIX6CTB   - Gerado por EXPORDIC / Upd. V.4.9.4 EFS        ³±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+User Function SICTBA02()
+
+Local   aSay      := {}
+Local   aButton   := {}
+Local   aMarcadas := {}
+Local   cTitulo   := "ATUALIZAÇÃO DE DICIONÁRIOS E TABELAS"
+Local   cDesc1    := "Esta rotina tem como função fazer  a atualização  dos dicionários do Sistema ( SX?/SIX )"
+Local   cDesc2    := "Este processo deve ser executado em modo EXCLUSIVO, ou seja não podem haver outros"
+Local   cDesc3    := "usuários  ou  jobs utilizando  o sistema.  É extremamente recomendavél  que  se  faça um"
+Local   cDesc4    := "BACKUP  dos DICIONÁRIOS  e da  BASE DE DADOS antes desta atualização, para que caso "
+Local   cDesc5    := "ocorra eventuais falhas, esse backup seja ser restaurado."
+Local   cDesc6    := ""
+Local   cDesc7    := ""
+Local   lOk       := .F.
+
+Private oMainWnd  := NIL
+Private oProcess  := NIL
+
+#IFDEF TOP
+    TCInternal( 5, "*OFF" ) // Desliga Refresh no Lock do Top
+#ENDIF
+
+__cInterNet := NIL
+__lPYME     := .F.
+
+Set Dele On
+
+// Mensagens de Tela Inicial
+aAdd( aSay, cDesc1 )
+aAdd( aSay, cDesc2 )
+aAdd( aSay, cDesc3 )
+aAdd( aSay, cDesc4 )
+aAdd( aSay, cDesc5 )
+//aAdd( aSay, cDesc6 )
+//aAdd( aSay, cDesc7 )
+
+// Botoes Tela Inicial
+aAdd(  aButton, {  1, .T., { || lOk := .T., FechaBatch() } } )
+aAdd(  aButton, {  2, .T., { || lOk := .F., FechaBatch() } } )
+
+FormBatch(  cTitulo,  aSay,  aButton )
+
+If lOk
+	aMarcadas := EscEmpresa()
+
+	If !Empty( aMarcadas )
+		If  MsgNoYes( "Confirma a atualização dos dicionários ?", cTitulo )
+			oProcess := MsNewProcess():New( { | lEnd | lOk := FSTProc( @lEnd, aMarcadas ) }, "Atualizando", "Aguarde, atualizando ...", .F. )
+			oProcess:Activate()
+
+			If lOk
+				Final( "Atualização Concluída." )
+			Else
+				Final( "Atualização não Realizada." )
+			EndIf
+
+		Else
+			MsgStop( "Atualização não Realizada.", "CNISX6CTB" )
+
+		EndIf
+
+	Else
+		MsgStop( "Atualização não Realizada.", "CNISX6CTB" )
+
+	EndIf
+
+EndIf
+
+Return NIL
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±º Programa ³ FSTProc  º Autor ³ TOTVS Protheus     º Data ³  12/07/2011 º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±º Descricao³ Funcao de processamento da gravação dos arquivos           ³±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±³ Uso      ³ FSTProc    - Gerado por EXPORDIC / Upd. V.4.9.4 EFS        ³±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function FSTProc( lEnd, aMarcadas )
+Local   aInfo     := {}
+Local   aRecnoSM0 := {}
+Local   cAux      := ""
+Local   cFile     := ""
+Local   cFileLog  := ""
+Local   cMask     := "Arquivos Texto" + "(*.TXT)|*.txt|"
+Local   cTCBuild  := "TCGetBuild"
+Local   cTexto    := ""
+Local   cTopBuild := ""
+Local   lOpen     := .F.
+Local   lRet      := .T.
+Local   nI        := 0
+Local   nPos      := 0
+Local   nRecno    := 0
+Local   nX        := 0
+Local   oDlg      := NIL
+Local   oFont     := NIL
+Local   oMemo     := NIL
+
+Private aArqUpd   := {}
+
+If ( lOpen := MyOpenSm0(.T.) )
+
+	dbSelectArea( "SM0" )
+	dbGoTop()
+
+	While !SM0->( EOF() )
+		// So adiciona no aRecnoSM0 se a empresa for diferente
+		If aScan( aRecnoSM0, { |x| x[2] == SM0->M0_CODIGO } ) == 0 ;
+		   .AND. aScan( aMarcadas, { |x| x[1] == SM0->M0_CODIGO } ) > 0
+			aAdd( aRecnoSM0, { Recno(), SM0->M0_CODIGO } )
+		EndIf
+		SM0->( dbSkip() )
+	End
+
+	SM0->( dbCloseArea() )
+
+	If lOpen
+
+		For nI := 1 To Len( aRecnoSM0 )
+
+			If !( lOpen := MyOpenSm0(.F.) )
+				MsgStop( "Atualização da empresa " + aRecnoSM0[nI][2] + " não efetuada." )
+				Exit
+			EndIf
+
+			SM0->( dbGoTo( aRecnoSM0[nI][1] ) )
+
+			RpcSetType( 3 )
+			RpcSetEnv( SM0->M0_CODIGO, SM0->M0_CODFIL )
+
+			lMsFinalAuto := .F.
+			lMsHelpAuto  := .F.
+
+			cTexto += Replicate( "-", 128 ) + CRLF
+			cTexto += "Empresa : " + SM0->M0_CODIGO + "/" + SM0->M0_NOME + CRLF + CRLF
+
+			oProcess:SetRegua1( 8 )
+
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³Atualiza o dicionário SX6         ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			oProcess:IncRegua1( "Dicionário de parâmetros - " + SM0->M0_CODIGO + " " + SM0->M0_NOME + " ..." )
+			FSAtuSX6( @cTexto )
+
+			RpcClearEnv()
+
+		Next nI
+
+		If MyOpenSm0(.T.)
+
+			cAux += Replicate( "-", 128 ) + CRLF
+			cAux += Replicate( " ", 128 ) + CRLF
+			cAux += "LOG DA ATUALIZACAO DOS DICIONÁRIOS" + CRLF
+			cAux += Replicate( " ", 128 ) + CRLF
+			cAux += Replicate( "-", 128 ) + CRLF
+			cAux += CRLF
+			cAux += " Dados Ambiente" + CRLF
+			cAux += " --------------------"  + CRLF
+			cAux += " Empresa / Filial...: " + cEmpAnt + "/" + cFilAnt  + CRLF
+			cAux += " Nome Empresa.......: " + Capital( AllTrim( GetAdvFVal( "SM0", "M0_NOMECOM", cEmpAnt + cFilAnt, 1, "" ) ) ) + CRLF
+			cAux += " Nome Filial........: " + Capital( AllTrim( GetAdvFVal( "SM0", "M0_FILIAL" , cEmpAnt + cFilAnt, 1, "" ) ) ) + CRLF
+			cAux += " DataBase...........: " + DtoC( dDataBase )  + CRLF
+			cAux += " Data / Hora Inicio.: " + DtoC( Date() )  + " / " + Time()  + CRLF
+			cAux += " Environment........: " + GetEnvServer()  + CRLF
+			cAux += " StartPath..........: " + GetSrvProfString( "StartPath", "" )  + CRLF
+			cAux += " RootPath...........: " + GetSrvProfString( "RootPath" , "" )  + CRLF
+			cAux += " Versao.............: " + GetVersao(.T.)  + CRLF
+			cAux += " Usuario TOTVS .....: " + __cUserId + " " +  cUserName + CRLF
+			cAux += " Computer Name......: " + GetComputerName() + CRLF
+
+			aInfo   := GetUserInfo()
+			If ( nPos    := aScan( aInfo,{ |x,y| x[3] == ThreadId() } ) ) > 0
+				cAux += " "  + CRLF
+				cAux += " Dados Thread" + CRLF
+				cAux += " --------------------"  + CRLF
+				cAux += " Usuario da Rede....: " + aInfo[nPos][1] + CRLF
+				cAux += " Estacao............: " + aInfo[nPos][2] + CRLF
+				cAux += " Programa Inicial...: " + aInfo[nPos][5] + CRLF
+				cAux += " Environment........: " + aInfo[nPos][6] + CRLF
+				cAux += " Conexao............: " + AllTrim( StrTran( StrTran( aInfo[nPos][7], Chr( 13 ), "" ), Chr( 10 ), "" ) )  + CRLF
+			EndIf
+			cAux += Replicate( "-", 128 ) + CRLF
+			cAux += CRLF
+
+			cTexto := cAux + cTexto + CRLF
+
+			cTexto += Replicate( "-", 128 ) + CRLF
+			cTexto += " Data / Hora Final.: " + DtoC( Date() ) + " / " + Time()  + CRLF
+			cTexto += Replicate( "-", 128 ) + CRLF
+
+			cFileLog := MemoWrite( CriaTrab( , .F. ) + ".log", cTexto )
+
+			Define Font oFont Name "Mono AS" Size 5, 12
+
+			Define MsDialog oDlg Title "Atualizacao concluida." From 3, 0 to 340, 417 Pixel
+
+			@ 5, 5 Get oMemo Var cTexto Memo Size 200, 145 Of oDlg Pixel
+			oMemo:bRClicked := { || AllwaysTrue() }
+			oMemo:oFont     := oFont
+
+			Define SButton From 153, 175 Type  1 Action oDlg:End() Enable Of oDlg Pixel // Apaga
+			Define SButton From 153, 145 Type 13 Action ( cFile := cGetFile( cMask, "" ), If( cFile == "", .T., ;
+			MemoWrite( cFile, cTexto ) ) ) Enable Of oDlg Pixel
+
+			Activate MsDialog oDlg Center
+
+		EndIf
+
+	EndIf
+
+Else
+
+	lRet := .F.
+
+EndIf
+
+Return lRet
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±º Programa ³ FSAtuSX6 º Autor ³ TOTVS Protheus     º Data ³  12/07/2011 º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±º Descricao³ Funcao de processamento da gravacao do SX6 - Parâmetros    ³±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±³ Uso      ³ FSAtuSX6   - Gerado por EXPORDIC / Upd. V.4.9.4 EFS        ³±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function FSAtuSX6( cTexto )
+Local aEstrut   := {}
+Local aSX6      := {}
+Local cAlias    := ""
+Local cMsg      := ""
+Local lContinua := .T.
+Local lReclock  := .T.
+Local lTodosNao := .F.
+Local lTodosSim := .F.
+Local nI        := 0
+Local nJ        := 0
+Local nOpcA     := 0
+Local nTamFil   := Len( SX6->X6_FIL )
+Local nTamVar   := Len( SX6->X6_VAR )
+
+cTexto  += "Inicio da Atualizacao" + " SX6" + CRLF + CRLF
+
+aEstrut := { "X6_FIL"    , "X6_VAR"  , "X6_TIPO"   , "X6_DESCRIC", "X6_DSCSPA" , "X6_DSCENG" , "X6_DESC1"  , "X6_DSCSPA1",;
+             "X6_DSCENG1", "X6_DESC2", "X6_DSCSPA2", "X6_DSCENG2", "X6_CONTEUD", "X6_CONTSPA", "X6_CONTENG", "X6_PROPRI" , "X6_PYME" }
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_AGLHIST'															, ; //X6_VAR
+	'L'																		, ; //X6_TIPO
+	'Indica se considera o historico na aglutinacäo de'						, ; //X6_DESCRIC
+	'Indica si considera el historial al agrupar los'						, ; //X6_DSCSPA
+	'Indicates if history is considered for grouping'						, ; //X6_DSCENG
+	'lancamentos contabeis (SIGACTB)-.T.=Sim/.F.=Näo.'						, ; //X6_DESC1
+	'Asientos Contables (SIGACTB) - .T.=Si/.F.=No'							, ; //X6_DSCSPA1
+	'of accounting entries (SIGACTB) - .T.=Yes/.F.=No'						, ; //X6_DSCENG1
+	'Para aglutinar por processo verifique o MV_AGLPROC'					, ; //X6_DESC2
+	'Para agrupar por proceso verifique el MV_AGLPROC'						, ; //X6_DSCSPA2
+	'For process grouping, verify MV_AGLPROC'								, ; //X6_DSCENG2
+	'F'																		, ; //X6_CONTEUD //ALTEREI
+	'F'																		, ; //X6_CONTSPA
+	'F'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_ALTLCTO'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Permite alterar lancamento contabil de integracao?'					, ; //X6_DESCRIC
+	'¿Permite modificar asiento de integracion?'							, ; //X6_DSCSPA
+	'Is it possible to change the integ.accnt.entry'						, ; //X6_DSCENG
+	'(S)Sim ou (N)Nao.'														, ; //X6_DESC1
+	'(S)Si o (N)No.'														, ; //X6_DSCSPA1
+	'(S)Yes or (N)No.'														, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'S'																		, ; //X6_CONTEUD
+	'S'																		, ; //X6_CONTSPA
+	'S'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_AVPCTB'																, ; //X6_VAR
+	'N'																		, ; //X6_TIPO
+	'Número de processo(threads) para ser utilizado na'						, ; //X6_DESCRIC
+	'Numero de proceso(threads) para utilizarse en el'						, ; //X6_DSCSPA
+	'Process number (threads) to be used in adjustment'						, ; //X6_DSCENG
+	'contabilizacao de ajustes de valor presente'							, ; //X6_DESC1
+	'contabilizacion de ajustes de valor presente'							, ; //X6_DSCSPA1
+	'calculation of current value FINA940'									, ; //X6_DSCENG1
+	'FINA940 e FINA950. Minímo: 1 Máximo:15'								, ; //X6_DESC2
+	'FINA940 y FINA950. Minimo: 1 Maximo:15'								, ; //X6_DSCSPA2
+	'and FINA950. Minimum: 1 Maximum:15'									, ; //X6_DSCENG2
+	'1'																		, ; //X6_CONTEUD
+	'1'																		, ; //X6_CONTSPA
+	'1'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CANSALT'															, ; //X6_VAR
+	'L'																		, ; //X6_TIPO
+	'Define se permite ou não o envio de uma página em'						, ; //X6_DESCRIC
+	'Define si permite el envio de una pagina en'							, ; //X6_DSCSPA
+	'It defines whether or not a blank page can be sent'					, ; //X6_DSCENG
+	'branco após a impressão. Caso afirmativo será'							, ; //X6_DESC1
+	'blanco despues de la impresion. En caso afirmativo'					, ; //X6_DSCSPA1
+	'after printing. If yes, parameter MV_SALTPAG will'						, ; //X6_DSCENG1
+	'considerado o parÔmetro MV_SALTPAG.'									, ; //X6_DESC2
+	'se considerara el parametro MV_SALTPAG.'								, ; //X6_DSCSPA2
+	'be considered.'														, ; //X6_DSCENG2
+	'.T.'																	, ; //X6_CONTEUD
+	'.T.'																	, ; //X6_CONTSPA
+	'.T.'																	, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CCSUP'																, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Indica se a estrutura do Centro de Custo sera a'						, ; //X6_DESCRIC
+	'Indica si la estructura del Centro de Costo sera'						, ; //X6_DSCSPA
+	'Indicates if the structure of the Cost Center will'					, ; //X6_DSCENG
+	'padrao (N) ou com centro de custo superior'							, ; //X6_DESC1
+	'la estandar (N) o con centro de costo superior'						, ; //X6_DSCSPA1
+	'be the standard (N) or with the higher cost center'					, ; //X6_DSCENG1
+	'diferente do padräo (S).'												, ; //X6_DESC2
+	'diferente del estandar (S).'											, ; //X6_DSCSPA2
+	'different from the standard (S).'										, ; //X6_DSCENG2
+	'S'																		, ; //X6_CONTEUD
+	'S'																		, ; //X6_CONTSPA
+	'S'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CFINTHR'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Quantidade de threads a serem usadas na'								, ; //X6_DESCRIC
+	''																		, ; //X6_DSCSPA
+	''																		, ; //X6_DSCENG
+	'contabilizacao offline dos titulos'									, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	'financeiros (CTBAFIN), minimo 1 maximo 15'								, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'1'																		, ; //X6_CONTEUD
+	'1'																		, ; //X6_CONTSPA
+	'1'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CLSUP'																, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Indica se a estrutura da Classe de Valor sera a'						, ; //X6_DESCRIC
+	'Indica si la estructura de Clase de Valor sera'						, ; //X6_DSCSPA
+	'Indicates if the structure of Value Class will be'						, ; //X6_DSCENG
+	'padräo (N) ou com classe de valor superior'							, ; //X6_DESC1
+	'la estandar (N) o con clase de valor superior'							, ; //X6_DSCSPA1
+	'the standard (N) or with the higher value class'						, ; //X6_DSCENG1
+	'diferente do padräo (S).'												, ; //X6_DESC2
+	'diferente del estandar (S).'											, ; //X6_DSCSPA2
+	'different from the standard (S).'										, ; //X6_DSCENG2
+	'S'																		, ; //X6_CONTEUD
+	'S'																		, ; //X6_CONTSPA
+	'S'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CNFETHR'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Quantidade de threads a serem usadas na'								, ; //X6_DESCRIC
+	'Quantidade de threads a serem usadas na'								, ; //X6_DSCSPA
+	''																		, ; //X6_DSCENG
+	'contabilizacao offline das notas fiscais'								, ; //X6_DESC1
+	'contabilizacao offline das notas fiscais'								, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	'de entrada (CTBANFE), minimo 1 maximo 15'								, ; //X6_DESC2
+	'de saida (CTBANFS), minimo 1 maximo 15'								, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'1'																		, ; //X6_CONTEUD
+	'1'																		, ; //X6_CONTSPA
+	'1'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_COMP'																, ; //X6_VAR
+	'N'																		, ; //X6_TIPO
+	'Caracter ASCII para compactacao  da  impressora.'						, ; //X6_DESCRIC
+	'Caracter ASCII para compactacion de la impresora.'						, ; //X6_DSCSPA
+	'ASCII character for compacting of the reports.'						, ; //X6_DSCENG
+	'Deve-se informar neste  campo  o  codigo'								, ; //X6_DESC1
+	'Se debe informar en este campo el codigo decimal'						, ; //X6_DSCSPA1
+	'must inform in this field the decimal code of the'						, ; //X6_DSCENG1
+	'decimal do caracter. Ex.: 15.'											, ; //X6_DESC2
+	'del caracter. Ej.: 15.'												, ; //X6_DSCSPA2
+	'character. Eg: 15.'													, ; //X6_DSCENG2
+	'15'																	, ; //X6_CONTEUD
+	'15'																	, ; //X6_CONTSPA
+	'15'																	, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CONOUTR'															, ; //X6_VAR
+	'N'																		, ; //X6_TIPO
+	'Habilita/ Desabilita o TraceLog na Integracao Cont'					, ; //X6_DESCRIC
+	'2 = Trace/Log ligado - O log sera apresentado'							, ; //X6_DSCSPA
+	'apenas no console do Protheus Server'									, ; //X6_DSCENG
+	'0 (zero) = log desligado (padrao)'										, ; //X6_DESC1
+	'em relatorio ao usuario ao final do processo'							, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	'1 = Trace/Log ligado - O log sera apresentado em r'					, ; //X6_DESC2
+	'3 = Trace/Log ligado. O log sera apresentado'							, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'0'																		, ; //X6_CONTEUD
+	'0'																		, ; //X6_CONTSPA
+	'0'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CONSOLD'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Cod. empresas/filiais destino.Se tiver mais de uma'					, ; //X6_DESCRIC
+	'Cod. empresas/suc. destino. Si hay mas de una'							, ; //X6_DSCSPA
+	'Companies/dest.bch code. If there is more than 1'						, ; //X6_DSCENG
+	'consolidadora preencher separados por "/". Emp. 01'					, ; //X6_DESC1
+	'consolidadora, informarlas separadas por "/". Emp.'					, ; //X6_DSCSPA1
+	'cons. comp. fill it in separating the coms. by'						, ; //X6_DSCENG1
+	'e filial 02 e emp.03 filial 01.PREENCHER:0102/0301'					, ; //X6_DESC2
+	'01 suc.02 y emp.03 suc.01. Informar:0102/0301'							, ; //X6_DSCSPA2
+	'"/".Co.01 and bch.02,co.03 and bch 01.Use0102/0301'					, ; //X6_DSCENG2
+	''																		, ; //X6_CONTEUD
+	''																		, ; //X6_CONTSPA
+	''																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CONTBAT'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Nao permite confirmar a inclusao de um Lancamento'						, ; //X6_DESCRIC
+	'No permite confirmar inclusion de un asiento con-'						, ; //X6_DSCSPA
+	'It does not permit to confirm the inclus.of an'						, ; //X6_DSCENG
+	'Contabil quando o documento nao bater (S), caso'						, ; //X6_DESC1
+	'table cuando el documento no coincide (S), en caso'					, ; //X6_DSCSPA1
+	'Acc.Entry when the doc. does not match (S).Otherwi'					, ; //X6_DSCENG1
+	'contrario sera somente emitido um aviso.'								, ; //X6_DESC2
+	'contrario solamente sera emitido un aviso.'							, ; //X6_DSCSPA2
+	'se,the syst. will only display a warning message'						, ; //X6_DSCENG2
+	'S'																		, ; //X6_CONTEUD
+	'S'																		, ; //X6_CONTSPA
+	'S'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CRITPLN'															, ; //X6_VAR
+	'L'																		, ; //X6_TIPO
+	'Define se o criterio de conversao utilizado no'						, ; //X6_DESCRIC
+	'Define si el criterio de conversion utilizado en e'					, ; //X6_DSCSPA
+	'It defines whether the conversion criteria used'						, ; //X6_DSCENG
+	'lancamento contabil sera o do Plano de Contas (T)'						, ; //X6_DESC1
+	'l asiento contable sera el del Plan de Cuentas (T)'					, ; //X6_DSCSPA1
+	'during acc. entry will be the Chart of Acc. (T)'						, ; //X6_DSCENG1
+	'ou do Inicializador padräo do campo CT2_CONVER (F)'					, ; //X6_DESC2
+	'o el del Iniciad.estandar del campo CT2_CONVER (F)'					, ; //X6_DSCSPA2
+	'or the stand.Initializer of CT2_CONVER (F) field.'						, ; //X6_DSCENG2
+	'F'																		, ; //X6_CONTEUD
+	'F'																		, ; //X6_CONTSPA
+	'F'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'N'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CT105LD'															, ; //X6_VAR
+	'N'																		, ; //X6_TIPO
+	'Permite efetuar a validação de uma linha deletada'						, ; //X6_DESCRIC
+	'Permite validar una linea borrada'										, ; //X6_DSCSPA
+	'It enables validation of a line deleted in'							, ; //X6_DSCENG
+	'no lanc. de integração ou automatico. Informe 1 (d'					, ; //X6_DESC1
+	'en asiento integracion o automatico. Informe 1 (d'						, ; //X6_DSCSPA1
+	'automatic or integration entry. Enter 1 (default)'						, ; //X6_DSCENG1
+	'efault) para não validar ou 2 para validar.'							, ; //X6_DESC2
+	'efault) para no validar o 2 para validar.'								, ; //X6_DSCSPA2
+	'to not validate it or 2 to validate it.'								, ; //X6_DSCENG2
+	'1'																		, ; //X6_CONTEUD
+	'1'																		, ; //X6_CONTSPA
+	'1'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CT105MS'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'mostra mensagem S/N'													, ; //X6_DESCRIC
+	'muestra mensaje S/N'													, ; //X6_DSCSPA
+	'Display message Y/N.'													, ; //X6_DSCENG
+	''																		, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'S'																		, ; //X6_CONTEUD
+	'S'																		, ; //X6_CONTSPA
+	'S'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CT2SMLT'															, ; //X6_VAR
+	'L'																		, ; //X6_TIPO
+	'config para verific alteracoes simultaneas'							, ; //X6_DESCRIC
+	'config para verific modificaciones simultaneas'						, ; //X6_DSCSPA
+	'Config. to check simultaneous changes.'								, ; //X6_DSCENG
+	''																		, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'F'																		, ; //X6_CONTEUD
+	'F'																		, ; //X6_CONTSPA
+	'F'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CT350QY'															, ; //X6_VAR
+	'L'																		, ; //X6_TIPO
+	'habilita a qry na efetuação'											, ; //X6_DESCRIC
+	'habilita la query en la efectuacion'									, ; //X6_DSCSPA
+	'Enables query in accomplishment.'										, ; //X6_DSCENG
+	''																		, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'T'																		, ; //X6_CONTEUD
+	'T'																		, ; //X6_CONTSPA
+	'T'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CT350SL'															, ; //X6_VAR
+	'L'																		, ; //X6_TIPO
+	'controle atualização saldos na efetivação'								, ; //X6_DESCRIC
+	'control actualizacion saldos en la concrecion'							, ; //X6_DSCSPA
+	'Balance update control in accomplishment.'								, ; //X6_DSCENG
+	''																		, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'T'																		, ; //X6_CONTEUD
+	'T'																		, ; //X6_CONTSPA
+	'T'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CT350TC'															, ; //X6_VAR
+	'L'																		, ; //X6_TIPO
+	'controle trace log na efetivação'										, ; //X6_DESCRIC
+	'control trace log en la concrecion'									, ; //X6_DSCSPA
+	'Trace log control in accomplishment.'									, ; //X6_DSCENG
+	''																		, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'F'																		, ; //X6_CONTEUD
+	'F'																		, ; //X6_CONTSPA
+	'F'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTA370S'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Indica se a atualização de saldos será On-Line ou'						, ; //X6_DESCRIC
+	'Indica si la actualizacion de saldos será On-Line'						, ; //X6_DSCSPA
+	'Indicates if balance updates will be Online or'						, ; //X6_DSCENG
+	'Off-Line ( Reprocessamento ) na atualização de'						, ; //X6_DESC1
+	'Off-Line ( Reprocesamiento ) en la actualizacion'						, ; //X6_DSCSPA1
+	'Offline ( Reprocessing ) while updating'								, ; //X6_DSCENG1
+	'Moedas - CTBA370. ( 1=On-Line,2=Off-Line)'								, ; //X6_DESC2
+	'de Monedas - CTBA370. ( 1=On-Line,2=Off-Line)'							, ; //X6_DSCSPA2
+	'Currencies - CTBA370. ( 1=Online,2=Offline)'							, ; //X6_DSCENG2
+	'1'																		, ; //X6_CONTEUD
+	'1'																		, ; //X6_CONTSPA
+	'1'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTASUP'																, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Indica se a estrutura do Plano de Contas será a'						, ; //X6_DESCRIC
+	'Indica si la estructura del Plan de Cuentas sera'						, ; //X6_DSCSPA
+	'Indicate if the chart of accounts structure will'						, ; //X6_DSCENG
+	'padrao (N) ou com contas superiores diferente do'						, ; //X6_DESC1
+	'la estandar (N) o con Cuentas superiores diferen-'						, ; //X6_DSCSPA1
+	'be the standard (N) or with superior accounts'							, ; //X6_DSCENG1
+	'padrao (S)'															, ; //X6_DESC2
+	'tes de la estandar (S)'												, ; //X6_DSCSPA2
+	'different of the standard (S).'										, ; //X6_DSCENG2
+	'N'																		, ; //X6_CONTEUD
+	'N'																		, ; //X6_CONTSPA
+	'N'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTB102I'															, ; //X6_VAR
+	'N'																		, ; //X6_TIPO
+	'Define a acao que deve ser tomada quando utiliza a'					, ; //X6_DESCRIC
+	'Define la accion que debe tomarse cuando utiliza'						, ; //X6_DSCSPA
+	'Establishes action to be taken when use'								, ; //X6_DSCENG
+	'atualizacao de saldos via Job. 1 - Nao grava;'							, ; //X6_DESC1
+	'actualizacion de saldos por Job. 1 - No graba;'						, ; //X6_DSCSPA1
+	'balance update via Job. 1 - does not save;'							, ; //X6_DSCENG1
+	'2 - Grava pre lancamento; 3 - Pergunta'								, ; //X6_DESC2
+	'2 - Graba asiento previo; 3 - Pregunta'								, ; //X6_DSCSPA2
+	'2 Saves pre-entry; 3 - Question'										, ; //X6_DSCENG2
+	'2'																		, ; //X6_CONTEUD
+	'2'																		, ; //X6_CONTSPA
+	'2'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTB190D'															, ; //X6_VAR
+	'L'																		, ; //X6_TIPO
+	'Indica se os registros serao excluidos fisicamente'					, ; //X6_DESCRIC
+	''																		, ; //X6_DSCSPA
+	''																		, ; //X6_DSCENG
+	'na rotina CTBA190 - "Reprocessamento contabil".'						, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	'T = Exclui fisicamente, F = Nao exclui fisicamente'					, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'T'																		, ; //X6_CONTEUD
+	'T'																		, ; //X6_CONTSPA
+	'T'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTB220D'															, ; //X6_VAR
+	'L'																		, ; //X6_TIPO
+	'Indica se os registros serao excluidos fisicamente'					, ; //X6_DESCRIC
+	''																		, ; //X6_DSCSPA
+	''																		, ; //X6_DSCENG
+	'na rotina CTBA220 - "Consolidacao contabil".'							, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	'T = Exclui fisicamente, F = Nao exclui fisicamente'					, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'T'																		, ; //X6_CONTEUD
+	'T'																		, ; //X6_CONTSPA
+	'T'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTB230D'															, ; //X6_VAR
+	'L'																		, ; //X6_TIPO
+	'Indica se os registros serao excluidos fisicamente'					, ; //X6_DESCRIC
+	''																		, ; //X6_DSCSPA
+	''																		, ; //X6_DSCENG
+	'na rotina CTBA230 - "Consolidacao contabil", model'					, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	'T = Exclui fisicamente, F = Nao exclui fisicamente'					, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'T'																		, ; //X6_CONTEUD
+	'T'																		, ; //X6_CONTSPA
+	'T'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTB360D'															, ; //X6_VAR
+	'L'																		, ; //X6_TIPO
+	'Indica se os registros serao excluidos fisicamente'					, ; //X6_DESCRIC
+	''																		, ; //X6_DSCSPA
+	''																		, ; //X6_DSCENG
+	'na rotina CTBA360 - "Atualizacao de saldos compost'					, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	'T = Exclui fisicamente, F = Nao exclui fisicamente'					, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'T'																		, ; //X6_CONTEUD
+	'T'																		, ; //X6_CONTSPA
+	'T'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTB390D'															, ; //X6_VAR
+	'L'																		, ; //X6_TIPO
+	'Indica se os registros serao excluidos fisicamente'					, ; //X6_DESCRIC
+	''																		, ; //X6_DSCSPA
+	''																		, ; //X6_DSCENG
+	'na rotina CTBA390 - "Cadastro de orcamento contabi'					, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	'T = Exclui fisicamente, F = Nao exclui fisicamente'					, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'T'																		, ; //X6_CONTEUD
+	'T'																		, ; //X6_CONTSPA
+	'T'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTB390F'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Formula generica aplicada ao botão "Multiplica" na'					, ; //X6_DESCRIC
+	'Formula generica aplicada al boton "Multiplica" en'					, ; //X6_DSCSPA
+	'Generic formula applied to the "Multiply" button'						, ; //X6_DSCENG
+	'tela de cadastro do orçamento SigaCTB.'								, ; //X6_DESC1
+	'la pantalla de registro del presupuesto SigaCTB.'						, ; //X6_DSCSPA1
+	'in the budget registration screen SigaCTB.'							, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'VALOR*1.1'																, ; //X6_CONTEUD
+	'VALOR*1.1'																, ; //X6_CONTSPA
+	'VALOR*1.1'																, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTB999D'															, ; //X6_VAR
+	'L'																		, ; //X6_TIPO
+	'Indica se os registros serao excluidos fisicamente'					, ; //X6_DESCRIC
+	''																		, ; //X6_DSCSPA
+	''																		, ; //X6_DSCENG
+	'na rotina CTBA999 - "Conversor SIGACON x SIGACTB".'					, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	'T = Exclui fisicamente, F = Nao exclui fisicamente'					, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'T'																		, ; //X6_CONTEUD
+	'T'																		, ; //X6_CONTSPA
+	'T'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBAPLA'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Indica se o SigaCTB ira limpar os flags de contabi'					, ; //X6_DESCRIC
+	'Indica si el SigaCTB limpiara los flags de conta'						, ; //X6_DSCSPA
+	'Indicates if SigaCTB will clear accounting flags'						, ; //X6_DSCENG
+	'lização (_LA/_DTLANC) ao excluir lançamentos.'							, ; //X6_DESC1
+	'bilizacion (_LA/_DTLANC) al borrar asientos.'							, ; //X6_DSCSPA1
+	'(_LA/_DTLANC) when deleting entries. 1=No;'							, ; //X6_DSCENG1
+	'1=Nao;2=Perguntar;3=Sim c/alertas;4=Sim s/ alertas'					, ; //X6_DESC2
+	'1=No;2=Preguntar;3=Si c/alertas;4=Si s/ alertas'						, ; //X6_DSCSPA2
+	'2=Ask;3=Yes with alerts;4=Yes without alerts'							, ; //X6_DSCENG2
+	'3'																		, ; //X6_CONTEUD
+	'3'																		, ; //X6_CONTSPA
+	'3'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBDEST'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Indica se os estornos de lançamentos poderão'							, ; //X6_DESCRIC
+	'Indica si las devoluciones de  asientos podran'						, ; //X6_DSCSPA
+	'Indicates if the reversals of entries can be their'					, ; //X6_DSCENG
+	'sofrer alteração de valores, contas, etc.'								, ; //X6_DESC1
+	'sufrir alteracion de valores, cuentas, etc.'							, ; //X6_DSCSPA1
+	'values, accounts, etc,  modified.'										, ; //X6_DSCENG1
+	'Conteudo : 1=Sim , 2=Nao'												, ; //X6_DESC2
+	'Contenido : 1=Si , 2=No'												, ; //X6_DSCSPA2
+	'Content : 1=Yes , 2=No.'												, ; //X6_DSCENG2
+	'1'																		, ; //X6_CONTEUD
+	'1'																		, ; //X6_CONTSPA
+	'1'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBFLAG'															, ; //X6_VAR
+	'L'																		, ; //X6_TIPO
+	'Indica se a marcação dos flags de contabilização'						, ; //X6_DESCRIC
+	'Indica si la marcacion de flags de contabilizacion'					, ; //X6_DSCSPA
+	'Indicates if marking of accounting flags for'							, ; //X6_DSCENG
+	'das rotinas Off-Line será feita na transação do'						, ; //X6_DESC1
+	'de las rutinas Off-Line se realizara en la transac'					, ; //X6_DSCSPA1
+	'Off-line accounting routines will be made in the'						, ; //X6_DSCENG1
+	'lançamento contábil - SIGACTB.'										, ; //X6_DESC2
+	'cion del asiento contable - SIGACTB.'									, ; //X6_DSCSPA2
+	'accounting entry transaction - SIGACTB.'								, ; //X6_DSCENG2
+	'T'																		, ; //X6_CONTEUD
+	'T'																		, ; //X6_CONTSPA
+	'T'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBHENT'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Habilita o controle do historico de alterações de'						, ; //X6_DESCRIC
+	''																		, ; //X6_DSCSPA
+	''																		, ; //X6_DSCENG
+	'entidades contábeis.'													, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	'"0"- Desabilitado / "1" - Habilitado'									, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'1'																		, ; //X6_CONTEUD
+	'1'																		, ; //X6_CONTSPA
+	'1'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBHRAT'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Habilita historico para rotina de Rateio Off-Line'						, ; //X6_DESCRIC
+	'Habilita historial para rutina de Prorrat.Off-Line'					, ; //X6_DSCSPA
+	'Enables the history for off-line proration routine'					, ; //X6_DSCENG
+	''																		, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'0'																		, ; //X6_CONTEUD
+	'0'																		, ; //X6_CONTSPA
+	'0'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBJOB'																, ; //X6_VAR
+	'N'																		, ; //X6_TIPO
+	'Define se usa Job para processamento.'									, ; //X6_DESCRIC
+	'Define si usa Job para procesamiento.'									, ; //X6_DSCSPA
+	'Establises if uses Job for processing.'								, ; //X6_DSCENG
+	'1 - Utiliza Job para atualizacao de saldos'							, ; //X6_DESC1
+	'1 - Utiliza Job para actualizacion de saldos'							, ; //X6_DSCSPA1
+	'1 - Use Job to update balances'										, ; //X6_DSCENG1
+	'2 - Utiliza o processamento tradicional'								, ; //X6_DESC2
+	'2 - Utiliza procesamiento tradicional'									, ; //X6_DSCSPA2
+	'2 - Use traditional processing'										, ; //X6_DSCENG2
+	'2'																		, ; //X6_CONTEUD
+	'2'																		, ; //X6_CONTSPA
+	'2'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBLOCK'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Interno SIGACTB - Controle de concorrencia entre'						, ; //X6_DESCRIC
+	'Interno SIGACTB-Control de competencia entre'							, ; //X6_DSCSPA
+	'Internal SIGACTB - Control of competition between'						, ; //X6_DSCENG
+	'reprocessamentos de saldos'											, ; //X6_DESC1
+	'reprocesamiento de saldos.'											, ; //X6_DSCSPA1
+	'reprocessing of balances'												, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	''																		, ; //X6_CONTEUD
+	''																		, ; //X6_CONTSPA
+	''																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBLPV'																, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Define a versão da rotina de Apuração de Resultado'					, ; //X6_DESCRIC
+	'Def. la version de la rutina de Calc. de Resultado'					, ; //X6_DSCSPA
+	'It defines the version of the routine of Calc. of'						, ; //X6_DSCENG
+	'210 para versão original, 211 para versão revisada'					, ; //X6_DESC1
+	'210 p/ version original, 211 para version revisada'					, ; //X6_DSCSPA1
+	'result 210 for original version, 211 for revised'						, ; //X6_DSCENG1
+	'em branco para selecao do usuario.'									, ; //X6_DESC2
+	'en blanco para selecc. de usuario.'									, ; //X6_DSCSPA2
+	'version in blank for selection of user.'								, ; //X6_DSCENG2
+	'211'																	, ; //X6_CONTEUD
+	'211'																	, ; //X6_CONTSPA
+	'211'																	, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBLQTP'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Indicar os tipos de saldo que estao bloqueados'						, ; //X6_DESCRIC
+	'Indicar tipos de saldo que estan bloqueados'							, ; //X6_DSCSPA
+	'Enter the balance types blocked for'									, ; //X6_DSCENG
+	'para copia/exclusao na rotina de Copia de Saldos'						, ; //X6_DESC1
+	'para copia/borrado en la rutina de Copia de Saldos'					, ; //X6_DSCSPA1
+	'copy/deletion in the routine Copy of Balances'							, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'01'																	, ; //X6_CONTEUD
+	'01'																	, ; //X6_CONTSPA
+	'01'																	, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBLVPR'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Define o plano da tabela auxiliar (CW0)'								, ; //X6_DESCRIC
+	'Define el plan de la tabla auxiliar (CW0)'								, ; //X6_DSCSPA
+	'It defines auxiliary table plan (CW0)'									, ; //X6_DSCENG
+	'com a amarração livros por processo'									, ; //X6_DESC1
+	'con la vinculacion libros por proceso'									, ; //X6_DSCSPA1
+	'with book binding by process'											, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	''																		, ; //X6_CONTEUD
+	''																		, ; //X6_CONTSPA
+	''																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBNFSE'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'semaf processos simult de comprase fat off-line'						, ; //X6_DESCRIC
+	'semaf procesos simult de compras y fact off-line'						, ; //X6_DSCSPA
+	'Simult. proc. traf lgt of purch. and off-line inv.'					, ; //X6_DSCENG
+	''																		, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	''																		, ; //X6_CONTEUD
+	''																		, ; //X6_CONTSPA
+	''																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBPAG'																, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Palavra impressa antes da numeração de página no'						, ; //X6_DESCRIC
+	'Palabra impresa antes de la numeracion de pagina e'					, ; //X6_DSCSPA
+	'Word printed before page numbering in the header'						, ; //X6_DSCENG
+	'cabeçalho com CGC dos relatórios contábeis SIGACTB'					, ; //X6_DESC1
+	'n el encabezado con CGC de informes contables SIGA'					, ; //X6_DSCSPA1
+	'with CGC of accounting reports SIGACTB'								, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	'CTB'																	, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'Pagina:'																, ; //X6_CONTEUD
+	'Pagina:'																, ; //X6_CONTSPA
+	'Page:'																	, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBSALD'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Indica qual procedure sera utilizada para atualiza'					, ; //X6_DESCRIC
+	'Indica que procedure se utilizara para actualiza'						, ; //X6_DSCSPA
+	'Indicates procedure to be used to update'								, ; //X6_DSCENG
+	'cao dos saldos "1" CTB150 "2" CTB185'									, ; //X6_DESC1
+	'cion de los saldos "1" CTB150 "2" CTB185'								, ; //X6_DSCSPA1
+	'balances "1" CTB150 "2" CTB185'										, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'2'																		, ; //X6_CONTEUD
+	'2'																		, ; //X6_CONTSPA
+	'2'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBSERD'															, ; //X6_VAR
+	'L'																		, ; //X6_TIPO
+	'Controle de exclusao do arquivo de semaforo'							, ; //X6_DESCRIC
+	''																		, ; //X6_DSCSPA
+	''																		, ; //X6_DSCENG
+	'.T. (true/verdadeiro)   .F. (false/ falso)'							, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'.T.'																	, ; //X6_CONTEUD
+	'.T.'																		, ; //X6_CONTSPA
+	'.T.'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBSERT'															, ; //X6_VAR
+	'N'																		, ; //X6_TIPO
+	'tempo em milissegundos'												, ; //X6_DESCRIC
+	'tiempo en milisegundos'												, ; //X6_DSCSPA
+	'Millesecond time'														, ; //X6_DSCENG
+	''																		, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	''																		, ; //X6_CONTEUD
+	''																		, ; //X6_CONTSPA
+	''																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBSERZ'															, ; //X6_VAR
+	'L'																		, ; //X6_TIPO
+	'Controle de exclusão do arquivo de semáforo.'							, ; //X6_DESCRIC
+	'Control de borrado de archivo de semaforo.'							, ; //X6_DSCSPA
+	'Exclusion control of semaphore file.'									, ; //X6_DSCENG
+	''																		, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'.T.'																	, ; //X6_CONTEUD
+	'.T.'																	, ; //X6_CONTSPA
+	'.T.'																	, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBURL'																, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Parametro que indica qual o caminho a ser'								, ; //X6_DESCRIC
+	'Parametro que indica que camino se'									, ; //X6_DSCSPA
+	'Parameter that indicates path to be'									, ; //X6_DSCENG
+	'utilizado pelo SPED'													, ; //X6_DESC1
+	'utilizara por el SPED'													, ; //X6_DSCSPA1
+	'used by SPED'															, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'http://'																, ; //X6_CONTEUD
+	'http://'																, ; //X6_CONTSPA
+	'http://'																, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTBVLDM'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Indica em quais moedas o sistema fara a'								, ; //X6_DESCRIC
+	'ignorando as outras moedas'											, ; //X6_DSCSPA
+	''																		, ; //X6_DSCENG
+	'validacao das moedas.'													, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	'Ex. 11222 o sistema validara a moeda 1 e 2'							, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'1222'																	, ; //X6_CONTEUD
+	'1222'																		, ; //X6_CONTSPA
+	'1222'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CTGBLOQ'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Status do calendário contábil que não permitem'						, ; //X6_DESCRIC
+	'Estatus del calendario contable que no permiten re'					, ; //X6_DSCSPA
+	'Status of accounting calendar that does not allow'						, ; //X6_DSCENG
+	'reprocessamento de saldos.'											, ; //X6_DESC1
+	'procesamiento de saldos.'												, ; //X6_DSCSPA1
+	'reprocessing of balances.'												, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	''																		, ; //X6_CONTEUD
+	''																		, ; //X6_CONTSPA
+	''																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CUSTORI'															, ; //X6_VAR
+	'L'																		, ; //X6_TIPO
+	'Controla a geracao do centro de custo origem'							, ; //X6_DESCRIC
+	'centro de custo origem.'												, ; //X6_DSCSPA
+	''																		, ; //X6_DSCENG
+	'para rateio off-line combinacoes'										, ; //X6_DESC1
+	'.F. Nao gera o lancamento com o centro'								, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	'.T. (conteudo padrao) Gera o lancamento com o'							, ; //X6_DESC2
+	'de custo origem.'														, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	''																		, ; //X6_CONTEUD
+	''																		, ; //X6_CONTSPA
+	''																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_CV1SEQ'																, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Indica o tamanho maximo de linhas do orcamento'						, ; //X6_DESCRIC
+	''																		, ; //X6_DSCSPA
+	''																		, ; //X6_DSCENG
+	'9999 o sistema bloqueia orcamentos com seqüencia s'					, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'999'																	, ; //X6_CONTEUD
+	'999'																		, ; //X6_CONTSPA
+	'999'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_DIASCTB'															, ; //X6_VAR
+	'N'																		, ; //X6_TIPO
+	'Indica a quantidade de dias do ano contábil'							, ; //X6_DESCRIC
+	'Indica la cantidad de dias del ano contable'							, ; //X6_DSCSPA
+	'Indicate number of days in accounting year'							, ; //X6_DSCENG
+	''																		, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'365'																	, ; //X6_CONTEUD
+	'365'																	, ; //X6_CONTSPA
+	'365'																	, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_EMP_CTB'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Empresa para o TXT (Contabilidade)'									, ; //X6_DESCRIC
+	'Empresa para el TXT (Contabilidad)'									, ; //X6_DSCSPA
+	'Company for the TXT (Accounting)/'										, ; //X6_DSCENG
+	''																		, ; //X6_DESC1
+	''																		, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	''																		, ; //X6_CONTEUD
+	''																		, ; //X6_CONTSPA
+	''																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'N'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_INUTLIN'															, ; //X6_VAR
+	'N'																		, ; //X6_TIPO
+	'Quantidade de linhas que serão inutilizadas no fim'					, ; //X6_DESCRIC
+	'Cantidad de lineas que se inutilizaran al final de'					, ; //X6_DSCSPA
+	'Number of lines that will be nullified at the end'						, ; //X6_DSCENG
+	'dos relatórios Razão e Diario Contábeis (SIGACTB).'					, ; //X6_DESC1
+	'los informes Mayor y Diario Contables (SIGACTB).'						, ; //X6_DSCSPA1
+	'of reports Ledger and Journal (SIGACTB).'								, ; //X6_DSCENG1
+	'Serão impressos asteriscos (*) no fim do relatório'					, ; //X6_DESC2
+	'Se imprimiran (*) al final del informe.'								, ; //X6_DSCSPA2
+	'Asterisks (*) will be printed at the report bottom'					, ; //X6_DSCENG2
+	'0'																		, ; //X6_CONTEUD
+	'0'																		, ; //X6_CONTSPA
+	'0'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_ITSUP'																, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Indica se a estrutura dos itens contabeis'								, ; //X6_DESCRIC
+	'Indica si la estrutura de los items contables'							, ; //X6_DSCSPA
+	'Indicates if the structure of accounting items'						, ; //X6_DSCENG
+	'sera a padräo (N) ou com item superior'								, ; //X6_DESC1
+	'sera la estandar (N) o con item superior'								, ; //X6_DSCSPA1
+	'will be the standard (N) or with higher item'							, ; //X6_DSCENG1
+	'diferente do padräo (S).'												, ; //X6_DESC2
+	'diferente del estandar (S).'											, ; //X6_DSCSPA2
+	'different from the standard (S).'										, ; //X6_DSCENG2
+	'N'																		, ; //X6_CONTEUD
+	'N'																		, ; //X6_CONTSPA
+	'N'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_MASCARA'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Definicao da mascara contabil. Devera ser informa-'					, ; //X6_DESCRIC
+	'Definicion de la mascara contable. Debe informarse'					, ; //X6_DSCSPA
+	'Define the accounting mask. The number of'								, ; //X6_DSCENG
+	'do o numero de digitos para cada nivel.'								, ; //X6_DESC1
+	'el numero de digitos para cada nivel.'									, ; //X6_DSCSPA1
+	'digits for each level must be informed.'								, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'11123'																	, ; //X6_CONTEUD
+	'11123'																	, ; //X6_CONTSPA
+	'11123'																	, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_MASCCUS'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Definicao da mascara do Centro de Custo.Devera ser'					, ; //X6_DESCRIC
+	'Definicion de la mascara del centro de costo. Debe'					, ; //X6_DSCSPA
+	'Define the Cost Center mask. The number of'							, ; //X6_DSCENG
+	'informado o numero de digitos para cada nivel.'						, ; //X6_DESC1
+	'informarse el numero de digitos para cada nivel.'						, ; //X6_DSCSPA1
+	'digits for each level must be informed.'								, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	''																		, ; //X6_CONTEUD
+	''																		, ; //X6_CONTSPA
+	''																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_NORM'																, ; //X6_VAR
+	'N'																		, ; //X6_TIPO
+	'Caracter ASCII utilizado  para  descompactacao  da'					, ; //X6_DESCRIC
+	'Caracter ASCII usado para la descompactacion de la'					, ; //X6_DSCSPA
+	'Character ASCII used to de-compact the printer'						, ; //X6_DSCENG
+	'impressora.  Informar neste campo o codigo decimal'					, ; //X6_DESC1
+	'impresora. Informar en este campo el codigo deci-'						, ; //X6_DSCSPA1
+	'Enter the character decimal code'										, ; //X6_DSCENG1
+	'do caracter.'															, ; //X6_DESC2
+	'mal del caracter.'														, ; //X6_DSCSPA2
+	'in this field.'														, ; //X6_DSCENG2
+	'18'																	, ; //X6_CONTEUD
+	'18'																	, ; //X6_CONTSPA
+	'18'																	, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_NUMLIN'																, ; //X6_VAR
+	'N'																		, ; //X6_TIPO
+	'Limita o numero de linhas do documento no lancamen'					, ; //X6_DESCRIC
+	'Limita el numero de lineas del documento en el'						, ; //X6_DSCSPA
+	'It limits the number of rows in the document'							, ; //X6_DSCENG
+	'to contabil de integracao (automatico).'								, ; //X6_DESC1
+	'asiento contable de integracion (automatico).'							, ; //X6_DSCSPA1
+	'during the accounting integration entry (automatic'					, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'9999'																	, ; //X6_CONTEUD
+	'9999'																	, ; //X6_CONTSPA
+	'9999'																	, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_NUMMAN'																, ; //X6_VAR
+	'N'																		, ; //X6_TIPO
+	'Limita o numero de linhas do documento no lancamen'					, ; //X6_DESCRIC
+	'Limite del numero de lineas del documento en el'						, ; //X6_DSCSPA
+	'Delimit the number of rows in the document of'							, ; //X6_DSCENG
+	'to contabil manual.'													, ; //X6_DESC1
+	'asiento contable manual.'												, ; //X6_DSCSPA1
+	'the accouting manual entry.'											, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'9999'																	, ; //X6_CONTEUD
+	'9999'																	, ; //X6_CONTSPA
+	'9999'																	, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_ORCAPRV'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Indica de deve (S) ou näo (N) utilizar o criterio'						, ; //X6_DESCRIC
+	'Indica si debe (S) o no (N) utilizar el criterio'						, ; //X6_DSCSPA
+	'It indicates whether or not the approval criterion'					, ; //X6_DSCENG
+	'de aprovacao para a rotina de orcamento SIGACTB.'						, ; //X6_DESC1
+	'de aprobacion para rutina de presupuesto SIGACTB.'						, ; //X6_DSCSPA1
+	'for SIGACTB budget routine should be used.'							, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	''																		, ; //X6_CONTEUD
+	''																		, ; //X6_CONTSPA
+	''																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_RODAPE'																, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Titulo utilizado nos rodapes do relatorios.'							, ; //X6_DESCRIC
+	'Titulo usado en las notas al pie de pagina de los'						, ; //X6_DSCSPA
+	'Title used in the footnotes of the reports.'							, ; //X6_DSCENG
+	''																		, ; //X6_DESC1
+	'informes.'																, ; //X6_DSCSPA1
+	''																		, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	''																		, ; //X6_CONTEUD
+	''																		, ; //X6_CONTSPA
+	''																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_SEQCORR'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Define se o tipo para controle de geracao dos corr'					, ; //X6_DESCRIC
+	'Define si el tipo de control para generacion de co'					, ; //X6_DSCSPA
+	'Define if type number sequential correlative for c'					, ; //X6_DSCENG
+	'elativos comprovantes contabeis sera unico ou nao,'					, ; //X6_DESC1
+	'rrelativos de comprobantes contables sera unico o'						, ; //X6_DSCSPA1
+	'corroborate accounts is unique or not, with month/'					, ; //X6_DSCENG1
+	'com quebra mensal/anual e se vincula com sublote.'						, ; //X6_DESC2
+	'con division por mes/ano y si asocia con sublote'						, ; //X6_DSCSPA2
+	'annual break and if join with sublot.'									, ; //X6_DSCENG2
+	'1AN'																	, ; //X6_CONTEUD
+	'1AN'																	, ; //X6_CONTSPA
+	'1AN'																	, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'N'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_SOMA'																, ; //X6_VAR
+	'N'																		, ; //X6_TIPO
+	'Determina se o total digitado em lancamento tipo X'					, ; //X6_DESCRIC
+	'Determina si el total tipeado en asiento tipo X'						, ; //X6_DSCSPA
+	'Determine whether the total typed in entry type x'						, ; //X6_DSCENG
+	'sera  somado 1 ou 2 vezes.'											, ; //X6_DESC1
+	'sera sumado 1 o 2 veces.'												, ; //X6_DSCSPA1
+	'will be summed once or twice'											, ; //X6_DSCENG1
+	''																		, ; //X6_DESC2
+	''																		, ; //X6_DSCSPA2
+	''																		, ; //X6_DSCENG2
+	'1'																		, ; //X6_CONTEUD
+	'1'																		, ; //X6_CONTSPA
+	'1'																		, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+aAdd( aSX6, { ;
+	'  '																	, ; //X6_FIL
+	'MV_SUBLOTE'															, ; //X6_VAR
+	'C'																		, ; //X6_TIPO
+	'Indica ou nao o uso do SUB-LOTE CONTABIL.'								, ; //X6_DESCRIC
+	'Indica o no el uso del SUBLOTE CONTABLE.'								, ; //X6_DSCSPA
+	'Whether or not the ACC. SUBLOT should be used.'						, ; //X6_DSCENG
+	'Caso em branco o campo sera solicitado para  digi-'					, ; //X6_DESC1
+	'Si esta vacio, el campo sera solicitado para digi-'					, ; //X6_DSCSPA1
+	'If the field is empty, it must be filled in,other-'					, ; //X6_DSCENG1
+	'tacao, caso preenchido, o conteudo, sera gravado.'						, ; //X6_DESC2
+	'tacion, y si fue llenado, se grabara su contenido.'					, ; //X6_DSCSPA2
+	'wise, the content will be entered.'									, ; //X6_DSCENG2
+	'001'																	, ; //X6_CONTEUD
+	'001'																	, ; //X6_CONTSPA
+	'001'																	, ; //X6_CONTENG
+	'S'																		, ; //X6_PROPRI
+	'S'																		} ) //X6_PYME
+
+//
+// Atualizando dicionário
+//
+oProcess:SetRegua2( Len( aSX6 ) )
+
+dbSelectArea( "SX6" )
+dbSetOrder( 1 )
+
+For nI := 1 To Len( aSX6 )
+	lContinua := .F.
+	lReclock  := .F.
+
+	If !SX6->( dbSeek( PadR( aSX6[nI][1], nTamFil ) + PadR( aSX6[nI][2], nTamVar ) ) )
+		lContinua := .T.
+		lReclock  := .T.
+		cTexto += "Foi incluído o parâmetro " + aSX6[nI][1] + aSX6[nI][2] + " Conteúdo [" + AllTrim( aSX6[nI][13] ) + "]"+ CRLF
+	Else
+		lContinua := .T.
+		lReclock  := .F.
+		If !StrTran( SX6->X6_CONTEUD, " ", "" ) == StrTran( aSX6[nI][13], " ", "" )
+
+			cMsg := "O parâmetro " + aSX6[nI][2] + " está com o conteúdo" + CRLF + ;
+			"[" + RTrim( StrTran( SX6->X6_CONTEUD, " ", "" ) ) + "]" + CRLF + ;
+			", que é será substituido pelo NOVO conteúdo " + CRLF + ;
+			"[" + RTrim( StrTran( aSX6[nI][13]   , " ", "" ) ) + "]" + CRLF + ;
+			"Deseja substituir ? "
+
+			If      lTodosSim
+				nOpcA := 1
+			ElseIf  lTodosNao
+				nOpcA := 2
+			Else
+				nOpcA := Aviso( "ATUALIZAÇÃO DE DICIONÁRIOS E TABELAS", cMsg, { "Sim", "Não", "Sim p/Todos", "Não p/Todos" }, 3, "Diferença de conteúdo - SX6" )
+				lTodosSim := ( nOpcA == 3 )
+				lTodosNao := ( nOpcA == 4 )
+
+				If lTodosSim
+					nOpcA := 1
+					lTodosSim := MsgNoYes( "Foi selecionada a opção de REALIZAR TODAS alterações no SX6 e NÃO MOSTRAR mais a tela de aviso." + CRLF + "Confirma a ação [Sim p/Todos] ?" )
+				EndIf
+
+				If lTodosNao
+					nOpcA := 2
+					lTodosNao := MsgNoYes( "Foi selecionada a opção de NÃO REALIZAR nenhuma alteração no SX6 que esteja diferente da base e NÃO MOSTRAR mais a tela de aviso." + CRLF + "Confirma esta ação [Não p/Todos]?" )
+				EndIf
+
+			EndIf
+
+			lContinua := ( nOpcA == 1 )
+
+			If lContinua
+				cTexto += "Foi alterado o parâmetro " + aSX6[nI][1] + aSX6[nI][2] + " de [" + ;
+				AllTrim( SX6->X6_CONTEUD ) + "]" + " para [" + AllTrim( aSX6[nI][13] ) + "]" + CRLF
+			EndIf
+
+		Else
+			lContinua := .F.
+		EndIf
+	EndIf
+
+	If lContinua
+		If !( aSX6[nI][1] $ cAlias )
+			cAlias += aSX6[nI][1] + "/"
+		EndIf
+
+		RecLock( "SX6", lReclock )
+		For nJ := 1 To Len( aSX6[nI] )
+			If FieldPos( aEstrut[nJ] ) > 0
+				FieldPut( FieldPos( aEstrut[nJ] ), aSX6[nI][nJ] )
+			EndIf
+		Next nJ
+		dbCommit()
+		MsUnLock()
+	EndIf
+
+	oProcess:IncRegua2( "Atualizando Arquivos (SX6)..." )
+
+Next nI
+
+cTexto += CRLF + "Final da Atualizacao" + " SX6" + CRLF + Replicate( "-", 128 ) + CRLF + CRLF
+
+Return NIL
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºRotina    ³ESCEMPRESAºAutor  ³ Ernani Forastieri  º Data ³  27/09/04   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDescricao ³ Funcao Generica para escolha de Empresa, montado pelo SM0_ º±±
+±±º          ³ Retorna vetor contendo as selecoes feitas.                 º±±
+±±º          ³ Se nao For marcada nenhuma o vetor volta vazio.            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ Generico                                                   º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function EscEmpresa()
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Parametro  nTipo                           ³
+//³ 1  - Monta com Todas Empresas/Filiais      ³
+//³ 2  - Monta so com Empresas                 ³
+//³ 3  - Monta so com Filiais de uma Empresa   ³
+//³                                            ³
+//³ Parametro  aMarcadas                       ³
+//³ Vetor com Empresas/Filiais pre marcadas    ³
+//³                                            ³
+//³ Parametro  cEmpSel                         ³
+//³ Empresa que sera usada para montar selecao ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+Local   aSalvAmb := GetArea()
+Local   aSalvSM0 := {}
+Local   aRet     := {}
+Local   aVetor   := {}
+Local   oDlg     := NIL
+Local   oChkMar  := NIL
+Local   oLbx     := NIL
+Local   oMascEmp := NIL
+Local   oMascFil := NIL
+Local   oButMarc := NIL
+Local   oButDMar := NIL
+Local   oButInv  := NIL
+Local   oSay     := NIL
+Local   oOk      := LoadBitmap( GetResources(), "LBOK" )
+Local   oNo      := LoadBitmap( GetResources(), "LBNO" )
+Local   lChk     := .F.
+Local   lOk      := .F.
+Local   lTeveMarc:= .F.
+Local   cVar     := ""
+Local   cNomEmp  := ""
+Local   cMascEmp := "??"
+Local   cMascFil := "??"
+
+Local   aMarcadas  := {}
+
+
+If !MyOpenSm0(.F.)
+	Return aRet
+EndIf
+
+
+dbSelectArea( "SM0" )
+aSalvSM0 := SM0->( GetArea() )
+dbSetOrder( 1 )
+dbGoTop()
+
+While !SM0->( EOF() )
+
+	If aScan( aVetor, {|x| x[2] == SM0->M0_CODIGO} ) == 0
+		aAdd(  aVetor, { aScan( aMarcadas, {|x| x[1] == SM0->M0_CODIGO .and. x[2] == SM0->M0_CODFIL} ) > 0, SM0->M0_CODIGO, SM0->M0_CODFIL, SM0->M0_NOME, SM0->M0_FILIAL } )
+	EndIf
+
+	dbSkip()
+End
+
+RestArea( aSalvSM0 )
+
+Define MSDialog  oDlg Title "" From 0, 0 To 270, 396 Pixel
+
+oDlg:cToolTip := "Tela para Múltiplas Seleções de Empresas/Filiais"
+
+oDlg:cTitle   := "Selecione a(s) Empresa(s) para Atualização"
+
+@ 10, 10 Listbox  oLbx Var  cVar Fields Header " ", " ", "Empresa" Size 178, 095 Of oDlg Pixel
+oLbx:SetArray(  aVetor )
+oLbx:bLine := {|| {IIf( aVetor[oLbx:nAt, 1], oOk, oNo ), ;
+aVetor[oLbx:nAt, 2], ;
+aVetor[oLbx:nAt, 4]}}
+oLbx:BlDblClick := { || aVetor[oLbx:nAt, 1] := !aVetor[oLbx:nAt, 1], VerTodos( aVetor, @lChk, oChkMar ), oChkMar:Refresh(), oLbx:Refresh()}
+oLbx:cToolTip   :=  oDlg:cTitle
+oLbx:lHScroll   := .F. // NoScroll
+
+@ 112, 10 CheckBox oChkMar Var  lChk Prompt "Todos"   Message  Size 40, 007 Pixel Of oDlg;
+on Click MarcaTodos( lChk, @aVetor, oLbx )
+
+@ 123, 10 Button oButInv Prompt "&Inverter"  Size 32, 12 Pixel Action ( InvSelecao( @aVetor, oLbx, @lChk, oChkMar ), VerTodos( aVetor, @lChk, oChkMar ) ) ;
+Message "Inverter Seleção" Of oDlg
+
+// Marca/Desmarca por mascara
+@ 113, 51 Say  oSay Prompt "Empresa" Size  40, 08 Of oDlg Pixel
+@ 112, 80 MSGet  oMascEmp Var  cMascEmp Size  05, 05 Pixel Picture "@!"  Valid (  cMascEmp := StrTran( cMascEmp, " ", "?" ), cMascFil := StrTran( cMascFil, " ", "?" ), oMascEmp:Refresh(), .T. ) ;
+Message "Máscara Empresa ( ?? )"  Of oDlg
+@ 123, 50 Button oButMarc Prompt "&Marcar"    Size 32, 12 Pixel Action ( MarcaMas( oLbx, aVetor, cMascEmp, .T. ), VerTodos( aVetor, @lChk, oChkMar ) ) ;
+Message "Marcar usando máscara ( ?? )"    Of oDlg
+@ 123, 80 Button oButDMar Prompt "&Desmarcar" Size 32, 12 Pixel Action ( MarcaMas( oLbx, aVetor, cMascEmp, .F. ), VerTodos( aVetor, @lChk, oChkMar ) ) ;
+Message "Desmarcar usando máscara ( ?? )" Of oDlg
+
+Define SButton From 111, 125 Type 1 Action ( RetSelecao( @aRet, aVetor ), oDlg:End() ) OnStop "Confirma a Seleção"  Enable Of oDlg
+Define SButton From 111, 158 Type 2 Action ( IIf( lTeveMarc, aRet :=  aMarcadas, .T. ), oDlg:End() ) OnStop "Abandona a Seleção" Enable Of oDlg
+Activate MSDialog  oDlg Center
+
+RestArea( aSalvAmb )
+dbSelectArea( "SM0" )
+dbCloseArea()
+
+Return  aRet
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºRotina    ³MARCATODOSºAutor  ³ Ernani Forastieri  º Data ³  27/09/04   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDescricao ³ Funcao Auxiliar para marcar/desmarcar todos os itens do    º±±
+±±º          ³ ListBox ativo                                              º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ Generico                                                   º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function MarcaTodos( lMarca, aVetor, oLbx )
+Local  nI := 0
+
+For nI := 1 To Len( aVetor )
+	aVetor[nI][1] := lMarca
+Next nI
+
+oLbx:Refresh()
+
+Return NIL
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºRotina    ³INVSELECAOºAutor  ³ Ernani Forastieri  º Data ³  27/09/04   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDescricao ³ Funcao Auxiliar para inverter selecao do ListBox Ativo     º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ Generico                                                   º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function InvSelecao( aVetor, oLbx )
+Local  nI := 0
+
+For nI := 1 To Len( aVetor )
+	aVetor[nI][1] := !aVetor[nI][1]
+Next nI
+
+oLbx:Refresh()
+
+Return NIL
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºRotina    ³RETSELECAOºAutor  ³ Ernani Forastieri  º Data ³  27/09/04   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDescricao ³ Funcao Auxiliar que monta o retorno com as selecoes        º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ Generico                                                   º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function RetSelecao( aRet, aVetor )
+Local  nI    := 0
+
+aRet := {}
+For nI := 1 To Len( aVetor )
+	If aVetor[nI][1]
+		aAdd( aRet, { aVetor[nI][2] , aVetor[nI][3], aVetor[nI][2] +  aVetor[nI][3] } )
+	EndIf
+Next nI
+
+Return NIL
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºRotina    ³ MARCAMAS ºAutor  ³ Ernani Forastieri  º Data ³  20/11/04   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDescricao ³ Funcao para marcar/desmarcar usando mascaras               º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ Generico                                                   º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function MarcaMas( oLbx, aVetor, cMascEmp, lMarDes )
+Local cPos1 := SubStr( cMascEmp, 1, 1 )
+Local cPos2 := SubStr( cMascEmp, 2, 1 )
+Local nPos  := oLbx:nAt
+Local nZ    := 0
+
+For nZ := 1 To Len( aVetor )
+	If cPos1 == "?" .or. SubStr( aVetor[nZ][2], 1, 1 ) == cPos1
+		If cPos2 == "?" .or. SubStr( aVetor[nZ][2], 2, 1 ) == cPos2
+			aVetor[nZ][1] :=  lMarDes
+		EndIf
+	EndIf
+Next
+
+oLbx:nAt := nPos
+oLbx:Refresh()
+
+Return NIL
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºRotina    ³ VERTODOS ºAutor  ³ Ernani Forastieri  º Data ³  20/11/04   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDescricao ³ Funcao auxiliar para verificar se estao todos marcardos    º±±
+±±º          ³ ou nao                                                     º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ Generico                                                   º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function VerTodos( aVetor, lChk, oChkMar )
+Local lTTrue := .T.
+Local nI     := 0
+
+For nI := 1 To Len( aVetor )
+	lTTrue := IIf( !aVetor[nI][1], .F., lTTrue )
+Next nI
+
+lChk := IIf( lTTrue, .T., .F. )
+oChkMar:Refresh()
+
+Return NIL
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±º Programa ³ MyOpenSM0º Autor ³ TOTVS Protheus     º Data ³  12/07/2011 º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±º Descricao³ Funcao de processamento abertura do SM0 modo exclusivo     ³±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±³ Uso      ³ MyOpenSM0  - Gerado por EXPORDIC / Upd. V.4.9.4 EFS        ³±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function MyOpenSM0(lShared)
+
+Local lOpen := .F.
+Local nLoop := 0
+
+For nLoop := 1 To 20
+	dbUseArea( .T., , "SIGAMAT.EMP", "SM0", lShared, .F. )
+
+	If !Empty( Select( "SM0" ) )
+		lOpen := .T.
+		dbSetIndex( "SIGAMAT.IND" )
+		Exit
+	EndIf
+
+	Sleep( 500 )
+
+Next nLoop
+
+If !lOpen
+	MsgStop( "Não foi possível a abertura da tabela " + ;
+	IIf( lShared, "de empresas (SM0).", "de empresas (SM0) de forma exclusiva." ), "ATENÇÃO" )
+EndIf
+
+Return lOpen
+
+
+/////////////////////////////////////////////////////////////////////////////

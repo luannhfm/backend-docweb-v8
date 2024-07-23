@@ -1,0 +1,96 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} SF34E06J
+Funcao utilizada no LP 696/001-002 - Cancelamento da contabilizacao dos contratos
+SGE - RM Classis
+@type function
+@author 	Jose Leite de Barros Neto
+@since 	18/08/2015
+@version 	1.0
+@return numeric, Valor a ser extornado
+/*/
+User Function SF34E06J()
+	
+	Local _aArea 	:= GetArea()
+	Local _aAreaCN9	:= CN9->(GetArea())
+	Local _aAreaSA1	:= SA1->(GetArea())
+	Local _nValor	:= 0
+	Local _cFilCt	:= CN9->CN9_FILIAL
+	Local _cCtrRM 	:= PADR(AllTrim(CN9->CN9_XCTRRM),TamSX3('CN9_XCTRRM')[1],Space(TamSX3('CN9_XCTRRM')[1]))
+	Local _cNumPla	:= StrZero(1,TamSX3('CNA_NUMERO')[1])
+	Local _cColig 	:= CN9->CN9_XCOLRM
+	Local _cChvCnw	:= ''
+	Local _cPessoa	:= ''
+	Local _cNumCtr	:= CN9->CN9_NUMERO
+	Local _cRevCtr	:= CN9->CN9_REVISA
+	Local _lOK		:= .F.
+	Local _lCombo	:= .F.
+	
+	DbSelectArea('SA1')
+	DbSetOrder(1)
+	If DbSeek(xFilial('SA1') + CN9->CN9_CLIENT + CN9->CN9_LOJACL)
+
+		_cPessoa := SA1->A1_PESSOA
+
+		If _cPessoa == 'F'
+			DbSelectArea('CN9')
+			CN9->( DbOrderNickName('CN9RMGCT') ) //CN9_FILIAL+CN9_XCTRRM+CN9_XCOLRM
+			CN9->( DbGotop() )
+			If CN9->( DbSeek( _cFilCt + _cCtrRM + _cColig) )
+				_lOK := .T.
+				_lCombo := Iif(CN9->CN9_XTCTRM == "1", .T.,.F.)
+			EndIf
+		ElseIf _cPessoa == 'J'
+			DbSelectArea('CN9')
+			CN9->( DbSetOrder(1)) //CN9_FILIAL+CN9_NUMERO+CN9_REVISA
+			CN9->( DbGotop() )
+			If CN9->( DbSeek( _cFilCt + _cNumCtr + _cRevCtr) )
+				_lOK := .T.
+				_lCombo := Iif(CN9->CN9_XTCTRM == "1", .T.,.F.)
+			EndIf
+		EndIf
+
+		//Verifica se é combo pra compor o valor total do Contrato
+		//Ajuste para exclusão de Contrato do Tipo Combo - Daniel Castro - 29/09/21
+		If _lCombo	
+			_nValor := CN9->CN9_VLINI 
+		else
+			_nValor := 0
+		EndIf
+		
+		If _lOK
+			DbSelectArea('CNV')
+			CNV->(DbSetOrder(2)) //CNV_FILIAL+CNV_CONTRA+CNV_REVISA+CNV_PLANIL
+			CNV->(DbGoTop())
+			CNV->( DbSeek( _cFilCt + _cNumCtr + _cRevCtr + _cNumPla) )
+			_cChvCnw := _cFilCt + _cNumCtr + _cRevCtr + CNV->CNV_NUMERO
+			DbSelectArea('CNW') 
+			CNW->(DbSetOrder(1)) //CNW_FILIAL+CNW_CONTRA+CNW_REVISA+CNW_NUMERO+CNW_PARCEL
+			CNW->(DbGoTop())
+			If CNW->(DbSeek( _cChvCnw ))
+				While .Not. CNW->( Eof() ) .And. _cChvCnw == CNW->CNW_FILIAL + CNW->CNW_CONTRA + CNW->CNW_REVISA + CNW->CNW_NUMERO
+					If _lCombo //Ajuste para exclusão de Contrato do Tipo Combo - Daniel Castro - 29/09/21
+						If CNW->CNW_FLGAPR = '1'
+							_nValor := _nValor - CNW->CNW_VLPREV 
+						EndIf
+					Else
+						If Empty(CNW->CNW_DTLANC)
+							_nValor := _nValor + CNW->CNW_VLPREV 				
+						EndIf
+					EndIf
+					CNW->(DbSkip())
+				EndDo
+			Else
+				// Walmir Junior 02/05/2019 - Tratativa para buscar o valor no campo CN9_SALDO,
+				// se o campo CN9_VLINI estiver com valor zerado.
+				_nValor := Iif(Empty(CN9->CN9_VLINI) .And. !Empty(CN9->CN9_XCTRRM),CN9->CN9_SALDO, CN9->CN9_VLINI)  // Adicionado para contabilizar exclusao de contrato sem turma iniciada - SGE
+			EndIf
+		EndIf
+			
+	EndIf
+	
+	RestArea(_aAreaCN9)
+	RestArea(_aAreaSA1)
+	RestArea(_aArea)
+	 
+Return( _nValor )

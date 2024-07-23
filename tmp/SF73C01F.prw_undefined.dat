@@ -1,0 +1,129 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} SF73C01F
+	Consulta (F3) específica(SU5002) de contatos da entidade para o campo [ADY_XASSIN - Cod. Assinante Contrato]
+	
+@author Franklin B. Oliveira
+@since 08/03/2018
+
+@type function
+/*/
+User Function SF73C01F()
+Local aArea		:= GetArea()
+Local cQuery	:= ""
+Local cEntidade	:= ""
+Local cCodEnt	:= ""
+Local lRet		:= .F.
+Local cAliTmp	:= "TMPSU5" 
+Local cPesq	 	:= Space(50) 
+Local nRecno	:= 0 
+Local oDlg		:= Nil
+Local oLstBx	:= Nil
+Local aContato	:= {}
+//Local bRet		:= {|| If(!Empty(aTail(oLstBx:aArray[oLstBx:nAt])),(lRet := .T.,nRecno := IIf(Len(oLstBx:aArray)>=oLstBx:nAt,aTail(oLstBx:aArray[oLstBx:nAt]),0),oDlg:End()),(lRet := .F.,MsgInfo(STR0208)))}
+Local bRet		:= {|| If(!Empty(aTail(oLstBx:aArray[oLstBx:nAt])),(lRet := .T.,nRecno := IIf(Len(oLstBx:aArray)>=oLstBx:nAt,aTail(oLstBx:aArray[oLstBx:nAt]),0),oDlg:End()),(lRet := .F.))}
+//Local bVisual	:= {|| SaveInter(),If(!Empty(aTail(oLstBx:aArray[oLstBx:nAt])),(nRecno := IIf(Len(oLstBx:aArray)>=oLstBx:nAt,aTail(oLstBx:aArray[oLstBx:nAt]),0),ALTERA := .F.,SU5->(DbGoTo(nRecno),A70Visual("SU5",nRecno,2))),Nil),RestInter()}
+Local oPesq
+
+	If !Empty(M->AD1_CODCLI)   
+		cEntidade := "SA1"
+		cCodEnt	:= M->AD1_CODCLI + M->AD1_LOJCLI 
+	ElseiF !Empty(M->AD1_PROSPE)   
+		cEntidade := "SUS"
+		cCodEnt	:= M->AD1_PROSPE + M->AD1_LOJPRO 
+	EndIf
+	
+	
+	If Empty(cEntidade)
+		MsgInfo("Nenhuma entidade (Código do Cliente/Código do Prospect) foi selecionada")
+		RestArea(aArea)
+		Return lRet
+	EndIf
+
+	cQuery	:= "SELECT U5_CODCONT,U5_CONTAT,SU5.R_E_C_N_O_ AS RECN FROM " + RetSqlName("SU5") + " SU5 "
+	cQuery	+= "INNER JOIN " + RetSqlName("AC8") + " AC8 ON AC8_FILIAL = '" + xFilial("AC8") + "' AND AC8_FILENT = '" + xFilial(cEntidade) + "' "
+	cQuery	+= "AND AC8_ENTIDA = '" + cEntidade + "' AND AC8_CODENT = '" + cCodEnt + "' AND AC8_CODCON = U5_CODCONT " 
+	cQuery	+= "AND AC8.D_E_L_E_T_ = '' "
+	cQuery	+= "WHERE SU5.D_E_L_E_T_ = ''"
+	
+	cQuery	:= ChangeQuery(cQuery)
+	
+	If Select(cAliTmp) > 0
+		(cAliTmp)->(DbCloseArea())
+	EndIf
+	
+	dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliTmp,.T.,.T.)
+	dbGoTop()
+	
+	While !(cAliTmp)->(Eof())
+		AAdd(aContato,{(cAliTmp)->U5_CODCONT,(cAliTmp)->U5_CONTAT,(cAliTmp)->RECN})
+		(cAliTmp)->(DbSkip())
+	End
+	
+	(cAliTmp)->(DbCloseArea())
+
+
+	If Len(aContato) == 0
+		 aAdd(aContato,{Nil,Nil,Nil})
+	EndIf
+	
+	DEFINE MSDIALOG oDlg TITLE "Consulta" FROM 268,260 TO 630,796 PIXEL
+	    
+		//Texto de pesquisa
+		@ 003,002 MsGet oPesq Var cPesq Size 219,009 COLOR CLR_BLACK PIXEL OF oDlg
+	
+		//Interface para selecao de indice e filtro
+		@ 003,228 Button "Pesquisar" Size 037,012 PIXEL OF oDlg	 ACTION IF(!Empty(aTail(oLstBx:aArray[oLstBx:nAt])),FtLbxSk(oLstBx,cPesq),Nil)
+								
+		//ListBox      
+		@ 20,03 LISTBOX oLstBx FIELDS HEADER "Código","Nome" SIZE 264,139 OF oDlg PIXEL
+		oLstBx:bLDblClick := bRet
+		
+		//Botoes inferiores
+		DEFINE SBUTTON FROM 162,002 TYPE 1	ENABLE OF oDlg Action(Eval(bRet)) //OK
+		DEFINE SBUTTON FROM 162,035 TYPE 2	ENABLE OF oDlg Action(oDlg:End()) //Cancelar 
+		//DEFINE SBUTTON FROM 162,068 TYPE 4	ENABLE OF oDlg Action A300IncCto(cEntidade,cCodEnt,oLstBx) //Incluir
+		//DEFINE SBUTTON FROM 162,102 TYPE 15	ENABLE OF oDlg Action(Eval(bVisual)) //Visualizar
+		
+		//Metodos da ListBox
+		oLstBx:SetArray(aContato)
+		oLstBx:bLine 	:= {|| {aContato[oLstBx:nAt,1],;
+			   					aContato[oLstBx:nAt,2],;
+								aContato[oLstBx:nAt,3]}}
+	
+	ACTIVATE MSDIALOG oDlg CENTERED 
+	
+	If lRet
+		DbSelectArea("SU5")
+		DbGoTo(nRecno)
+	EndIf
+	
+	If aArea[1] <> "SU5"
+		RestArea(aArea)
+	EndIf
+	
+Return (lRet)
+
+/*/{Protheus.doc} FtLbxSk
+//TODO Descrição auto-gerada.
+@author franklin.oliveira
+@since 08/03/2018
+@param oLstBx, object, tListBox
+@param cPesq, characters, descricao
+
+@type function
+/*/
+Static Function FtLbxSk(oLstBx, cPesq)
+Local nLen	:= 0
+Local nPos	:= 0 
+
+	cPesq 	:= AllTrim(Upper(cPesq))
+	nLen	:= Len(cPesq)
+	nPos	:= AScan(oLstBx:aArray,{|x| Left(Upper(x[2]),nLen) == cPesq })
+	
+	If nPos > 0
+		oLstBx:nAt := nPos
+		oLstBx:Refresh()
+	EndIf
+
+Return ( Nil )  

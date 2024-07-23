@@ -1,0 +1,102 @@
+#Include 'protheus.ch'
+
+/*/{Protheus.doc} SF01R01F
+Relatório que relaciona os bens aos seus respectivos responsáveis.
+Utiliza a mesma consulta e os mesmos parâmetros do termo de responsabilidade.
+@author Franklin B. Oliveira
+@since 18/06/2020
+@type user function
+/*/
+User Function SF01R01F()
+Local oReport
+	Pergunte("XSFATFR1",.F.)	
+	oReport := ReportDef()	
+	oReport:PrintDialog()	
+Return
+
+/*/{Protheus.doc} ReportDef
+Definição de sessão e células do relatório.
+@author Franklin B. Oliveira
+@since 18/06/2020
+@return oReport, objeto TReport
+@type static function
+/*/
+Static Function ReportDef()
+Local bAction	:= {|oReport| PrintReport(oReport)}
+Local cReport	:= "SF01R01F"
+Local cRepTitle	:= "Termo de Responsabilidade"
+Local cRepDescr	:= "Relatorio que relaciona os bens aos seus respectivos responsáveis"
+Local lLandsc	:= .F.
+Local oReport
+Local oSection
+Local oBreak
+	oReport := TReport():New( cReport, cRepTitle, "XSFATFR1", bAction, cRepDescr, lLandsc )
+	oReport:HideParamPage()
+	oSection := TRSection():New( oReport, "Local", { "SND", "RD0", "SN1", "SN3" } )
+	TRCell():New( oSection, "ND_FILIAL", "SND", /*cTitle*/, /*cPicture*/, 12 )
+	TRCell():New( oSection, "RD0_NOME", "RD0" )
+	TRCell():New( oSection, "N1_LOCAL", "SN1" )
+	TRCell():New( oSection, "NL_DESCRIC", "SNL", , , , , { || AllTrim( Posicione("SNL", 1, xFilial("SNL") + QRYSND->N1_LOCAL, "NL_DESCRIC") ) } )
+	TRCell():New( oSection, "ND_CBASE", "SND", /*cTitle*/, /*cPicture*/, 18 )
+	TRCell():New( oSection, "N1_DESCRIC", "SN1", /*cTitle*/, /*cPicture*/, 69 )
+	TRCell():New( oSection, "N1_XSERIEP", "SN1")
+	TRCell():New( oSection, "N1_AQUISIC", "SN1")
+	TRCell():New( oSection, "TOTAL", "SN3", "Vlr. Total", "@E 999,999,999.99", 14 )
+	TRCell():New( oSection, "N3_VRDACM1", "SN3", /*cTitle*/, /*cPicture*/, 18 )
+	TRCell():New( oSection, "RESIDUAL", "SN3", "Vlr. Residual", "@E 999,999,999.99", 14 )
+	oBreak := TRBreak():New( oSection, oSection:Cell("NL_DESCRIC"), "Sub Total Local" )
+	TRFunction():New( oSection:Cell("NL_DESCRIC"), NIL, "COUNT", oBreak, "Quantidade de bens no local: " )
+	TRFunction():New( oSection:Cell("TOTAL"), NIL, "SUM", oBreak, "Vlr. total de bens no local: " )
+	TRFunction():New( oSection:Cell("N3_VRDACM1"), NIL, "SUM", oBreak, "Vlr. total de Dep: " )
+	TRFunction():New( oSection:Cell("RESIDUAL"), NIL, "SUM", oBreak, "Vlr. total Res. no local: " )
+Return oReport
+
+/*/{Protheus.doc} PrintReport
+Função para impressão do relatório conforme objeto TReport definido anteriormente
+@author Franklin B. Oliveira
+@since 18/06/2020
+@param oReport, object, objeto TReport definido anteriormente
+@type function
+/*/
+Static Function PrintReport(oReport)
+Local oSection := oReport:Section(1)
+Local cBasItem1	:= MV_PAR03 + MV_PAR04
+Local cBasItem2	:= MV_PAR05 + MV_PAR06
+	//Transforma parametros do tipo Range em expressao SQL para ser utilizada na query 	
+	MakeSqlExpr("XSFATFR1")	
+	oSection:BeginQuery()	
+	If .Not. Empty(mv_par09)
+		_cWhere := "	AND N1_DESCRIC LIKE '%"+AllTrim(Upper(mv_par09))+"%' "
+	Else
+		_cWhere := "	AND 1=1 "	
+	EndIf
+	If mv_par10 == 1
+		_cWhere += " AND ND_FILIAL = '" + xFilial('SND') + "' "
+	EndIf
+	_cWhere := "%" + _cWhere + "%"			
+	BeginSql alias "QRYSND"		
+		Column N1_AQUISIC		as Date
+		Column TOTAL 			as Numeric(14,2)
+		Column RESIDUAL 		as Numeric(14,2)
+		SELECT ND_FILIAL, ND_CBASE, ND_ITEM, ND_CODRESP, RD0_NOME, RD0_TIPO, //  -- 1 = Interno / 2 = Externo
+				N1_DESCRIC, N1_LOCAL, N1_XSERIEP, N1_AQUISIC, 
+				(N3_VORIG1+N3_AMPLIA1) as TOTAL, N3_VRDACM1,( (N3_VORIG1+N3_AMPLIA1) - N3_VRDACM1 ) as RESIDUAL
+		FROM %Table:SND% SND
+		INNER JOIN %Table:RD0% RD0 ON RD0_FILIAL = %xFilial:RD0%  AND  RD0_CODIGO = ND_CODRESP AND RD0.%NotDel%
+		INNER JOIN %Table:SN1% SN1 ON N1_FILIAL = ND_FILIAL AND N1_CBASE = ND_CBASE AND N1_ITEM = ND_ITEM AND SN1.%NotDel%
+		INNER JOIN %Table:SN3% SN3 ON N3_FILIAL = ND_FILIAL AND N3_CBASE = ND_CBASE AND N3_ITEM = ND_ITEM AND SN3.%NotDel%
+		WHERE 	SND.%NotDel%
+				AND ND_CODRESP BETWEEN %Exp:MV_PAR01% AND %Exp:MV_PAR02%
+				AND ND_CBASE || ND_ITEM BETWEEN %Exp:cBasItem1% AND %Exp:cBasItem2%
+				AND ND_STATUS = "1"
+				AND N1_LOCAL BETWEEN %Exp:MV_PAR07% AND %Exp:MV_PAR08%
+				AND N1_QUANTD <> 0
+	      		%Exp:_cWhere%
+		ORDER BY ND_CODRESP, N1_LOCAL, ND_CBASE	
+	EndSql	
+	/*	Prepara relatorio para executar a query gerada pelo Embedded SQL passando como 	
+	parametro a pergunta ou vetor com perguntas do tipo Range que foram alterados 	
+	pela funcao MakeSqlExpr para serem adicionados a query	*/	
+	oSection:EndQuery(mv_par04)
+	oSection:Print()
+Return	

@@ -1,0 +1,216 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} SFCN901A
+@description Rotina criada para alimentar campos necessarios na versão Protheus 12 utilizados na medição do contrato.
+@type User Function
+@author Alan Teles de Oliveira
+@since 19/02/2019
+@version 12.1.17
+/*/
+User Function SFCN901A()
+
+    Local cAlTMP := GetNextAlias()
+    Local aNumPlan := {}
+
+	If Select(cAlTMP) > 0
+		(cAlTMP)->(DbCloseArea())
+	EndIf
+
+    BeginSQL Alias cAlTMP
+
+        SELECT 
+            CN9.CN9_FILIAL AS FILIAL,
+            CN9.CN9_NUMERO AS CONTRATO,
+            CN9.CN9_REVISA AS REVISAO,
+	        CN9.R_E_C_N_O_ AS REC
+        FROM %Table:CN9% CN9
+        WHERE
+            CN9.CN9_REVATU  = ' ' AND
+            CN9.CN9_CLIENT  = ' ' AND
+            CN9.CN9_XNROCV  = ' ' AND	
+            CN9.CN9_SALDO   > 0 AND
+            CN9.CN9_DTFIM   >= %Exp:DtoS(dDataBase)% AND
+            CN9.CN9_ESPCTR  IN (' ', '1') AND
+            CN9.%NotDel%
+
+    EndSQL
+
+    dbSelectArea(cAlTMP)
+
+	(cAlTMP)->(DbGoTop())
+
+	While .not. (cAlTMP)->(Eof())	
+
+        //fAltCN9((cAlTMP)->REC, (cAlTMP)->FILIAL)
+        
+        aNumPlan :=  fAltCNA((cAlTMP)->FILIAL, (cAlTMP)->CONTRATO, (cAlTMP)->REVISAO)
+                
+        fAltCNB((cAlTMP)->FILIAL, (cAlTMP)->CONTRATO, (cAlTMP)->REVISAO)        
+        fIncCPD((cAlTMP)->FILIAL, (cAlTMP)->CONTRATO, aNumPlan)
+
+        (cAlTMP)->(dbSkip())
+
+    End
+
+	If Select(cAlTMP) > 0
+		(cAlTMP)->(DbCloseArea())
+	EndIf
+
+Return 
+
+
+/*/{Protheus.doc} SFCN901A
+@description Alimento campos na tabela de Contratos. 
+@type User Function
+@author Alan Teles de Oliveira
+@since 19/02/2019
+@version 12.1.17
+/*/
+Static Function fAltCN9(p_nRec, p_cFil)
+
+    Local aArea := GetArea()
+
+    dbSelectArea('CN9')
+    CN9->(dbGoTo(p_nRec))
+
+    RecLock('CN9', .f.)
+        CN9->CN9_ESPCTR := '1'
+        CN9->CN9_FILCTR := p_cFil
+    CN9->(MsUnLock())
+
+    RestArea(aArea)
+
+Return 
+
+
+/*/{Protheus.doc} SFCN901A
+@description Alimento campos na tabela de Cabeçalho Planilhas Contratos.
+@type User Function
+@author Alan Teles de Oliveira
+@since 19/02/2019
+@version 12.1.17
+/*/
+Static Function fAltCNA(p_cFil, p_cContrato, p_cRevisao)
+
+    Local aArea := GetArea()
+    Local cPlan := ''
+    Local aRet := {}
+
+    dbSelectArea('CNA')
+    CNA->(dbGoTop())
+    CNA->(dbSetOrder(1)) //CNA_FILIAL+CNA_CONTRA+CNA_REVISA+CNA_NUMERO
+
+    If CNA->(dbSeek(p_cFil + p_cContrato + p_cRevisao))
+
+        While .not. CNA->(Eof()) .and. CNA->CNA_FILIAL = p_cFil .and. CNA->CNA_CONTRA = p_cContrato .and. CNA->CNA_REVISA = p_cRevisao
+
+            If cPlan != CNA->CNA_NUMERO
+
+                cPlan := CNA->CNA_NUMERO
+
+                aAdd(aRet, cPlan)
+            
+            EndIf
+
+            If Empty(CNA->CNA_RPGANT)
+            
+                RecLock('CNA', .f.)
+            
+                    CNA->CNA_RPGANT := '2'
+            
+                CNA->(MsUnLock())
+            
+            EndIf  
+
+            CNA->(dbSkip())
+
+        End              
+
+    EndIf
+
+    RestArea(aArea)
+
+Return aRet 
+
+
+/*/{Protheus.doc} SFCN901A
+@description Alimento campos na tabela de Itens das Planilhas Contratos.
+@type User Function
+@author Alan Teles de Oliveira
+@since 19/02/2019
+@version 12.1.17
+/*/
+Static Function fAltCNB(p_cFil, p_cContrato, p_cRevisao)
+
+    Local aArea := GetArea()
+
+    dbSelectArea('CNB')
+    CNB->(dbGoTop())
+    CNB->(dbSetOrder(1)) //CNB_FILIAL+CNB_CONTRA+CNB_REVISA+CNB_NUMERO+CNB_ITEM
+
+    If CNB->(dbSeek(p_cFil + p_cContrato + p_cRevisao))        
+
+        While .not. CNB->(Eof()) .and. CNB->CNB_FILIAL = p_cFil .and. CNB->CNB_CONTRA = p_cContrato .and. CNB->CNB_REVISA = p_cRevisao
+
+            If  Empty(CNB->CNB_ATIVO) .or. Empty(CNB->CNB_PEDTIT)
+
+                RecLock('CNB', .f.)
+
+                    CNB->CNB_ATIVO  := '1'
+                    CNB->CNB_PEDTIT := '1'
+                
+                CNB->(MsUnLock())
+
+            EndIf
+
+            CNB->(dbSkip())
+
+        End                
+
+    EndIf
+
+    RestArea(aArea)
+
+Return 
+
+
+/*/{Protheus.doc} SFCN901A
+@description Rotina criada para alimentar campos necessarios na versão Protheus 12 utilizados na medição do contrato.
+@type User Function
+@author Alan Teles de Oliveira
+@since 19/02/2019
+@version 12.1.17
+/*/
+Static Function fIncCPD(p_cFil, p_cContrato, p_aPlanilha)
+
+    Local aArea := GetArea()
+    Local nI    := 0
+
+	dbSelectArea('CPD')
+    CPD->(dbGoTop())
+    CPD->(dbSetOrder(1)) //CPD_FILIAL+CPD_CONTRA+CPD_NUMPLA+CPD_FILAUT
+
+    For nI := 1 to Len(p_aPlanilha)
+
+        If Empty(p_aPlanilha[nI])
+            Loop
+        EndIf
+
+        If .not. CPD->(dbSeek(p_cFil + p_cContrato + p_aPlanilha[nI] + p_cFil))
+
+            RecLock('CPD', .T.)
+
+                CPD->CPD_FILIAL := p_cFil
+                CPD->CPD_CONTRA := p_cContrato
+                CPD->CPD_NUMPLA := p_aPlanilha[nI]
+                CPD->CPD_FILAUT := p_cFil
+
+            CPD->(MsUnLock())
+
+        EndIf
+
+    Next
+	
+    RestArea(aArea)
+
+Return 

@@ -1,0 +1,215 @@
+/*/{Protheus.doc} SF06A08X
+(long_description)
+@type class
+@author Luiz
+@since 10/10/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+User Function SF06A08X(pParam)
+	
+	Local cParam  := pParam
+	Local cChave  := xFilial("SE1") + SE1->E1_PREFIXO + SE1->E1_NUM + SE1->E1_PARCELA + SE1->E1_TIPO
+	Local cData   := ""
+	Local cRet    := ""
+	Local aArea   := GetArea()
+	Local nLinArq := 0    	
+	Public nCont  := 0
+	
+	/***************************************************************************************************/
+	/*  quando o campo for numerico devera conter zeros a esquerda ate completar tamanho do campo      */  
+	/*  quando o campo for alfanumerico devera contem espaços a direita ate completar tamanho do campo */   
+	/*                                                                                                 */ 
+	/***************************************************************************************************/
+	
+	Do Case
+		
+		/*
+		*  HEADER
+		*   
+		*/		
+		//-> Data do movimento - ddmmaaaa
+		Case cParam == "1"
+			cData := DToS(dDataBase)
+			cRet  := SubStr(cData,7,2) + SubStr(cData,5,2) + SubStr(cData,1,4)
+		
+		//-> Entidade tamanho 05	
+		Case cParam == "2"
+			cRet := StrZero(Val(Posicione("ZF3",1,SE1->E1_FILIAL,"ZF3_ENT")),5)
+		
+		//-> Associado tamanho 08
+		Case cParam == "3"	  			
+			cRet := StrZero(Val(Posicione("ZF3",1,SE1->E1_FILIAL,"ZF3_ASSOC")),8)
+		
+		/*
+		* DETALHE 01 - (CONSUMIDOR)
+		*
+		*/
+		//-> Data Nascimento - ddmmaaaa
+		Case cParam == "4"
+			cData := DToS(SA1->A1_DTNASC)
+			cRet  := SubStr(cData,7,2) + SubStr(cData,5,2) + SubStr(cData,1,4)
+		
+		/*
+		* DETALHE 02 - (SPC)
+		*
+		*/
+		//-> Valida se titulo esta relacionado a CHQ
+		Case cParam == "11"		
+			DbSelectArea("SEF")
+			DbSetOrder(3)
+			If DbSeek(SE1->E1_FILIAL + SE1->E1_PREFIXO + SE1->E1_NUM + SE1->E1_PARCELA + SE1->E1_TIPO)
+				cRet := .F.
+			Else
+				cRet := .T.	
+			EndIf
+		
+		//-> Data de Vencimento	
+		Case cParam == "5"			
+			cData := DToS(SE1->E1_VENCREA)
+			cRet  := SubStr(cData,7,2) + SubStr(cData,5,2) + SubStr(cData,1,4)
+			
+		//-> Data de Compra	
+		Case cParam == "6" 
+			cData := DTOS(SE1->E1_EMISSAO)
+			cRet  := SubStr(cData,7,2) + SubStr(cData,5,2) + SubStr(cData,1,4)						
+
+		//-> Contrato
+		Case cParam == "7"	  			
+			//cRet := PADL(AllTrim(Posicione("ZF3",1,SE1->E1_FILIAL,"ZF3_CONTR")),30)
+			cRet := PADL(AllTrim(SE1->E1_NUM),30)
+		//-> Tipo Documento
+		Case cParam == "8"	  			
+			If !Empty(SE1->E1_XMOEXC) 
+				cRet := "E" 
+			Else
+				cRet := "I"
+			EndIf
+		//Walmir Junior 24/01/2017 - Tratamento do valor para apresentar as casas decimais e não arredondar valores.
+		//-> Valor Débito
+		Case cParam == "V"  
+			nValReal := (SE1->E1_SALDO - SE1->E1_DECRESC) * 100
+			Private _cVal := STR(nValReal) //+ Iif(!"." $ STR(nValReal),"00","")			
+			cRet := STRTRAN(SPACE(13 - LEN(ALLTRIM(StrTran(_cVal,".", "")))) + ALLTRIM(StrTran(_cVal,".","")), " ", "0")
+			                                                                                                                                                                            		
+		//-> Motivo de exclusao	
+		Case cParam == "15"
+			If !Empty(SE1->E1_XMOEXC) 
+				cRet := SE1->E1_XMOEXC 
+			Else
+				cRet := Space(03)
+			EndIf			
+		
+		/*
+		*  TRAILER
+		*
+		*/
+		//-> Quantidade de linhas do arquivo 
+		Case cParam == "9"	  	
+			If Type("lGerTer") <> "U" //.And. lGerTer
+				If lGerTer				
+					cRet := PADL(AllTrim(cValToChar(nLinLote+1)),6,"0")
+				EndIf
+			Else		
+				nLinArq := 2 * Count()	
+				nLinArq += 2
+				cRet := PADL(AllTrim(cValToChar(nLinArq)),6,"0")			
+			EndIf
+			
+		Case cParam == "10"
+			If Type("lGerTer") <> "U" //.And. lGerTer
+				If lGerTer					
+					nLinLote++
+					cRet := PADL(AllTrim(cValToChar(nLinLote)),6,"0")
+				EndIf
+			Else
+				cRet := PADL(AllTrim(cValToChar(F420LINLOT())),6,"0")
+			EndIf	
+			/*/
+				Atualiza campos 			
+			/*/			
+			/*/
+			If Empty(SE1->E1_XSPC) .And. Empty(SE1->E1_XSPCDT) 
+				DbSelectArea("SE1")
+				DbSetOrder(1)
+				If DbSeek(cChave)
+					While !SE1->(Eof()) .And. cChave == SE1->E1_FILIAL + SE1->E1_PREFIXO + SE1->E1_NUM + SE1->E1_PARCELA + SE1->E1_TIPO 						
+						If RecLock("SE1",.F.)						
+							SE1->E1_XSPC   := "S"
+							SE1->E1_XSPCDT := dDataBase							
+							MsUnLock()						
+						EndIf					
+						SE1->(DbSkip())
+					EndDo
+				EndIf
+			EndIf							
+			/*/
+		/*
+		* DETALHE 03
+		*
+		*/		
+		Case cParam == "12"	
+			DbSelectArea("SEF")
+			DbSetOrder(3)
+			If DbSeek(SE1->E1_FILIAL + SE1->E1_PREFIXO + SE1->E1_NUM + SE1->E1_PARCELA + SE1->E1_TIPO)
+				cRet := .T.
+			Else
+				cRet := .F.	
+			EndIf
+		
+		//-> Retorna data de emissao	
+		Case cParam == "13"							
+			cData := DTOS(Posicione("SEF",3, SE1->E1_FILIAL + SE1->E1_PREFIXO + SE1->E1_NUM + SE1->E1_PARCELA + SE1->E1_TIPO,"EF_DATA"))
+			cRet  := SubStr(cData,7,2) + SubStr(cData,5,2) + SubStr(cData,1,4)
+		
+		//-> Alinea
+		Case cParam == "14"
+			DbSelectArea("SEF")
+			DbSetOrder(3)
+			If DbSeek(SE1->E1_FILIAL + SE1->E1_PREFIXO + SE1->E1_NUM + SE1->E1_PARCELA + SE1->E1_TIPO)				
+				If !Empty(SEF->EF_ALINEA2)				
+					cRet := SEF->EF_ALINEA2
+				Else
+					cRet := SEF->EF_ALINEA1				
+				EndIf	
+			EndIf				
+						
+	EndCase 
+	
+	RestArea(aArea)
+	
+Return cRet
+
+/*/{Protheus.doc} Count
+(long_description)
+@author j2a.luizjunior
+@since 20/10/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function Count
+
+	Local cAlias := GetNextAlias()
+	Local nRet   := 0
+	
+	BeginSql Alias cAlias
+	
+		SELECT COUNT(*) as TOTAL 
+		FROM %Table:SE1%
+		WHERE E1_NUMBOR = %Exp:MV_PAR01%
+		AND   E1_FILIAL = %xFilial:SE1%
+		AND   %NotDel%
+		
+	EndSql
+	
+	If !(cAlias)->(Eof()) 
+		nRet := (cAlias)->TOTAL
+	EndIf
+	
+Return nRet

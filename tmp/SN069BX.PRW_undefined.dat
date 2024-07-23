@@ -1,0 +1,287 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "PARMTYPE.CH"
+//--
+#DEFINE GETF_ONLYSERVER                   0
+#DEFINE GETF_OVERWRITEPROMPT              1
+#DEFINE GETF_MULTISELECT                  2
+#DEFINE GETF_NOCHANGEDIR                  4
+#DEFINE GETF_LOCALFLOPPY                  8
+#DEFINE GETF_LOCALHARD                   16
+#DEFINE GETF_NETWORKDRIVE                32
+#DEFINE GETF_SHAREAWARE                  64
+#DEFINE GETF_RETDIRECTORY               128
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<SN069BX>                                                   |
+| Rotina GENERICA para impressao de Relatorio de LOG a Partir de Arquivos  |
+| TXT de Log's Gerados Pelo Sistemas em Rotinas de Rico.                   |
+|                                                                          |
+|	@Formato esperado do arquivo a ser lido                                |
+|	o arquivo deve ter pelo menos uma linha de cabecalho e de itens para   |
+|	ser impresso.                                                          |
+|	 Estrutura das linhas de cabecalhos                                    |
+|	 cab_coluna01: dado_col01                                              |
+|	 cab_coluna02: dado_col02                                              |
+|	 cab_coluna03: dado_col03                                              |
+|	 ...                                                                   |
+|	 Estrutura das linhas de itens -- primeira linha deve ser o cabecalho  |
+|	 cab_coluna01 ; cab_coluna02 ; cab_coluna03 ...                        |
+|	 dado_col01   ; dado_col02   ; dado_col03   ...                        |
+|	 dado_col01   ; dado_col02   ; dado_col03   ...                        |
+|	 dado_col01   ; dado_col02   ; dado_col03   ...                        |
+|	 dado_col01   ; dado_col02   ; dado_col03   ...                        |
+|	 ...                                                                   |
+|	A primeira linha que iniciar com # sera considerada o titulo do        |
+|	relatorio as demais linhas que iniciar com # serao considerada um      |
+|	comentario e serao deconsideradas                                      |
+|	 ...                                                                   |
+|@Author<Caio Lima>                                                        |
+|@since<08/05/2014>                                                        |
+|@version<Nil>                                                             |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<      _cArquivo (c) - Nome do Arquivo de Log a Ser lido e Impresso       |
+|>                                                                         |
+|@return                                                                   |
+|<   Nil >                                                                 |
++--------------------------------------------------------------------------+
+|@review                                                                   |
+|<>                                                                        |
+|@Author<>                                                                 |
+|@since<>                                                                  |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function SN069BX(_cArquivo)
+Local oReport
+Local _cTipo 			:= "Arquivos de texto (*.txt) |*.txt|Todos (*.*)|*.*"
+Local _nRetDirectory 	:= GETF_ONLYSERVER
+Local _cDirLog		 	:= GetNewPar("MV_XLOGPRO","\Pronatec\Logs\")    
+Local _cString			:= ""
+Local _nTamTx			:= 0
+Local _nCtaA 			:= 0
+//--
+Private _aLinhas 		:= {}
+Private _aCab    		:= {}
+Private _aItem   		:= {}
+Private _cTitulo 		:= ""
+Private _nLin 			:= 0 // Variavel sera utilizada no bloco de impressao
+Private _nCol 			:= 0 // variavel sera utilizada no bloco de impressao
+Private _cPerg 			:= ""
+Private _cALias 		:= ""
+Private _oCab			:= Nil 
+Private _oItem			:= Nil 
+Private _cPicture 		:= ""
+//--
+Private _cArqLOG		:= _cArquivo      
+/*
+	Jose Leite - 23/09/14
+	A funcao nao estava conseguindo carregar corretamente o diretorio de logs, ficando
+	decidido que o usuario irá escolher o diretorio
+	//Default _cArquivo 		:= cGetFile(_cTipo,"Selecione o arquivo",2,_cDirLog, .F., _nRetDirectory)
+*/
+Default _cArquivo  := cGetFile(_cTipo,"Selecione o arquivo",0,"SERVIDOR\",.T., _nRetDirectory)
+
+While Empty(_cArquivo)
+	If MsgYesNo("Para utilizar esse relatorio deve ser definido qual arquivo de log será utilizado."+CRLF+;
+				"Deseja continuar?")
+		_cArquivo := cGetFile(_cTipo,"Selecione o arquivo",2,_cDirLog, .F., _nRetDirectory)
+	Else
+		Exit
+	Endif
+EndDo
+// se o arquivo de log nao tiver sido definido sai da rotina
+If Empty(_cArquivo)
+	MsgAlert("Arquivo de log não foi definido.")
+	Return
+EndIf
+//-- *********************************************************************
+//--    Captura o NONE do Arquivo de LOG
+//-- *********************************************************************
+_cString	:= Alltrim(_cArquivo)
+_nTamTx		:= Len(_cString)
+_nCtaA 		:= 0
+For _nCtaA := _nTamTx to 1 step -1
+	If Substr(_cString,_nCtaA,1) == "\"
+		Exit			
+	Endif
+Next _nCtaA
+_cArqLOG	:= 	Substr(_cString,_nCtaA+1,_nTamTx)
+_aLinhas 	:= fLeArq(_cArquivo) // Variavel contendo todas as linhas do arquivo
+_aCab    	:= RetReg(_aLinhas, "C")
+_aItem   	:= RetReg(_aLinhas, "I")
+_cTitulo 	:= RetReg(_aLinhas, "T")
+_nLin 		:= 0 // Variavel sera utilizada no bloco de impressao
+_nCol 		:= 0 // variavel sera utilizada no bloco de impressao
+_cPerg 		:= ""
+_cALias 	:= GetNextAlias()
+_cPicture 	:= TM(999999999.99,14,2) // "@E 999,999,999.99"
+If Empty(_aCab) .OR. Empty(_aItem)
+	MsgInfo("Arquivo vazio ou com o formato errado.")
+	Return
+EndIf
+If FindFunction("TRepInUse") // .And. TRepInUse()
+	//-- Interface de impressao
+	oReport := ReportDef()
+	oReport:PrintDialog()
+EndIf
+
+Return
+//ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+// funcao Definicoes dos objetos treport
+//ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+Static Function ReportDef()
+Local oReport	:= Nil 
+Local _cDescri 	:= _cTitulo
+oReport := TReport():New("SN0637X",_cDescri,_cPerg,{|oReport| PrintReport(oReport)},_cDescri)
+oReport:SetLeftMargin(2)
+oReport:SetLandScape() // paisagem
+oReport:oPage:SetPaperSize(9) // papel A4
+oReport:SetEnvironment(2) // local
+_oCab  := TRSection():New(oReport,"Cabecalho", {""} )
+_nx := 0
+For _nx := 1 To Len(_aCab) // Cria as celulas de maneira dinamica baseado no numero de colunas que encontrar no arquvio
+	TRCell():New(_oCab,_aCab[_nx,1], "" , , , Len(_aCab[_nx,2]) , , {|| ImpCampos(1) } )
+Next _nx
+TRCell():New(_oCab,"Arq. LOG"   , "" , , , Len(_cArqLOG) , , {|| _cArqLOG } )
+
+_oItem := TRSection():New(oReport,"Itens"    , {""} )
+_oItem:SetLeftMargin(3)    
+_nx := 0
+For _nx := 1 To Len(_aItem[01]) // Cria as celulas de maneira dinamica baseado no numero de colunas que encontrar no arquvio
+	_lFildOco := Iif(Substr(_aItem[01,_nx],1,6) == "Ocorr,",.t.,.f.)
+	TRCell():New(_oItem,_aItem[01,_nx],"",,,Iif(_lFildOco,80,Len(_aItem[01,_nx])),,{||ImpCampos(2)})
+	If _lFildOco
+		_oItem:Cell(_aItem[01,_nx]):SetLineBreak(.T.)
+	EndIf
+Next _nx
+
+Return(oReport)
+//ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+// funcao usada nos bloco de codigos
+//ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+Static Function ImpCampos(_nSecao)
+Local _xRet
+_nCol++
+Do Case
+	Case _nSecao == 1
+		_xRet := _aCab[_nCol,2]
+	Case _nSecao == 2
+		_xRet := _aItem[_nLin,_nCol]
+	Case _nSecao == 2
+		_xRet := _aItem[_nLin,_nCol]
+	OtherWise
+		_xRet := ""
+EndCase
+Return(_xRet)
+
+//ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+//³funcao que realiza o filtro e imprimi os dados na tela³
+//ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+Static Function PrintReport(oReport)
+
+_nCol := 0 // Zera a variavel que controla o numero de colunas dinamicamente.
+_oCab:Init()
+_oCab:PrintLine()
+_oCab:Finish()
+
+oReport:SetMeter(0)
+
+_oItem:Init()
+For _nLin := 2 To Len(_aItem) // comeca a partir da segunda linha, a primeira e considerada cabecalho
+	oReport:IncMeter() // incrementa regua
+
+	if oReport:Cancel() // trata possivel cancelamento do relatorio.
+		oReport:PrintText("CANCELADO PELO USUÁRIO")
+		exit
+	Endif
+	
+	_nCol:= 0 // Zera a variavel que controla o numero de colunas dinamicamente.
+	
+	_oItem:PrintLine()
+Next
+_oItem:Finish()
+
+Return
+//ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+// funcao que retorna um array com os dados referente ao cabecalho ou os itens dos registros contidos no arquivo
+//ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+Static Function RetReg(_aLinhas, _cTipo)
+Local _xRet 	:= {}
+Local _aCab 	:= {}
+Local _aItem 	:= {}
+Local _nPos 	:= 0
+
+If _cTipo == "T"
+	_nPos := aScan(_aLinhas, {|x| Substr( x ,01,01) == "#" } )
+	If _nPos > 0
+		_xRet := SubStr( _aLinhas[_nPos],02,Len(_aLinhas[_nPos]) )
+	Else
+		_xRet := ""
+	EndIf
+Endif
+
+If _cTipo $ "C|I"
+	For _nx := 1 To Len(_aLinhas)
+		If Substr( _aLinhas[_nx] ,01,01) == "#" // Pula Linha de comentario
+			Loop
+		Endif
+		
+		If ";" $ _aLinhas[_nx]
+			// Estrutura das linhas de itens
+			// cab_coluna01 ; cab_coluna02 ; cab_coluna03 ...
+			// dado_col01   ; dado_col02   ; dado_col03   ...
+			// dado_col01   ; dado_col02   ; dado_col03   ...
+			// dado_col01   ; dado_col02   ; dado_col03   ...
+			// dado_col01   ; dado_col02   ; dado_col03   ...
+			Aadd(_aItem , StrTokArr(_aLinhas[_nx], ";") )
+		ElseIf ":" $ _aLinhas[_nx]
+			// Estrutura das linhas de cabecalhos
+			// cab_coluna01: dado_col01
+			// cab_coluna02: dado_col02
+			// cab_coluna03: dado_col03
+			// ...
+			Aadd(_aCab , StrTokArr(_aLinhas[_nx], ":") )
+		Endif
+	Next
+EndIf
+
+If _cTipo == "C"
+	_xRet := _aCab
+ElseIf _cTipo == "I"
+	_xRet := _aItem
+EndIf
+
+Return(_xRet)
+//ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+// funcao que le o arquivo e retorna um array com todos as linhas do arquivo
+//ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+Static Function fLeArq(_cArquivo , _aLinhas)
+Default _aLinhas := {}
+
+nHandle := FT_FUse(_cArquivo)
+
+// Se houver erro de abertura abandona processamento
+if nHandle = -1
+	Alert("Não foi possivel abrir o arquivo "+_cArquivo)
+	return
+endif
+// Posiciona na primeria linha
+FT_FGoTop()
+// Retorna o número de linhas do arquivo
+//nLast := FT_FLastRec()
+While !FT_FEOF()
+	cLine  := FT_FReadLn()
+	Aadd(_aLinhas, cLine)
+	// Pula para próxima linha
+	FT_FSKIP()
+EndDo
+// Fecha o Arquivo
+FT_FUSE()
+
+Return(_aLinhas)

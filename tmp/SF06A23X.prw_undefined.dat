@@ -1,0 +1,278 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} SF06A23X
+Funcao responsavel por atualizar alguns campos customizado da SE1
+campos esses que serão utilizados para atualização do boleto
+@author j2a.caiolima
+@since 07/08/2017
+/*/
+User Function SF06A23X()
+	Local _aArea := GetArea()
+	
+	Local _aAcho := {"NOUSER", "E1_FILIAL" , "E1_NUM"    , "E1_PREFIXO", "E1_PARCELA", "E1_TIPO"   , "E1_CLIENTE", "E1_LOJA"                 ;
+		                     , "E1_NOMCLI" , "E1_VALOR"  , "E1_VENCTO" , "E1_VENCREA", "E1_XNEWVAL", "E1_XNEWEMI", "E1_XNEWVEN"              ;
+		                     , "E1_XSPC"   , "E1_XSPCDT" , "E1_XEXCSPC", "E1_XMOEXC" , "E1_XCOBJ"  , "E1_XCOBJDT", "E1_XDR"     , "E1_XDTTER";
+		                     , "E1_XSITUAC", "E1_XNUMBOR", "E1_XDATABO" }
+	Local _aCPos := {"E1_XNEWVAL", "E1_XNEWEMI", "E1_XNEWVEN"}
+    Local cBanUni   := GetNewPar('MV_XBANCO', '')
+    Local cAgeUni 	:= GetNewPar('MV_XAGENC', '')
+    Local cConUni 	:= GetNewPar('MV_XCONTA', '')
+
+	If fValReg()
+		
+		// Cria listagem de dados para gerar eventos de Alterações dos Boletos para serem enviados ao banco do Brasil via API de Integração de Boletos.
+		If SE1->E1_PORTADO = cBanUni .and. SE1->E1_AGEDEP = cAgeUni .and. SE1->E1_CONTA = cConUni .and. SE1->E1_XENVBOL = '4'
+			U_F06A64XA()
+		EndIf
+
+		_cValid    := "StaticCall(SF06A23X, ValAtuBol)"
+		_cTransact := "StaticCall(SF06A23X, FTRANSACT)"
+		AxAltera("SE1", SE1->(Recno()), 4, _aAcho, _aCPos,,, _cValid, _cTransact)
+
+		If SE1->E1_PORTADO = cBanUni .and. SE1->E1_AGEDEP = cAgeUni .and. SE1->E1_CONTA = cConUni .and. SE1->E1_XENVBOL  $ '24'
+			// Analisa dados e gera eventos de Alterações dos Boletos para serem enviados ao banco do Brasil via API de Integração de Boletos.
+			U_F06A64XS()
+		EndIf
+			
+	EndIf
+	
+	RestArea(_aArea)
+Return
+
+/*/{Protheus.doc} FCXNEWV
+funcao para calcular o valor atualizado do titulo, com juros e multa
+Utilizada no gatilho do campo E1_XNEWVEN
+@author j2a.caiolima
+@since 08/08/2017
+@return numerico, retorna o valor atualizado do titulo com juros e multa
+/*/
+User Function FCXNEWV(cTipo, _nRecno, _lValor)
+	Local _nRet := 0
+	Local _nDias := 0
+	Local _nJuros := 0
+	Local _nMulta := 0
+	Local _nPercJur
+	Local _nJur
+	Local _dNewvEN
+	Local _dVenc
+	Local _nValor
+	// na rotina de boleto puxa do camop SEE->EE_XMULTA
+	// porém nesse momento, como está limpando os campos, não da pra posicionar na SEE
+	// por isso pega a multa do parametro
+	Local _nPercMul := GetMV("MV_XMULBOL" ,, 2)
+	_nPercMul := _nPercMul / 100
+	
+	Default cTipo    := "VALOR"
+	Default _nRecno  := 0
+	Default _lValor  := .F.
+	
+	If U_SF06A01W(M->E1_VENCREA, M->E1_PREFIXO)
+		if _lValor
+			_nValor  := SE1->E1_VALOR
+		Else
+			_nValor  := SE1->E1_SALDO - SE1->E1_SDDECRE
+		EndIf
+		Return _nValor
+	EndIf
+	
+	If _nRecno = 0
+		_nJur    := M->E1_PORCJUR
+		_dNewvEN := M->E1_XNEWVEN
+		_dVenc   := M->E1_VENCREA
+		if _lValor
+			_nValor  := M->E1_VALOR
+		Else
+			_nValor  := M->E1_SALDO + SE1->E1_SDACRES - SE1->E1_SDDECRE
+		EndIf
+	Else
+		SE1->(dbGoTo(_nRecno))
+		_nJur    := SE1->E1_PORCJUR
+		_dNewvEN := SE1->E1_XNEWVEN
+		_dVenc   := SE1->E1_VENCREA
+		if _lValor
+			_nValor  := SE1->E1_VALOR
+		Else
+			_nValor  := SE1->E1_SALDO + SE1->E1_SDACRES - SE1->E1_SDDECRE
+		EndIf
+	EndIf
+	
+	_nPercJur := _nJur / 100 // ao dia - geralmente 0.0333
+	
+	_nDias := (_dNewvEN - _dVenc)
+	
+	If _nDias >= 1 .AND. !Empty(_dNewvEN)
+		_nJuros := (_nDias * _nPercJur) * _nValor
+		_nMulta := _nPercMul * _nValor
+	EndIf
+	
+	Do Case
+		Case Upper(cTipo) = "VALOR"
+			_nRet := _nValor + _nMulta + _nJuros
+		Case Upper(cTipo) = "JUROS"
+			_nRet := _nJuros
+		Case Upper(cTipo) = "MULTA"
+			_nRet := _nMulta
+		Case Upper(cTipo) = "CNAB" .AND. _nRecno > 0 // Walmir Junior 19/04/2018 - Tratativa para chamada da função na Remessa do CNAB.
+			If !Empty(_dNewvEN) 
+				_nRet := SE1->E1_XNEWVAL
+			Else
+				_nRet := SE1->E1_SALDO
+			EndIf
+	EndCase
+Return(_nRet)
+
+/*/{Protheus.doc} VLNEWVEN
+funcao que valida a digitacao da data de vencimento atual da atualizacao do boleto
+@author j2a.caiolima
+@since 08/08/2017
+@return Logico, true se for uma data valida e falso se não for valida
+/*/
+User Function VLNEWVEN()
+	Local _lRet := .T.
+	Local _cMsg := ""
+	
+	//Paulo Schwind - 30/05/2019 - Alterado vencimento de 140 param 150 dias 
+	//If M->E1_XNEWVEN - M->E1_VENCREA > 140
+	If M->E1_XNEWVEN - M->E1_VENCREA > 180
+		_lRet := .F.
+		//_cMsg += "-> Vencimento atual não pode ser maior que 140 dias em relação ao vencimento real do titulo." + CRLF
+		_cMsg += "-> Vencimento atual não pode ser maior que 180 dias em relação ao vencimento real do titulo." + CRLF
+	EndIf
+	
+	If M->E1_XNEWVEN <= M->E1_VENCREA
+		_lRet := .F.
+		_cMsg += "-> O campo Vencimento atual precisa ser maior que o vencimento real do titulo." + CRLF
+	EndIf
+	
+	If M->E1_XNEWVEN < Date()
+		_lRet := .F.
+		_cMsg += "-> O Vencimento atual não pode ser retroativo." + CRLF
+	EndIf
+	
+	If !_lRet
+		Aviso("Atenção", _cMsg , {"ok"},3 )
+	EndIf
+Return(_lRet)
+
+/*/{Protheus.doc} ValAtuBol
+Valida se o registro pode ser atualizado
+@author j2a.caiolima
+@since 08/08/2017
+@return Logico, True se pode ser atualizado ou falso caso não possa ser atualizado
+/*/
+Static Function ValAtuBol()
+	Local _lRet := .T.
+	
+	If EMPTY(M->E1_XNEWVEN) .OR. M->E1_XNEWVAL <= 0
+		_lRet := .F.
+		Alert("Para a atualização do boleto os campos 'vencimento atual' e 'valor atual' precisam estar preenchidos.")
+	EndIf
+Return(_lRet)
+
+/*/{Protheus.doc} FTRANSACT
+Funcao a ser executada dentro da transação
+@author j2a.caiolima
+@since 08/08/2017
+/*/
+Static Function FTRANSACT()
+	Local _aArea := GetArea()
+	
+	dbSelectArea("SEA")
+	SEA->(dbSetOrder(2)) // EA_FILIAL+EA_NUMBOR+EA_CART+EA_PREFIXO+EA_NUM+EA_PARCELA+EA_TIPO+EA_FORNECE+EA_LOJA
+	If SEA->( dbSeek(xFilial("SEA")+SE1->E1_NUMBOR+"R"+SE1->E1_PREFIXO+SE1->E1_NUM+SE1->E1_PARCELA+SE1->E1_TIPO) )
+		
+		RecLock("SEA", .F.)
+		SEA->(dbDelete())
+		SEA->(MsUnlock())
+	EndIf
+	
+	SE1->E1_NUMBOR  := Space(TamSX3("E1_NUMBOR ")[1])
+	SE1->E1_NUMBCO  := Space(TamSX3("E1_NUMBCO ")[1])
+	SE1->E1_IDCNAB  := Space(TamSX3("E1_IDCNAB ")[1])
+//	SE1->E1_PORTADO := Space(TamSX3("E1_PORTADO")[1])
+//	SE1->E1_AGEDEP  := Space(TamSX3("E1_AGEDEP ")[1])
+//	SE1->E1_CONTA   := Space(TamSX3("E1_CONTA  ")[1])
+	SE1->E1_XNUMBCO := Space(TamSX3("E1_XNUMBCO")[1])
+	SE1->E1_XENVBOL := '2'
+	//Walmir Junior 14/02/2020 -	Tratativa para não limpar campo para títulos gerados no educacional e importados via integração financeira.
+	//								Neste caso a informação do campo E1_XIDCNAB é utilizada para saber se título a receber é realmente devido e não um "provisório".
+	If !(SE1->E1_PREFIXO $ 'RMC#SGE') 
+		SE1->E1_XIDCNAB := Space(TamSX3("E1_XIDCNAB")[1])
+	EndIf
+	SE1->E1_DATABOR := STOD("")
+	SE1->E1_SITUACA := "0"
+	//SE1->E1_SDACRES := SE1->E1_XNEWVAL - SE1->E1_VALOR
+	//SE1->E1_ACRESC  := SE1->E1_XNEWVAL - SE1->E1_VALOR
+	
+	//SE1->E1_JUROS  := U_FCXNEWV("JUROS") // SE1->E1_XNEWVAL - SE1->E1_VALOR
+	//SE1->E1_MULTA  := U_FCXNEWV("MULTA") // SE1->E1_XNEWVAL - SE1->E1_VALOR
+	
+	RestArea(_aArea)
+Return nil
+
+/*/{Protheus.doc} fValReg
+Valida se o titulo pode ser atualizado
+@author j2a.caiolima
+@since 08/08/2017
+@return logico, true se titulo está para ser atualizado, falso se não estiver ok
+/*/
+Static Function fValReg
+	Local _lRet := .T.
+	Local _cMsg := ""
+	
+	dbSelectArea("ZEF")
+	ZEF->(DbSetOrder(1))
+	If ZEF->(MsSeek( SE1->E1_FILIAL+SE1->E1_PREFIXO+SE1->E1_NUM+SE1->E1_PARCELA+SE1->E1_TIPO )) .And. ZEF->ZEF_RECORR = "S"
+		_lRet := .F.
+		_cMsg += "-> Atenção o boleto selecionado está na modalidade de recebimento 'Cobrança Recorrente'." + CRLF
+		_cMsg += "-> Se você realmente precisa atualizar, remova o título desta modalidade de recebimento." + CRLF
+		_cMsg += "-> Lembre-se porém de atualizar no portal do fornecedor do serviço de cobrança recorrente." + CRLF
+	EndIf
+	
+	If Empty(SE1->E1_XNUMBCO) .AND. Empty(SE1->E1_XNEWVAL)
+		_lRet := .F.
+		_cMsg += "-> Boleto não gerado para esse titulo, não precisa ser atualizado" + CRLF
+	EndIf
+	
+	If SE1->E1_SALDO <> SE1->E1_VALOR
+		_lRet := .F.
+		_cMsg += "-> Titulos baixados não podem ser atualizados" + CRLF
+	EndIf
+	
+	If SE1->E1_XNEWVAL > 0 .AND. !Empty(SE1->E1_NUMBOR)
+		_lRet := .F.
+		_cMsg += "-> Titulo já foi atualizado e o bordero já foi gerado, não poderá mais ser atualizado." + CRLF
+	EndIf
+	
+	If SE1->E1_VENCREA >= Date()
+		_lRet := .F.
+		_cMsg += "-> Rotina disponivel apenas para titulos vencidos." + CRLF
+	EndIf
+
+	//Walmir Junior 30/04/2018 - Alterada validação do campo E1_EMISSAO para E1_VENCREA.
+	//Paulo Schwind 13/05/2019 - Alterada a permissão para atualização do boleto de : 40 dias para até 30
+	//If (Date() - SE1->E1_VENCREA) < 40
+	If (Date() - SE1->E1_VENCREA) < 30	
+		dbSelectArea("ZEF")
+		ZEF->(DbSetOrder(1))
+		If ZEF->(MsSeek( SE1->E1_FILIAL+SE1->E1_PREFIXO+SE1->E1_NUM+SE1->E1_PARCELA+SE1->E1_TIPO )) .And. !Empty(ZEF->ZEF_DTRECO)
+		Else
+			_lRet := .F.
+			//_cMsg += "-> Apenas titulos vencidos a mais de 40 dias podem ser atualizados." + CRLF
+			_cMsg += "-> Apenas titulos vencidos a mais de 30 dias podem ser atualizados." + CRLF
+		EndIf
+	EndIf
+	
+	//Walmir Junior 12/04/2017 - Alteração de 140 para 180 dias.
+    //Paulo Schwind 13/05/2019 - Alterada a permissão de 140 para 150	
+	//If (Date() - SE1->E1_VENCREA) > 140
+    If (Date() - SE1->E1_VENCREA) > 180
+		_lRet := .F.
+		//_cMsg += "-> Apenas titulos vencidos até 140 dias podem ser atualizados." + CRLF
+		_cMsg += "-> Apenas titulos vencidos até 180 dias podem ser atualizados." + CRLF
+	EndIf	
+	If !_lRet
+		Aviso("Atenção", _cMsg , {"ok"},3 )
+	EndIf
+	
+Return(_lRet)

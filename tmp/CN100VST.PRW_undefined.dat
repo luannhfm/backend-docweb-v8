@@ -1,0 +1,247 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+
+/*/{Protheus.doc} CN100VST
+Alteração na situação do contrato.
+LOCALIZAÇÃO: Function CN100SitCh - Função executada na alteração da situação do contrato.
+EM QUE PONTO: Executado antes do processamento da alteração.
+@author Microsiga
+@since 22/11/12
+@return lRet, Confirma se altera ou não a situação do contrato.
+@see https://tdn.totvs.com/pages/releaseview.action?pageId=6089557
+@type user function
+@history 19/10/2020, Franklin de Brito de Oliveira, Removido verificação de notas fiscais emitidas no cancelamento de contrato.
+/*/
+User Function CN100VST()
+	
+	Local _lRet    	:= .T.
+	Local _aArea   	:= GetArea()
+	Local _aUsrGrp 	:= {}
+	Local _cGrpVst 	:= GetNewPar("MV_XATSCTR","000000")
+	Local _cUsrVst 	:= GetNewPar("MV_XUTSCTR","000000")
+	Local _lGrpVst	:= .F.
+	Local _lIsAdm	:= FwIsAdmin()
+	Local _cNewSit	:= ParamIXB[1]
+	Local _cMsg		:= ""
+	
+	CNA->(dbSetOrder(1))
+	If CNA->(dbSeek(XFilial("CNA")+CN9->(CN9_NUMERO+CN9->CN9_REVISA)))
+		
+		While CNA->(!Eof()) .and. CNA->(CNA_FILIAL+CNA_CONTRA+CNA_REVISA) == XFilial("CNA")+CN9->(CN9_NUMERO+CN9_REVISA)
+			
+			If Empty(CNA->CNA_TIPPLA)
+				_cMsg := "Favor informar o tipo da planilha!"
+				Aviso("Atenção",_cMsg,{"Sair"})
+				_lRet := .F.
+				Exit
+			EndIf
+			
+			CNA->(dbSkip())
+		End
+	EndIf
+	
+	/* 	19-04-16 - Jose Leite - CSI
+		Tratamento para os CTR Venda - CRM
+		Somente alguns grupos podem alterar a situacao dos contratos 
+	*/
+	If .Not. Empty(CN9->CN9_XOPORT) .And. .Not. Empty(CN9->CN9_XREVOP)
+		
+		IIF(_lIsAdm,ConOut("Is ADmin"),ConOut("NoIs ADmin"))
+		
+		If _lIsAdm
+			_lGrpVst := .T.
+		Else
+			
+			If "02MT" $ cFilAnt .And. (CN9->CN9_SITUAC == "05" .And. _cNewSit == "01")
+				If __cUserID $ _cUsrVst 
+					_lGrpVst := .T.
+				EndIf	
+				/*Else
+					_aUsrGrp := UsrRetGrp( UsrRetName( __cUserID ), __cUserID )
+					For i := 1 To Len(_aUsrGrp)
+						If _aUsrGrp[i] $ _cGrpVst 
+							_lGrpVst := .T.
+							Exit
+						EndIf
+					Next
+				EndIf*/
+			ElseIf "03MT" $ cFilAnt 
+				If __cUserID $ _cUsrVst .And. (CN9->CN9_SITUAC == "05" .And. _cNewSit == "01")
+					_lGrpVst := .T.
+				Else
+					If CN9->CN9_SITUAC <> "05"
+						_lGrpVst := .T.
+					EndIf
+				EndIf
+			Else
+				_aUsrGrp := UsrRetGrp( UsrRetName( __cUserID ), __cUserID )
+				For i := 1 To Len(_aUsrGrp)
+					If _aUsrGrp[i] $ _cGrpVst 
+						_lGrpVst := .T.
+						Exit
+					EndIf
+				Next
+			EndIf
+
+		EndIf
+		
+		If _lGrpVst
+			_lRet := _lGrpVst
+		Else
+			_cMsg := "Usuário sem permissão para Alterar a Situação do Contrato!"
+			Aviso("Atenção",_cMsg,{"Sair"})
+			ConOut(_cMsg)
+			_lRet := .F.
+		EndIf
+	
+	EndIf
+	
+	/* 22/06/2016 - Jose Leite - CSI
+		Tratamento para verificar se o campo de vigencia/execucao e menor que o campo da situacao anterior
+		alterada pelo schedule.
+	*/
+	If .Not. Empty(CN9->CN9_XDASIT)
+		If CN9->CN9_DTINIC < CN9->CN9_XDASIT  
+			_cMsg := "A Data de Inicio do Contrato tem que ser Diferente da Data da Alteração da Situação Anterior (Schedule), Favor verificar"
+			Aviso("Atenção",_cMsg,{"Sair"})
+			ConOut(_cMsg)
+			_lRet := .F.
+		EndIf
+	EndIf
+	
+	/* 14/08/2017 - Jose Leite - CSI
+		Tratamento para contrato PJ - SENAI - Com NF
+	*/
+	/*
+	If .Not. Empty(CN9->CN9_XOPORT) .And. .Not. Empty(CN9->CN9_XREVOP)
+		If "03MT" $ cFilAnt .And. CN9->CN9_SITUAC == "05" .And. _cNewSit == "01"
+			_lRet := fVldNf("1")
+			If .Not. _lRet
+				_cMsg := "Não é possível realizar o cancelamento do contrato, pois existe Nota Fiscal emitida e títulos em aberto (Sem Nosso Número)."+CRLF
+				_cMsg += "Caso queira cancelar o contrato, terá que cancelar a Nota Fiscal antes do contrato." +CRLF
+				_cMsg += "Favor verificar!"
+				Aviso("Atenção",_cMsg,{"Sair"})
+			EndIf
+		EndIf
+	EndIf
+	*/
+	/* 26/09/2017 - Jose Leite - CSI
+		Tratamento para Contrato de Venda - Valida cliente na receita
+	*/
+	If _lRet .And. _cNewSit == '05' .And. .Not. Empty(AllTrim(CN9->CN9_XOPORT)) .And. .Not. Empty(AllTrim(CN9->CN9_XREVOP))
+		_lRet := u_SF73E08J(CN9->CN9_CLIENT,CN9->CN9_LOJACL)
+	EndIf
+	
+	RestArea( _aArea )
+
+Return( _lRet )
+
+
+/** {Protheus.doc} fVldNf
+Funcao para validar o se pode ser realizada o cancelamento do contrato
+
+@author: 	Jose Leite de Barros Neto
+@since: 	14/08/2017
+@Uso: 		FIEMT
+*/
+Static Function fVldNf(p_cOpc)
+	
+	Local _lOk  := .T.
+	Local _lPed	:= .F.
+	Local _lNf	:= .F.
+	Local _lTit	:= .F.
+	Local _cQry	:= ""
+	Local _cDoc	:= ""
+	Local _cSer	:= ""
+	
+	/* Sem boleto e Sem baixa
+	   Se tem NF emitida (Com titulos em abertos ou sem boletos), não pode cancelar o contrato.
+	   Tem que cancelar primeiro a NF
+	*/ 
+	If p_cOpc == "1" 
+		
+		If Select("TRA") > 0
+			DbSelectarea("TRA")
+			TRA->(DbCloseArea())
+		EndIf
+		
+		_cQry := " SELECT C5_FILIAL, C5_NUM, C5_NOTA, C5_SERIE, C5_MDCONTR " +CRLF
+		_cQry += " FROM "+ RetSqlName("SC5") + " "+CRLF
+		_cQry += " WHERE C5_FILIAL = '"+ CN9->CN9_FILIAL +"' "+CRLF
+		_cQry += "  AND C5_MDCONTR = '"+ CN9->CN9_NUMERO +"' "+CRLF
+		_cQry += "  AND C5_NOTA    <> ' ' "+CRLF
+		_cQry += "  AND C5_BLQ     = ' '  "+CRLF
+		_cQry += "  AND D_E_L_E_T_ <> '*' "+CRLF
+		
+		TCQUERY _cQry NEW ALIAS "TRA"	
+		
+		While .Not. TRA->( Eof() )
+			_cDoc := TRA->C5_NOTA
+			_cSer := TRA->C5_SERIE
+			TRA->(DbSkip())
+		End
+		
+		TRA->( DbCloseArea() )
+		
+		If .Not. Empty(AllTrim(_cDoc)) .And. .Not. Empty(AllTrim(_cSer))
+			_lPed := .T.
+		EndIf
+		
+		If _lPed
+			_cQry := " SELECT F2_FILIAL, F2_DOC, F2_SERIE, F2_CLIENTE, F2_LOJA "+CRLF
+			_cQry += " FROM "+ RetSqlName("SF2") + " "+CRLF
+			_cQry += " WHERE F2_FILIAL = '"+ CN9->CN9_FILIAL +"' "+CRLF
+			_cQry += "  AND F2_DOC     = '"+ _cDoc +"' "+CRLF
+			_cQry += "  AND F2_SERIE   = '"+ _cSer +"' "+CRLF
+			_cQry += "  AND F2_CLIENTE = '"+ CN9->CN9_CLIENT +"' "+CRLF
+			_cQry += "  AND F2_LOJA    = '"+ CN9->CN9_LOJACL +"' "+CRLF
+			_cQry += "  AND D_E_L_E_T_ <> '*' "+CRLF
+			
+			TCQUERY _cQry NEW ALIAS "TRA"	
+			
+			_cDoc := ""
+			_cSer := ""
+			
+			While .Not. TRA->( Eof() )
+				_cDoc := TRA->F2_DOC
+				_cSer := TRA->F2_SERIE
+				TRA->(DbSkip())
+			End
+			
+			TRA->( DbCloseArea() )
+			
+			If .Not. Empty(AllTrim(_cDoc)) .And. .Not. Empty(AllTrim(_cSer))
+				_lNf  := .T.
+			EndIf
+			
+			If _lNf
+				_cQry := " SELECT E1_FILIAL, E1_PREFIXO, E1_NUM, E1_CLIENTE, E1_LOJA, E1_STATUS, E1_NUMBCO "+CRLF 
+				_cQry += " FROM "+ RetSqlName("SE1") + " "+CRLF
+				_cQry += " WHERE E1_FILIAL = '"+ CN9->CN9_FILIAL +"' "+CRLF
+				_cQry += "  AND E1_PREFIXO = '"+ _cSer +"' "+CRLF
+				_cQry += "  AND E1_NUM     = '"+ _cDoc +"' "+CRLF
+				_cQry += "  AND E1_CLIENTE = '"+ CN9->CN9_CLIENT +"' "+CRLF
+				_cQry += "  AND E1_LOJA    = '"+ CN9->CN9_LOJACL +"' "+CRLF
+				_cQry += "  AND D_E_L_E_T_ <> '*' "+CRLF
+				
+				TCQUERY _cQry NEW ALIAS "TRA"	
+				
+				While .Not. TRA->( Eof() )
+					If TRA->E1_STATUS == 'A' .OR. Empty(AllTrim(TRA->E1_NUMBCO))
+						_lTit := .T.
+						Exit
+					EndIf
+					TRA->(DbSkip())
+				End
+				
+				TRA->( DbCloseArea() )
+			EndIf
+		EndIf
+		
+		If _lTit
+			_lOk := .F.
+		EndIf
+		
+	EndIf
+		
+Return( _lOk )

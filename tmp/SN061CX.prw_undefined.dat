@@ -1,0 +1,566 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"                                                     
+#INCLUDE "PARMTYPE.CH"     
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"    
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<SN061CX>                                                   |
+|Rotinas para Geracao dos Arquivos de Solicitação de Cartões Pré Pago - BB |  
+|    ATENCAO:                                                              |
+|    --------                                                              |
+|    Para utilizar a faciliade verifique o criacao e declaracao do         |
+|    parametro: Layout de Pre-Cadastro - Remessa                           |
+|    MV_XREMCAD	:= "\Pronatec\Layouts\PreCad\Remessa\"        			   |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<03/06/2014>                                                        |
+|@version<001>                                                             |
+|@return<Nil>,<Nil>                                                        |
+|                                                                          |
+|@parameters<Nil>                                                          |
+|@return<Nil>                                                              |
++--------------------------------------------------------------------------+
+|Uso        |SENAI										     			   |
++-----------+--------------------------------------------------------------+
+*/
+User Function SN061CX()
+Private _cTitle  	:= "Gera Solicitação de Cartões Pré Pago - BB"
+Private _nQdtCard	:= 0.00				//-- Quantidade de Cartoes que seram solicitada    
+//-- **********************************************************************
+//--    Declaração de Variaveis Private dos Objetos
+//-- **********************************************************************
+SetPrvt("_oDlgCART","_oSayQTD","_oGetQTD","_oBtnOK","_oBtnESC")
+If ZP1->ZP1_XSCARD != "S"
+	Aviso(FunName()+"/"+ProcName(),"Convenio Selecionado não gera solicitação de Cartão pré pago!",{"OK"})
+	Return .f.
+Endif 
+If ZP1->ZP1_XSTATU != "A"
+	Aviso(FunName()+"/"+ProcName(),"Convenio NÃO ATIVO!",{"OK"})
+	Return .f.
+Endif 
+//-- **********************************************************************
+//--    Definicao do Dialog e todos os seus componentes.
+//-- **********************************************************************
+_oDlgCART   := MSDialog():New( 202,326,359,699,_cTitle,,,.F.,,,,,,.T.,,,.T. )
+_oSayQTD    := TSay():New( 024,016,{||"Quantidade de Cartões  a Solicitar:"},_oDlgCART,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,084,008)
+_oGetQTD    := TGet():New( 021,100,{|u| If(PCount()>0,_nQdtCard:=u,_nQdtCard)}	,_oDlgCART,060,008,"@E 999,999.99"	,{|| _nQdtCard>0.00 }	,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","_nQdtCard",,)
+//--
+_oBtnOK     := TButton():New( 048,084,"OK"			,_oDlgCART,{|| u_fGeraRem() }		,037,012,,,,.T.,,"",,,,.F. )
+_oBtnESC    := TButton():New( 048,124,"Cancelar"	,_oDlgCART,{|| _oDlgCART:End() }	,037,012,,,,.T.,,"",,,,.F. )
+//--
+_oDlgCART:Activate(,,,.T.)
+Return .t.
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGeraRem>                                                  |
+|Rotina Responsavel pela chamadas as rotinas que gerar o arquivo de        |
+|remessa e que, Modifica o FLAG dos Conveniados enviado na remessa.        |
+|																		   |
+|@Author<Antonio Dantas>                                                   |
+|@since<03/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@Receive                                                                  |
+|<  Nihil                                                                  |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _lRemOK (l) - (.t.) Se a Geracao do Arquivo foi OK                    |
+|                  (.f.) Por qualquer motivo não gerou arquivo de remesa   |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+User Function fGeraRem()
+Local _nAviso			:= 0
+Private _lRemOK			:= .t.
+Private _aRecnos		:= {}
+Private _cRemCart 		:= 0 			//-- Variavel private a ser usada pelo arquivo de layout
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Implementa controle de Transacao.                                  ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If _lRemOK
+	_nAviso	:= Aviso(FunName()+"/"+ProcName(),"Confirma a geração do arquivo de Solicitação dos cartões?",{"Sim","Não"})
+	If _nAviso == 1 	// Confirmou a geracao do arquivo de remessa para cartoes
+		Processa( {|| fGerArqCar() }, "Gera Arq. de Solicitação", "Processando...")
+	Endif
+Endif
+Return _lRemOK
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGerArqCar>                                                |
+|Rotina Responsavel Gerar o Arquivo de Remessa para requisitar cartoes     |
+|																		   |
+|@Author<Antonio Dantas>                                                        |
+|@since<03/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@Receive                                                                  |
+|< Nil                                                                     |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _lRemOK (l) - (.t.) Se a Geracao do Arquivo foi OK                    |
+|                  (.f.) Por qualquer motivo não gerou arquivo de remesa   |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGerArqCar()
+Local _cArLayout	:= ZP1->ZP1_XPRREM
+Local _cConven		:= ZP1->ZP1_XCONV
+Local _cPathRoot	:= GetNewPar("MV_XREMCAD","\Pronatec\Layouts\PreCad\Remessa\")
+Local _aArqLyt 		:= {} // Alterada para private pois sera usada em outras funcoes 
+Local _aHeader 		:= {}
+Local _aDetalhe 	:= {}
+Local _aTrailler	:= {}
+Local _nH_Arq		:= 0
+Local _cTexto		:= ""
+Local _cFileLog		:= ""
+Local _nRegs		:= 0
+Local _bBlock		:= "" 
+Local _cDados 		:= ""   
+Local _cMkTp 		:= ""
+Local _cPathRem		:= ""
+Local _cNomArqR		:= ""
+Private _cNumRem	:= ""    
+Private _nCtaREG	:= 0   
+Private _cNomArqR	:= ""
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Validacoes antes da chamada da rotina de geracao do arquivo de Remesa ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If Alltrim(_cArLayout) == ""
+	Aviso(FunName()+"/"+ProcName(),"Não foi informado neste Convênio o nome do Arquivo de Configuração do Arquivo de Remessa!",{"OK"})
+	_lRemOK := .f.
+Endif
+If _lRemOK
+	_cArqRem := cGetFile('Arquivo |*.*','Salvar Arquivo',1,'C:\TEMP',.F.,GETF_LOCALHARD)
+	If _cArqRem == ""
+		Aviso(FunName()+"/"+ProcName(),"Nome do Arquivo de Remessa não Foi Informado!",{"OK"})
+		_lRemOK := .f.
+	Endif       
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Se o operador informat ponto(.) gera nome do Arquivo de Remessa.      ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_cMkTp := Substr(_cArqRem,Len(Alltrim(_cArqRem)),1)
+	If _cMkTp == "."
+		_cPathRem	:= Substr(_cArqRem,1,Len(Alltrim(_cArqRem))-1)
+		_cNomArqR	:= Alltrim(ZP1->ZP1_XCONTR)+"_"+dtos(dDataBase)+StrTran(Time(),":","")+".TXT"
+		_cArqRem	:= _cPathRem+_cNomArqR 
+		Aviso(FunName()+"/"+ProcName(),"Arquivo de Remessa será gerado com nome ["+_cNomArqR+"].",{"OK"})
+	Else		
+		_cString	:= Alltrim(_cArqRem)
+		_nTamTx		:= Len(_cString)
+		_nCtaA 		:= 0
+		For _nCtaA := _nTamTx to 1 step -1
+			If Substr(_cString,_nCtaA,1) == "\"
+				Exit			
+			Endif
+		Next _nCtaA
+		_cNomArqR	:= 	Substr(_cString,_nCtaA+1,_nTamTx)
+	Endif
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Cria e Abre o Arquivo de Remessa                                      ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_nH_Arq	:= fCreate(_cArqRem)
+Endif      
+If _lRemOK
+	If !File(_cPathRoot+Alltrim(_cArLayout))
+		Aviso(FunName()+"/"+ProcName(),"Arquivo de Layout: "+_cPathRoot+Alltrim(_cArLayout)+". não foi encontrado!",{"OK"})
+		_lRemOK := .f.
+	EndIf
+EndIf     
+If _lRemOK
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Carrega o Layout do Arquivo de Remessa                                ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_aArqLyt 	:= u_fCrArqIn(_cPathRoot+Alltrim(_cArLayout))
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Identifica os Arrays de Header, Detalhe e Trailler                    ³
+	//³ OBS: Caso venha a existir tipo de arquivos com mais de uma linha por  ³
+	//³      tipo; Tratar caso a caso. Deve-se adicionar ao array do tipo e   ³
+	//³      tratar na seguencia.                                             ³
+	//³      - Inicialmente estamos considerando um de cada tipo.             ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ  
+	_nCtaA	:= 0
+	For _nCtaA := 1 To Len(_aArqLyt) 
+		_cLinTP := Substr(_aArqLyt[_nCtaA,1],2,1)
+		Do Case
+			Case _cLinTP == "H"   	//-- Header
+				_aHeader 	:= _aArqLyt[_nCtaA,4]
+			Case _cLinTP == "D"   	//-- Detalhe
+				_aDetalhe 	:= _aArqLyt[_nCtaA,4]
+			Case _cLinTP == "T" 	//-- Trailler
+				_aTrailler	:= _aArqLyt[_nCtaA,4]   
+		Endcase
+	Next _nCtaA
+Endif 	
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Trata caso a caso os Layout's da Remessa                              ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ  
+If _lRemOK .and. Len(_aDetalhe) > 0
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ ***** GERA CABECALHO "Header"                                         ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	//-- 
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Antonio Dantas                                            30/06/2014  ³
+	//³ Austes para permitir ao operador modificar o numero seguencial da     ³
+	//³ remessa no momento da geracao do arquivo.                             ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ  
+&&-- 	_cNumRem := fGetNrRe(ZP1->ZP1_XCONV,ZP1->ZP1_XCONTR)  
+	_cNumRem 	:= u_fGerCodZPA(FwxFilial("ZPA"),ZP1->ZP1_XCONV)   
+	_cNumRem 	:= fTrIDsc(ZP1->ZP1_XCONV)
+ 	If _lRemOK .and. Len(_aHeader) >= 1
+		_cTexto := ""
+ 		_cDados := ""
+		_nCtaA	:= 0
+ 		For _nCtaA := 1 To Len(_aHeader) 
+			_bBlock	:= {|| &(_aHeader[_nCtaA,2]) }
+ 			_cDados := Eval(_bBlock)
+ 			_cDados := StrTran(_cDados,Chr(13)+Chr(10),Space(2))
+ 			_cTexto += _cDados
+		Next _nCtaA
+		_cTexto += Chr(13)+Chr(10) 
+        //-- Grava a Linha de Cabecalho "Header" do Arquivos Remessa 
+		If fWrite(_nH_Arq,_cTexto,Len(_cTexto)) != Len(_cTexto)
+			If !MsgAlert("Ocorreu um erro na gravacao do arquivo.","Atencao!")
+				_lRemOK := .f.
+			Endif
+		Endif
+	Endif 
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ ***** GERA DETALHE "Detalhe"                                          ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+ 	//--     
+ 	If _lRemOK .and. Len(_aDetalhe) >= 1
+		//-- Trata condicao de controle, so sera verdadeira se houver registros para remessa	
+		_lRemOK := .F.   
+		_nRegs	:= ZP3->(RecCount())
+		ProcRegua(_nRegs)
+		//-- Monta a Linha detalhe Conforme Layout 
+ 		_cDados := ""
+		_cTexto := ""
+		_nCtaA 	:= 0 
+		For _nCtaA := 1 To Len(_aDetalhe) 
+			_bBlock	:= {|| &(_aDetalhe[_nCtaA,2]) }
+ 			_cDados := Eval(_bBlock)
+ 			_cDados := StrTran(_cDados,Chr(13)+Chr(10),Space(2))
+ 			_cTexto += _cDados
+		Next _nCtaA
+		_cTexto += Chr(13)+Chr(10) 
+		//-- Grava as Linhas de Informacoes "Detalhe" no Arquivos Remessa 
+		If fWrite(_nH_Arq,_cTexto,Len(_cTexto)) != Len(_cTexto)
+			If !MsgAlert("Ocorreu um erro na gravacao do arquivo.","Atencao!")
+				_lRemOK := .f.
+			Endif
+		EndIf
+		_lRemOK := .T.
+	Endif 		
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ ***** GERA RODAPE "Trailler"                                          ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+ 	//-- 
+ 	If _lRemOK .and. Len(_aTrailler) >= 1     
+ 		_cDados := ""
+ 		_cTexto := ""
+		_nCtaA	:= 0
+ 		For _nCtaA := 1 To Len(_aTrailler) 
+			_bBlock	:= {|| &(_aTrailler[_nCtaA,2]) }
+ 			_cDados := Eval(_bBlock)
+ 			_cDados := StrTran(_cDados,Chr(13)+Chr(10),Space(2))
+ 			_cTexto += _cDados
+		Next _nCtaA
+		_cTexto += Chr(13)+Chr(10) 
+        //-- Grava a Linha de Rodape "Trailler" do Arquivos Remessa 
+		If fWrite(_nH_Arq,_cTexto,Len(_cTexto)) != Len(_cTexto)
+			If !MsgAlert("Ocorreu um erro na gravacao do arquivo.","Atencao!")
+				_lRemOK := .f.
+			Endif
+		EndIf
+	Endif
+	If !_lRemOK
+		Aviso(FunName()+"/"+ProcName(),"Não existem Conveniados aptos para gerar cartao!",{"OK"})
+	Endif 
+Endif  	
+fClose(_nH_Arq) 
+If Aviso(FunName()+"/"+ProcName(),"Solicitação gerada com Sucesso. Confirma a solicitação?",{"Sim","Não"}) == 1
+	fGrvRemSl(ZP1->ZP1_XCONV,ZP1->ZP1_XCONTR,_cNumRem,_cNomArqR,_nQdtCard)
+Endif 
+Return _lRemOK 
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Antonio Dantas                                            30/06/2014  ³
+//³ As rotinas abaixo foram descontinuadas em decorrencia da modificacao  ³
+//³ da sistematica de geracao de Numero de Remessa; Deve ser permitido    ³
+//³ ao operador modificar o numero seguencia da remessa, porem, nao       ³
+//³ que ele possa utilizar um numero de remessa de PAGAMENTO.             ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ  
+&&-- 
+&&-- 
+&&-- /*
+&&-- +--------------------------------------------------------------------------+
+&&-- |{Protheus.doc}<fGetNrRe>                                                  |
+&&-- |Devolve o Codigo da Solicitacao de Cartoes Pre-Pago - BB                  |
+&&-- |																		   |
+&&-- |@Author<Antonio Dantas>                                                   |
+&&-- |@since<04/06/2014>                                                        |
+&&-- |@version<Nil>                                                             |
+&&-- |                                                                          |
+&&-- |@Receive                                                                  |
+&&-- |< _cConvenio (c) - Codigo do Convenio                                     |
+&&-- |  _cContrato (c) - Codigo do Contrato                                     |
+&&-- |>                                                                         |
+&&-- |@return<Nil>                                                              |
+&&-- |<   _cNumRem (c) - Codigo Numerico da Remessa                             |
+&&-- |>                                                                         |
+&&-- +--------------------------------------------------------------------------+
+&&-- |Uso        |SENAI 	     												   |
+&&-- +-----------+--------------------------------------------------------------+
+&&-- */
+&&-- Static Function fGetNrRe(_cConvenio,_cContrato)
+&&-- Local _cNumRem		:= ""
+&&-- Local _cQuery		:= ""  
+&&-- Local _ChrBreak		:= Chr(13)+Chr(10)
+&&-- _cQuery	:= ""
+&&-- _cQuery	+= "Select *From "+RetSqlName("ZPB")+" "+_ChrBreak
+&&-- _cQuery	+= "where D_E_L_E_T_ <> '*' "+_ChrBreak
+&&-- _cQuery	+= "and ZPB_FILIAL = '"+FwxFilial("ZPB")+"' "+_ChrBreak
+&&-- _cQuery	+= "and ZPB_XCONV = '"+_cConvenio+"' "+_ChrBreak
+&&-- _cQuery	+= "and ZPB_XCONTR = '"+_cContrato+"' "+_ChrBreak
+&&-- _cQuery	+= "Order by ZPB_XCODIG Desc"+_ChrBreak 
+&&-- MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+&&-- If Select("TMPZPB")>0
+&&-- 	TMPZPB->(DbCloseArea())
+&&-- Endif  
+&&-- //-- ********************************************************************
+&&-- //--    Retorna {TMP} Tabela temporaria com o resultado da Query 
+&&-- //-- ********************************************************************
+&&-- dbUseArea(.t.,"TOPCONN",TCGENQRY(,,_cQuery),"TMPZPB",.t.,.t.)
+&&-- dbSelectArea("TMPZPB")
+&&-- TMPZPB->(dbGoTop())
+&&-- //-- ********************************************************************
+&&-- //--    Nao encontrou nenhuma Remessa em Aberto
+&&-- //-- ********************************************************************
+&&-- If TMPZPB->(Eof()) .and. TMPZPB->(Bof())
+&&-- 	_cNumRem := Strzero(1,TamSX3("ZPB_XCODIG")[1])
+&&-- Else
+&&-- 	_cNumRem := Strzero(Val(TMPZPB->ZPB_XCODIG)+1,TamSX3("ZPB_XCODIG")[1])
+&&-- Endif
+&&-- TMPZPB->(DbCloseArea())
+&&-- Return _cNumRem
+&&-- 
+&&-- 
+&&--  
+&&-- /*
+&&-- +--------------------------------------------------------------------------+
+&&-- |{Protheus.doc}<fGrvRemSl>                                                 |
+&&-- | Grava (Gera) o controle de Remessa da Solicitacao de Cartao Pre Pago.    |
+&&-- |																		   |
+&&-- |@Author<Antonio Dantas>                                                   |
+&&-- |@since<04/06/2014>                                                        |
+&&-- |@version<Nil>                                                             |
+&&-- |                                                                          |
+&&-- |@Receive                                                                  |
+&&-- |< _cConvenio (c) - Codigo do Convenio                                     |
+&&-- |  _cContrato (c) - Codigo do Contrato                                     |
+&&-- |    _cNumRem (c) - Codigo com o qual a Remessa foi Gerada                 |
+&&-- |   _cNomArqR (c) - Nome do Arquivo Gerado                                 |
+&&-- |   _nQdtCard (c) - Quantidade Solicitada                                  |
+&&-- |>                                                                         |
+&&-- |@return<Nil>                                                              |
+&&-- |< .t.                                                                     |
+&&-- |>                                                                         |
+&&-- +--------------------------------------------------------------------------+
+&&-- |Uso        |SENAI 	     												   |
+&&-- +-----------+--------------------------------------------------------------+
+&&-- */
+&&-- Static Function fGrvRemSl(_cConvenio,_cContrato,_cNumRem,_cNomArqR,_nQdtCard)
+&&-- Local _aArea	:= GetArea() 
+&&-- Local _cMensag 	:= ""
+&&-- dbSelectArea("ZPB")
+&&-- ZPB->(dbSelectArea(1))
+&&-- If !(ZPB->(dbSeek(FwxFilial("ZPB")+_cConvenio+_cContrato+_cNumRem)))
+&&-- 	ZPB->(RecLock("ZPB",.t.))
+&&-- 	Replace ZPB->ZPB_FILIAL	With FwxFilial("ZPB")	 	//-- Filial
+&&-- 	Replace ZPB->ZPB_XCONV	With _cConvenio				//-- Codigo do Convenio 
+&&-- 	Replace ZPB->ZPB_XCONTR	With _cContrato				//-- Contrato
+&&-- 	Replace ZPB->ZPB_XCODIG	With _cNumRem				//-- Codigo
+&&-- 	Replace ZPB->ZPB_XARQRE	With _cNomArqR				//-- Arq Remessa
+&&-- 	Replace ZPB->ZPB_XDATA	With dDataBase 				//-- Data
+&&-- 	Replace ZPB->ZPB_XQTD	With _nQdtCard				//-- Quantidade
+&&-- 	Replace ZPB->ZPB_XUSER	With __cUserId				//-- Cod User
+&&-- 	ZPB->(MsUnLock())
+&&-- 	ZPB->(dbCommit())
+&&-- Else
+&&-- 	_cMensag := "ATENÇÃO! "+Chr(13)+Chr(10)
+&&-- 	_cMensag += "Não Foi possivel GRAVA a Remessa GERADA ["+_cNumRem+"]. "
+&&-- 	_cMensag += "Já existe uma remessa com o mesmo numero criada por "
+&&-- 	_cMensag += "outra instância, tornando a remessa invalida."+Chr(13)+Chr(10)
+&&-- 	_cMensag += "Retorne e Gere uma nova remessa."
+&&-- 	Aviso(FunName()+"/"+ProcName(),_cMensag,{"OK"})
+&&-- Endif
+&&-- RestArea(_aArea)
+&&-- Return .t.             
+&&-- 
+&&-- 
+&&-- 
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGrvRemSl>                                                 |
+| Grava (Gera) o controle de Remessa da Solicitacao de Cartao Pre Pago.    |
+|																		   |
+|@Author<Antonio Dantas>                                                   |
+|@since<04/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@Receive                                                                  |
+|< _cConvenio (c) - Codigo do Convenio                                     |
+|  _cContrato (c) - Codigo do Contrato                                     |
+|    _cNumRem (c) - Codigo com o qual a Remessa foi Gerada                 |
+|   _cNomArqR (c) - Nome do Arquivo Gerado                                 |
+|   _nQdtCard (c) - Quantidade Solicitada                                  |
+|>                                                                         |
+|@return<Nil>                                                              |
+|< .t.                                                                     |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGrvRemSl(_cConvenio,_cContrato,_cNumRem,_cNomArqR,_nQdtCard)
+Local _aArea	:= GetArea() 
+Local _cMensag 	:= ""
+dbSelectArea("ZPA")
+ZPA->(dbSetOrder(3))			//-- Codigo da Remessa 
+If (ZPA->(dbSeek(FwxFilial("ZPA")+_cConvenio+_cNumRem+"RL")))
+	If ZPA->ZPA_XTIPO == "SC"
+		ZPA->(RecLock("ZPA",.f.))
+		Replace ZPA->ZPA_XDATA  With dDataBase			//-- Data Remessa
+		Replace ZPA->ZPA_XCONVE With _cConvenio			//-- Convenio    
+	 	//-- 
+		Replace ZPA->ZPA_XFLREM With _cNomArqR  		//-- Arq Remessa
+		Replace ZPA->ZPA_XQTDE  With _nQdtCard
+		Replace ZPA->ZPA_XSTATU With "E" 				//-- Status da Remessa: R=Remessa Efetivada
+		//-- 	
+		Replace ZPA->ZPA_XCONTR With ZP1->ZP1_XCONTR   
+		Replace ZPA->ZPA_XUSER  With __cUserID
+		ZPA->(MsUnLock())
+		ZPA->(dbCommit())
+	Else 
+		_cMensag := "ATENÇÃO! "+Chr(13)+Chr(10)
+		_cMensag += "Não Foi possivel GRAVA a Remessa GERADA ["+_cNumRem+"]. "
+		_cMensag += "Já existe uma remessa de PAGAMENTO com o mesmo numero criada por "
+		_cMensag += "outra instância, tornando a remessa invalida."+Chr(13)+Chr(10)
+		_cMensag += "Retorne e Gere uma nova remessa."
+		Aviso(FunName()+"/"+ProcName(),_cMensag,{"OK"})
+	Endif 
+Else
+	ZPA->(RecLock("ZPA",.t.))
+	Replace ZPA->ZPA_FILIAL With FwxFilial("ZPA")	//-- Filial
+	Replace ZPA->ZPA_XCOD   With _cNumRem			//-- Codigo
+	Replace ZPA->ZPA_XDATA  With dDataBase			//-- Data Remessa
+	Replace ZPA->ZPA_XPERID With ""		 			//-- Cod Periodo
+	Replace ZPA->ZPA_XSEG   With ""					//-- Seg Calendar
+	Replace ZPA->ZPA_XSESSA With "" 				//-- Cod Sessao
+	Replace ZPA->ZPA_XCONVE With _cConvenio			//-- Convenio    
+	 	//-- 
+	Replace ZPA->ZPA_XFLREM With _cNomArqR  		//-- Arq Remessa
+	Replace ZPA->ZPA_XVLRRE With 0.00 				//-- Vlr Remessa     
+	Replace ZPA->ZPA_XQTDE  With _nQdtCard
+	Replace ZPA->ZPA_XSTATU With "E" 				//-- Status da Remessa: R=Remessa Efetivada
+	//-- 	
+	Replace ZPA->ZPA_XCONTR With ZP1->ZP1_XCONTR   
+	Replace ZPA->ZPA_XUSER  With __cUserID
+	Replace ZPA->ZPA_XTIPO  With "SC"
+	ZPA->(MsUnLock())
+	ZPA->(dbCommit())
+Endif
+RestArea(_aArea)
+Return .t.  
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fTrIDsc>                                                  |
+| Implementa interface "Tela" para que o operador possa consulta e modifica|  
+| o Codigo da REMESSA, ao seleciona na CONSULTA padrao ZPAC o codigo       |
+| a consulta padrao devolve o NUMERO + 1 para implementar a seguencia      |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<30/06/2014>                                                        |
+|@version<001>                                                             |
+|@Receive                                                                  |
+|<   _cConvenio (c) - Codigo do Convenio                                   |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _cNumRem (c) - NOVO NUMERO da Remessa                                 |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI										     			   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fTrIDsc(_cConvenio)  
+Private _cTitle  	:= "Numero de Remessa"   
+//-- **********************************************************************
+//--    Declaração de Variaveis Private dos Objetos
+//-- **********************************************************************
+SetPrvt("_oDlgIDsc","_oSayIDsc","_oGetIDsc","_oBtOKID","_oBtESCsc")
+//-- **********************************************************************
+//--   Garante a posicionamento do convenio para ser utilizado pela
+//--   consulta Padrao ZPAC
+//-- **********************************************************************
+DbSelectArea("ZP1")
+DbSetOrder(1)
+ZP1->(dbSeek(FwxFilial("ZP1")+_cConvenio))
+//-- **********************************************************************
+//--    Definicao do Dialog e todos os seus componentes.
+//-- **********************************************************************
+_oDlgIDsc	:= MSDialog():New( 220,340,350,710,_cTitle,,,.F.,,,,,,.T.,,,.T. )
+_oSayIDsc	:= TSay():New( 023,030,{||"Numero da Remessa:"},_oDlgIDsc,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,080,008)
+_oGetIDsc	:= TGet():New( 020,090,{|u| If(PCount()>0,_cNumRem:=u,_cNumRem)}	,_oDlgIDsc,060,008,"@!"	,{|| u_VldNrR(_cConvenio,_cNumRem) }	,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"ZPAC","_cNumRem",,)
+//--
+_oBtnOKsc	:= TButton():New( 040,075,"OK"			,_oDlgIDsc,{|| _oDlgIDsc:End() }	,037,012,,,,.T.,,"",,,,.F. )
+_oBtESCsc	:= TButton():New( 040,115,"Cancelar"	,_oDlgIDsc,{|| _oDlgIDsc:End() }	,037,012,,,,.T.,,"",,,,.F. )
+//--
+_oDlgIDsc:Activate(,,,.T.)
+Return _cNumRem
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<VldNrR>                                                    |
+| Valida o codigo informado e ou selecionado pelo operador                 |  
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<30/06/2014>                                                        |
+|@version<001>                                                             |
+|@Receive                                                                  |
+|<   _cConvenio (c) - Codigo do Convenio                                   |
+|    _cNumRem (c) - Codigo da Remessa informado pelo usuario               |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<    _lReturn (L) - (.t.) - Codigo valido; (.f.) - Codigo invalido        |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI										     			   |
++-----------+--------------------------------------------------------------+
+*/
+User Function VldNrR(_cConvenio,_cNumRem)
+Local _lReturn := .t.
+dbSelectArea("ZPA")
+ZPA->(dbSetOrder(3))
+If (ZPA->(dbSeek(FwxFilial("ZPA")+_cConvenio+_cNumRem+"RL")))
+	If ZPA->ZPA_XTIPO != "SC"
+		Aviso(FunName()+"/"+ProcName(),"O Codigo de Remessa Selecionada Refere-se a Remessa de Solicitação de PAGAMENTO, não pode ser Selecionada!",{"OK"})
+		_lReturn := .f.
+	Endif 
+Endif 
+Return _lReturn 

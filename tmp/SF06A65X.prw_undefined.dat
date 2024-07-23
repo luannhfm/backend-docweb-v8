@@ -1,0 +1,162 @@
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE 'IDATOOLS.CH'
+
+#DEFINE CR Chr(13) + Chr(10)
+
+/*/{Protheus.doc} SF06A65X
+
+@description  Rotina Cancelar titulos a receber na API do BB
+
+@author Diego Donatti Moura
+@since 21/08/2020
+@version 12.1.17
+
+/*/
+
+User Function SF06A65X()
+
+    Local aTitulo    := {}
+    Local cBanco     := PadR(GetNewPar('MV_XBANCO'  	, '001') 	,TamSX3('A6_COD')[1])
+    Local cAgencia   := PadR(GetNewPar('MV_XAGENC'	, '452')	,TamSX3('A6_AGENCIA')[1])
+    Local cConta     := PadR(GetNewPar('MV_XCONTA'  	, '123873')	,TamSX3('A6_NUMCON')[1])
+    Local nTamNumBco := TamSX3('E1_NUMBCO')[1]
+    Local oIntegra   := Nil
+    Local aRet       := {.T., ''}
+    Local cLogErro   := ''
+
+    Local cRet 		   := ''
+    Local oAlterBoleto := JsonObject():New()
+    Local cAliasTMP    := GetNextAlias()
+    Local cQuery       := ""
+
+    cQuery += " SELECT  EA_FILIAL,EA_PREFIXO,EA_NUM,EA_PARCELA,EA_TIPO,EA_NUMBOR,EA_PORTADO,EA_AGEDEP,EA_NUMCON,EA_FORNECE,EA_LOJA,EA_XSTATUS,EA.R_E_C_N_O_ AS EA_RECNO,"
+    cQuery += " 		A6_FILIAL,A6_COD,A6_AGENCIA,A6_NUMCON,A6_XCONV,A6_XTPCART,A6_XVARCAR,"
+    cQuery += " 		E1_FILIAL,E1_NUMBCO,E1_XNUMBCO,E1_NUMBOR,E1_PREFIXO,E1_NUM,E1_PARCELA,E1_TIPO,E1_CLIENTE,E1_LOJA,E1_EMISSAO,E1_VENCTO,E1_VENCREA,E1_VALOR,E1_IDCNAB,E1_DESCFIN,E1_XENVBOL, E1.R_E_C_N_O_ AS E1_RECNO,"
+    cQuery += " 		A1_FILIAL,A1_COD,A1_LOJA,A1_BAIRRO,A1_CEP,A1_MUNC,A1_END,A1_NOME,A1_PESSOA,A1_CGC,A1_EST"
+    cQuery += " FROM " + RetSqlName("SEA") + " EA "
+    cQuery += " INNER JOIN " + RetSqlName("SA6") + " A6 ON A6.A6_COD     = EA.EA_PORTADO "
+    cQuery += "              						   AND A6.A6_AGENCIA = EA.EA_AGEDEP "
+    cQuery += "              						   AND A6.A6_NUMCON  = EA.EA_NUMCON "
+    cQuery += "              						   AND A6.A6_FILIAL  = '" + xFilial("SA6") + "' "
+    cQuery += "              						   AND A6.D_E_L_E_T_ = ' '  "
+    cQuery += " INNER JOIN " + RetSqlName("SE1") + " E1 ON E1.E1_PREFIXO = EA.EA_PREFIXO "
+    cQuery += "                                        AND E1.E1_NUM     = EA.EA_NUM "
+    cQuery += "                                        AND E1.E1_PARCELA = EA.EA_PARCELA "
+    cQuery += "                                        AND E1.E1_TIPO    = EA.EA_TIPO "
+    cQuery += "                                        AND E1.E1_NUMBOR  = EA.EA_NUMBOR "
+    cQuery += " 									   AND E1.E1_FILIAL  = '" + xFilial("SE1") + "'"	
+    cQuery += "                                        AND E1.D_E_L_E_T_ = ' ' "
+    cQuery += " INNER JOIN " + RetSqlName("SA1") + " A1 ON A1.A1_FILIAL  = '" + xFilial("SA1") + "'"
+	cQuery += "              						   AND A1.A1_COD     = E1.E1_CLIENTE "
+	cQuery += "              						   AND A1.A1_LOJA    = E1.E1_LOJA "
+    cQuery += " 									   AND A1.A1_FILIAL  = '" + xFilial("SA1") + "'"	
+	cQuery += "              						   AND A1.D_E_L_E_T_ = ' ' "
+    cQuery += " WHERE EA.EA_PREFIXO = '" + SE1->E1_PREFIXO + "' "
+	cQuery += "   AND EA.EA_NUM     = '" + SE1->E1_NUM + "' "
+	cQuery += "   AND EA.EA_PARCELA = '" + SE1->E1_PARCELA + "' "
+	cQuery += "   AND EA.EA_TIPO    = '" + SE1->E1_TIPO + "' "
+    cQuery += "   AND EA.EA_FILIAL  = '" + xFilial('SEA') + "' "
+    cQuery += "   AND EA.D_E_L_E_T_ = ' ' "	
+    cQuery += "ORDER BY "+ SqlOrder(SE1->(IndexKey()))
+	
+    cQuery := ChangeQuery(cQuery)
+
+    If Select(cAliasTMP) > 0
+        (cAliasTMP)->(DbCloseArea())
+    EndIf
+
+    DbUseArea(.T., "TOPCONN", TCGenQry(,,cQuery), cAliasTMP, .F., .T.)
+
+    TcSetField(cAliasTMP, 'E1_EMISSAO', TamSX3('E1_EMISSAO')[3], TamSX3('E1_EMISSAO')[1], TamSX3('E1_EMISSAO')[2])
+    TcSetField(cAliasTMP, 'E1_VENCTO', TamSX3('E1_VENCTO')[3], TamSX3('E1_VENCTO')[1], TamSX3('E1_VENCTO')[2])
+    TcSetField(cAliasTMP, 'E1_VENCREA', TamSX3('E1_VENCREA')[3], TamSX3('E1_VENCREA')[1], TamSX3('E1_VENCREA')[2])
+    TcSetField(cAliasTMP, 'E1_VALOR', TamSX3('E1_VALOR')[3], TamSX3('E1_VALOR')[1], TamSX3('E1_VALOR')[2])
+    TcSetField(cAliasTMP, 'E1_DESCFIN', TamSX3('E1_DESCFIN')[3], TamSX3('E1_DESCFIN')[1], TamSX3('E1_DESCFIN')[2])
+    TcSetField(cAliasTMP, 'EA_RECNO', 'N', 17, 0)
+    TcSetField(cAliasTMP, 'E1_RECNO', 'N', 17, 0)
+
+    If .not. (cAliasTMP)->(Eof())
+
+        Private lMsErroAuto := .F.
+
+        If Empty((cAliasTMP)->E1_NUMBOR)
+            MsgInfo('Este título não está em borderô, não poderá ser cancelado!', 'Atenção')
+            aRet[1] := .F.
+        ElseIf (cAliasTMP)->E1_XENVBOL != '4'
+            MsgInfo('Este título não foi enviado ao banco, não poderá ser cancelado!', 'Atenção')
+            aRet[1] := .F.
+        ElseIf Empty((cAliasTMP)->E1_XNUMBCO) .or. Empty((cAliasTMP)->E1_NUMBCO)
+            MsgInfo('Este título não possui nosso número, não poderá ser cancelado!', 'Atenção')
+            aRet[1] := .F.
+        EndIf
+
+        If aRet[1]
+
+            Begin Transaction
+
+                //Informações bacárias para o borderô
+                aAdd(aTitulo, {"E1_NUM"		, (cAliasTMP)->E1_NUM       				, Nil})
+                aAdd(aTitulo, {"E1_PREFIXO"	, (cAliasTMP)->E1_PREFIXO   				, Nil})
+                aAdd(aTitulo, {"E1_PARCELA"	, (cAliasTMP)->E1_PARCELA   				, Nil})
+                aAdd(aTitulo, {"E1_TIPO"	, (cAliasTMP)->E1_TIPO      				, Nil})
+                aAdd(aTitulo, {"AUTBANCO"   , Space(TamSX3("A6_COD")[1])			  	, Nil})
+                aAdd(aTitulo, {"AUTAGENCIA" , Space(TamSX3("A6_AGENCIA")[1])		 	, Nil})
+                aAdd(aTitulo, {"AUTCONTA"   , Space(TamSX3("A6_NUMCON")[1])			  	, Nil})
+                aAdd(aTitulo, {"AUTSITUACA" , PadR("0", TamSX3("E1_SITUACA")[1])	    , Nil})
+                aAdd(aTitulo, {"AUTNUMBCO"  , Space(TamSX3("E1_NUMBCO")[1])  			, Nil})
+
+                MSExecAuto({|a,b| FINA060(a,b)},2,aTitulo)
+
+                If lMsErroAuto
+                    DisarmTransaction()
+                    MostraErro()
+                Else
+
+                    oIntegra := INTBOLBB():New(SuperGetMV('MV_XMSGBB',, .F.))
+                    oIntegra:PostToken()
+
+                    aRet := oIntegra:CancelBoleto(Padl(Alltrim(Iif(Empty((cAliasTMP)->E1_NUMBCO), (cAliasTMP)->E1_XNUMBCO, (cAliasTMP)->E1_NUMBCO)), nTamNumBco,'0'), Alltrim((cAliasTMP)->A6_XCONV))
+
+                    If aRet[1]
+
+                        DbSelectArea("SEA")
+                        DBGoTo((cAliasTMP)->EA_RECNO)
+                        If SEA->(Recno()) == (cAliasTMP)->EA_RECNO
+                            RecLock('SEA', .F.)
+                                SEA->EA_XSTATUS = '06'
+                                SEA->EA_XMENSG  = 'Cancelado'
+                            SEA->(MsUnLock())
+                        EndIf
+
+                        MsgInfo('Cancelamento junto ao Banco efetuado com sucesso.', 'Cancelamento de Títulos')
+
+                    Else
+
+                        cLogErro := 'Houve erro ao enviar Cancelamento do Boleto:' + CR
+                        cLogErro += '	Filial     -> ' + (cAliasTMP)->E1_FILIAL + CR
+                        cLogErro += '	Prefixo    -> ' + (cAliasTMP)->E1_PREFIXO + CR
+                        cLogErro += '	Numero     -> ' + (cAliasTMP)->E1_NUM + CR
+                        cLogErro += '	Parcela    -> ' + (cAliasTMP)->E1_PARCELA + CR
+                        cLogErro += '	Tipo       -> ' + (cAliasTMP)->E1_TIPO + CR
+						cLogErro += ' Nosso Numero -> ' + ZHU->ZHU_NUMBCO + CR                        
+                        cLogErro += ' Descrição do Erro: ' + CR
+                        cLogErro += SubStr(FwCutOff(aRet[2]:ToJson(), .T.), 1, 100) + CR
+
+                        GravLog(cLogErro, 'SF06A63X', 'ENVIO_CANCELAMENTO_BOLETO_BANCO_BRASIL', !IsBlind())
+                        
+                        DisarmTransaction()
+                    EndIf
+
+                EndIf
+
+            End Transaction
+
+        EndIf
+
+    EndIf
+
+    If Select(cAliasTMP) > 0
+        (cAliasTMP)->(DbCloseArea())
+    EndIf
+
+Return

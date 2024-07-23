@@ -1,0 +1,596 @@
+#Include 'Protheus.ch'
+#include "apwizard.ch"
+#include "fileio.ch"
+#Include 'Topconn.ch'
+
+/*/{Protheus.doc} SS33E01S
+Wizard para cria
+@author sergio.salustiano
+@since 12/11/2014
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+User Function SS33E01S()
+	Local oNo              := LoadBitmap ( GetResources(), "LBNO" )
+	Local oOk              := LoadBitmap ( GetResources(), "LBTIK" )
+	Local oWizard
+	Local oGet2, oGet3
+	Local oLeg1, oLeg2, oLeg3
+	Local cGet1   := "          "
+	//Local cGet2   := "    "
+	Local cGet3   := "                        "
+	Local cLeg1   := "                                     "
+	Local cLeg2   := "          "
+	//Local cLeg3   := "          "
+	Local nPanel
+	Local aWiz    := {{.F.,""}}
+	Local oLbxWiz
+	Local oChkTWiz
+	Local oChkIWiz
+	Local lChkTWiz := .F.
+	Local lChkIWiz := .F.
+	Local lWiz     := .F.
+	
+	Private cGet2   := "    "
+	Private cLeg3   := "          "
+
+	
+	DEFINE WIZARD oWizard TITLE "Wizard" HEADER "Wizard para Geração de Arquivo SMD" MESSAGE " ";
+		TEXT "Este programa gera o arquivo de importação do SAS para o SMD. " PANEL;
+		NEXT {|| .T.} FINISH{||.T.}
+
+
+//cria um novo passo (janela) para o wizard
+	CREATE PANEL oWizard HEADER "Passo 1 " MESSAGE "Selecione as configurações para a geração do arquivo para importação do SMD." PANEL;
+		BACK {|| .T.} NEXT {|| If(Empty(cLeg3), (MsgStop("Informe a Competencia"), .F.), If(cGet2 <= '2014', (msgStop("O ano deverá ser maior que 2014"), .F.), .T.))} FINISH {|| .T.} EXEC {|| .T.}
+		@ 010, 010 TO 125,280 OF oWizard:oMPanel[2] PIXEL
+     
+	//@ 20, 15 SAY oSay1 VAR "Data Inicial:" OF oWizard:oMPanel[2] PIXEL
+	//@ 20, 70 GET oGet1 VAR cGet1 PICTURE "@D" OF oWizard:oMPanel[2] SIZE 50,009 PIXEL 
+
+	@ 40, 15 SAY oSay2 VAR "ANO: " OF oWizard:oMPanel[2] PIXEL
+	@ 40, 70 GET oGet2 VAR cGet2 PICTURE "@!"  OF oWizard:oMPanel[2] SIZE 50,004 PIXEL 
+	
+	@ 20, 15 SAY oSay2 VAR "Competencia: " OF oWizard:oMPanel[2] PIXEL
+	@ 20, 70 MSCOMBOBOX oLeg3 VAR cLeg3 ITEMS{"JAN=Janeiro","FEV=Fevereiro","MAR=Marco","ABR=Abril","MAI=Maio","JUN=Junho","JUL=Julho","AGO=Agosto","SET=Setembro","OUT=Outubro","NOV=Novembro","DEZ=Dezembro"} SIZE 130, 010 OF oWizard:oMPanel[2] COLORS 0, 16777215 PIXEL
+
+
+// PANEL 3
+//cria um novo passo (janela) para o wizard
+	CREATE PANEL oWizard HEADER "Configuração de Legenda" MESSAGE "Selecione as configurações para a geração do arquivo para importação do SMD." PANEL;
+		BACK {|| oWizard:nPanel := 3, .T.} NEXT {|| .T.} FINISH {|| If(Empty(cLeg1) , (MsgStop('Selecione o Layout'), .F.), (lWiz := .T., .T.)) } EXEC {|| .T.}
+
+	@ 010, 010 TO 125,280 OF oWizard:oMPanel[3] PIXEL
+
+	@ 20, 15    SAY oSay4 VAR " Expressão "  OF oWizard:oMPanel[3] PIXEL
+	//@ 30, 15    GET oLeg1 VAR cLeg1 PICTURE "@!" OF oWizard:oMPanel[3] SIZE 130,009 PIXEL
+	@ 30,15 MSCOMBOBOX oLeg1 VAR cLeg1 ITEMS{"1=SAS","2=S4"} SIZE 130, 010 OF oWizard:oMPanel[3] COLORS 0, 16777215 PIXEL 
+          
+
+	//WJR 20190209 - Propriedade inexistente. --> oWizard:oDlg:lEscClose := .F.
+	ACTIVATE WIZARD oWizard CENTERED VALID {|| .T. }
+
+	If lWiz
+		Processa({|| GeraSmd()})
+   Else
+   		MsgAlert("Rotina nao executada")
+  EndIf
+		
+Static Function GeraSmd()
+	Local cTexto   := " "
+	Local nArquivo
+	Local nArqLog
+	Local aLogInd  := {}
+	Local aLogCPF  := {}
+	Local aLogInc  := {}
+
+	Local cFilPrt  := FWCODFIL()
+	Local cFilSMD  := " "
+	Local cCompSMD := "0002050"
+	Local cFinanc  := "0000000"
+	Local cClient  := " "
+	Local cProjet  := "0000000"
+	Local cCargaH  := "0000000"
+	Local cSerie   := "0000100"
+	Local cNomTrb  := " "
+	Local cDtNasc  := " "
+	Local cNomResp := " "
+	Local cCpf     := " "
+	Local cQuant   := " "
+	Local cClient  := " "
+	Local cModal   := " "
+	Local oExcel   := FWMSEXCEL():New()
+	Local NI       := 0
+	Local cIndAnt  := " "
+	Local cTrabAnt := " "
+	Local dDtIni   
+	Local dDtFim
+	Local cLogEnc := 0
+	
+	Local cCnpJ     := " " 
+	Local cProdSMD  := " "
+	Local cQuantMod := " "
+	
+	Local nRegT     := 0
+	Local nReg      := 0
+	Local nRegTot   := 0
+	Local cTexto1   := " "
+	Local cTexto2   := " "
+	Local cTexto3   := " "
+	Local cTexto4   := " "
+
+//----------------------------------------------------|
+// Seleciona o Codigo da Filial no SMD                |
+//----------------------------------------------------|
+		//If (cLeg1 = '1')
+			If (cFilPrt = '02MT0006')
+				cFilSMD := '0004104'
+			ElseIf (cFilPrt = '02MT0008')
+				cFilSMD := '0004096'
+			ElseIf (cFilPrt = '02MT0011')
+				cFilSMD := '0004099'
+			ElseIf (cFilPrt = '02MT0014')
+				cFilSMD := '0004101'
+			ElseIf (cFilPrt = '02MT0015')
+				cFilSMD := '0004103'
+			EndIf
+
+//----------------------------------------------------|
+//De Para Competencia                                 |
+//----------------------------------------------------|
+			If (cLeg3 = 'JAN')
+				dDtIni := cGet2 + "0101"   
+				dDtFim := cGet2 + "0131"
+			ElseIf (cLeg3 = 'FEV')
+				dDtIni := cGet2 + "0201"   
+				dDtFim := cGet2 + "0231"
+			ElseIf (cLeg3 = 'MAR')
+				dDtIni := cGet2 + "0301"   
+				dDtFim := cGet2 + "0331"
+			ElseIf (cLeg3 = 'ABR')
+				dDtIni := cGet2 + "0401"   
+				dDtFim := cGet2 + "0431"
+			ElseIf (cLeg3 = 'MAI')
+				dDtIni := cGet2 + "0501"   
+				dDtFim := cGet2 + "0531"
+			ElseIf (cLeg3 = 'JUN')
+				dDtIni := cGet2 + "0601"   
+				dDtFim := cGet2 + "0631"
+			ElseIf (cLeg3 = 'JUL')
+				dDtIni := cGet2 + "0701"   
+				dDtFim := cGet2 + "0731"
+			ElseIf (cLeg3 = 'AGO')
+				dDtIni := cGet2 + "0801"   
+				dDtFim := cGet2 + "0831"
+			ElseIf (cLeg3 = 'SET')
+				dDtIni := cGet2 + "0901"   
+				dDtFim := cGet2 + "0931"
+			ElseIf (cLeg3 = 'OUT')
+				dDtIni := cGet2 + "1001"   
+				dDtFim := cGet2 + "1031"	
+			ElseIf (cLeg3 = 'NOV')
+				dDtIni := cGet2 + "1101"   
+				dDtFim := cGet2 + "1131"
+			ElseIf (cLeg3 = 'DEZ')
+				dDtIni := cGet2 + "1201"   
+				dDtFim := cGet2 + "1231"
+			EndIf
+
+
+
+//----------------------------------------------------|
+// Query para selecionar as informações para Geração  |
+//do Arquivo.                                         |
+//----------------------------------------------------|				
+			_cQuery := " "
+			_cQuery += "SELECT ZZM.ZZM_CNPJ, ZZM.ZZM_NOME, ZZM.ZZM_TRABAL, ZZ0.ZZ0_CPF, ZZ0.ZZ0_NOME, ZZF.ZZF_PRDSMD, ZZ1.ZZ1_FORM, ZZ1.ZZ1_CRSMD, ZZ1.ZZ1_UNCONT, ZZM.ZZM_TPATEN, SA1.A1_XCNAEIN, ZZ4_MODSMD, COUNT(ZZM_TPATEN) QUANT "
+			_cQuery += "FROM "      + RETSQLNAME("ZZM") + " ZZM "
+			_cQuery += "INNER JOIN "+ RETSQLNAME("ZZN") + " ZZN ON ZZN.ZZN_FILIAL = ZZM.ZZM_FILIAL AND ZZN.ZZN_ATEND = ZZM.ZZM_ATEND "
+			_cQuery += "INNER JOIN "+ RETSQLNAME("ZZF") + " ZZF ON ZZF_CODIGO = ZZN_PROCED "
+			_cQuery += "INNER JOIN "+ RETSQLNAME("SA1") + " SA1 ON SA1.A1_CGC = ZZM.ZZM_CNPJ "
+			_cQuery += "INNER JOIN "+ RETSQLNAME("ZZ1") + " ZZ1 ON ZZF_PRDSMD = ZZ1_COD "
+			_cQuery += "INNER JOIN "+ RETSQLNAME("ZZ4") + " ZZ4 ON ZZ4_CODIGO = ZZF_CLASSE "
+			_cQuery += "INNER JOIN "+ RETSQLNAME("ZZ0") + " ZZ0 ON ZZ0_CODIGO = ZZM_TRABAL "
+			_cQuery += "WHERE ZZM_FILIAL = '"+xFilial("ZZM")+"' "
+			_cQuery += "      AND ZZM_DATA >= '"+dDtIni+"' "
+			_cQuery += "      AND ZZM_DATA <= '"+dDtFim+"' "
+			_cQuery += " 		AND ZZM.D_E_L_E_T_ <> '*' 			"
+			_cQuery += "		AND ZZN.D_E_L_E_T_ <> '*'          "
+			_cQuery += "		AND ZZF.D_E_L_E_T_ <> '*' 			"
+			_cQuery += "     AND ZZ1.D_E_L_E_T_ <> '*'           "
+			_cQuery += "     AND SA1.D_E_L_E_T_ <> '*'          "
+			_cQuery += "     AND ZZ0.D_E_L_E_T_ <> '*'          "
+			_cQuery += "     AND ZZM.ZZM_TPATEN <> '9'          "
+			_cQuery += "     AND ZZ4.ZZ4_MODSMD <> ' '
+			_cQuery += "GROUP BY ZZM.ZZM_CNPJ, ZZM.ZZM_NOME, ZZM.ZZM_TRABAL, ZZ0.ZZ0_CPF, ZZ0.ZZ0_NOME, ZZF.ZZF_PRDSMD, ZZ1.ZZ1_FORM, ZZ1.ZZ1_CRSMD, ZZ1.ZZ1_UNCONT, ZZM.ZZM_TPATEN, SA1.A1_XCNAEIN, ZZ4_MODSMD "
+			_cQuery += "ORDER BY ZZM.ZZM_CNPJ, ZZM.ZZM_TRABAL, ZZF_PRDSMD "
+			
+			                    
+			TCQUERY _cQuery NEW ALIAS "TRA"
+	
+			DbSelectArea("TRA")
+			
+			//nRegT := TRA->(RecCount())
+			Count To nRecTra	
+			ProcRegua(nRecTra)
+			DbGoTop()
+						
+			While .Not. TRA->( EOF() )
+			IncProc("Registro " + StrZero(nReg,8) + "  /  "  + STRZERO(nRecTRA,8))
+			nReg++
+			nRegTot++
+//----------------------------------------------------------|
+// Query para selecionar o nome do trabalhador da tabela ZZ2|
+//para trabalhador com CPF.                                 |
+//----------------------------------------------------------|
+				If(!Empty(TRA->ZZ0_CPF))
+					_cQryTRB := " "
+					_cQryTRB += "SELECT ZZ2_DTNASC, ZZ2_NOME, ZZ2_RESP "
+					_cQryTRB += "FROM "      + RETSQLNAME("ZZ2") + " ZZ2 "
+					_cQryTRB += "WHERE ZZ2_CPF = '" + TRA->ZZ0_CPF + "' "
+					
+					TCQUERY _cQryTRB NEW ALIAS "TRB"
+					
+					DbSelectArea("TRB")
+					
+					//----------------------------------------------------------------|
+					//Se não encotrar o trabalhador na Tabela ZZ2 (TRABALHADORES SMD),|
+					//busca nome e CPF, tabela ZZ0 (Trabalhadores SAS).               |
+					//----------------------------------------------------------------|					
+					If TRB->( Eof() )
+						cNomTrb := Alltrim(TRA->ZZ0_NOME)
+						cCPF := TRA->ZZ0_CPF
+					Else
+						cNomTrb := TRB->ZZ2_NOME
+						cCPF := TRA->ZZ0_CPF
+					EndIf
+				Else
+					aadd(aLogCPF, {TRA->ZZM_TRABAL, TRA->ZZ0_NOME})
+					cCPF := '00000000000'
+					_cQryTRB := " "
+					_cQryTRB += "SELECT ZZ2_DTNASC, ZZ2_NOME, ZZ2_RESP "
+					_cQryTRB += "FROM "      + RETSQLNAME("ZZ2") + " ZZ2 "
+					_cQryTRB += "WHERE ZZ2_NOME LIKE '%" + TRA->ZZ0_NOME + "%' "
+					TCQUERY _cQryTRB NEW ALIAS "TRB"
+					
+					DbSelectArea("TRB")
+					
+					If TRB->( Eof() )
+						cNomTrb := Alltrim(TRA->ZZ0_NOME)
+						cCPF := '00000000000'
+						//cLogEnc += TRA->ZZ0_NOME + CRLF
+						cLogEnc++
+					
+					ElseIf ((!Empty(TRB->ZZ2_RESP)) .AND. (!Empty(TRB->ZZ2_DTNASC)))
+						cNomTrb  := TRB->ZZ2_NOME
+						cDtNasc  := DTOS(TRB->ZZ2_DTNASC)
+						cNomResp := TRB->ZZ2_RESP
+					Else
+						cNomTrb := Alltrim(TRA->ZZ0_NOME)
+						cCPF := '00000000000'
+						aadd(aLogInc, {TRB->ZZ2_NOME, DTOS(TRB->ZZ2_DTNASC),TRB->ZZ2_RESP })
+												
+					EndIf
+				EndIf
+				
+				DbCloseArea("TRB")
+
+				If(Empty(TRA->A1_XCNAEIN))
+					aadd(aLogInd, {TRA->ZZM_CNPJ, TRA->ZZM_NOME })
+				EndIf
+				
+				If (Empty(cDtNasc))
+					cDtNasc  := '00000000'
+				EndIf
+				If (Empty(cNomResp))
+					cNomResp := Padr('0',60,'0')
+				EndIf
+				
+//------------------------------|
+//CLIENTELA                     |
+//------------------------------|		
+				If (TRA->A1_XCNAEIN = 'S' .OR. TRA->A1_XCNAEIN = ' ')
+					cClient := "0000050"
+				ElseIf (TRA->A1_XCNAEIN = 'N')
+					cClient := "0000052"
+				EndIf		
+				
+//------------------------------|
+//MODALIDADE                    |
+//------------------------------|		
+				If(AllTrim(TRA->ZZF_PRDSMD) <> '0000363')
+					cModal := STRZERO(VAL(TRA->ZZ4_MODSMD),7)        //Modalidade      Posição 59 / 65 ****** *** *** ** ** * * * ****
+					//cQuant := TRA->QUANT
+				Else
+					//cQuant := TRA->QUANT * 5
+					If(TRA->ZZM_TPATEN = '1')
+						cModal := '0000115'
+					ElseIf(TRA->ZZM_TPATEN = '2')
+						cModal := '0000116'
+					ElseIf(TRA->ZZM_TPATEN = '3')
+						cModal := '0000118'
+					ElseIf(TRA->ZZM_TPATEN = '4' .OR. TRA->ZZM_TPATEN = '7' .OR. TRA->ZZM_TPATEN = '6')
+						cModal := '0000117'
+					ElseIf(TRA->ZZM_TPATEN = '5')
+						cModal := '0000119'
+					ElseIf(TRA->ZZM_TPATEN = '8')
+						cModal := 'ZZZZZZZZ'
+					
+					ElseIf(TRA->ZZM_TPATEN = '9')
+						cModal := 'AAAAAAA'
+					EndIf
+				EndIf				
+				
+//----------------------------------------------||
+//Seleciona a Quantidade de Atendimentos		||		
+//----------------------------------------------||
+			cCnpj     := TRA->ZZM_CNPJ
+			cProdSMD  := TRA->ZZF_PRDSMD
+			//cQuantMod := TRA->ZZ4_MODSMD
+	
+//------------------------------------------------------------||
+// Seleciona a Quantidade de Atendimento                      ||
+//------------------------------------------------------------||
+
+If(AllTrim(TRA->ZZF_PRDSMD) <> '0000363')
+			cQuantMod := TRA->ZZ4_MODSMD	
+     		_cQuery1 := " "
+			_cQuery1 += "SELECT ZZM.ZZM_CNPJ, ZZF.ZZF_PRDSMD, ZZ1.ZZ1_FORM, ZZ1.ZZ1_CRSMD, ZZ1.ZZ1_UNCONT, ZZ4_MODSMD, COUNT(ZZM_TPATEN) QUANT "
+			_cQuery1 += "FROM "      + RETSQLNAME("ZZM") + " ZZM "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZN") + " ZZN ON ZZN.ZZN_FILIAL = ZZM.ZZM_FILIAL AND ZZN.ZZN_ATEND = ZZM.ZZM_ATEND "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZF") + " ZZF ON ZZF_CODIGO = ZZN_PROCED "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("SA1") + " SA1 ON SA1.A1_CGC = ZZM.ZZM_CNPJ "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZ1") + " ZZ1 ON ZZF_PRDSMD = ZZ1_COD "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZ4") + " ZZ4 ON ZZ4_CODIGO = ZZF_CLASSE "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZ0") + " ZZ0 ON ZZ0_CODIGO = ZZM_TRABAL "
+			_cQuery1 += "WHERE ZZM_FILIAL        = '"+xFilial("ZZM")+"' "
+			_cQuery1 += "      AND ZZM_DATA      >= '"+dDtIni+"' "
+			_cQuery1 += "      AND ZZM_DATA      <= '"+dDtFim+"' "
+			_cQuery1 += "      AND ZZM.ZZM_CNPJ   = '"+cCnpj+"' "
+			_cQuery1 += "      AND ZZF.ZZF_PRDSMD = '"+cProdSMD+"' "
+			_cQuery1 += "      AND ZZ4.ZZ4_MODSMD = '"+cQuantMod+"' "
+			_cQuery1 += " 	   AND ZZM.D_E_L_E_T_ <> '*' 			"
+			_cQuery1 += "	   AND ZZN.D_E_L_E_T_ <> '*'          "
+			_cQuery1 += "	   AND ZZF.D_E_L_E_T_ <> '*' 			"
+			_cQuery1 += "      AND ZZ1.D_E_L_E_T_ <> '*'           "
+			_cQuery1 += "      AND SA1.D_E_L_E_T_ <> '*'          "
+			_cQuery1 += "      AND ZZ0.D_E_L_E_T_ <> '*'          "
+			_cQuery1 += "      AND ZZM.ZZM_TPATEN <> '9'          "
+			_cQuery1 += "      AND ZZ4.ZZ4_MODSMD <> ' '
+			_cQuery1 += "GROUP BY ZZM.ZZM_CNPJ, ZZF.ZZF_PRDSMD, ZZ1.ZZ1_FORM, ZZ1.ZZ1_CRSMD, ZZ1.ZZ1_UNCONT, ZZ4_MODSMD "
+			_cQuery1 += "ORDER BY ZZM.ZZM_CNPJ, ZZF_PRDSMD,ZZ4_MODSMD "
+Else
+	     	cQuantMod := TRA->ZZM_TPATEN
+	     	_cQuery1 := " "
+			_cQuery1 += "SELECT ZZM.ZZM_CNPJ, ZZF.ZZF_PRDSMD, ZZ1.ZZ1_FORM, ZZ1.ZZ1_CRSMD, ZZ1.ZZ1_UNCONT, ZZM.ZZM_TPATEN, COUNT(ZZM_TPATEN) QUANT "
+			_cQuery1 += "FROM "      + RETSQLNAME("ZZM") + " ZZM "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZN") + " ZZN ON ZZN.ZZN_FILIAL = ZZM.ZZM_FILIAL AND ZZN.ZZN_ATEND = ZZM.ZZM_ATEND "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZF") + " ZZF ON ZZF_CODIGO = ZZN_PROCED "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("SA1") + " SA1 ON SA1.A1_CGC = ZZM.ZZM_CNPJ "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZ1") + " ZZ1 ON ZZF_PRDSMD = ZZ1_COD "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZ4") + " ZZ4 ON ZZ4_CODIGO = ZZF_CLASSE "
+			_cQuery1 += "INNER JOIN "+ RETSQLNAME("ZZ0") + " ZZ0 ON ZZ0_CODIGO = ZZM_TRABAL "
+			_cQuery1 += "WHERE ZZM_FILIAL        = '"+xFilial("ZZM")+"' "
+			_cQuery1 += "      AND ZZM_DATA      >= '"+dDtIni+"' "
+			_cQuery1 += "      AND ZZM_DATA      <= '"+dDtFim+"' "
+			_cQuery1 += "      AND ZZM.ZZM_CNPJ   = '"+cCnpj+"' "
+			_cQuery1 += "      AND ZZF.ZZF_PRDSMD = '"+cProdSMD+"' "
+			_cQuery1 += "      AND ZZM.ZZM_TPATEN = '"+cQuantMod+"' "
+			_cQuery1 += " 	   AND ZZM.D_E_L_E_T_ <> '*' 			"
+			_cQuery1 += "	   AND ZZN.D_E_L_E_T_ <> '*'          "
+			_cQuery1 += "	   AND ZZF.D_E_L_E_T_ <> '*' 			"
+			_cQuery1 += "      AND ZZ1.D_E_L_E_T_ <> '*'           "
+			_cQuery1 += "      AND SA1.D_E_L_E_T_ <> '*'          "
+			_cQuery1 += "      AND ZZ0.D_E_L_E_T_ <> '*'          "
+			_cQuery1 += "      AND ZZM.ZZM_TPATEN <> '9'          "
+			_cQuery1 += "      AND ZZ4.ZZ4_MODSMD <> ' '
+			_cQuery1 += "GROUP BY ZZM.ZZM_CNPJ, ZZF.ZZF_PRDSMD, ZZ1.ZZ1_FORM, ZZ1.ZZ1_CRSMD, ZZ1.ZZ1_UNCONT, ZZM_TPATEN "
+			_cQuery1 += "ORDER BY ZZM.ZZM_CNPJ, ZZF_PRDSMD,ZZM_TPATEN "
+
+//------------------------------------------------------------|
+//Query para Contar Emfermagem                                |
+//------------------------------------------------------------|
+	     	_cQuery2 := " "
+			_cQuery2 += "SELECT ZZM.ZZM_CNPJ, ZZF.ZZF_PRDSMD, ZZ1.ZZ1_FORM, ZZ1.ZZ1_CRSMD, ZZ1.ZZ1_UNCONT, COUNT(ZZ1.ZZ1_UNCONT) QUANT "
+			_cQuery2 += "FROM "      + RETSQLNAME("ZZM") + " ZZM "
+			_cQuery2 += "INNER JOIN "+ RETSQLNAME("ZZN") + " ZZN ON ZZN.ZZN_FILIAL = ZZM.ZZM_FILIAL AND ZZN.ZZN_ATEND = ZZM.ZZM_ATEND "
+			_cQuery2 += "INNER JOIN "+ RETSQLNAME("ZZF") + " ZZF ON ZZF_CODIGO = ZZN_PROCED "
+			_cQuery2 += "INNER JOIN "+ RETSQLNAME("SA1") + " SA1 ON SA1.A1_CGC = ZZM.ZZM_CNPJ "
+			_cQuery2 += "INNER JOIN "+ RETSQLNAME("ZZ1") + " ZZ1 ON ZZF_PRDSMD = ZZ1_COD "
+			_cQuery2 += "INNER JOIN "+ RETSQLNAME("ZZ4") + " ZZ4 ON ZZ4_CODIGO = ZZF_CLASSE "
+			_cQuery2 += "INNER JOIN "+ RETSQLNAME("ZZ0") + " ZZ0 ON ZZ0_CODIGO = ZZM_TRABAL "
+			_cQuery2 += "WHERE ZZM_FILIAL        = '"+xFilial("ZZM")+"' "
+			_cQuery2 += "      AND ZZM_DATA      >= '"+dDtIni+"' "
+			_cQuery2 += "      AND ZZM_DATA      <= '"+dDtFim+"' "
+			_cQuery2 += "      AND ZZM.ZZM_CNPJ   = '"+cCnpj+"' "
+			_cQuery2 += "      AND ZZF.ZZF_PRDSMD = '"+cProdSMD+"' "
+			_cQuery2 += " 	   AND ZZM.D_E_L_E_T_ <> '*' 			"
+			_cQuery2 += "	   AND ZZN.D_E_L_E_T_ <> '*'          "
+			_cQuery2 += "	   AND ZZF.D_E_L_E_T_ <> '*' 			"
+			_cQuery2 += "      AND ZZ1.D_E_L_E_T_ <> '*'           "
+			_cQuery2 += "      AND SA1.D_E_L_E_T_ <> '*'          "
+			_cQuery2 += "      AND ZZ0.D_E_L_E_T_ <> '*'          "
+			_cQuery2 += "      AND ZZM.ZZM_TPATEN <> '9'          "
+			_cQuery2 += "      AND ZZ4.ZZ4_MODSMD <> ' '
+			_cQuery2 += "GROUP BY ZZM.ZZM_CNPJ, ZZF.ZZF_PRDSMD, ZZ1.ZZ1_FORM, ZZ1.ZZ1_CRSMD, ZZ1.ZZ1_UNCONT "
+			_cQuery2 += "ORDER BY ZZM.ZZM_CNPJ, ZZF_PRDSMD "
+
+			TCQUERY _cQuery2 NEW ALIAS "TRK"
+
+
+EndIf
+		
+			TCQUERY _cQuery1 NEW ALIAS "TRQ"	
+			
+			
+			DbSelectArea("TRQ")
+			cQuant := TRQ->QUANT
+				
+				cNomTrb := STRTRAN(cNomTrb,'"',' ')		
+				
+				cTexto += cFilSMD                                            //Filial                Posição 001 / 007
+				cTexto += STRZERO(VAl(TRA->ZZF_PRDSMD),7)                    //Produto               Posição 008 / 014
+				cTexto += STRZERO(VAL(TRA->ZZ1_FORM),7)                      //Formulario            Posição 015 / 021
+				cTexto += STRZERO(VAL(cCompSMD),7)                           //Competencia           Posição 022 / 028
+				cTexto += STRZERO(VAL(TRA->ZZ1_CRSMD),9)                     //Centro Resp.          Posição 029 / 037
+				cTexto += STRZERO(VAL(cFinanc),7)                            //Financiamento         Posição 038 / 044
+		        cTexto += STRZERO(VAL(cClient),7)                            //Clientela             Posição 045 / 051
+				cTexto += STRZERO(VAL(cProjet),7)                            //Projeto               Posição 052 / 058
+				cTexto += STRZERO(VAL(cModal),7)                             //Modalidade            Posição 059 / 065
+				cTexto += cSerie                                             //Serie                 Posição 066 / 072
+				cTexto += cCargaH                                            //Carga Horaria         Posição 073 / 079
+				cTexto += TRA->ZZM_CNPJ                                      //CNPJ                  Posição 080 / 093
+				cTexto += TRA->ZZ1_UNCONT                                     //Unidade de Controle   Posição 094 / 100 Alterar o nome para Unidade de Controle
+				cTexto += PadR(cLeg3,3)                                      //Mes Produção          Posição 101 / 103
+				cTexto += STRZERO(cQuant,7)	                                 //Quantidade            Posição 104 / 110
+				cTexto += '000000000'                                        //Codigo Pessoa Fisica  Posição 111 / 119 
+				cTexto += PadR(cCPF,11)                                      // CPF do Trabalhador   Posição 120 / 130
+				cTexto += PadL(Substr(Alltrim(cNomTrb),1,60),60,'0')         // Nome do Trabalhador  Posição 131 / 190
+				cTexto += PadL(Substr(AllTrim(cNomResp),1,60),60,'0')        // Nome do Responsavel  Posição 191 / 250
+				cTexto += cDtNasc								                   //Data de Nascimento    Posiçao 251 / 258
+				cTexto += CRLF
+				
+				
+				//------------------------------------------------------||
+				//Se for consulta gerar outra Linha e Multiplica por 5  ||
+				//------------------------------------------------------||
+				If(AllTrim(TRA->ZZF_PRDSMD) = '0000363')
+					DbSelectArea("TRK")
+					
+					cQuant := TRK->QUANT * 5
+										
+					cTexto += cFilSMD                                            //Filial                Posição 001 / 007
+					cTexto += "0000366"                                          //Produto               Posição 008 / 014
+					cTexto += "0003062"                                          //Formulario            Posição 015 / 021
+					cTexto += STRZERO(VAL(cCompSMD),7)                           //Competencia           Posição 022 / 028
+					cTexto += "304010101"                                        //Centro Resp.          Posição 029 / 037
+					cTexto += STRZERO(VAL(cFinanc),7)                            //Financiamento         Posição 038 / 044
+					cTexto += STRZERO(VAL(cClient),7)                            //Clientela             Posição 045 / 051
+					cTexto += STRZERO(VAL(cProjet),7)                            //Projeto               Posição 052 / 058
+					//cTexto += STRZERO(VAL(cModal),7)                             //Modalidade            Posição 059 / 065
+					cTexto += "0000000"                                          //Modalidade            Posição 059 / 065
+					cTexto += "0000000"                                           //Serie                 Posição 066 / 072
+					cTexto += cCargaH                                            //Carga Horaria         Posição 073 / 079
+					cTexto += TRA->ZZM_CNPJ                                      //CNPJ                  Posição 080 / 093
+					cTexto += "0000157"                                          //Unidade de Controle   Posição 094 / 100 Alterar o nome para Unidade de Controle
+					cTexto += PadR(cLeg3,3)                                      //Mes Produção          Posição 101 / 103
+					cTexto += STRZERO(cQuant,7)	                                 //Quantidade            Posição 104 / 110
+					cTexto += '000000000'                                        //Codigo Pessoa Fisica  Posição 111 / 119 
+					cTexto += PadR(cCPF,11)                                      // CPF do Trabalhador   Posição 120 / 130
+					cTexto += PadL(Substr(Alltrim(cNomTrb),1,60),60,'0')         // Nome do Trabalhador  Posição 131 / 190
+					cTexto += PadL(Substr(AllTrim(cNomResp),1,60),60,'0')        // Nome do Responsavel  Posição 191 / 250
+					cTexto += cDtNasc								                   //Data de Nascimento    Posiçao 251 / 258
+					cTexto += CRLF
+					
+							
+				EndIf
+				
+				If (nRegTot = 2000) 
+					cTexto1 := cTexto
+				    cTexto := " "
+				    MsgAlert("2000")
+				EndIf
+				
+				If (nRegTot = 4000)
+					cTexto2 := cTexto
+				    cTexto := " "
+				     MsgAlert("4000")
+				EndIf
+				
+				If (nRegTot = 6000)
+					cTexto3 := cTexto
+				    cTexto := " "
+				     MsgAlert("6000")
+				EndIf
+				
+				If (nRegTot = 8000)
+					cTexto4 := cTexto
+				    cTexto := " "
+				     MsgAlert("8000")
+				EndIf
+				
+											
+				TRA->(DBSKIP())
+				TRQ->(DBCLOSEAREA())
+				TRK->(DBCLOSEAREA())
+						
+			Enddo
+			
+				TRA->(DBCLOSEAREA())
+				
+			cPlaNew := Upper(cGetFile('Arquivos XLS (*.xls) |*.xls|', 'Salvar Planilha Como',,'C:\UTIL\',.T.,nOR( GETF_LOCALHARD, GETF_LOCALFLOPPY, GETF_RETDIRECTORY ),.F.))
+			
+			nArquivo := FCREATE (cPlaNew+"SMD.TXT",FC_NORMAL)
+
+			If nArquivo == -1
+				MsgStop('Erro ao criar o Arquivo.')
+			else
+				FSeek (nArquivo, 0, FS_END) // Posiciona no fim do arquivo
+				FWrite(nArquivo, cTexto) // Insere texto no arquivo
+				FSeek (nArquivo, 0, FS_END)
+				FWrite(nArquivo, cTexto1) 
+				FSeek (nArquivo, 0, FS_END)
+				FWrite(nArquivo, cTexto2)
+				FSeek (nArquivo, 0, FS_END)
+				FWrite(nArquivo, cTexto3) 
+				FSeek (nArquivo, 0, FS_END)
+				FWrite(nArquivo, cTexto4)  
+				
+				fclose(nArquivo) // Fecha arquivo
+				MsgAlert('Arquivo SMD Criado')
+			Endif
+
+
+
+			/*nArqLog := FCREATE ("C:\temp\Log.txt",FC_NORMAL)
+
+
+			If nArqlog == -1
+				MsgStop('Erro ao criar o Arquivo.')
+			else
+				FSeek (nArqLog, 0, FS_END) // Posiciona no fim do arquivo
+				FWrite(nArqLog, cLogCPL) // Insere texto no arquivo
+				fclose(nArqLog) // Fecha arquivo
+				MsgAlert('Log Concluido')
+			Endif */
+ 
+ //---------------------------------------------------|
+ //Cria a Planilha de LOG de Inconsistencias          |        
+ //---------------------------------------------------|
+oExcel:AddworkSheet("Industria")
+oExcel:AddTable ("Industria","Empresa Sem Classificacao")
+oExcel:AddColumn("Industria","Empresa Sem Classificacao","CNPJ",1,1)
+oExcel:AddColumn("Industria","Empresa Sem Classificacao","NOME INDUSTRIA",1,1)
+
+	For nI := 1 To Len(aLogInd)
+		If(cIndAnt <> aLogInd[NI][1])
+			oExcel:AddRow("Industria","Empresa Sem Classificacao",{aLogInd[NI][1],aLogInd[NI][2]})
+			cIndAnt := aLogInd[NI][1]
+		EndIf
+	Next NI	
+
+oExcel:AddworkSheet("Trabalhador")
+oExcel:AddTable ("Trabalhador","Trabalhador Sem CPF")
+oExcel:AddColumn("Trabalhador","Trabalhador Sem CPF","Codigo Trabalhador",1,1)
+oExcel:AddColumn("Trabalhador","Trabalhador Sem CPF","Nome do Trabalhador",1,1)
+
+	For nI := 1 To Len(aLogCPF)
+		If(cTrabAnt <> aLogCPF[NI][1])
+			oExcel:AddRow("Trabalhador","Trabalhador Sem CPF",{aLogCPF[NI][1],aLogCPF[NI][2]})
+			cTrabAnt := aLogCPF[NI][1]
+		EndIf
+	Next NI	
+	
+		oExcel:Activate()
+		//cPlaNew := Upper(cGetFile('Arquivos XLS (*.xls) |*.xls|', 'Salvar Planilha Como',,'C:\UTIL\',.T.,nOR( GETF_LOCALHARD, GETF_LOCALFLOPPY, GETF_RETDIRECTORY ),.F.))
+		oExcel:GetXMLFile(cPlaNew+"Log.XLS")
+ 
+ 
+			MsgAlert("Executa a rotina de processamento após a seleção dos dados no Wizard")
+		
+		//EndIf
+
+Return
+

@@ -1,0 +1,1056 @@
+#include 'protheus.ch'
+#include 'parmtype.ch'
+#Include 'fwmvcdef.ch'
+#Include 'Topconn.ch'
+
+user function SS3318S()
+	Local oBrowse
+
+	Private aRotina := MenuDef()
+
+	//Instancio a classe FWMBrowse
+	oBrowse := FWMBrowse():New()
+
+	//Setando o Alias a ser utilizado
+	oBrowse:SetAlias( 'ZZ3' )
+
+	//Descrição do Cabeçalho
+	oBrowse:SetDescription('Vacina')
+
+	oBrowse:SetFilterDefault("ZZ3_TPATEN == 'I'")
+	oBrowse:AddLegend("ZZ3_GERADO =='S'","GREEN" ,"Sim")
+	oBrowse:AddLegend("ZZ3_GERADO =='N'","RED"   ,"Nao")
+
+	//Ativando
+	oBrowse:Activate()
+
+Return( Nil )
+
+Static Function MenuDef()
+
+	Local aRotina := {}
+
+	ADD OPTION aRotina Title 'Visualizar'        Action 'VIEWDEF.SS3318S' OPERATION 2 ACCESS 0
+	ADD OPTION aRotina Title 'Incluir'           Action 'VIEWDEF.SS3318S' OPERATION 3 ACCESS 0
+	ADD OPTION aRotina Title 'Alterar'           Action 'VIEWDEF.SS3318S' OPERATION 4 ACCESS 0
+	ADD OPTION aRotina Title 'Excluir'           Action 'VIEWDEF.SS3318S' OPERATION 5 ACCESS 0
+	ADD OPTION aRotina Title 'Gerar Lancmnto'    Action 'U_SS3318SA'      OPERATION 3 ACCESS 0
+	ADD OPTION aRotina Title 'Extornar G.A'      Action 'U_EXTGA'         OPERATION 3 ACCESS 0
+	ADD OPTION aRotina Title 'Copiar'            Action 'VIEWDEF.SS3318S' OPERATION 9 ACCESS 0
+
+Return( aRotina )
+
+Static Function ModelDef()
+	Local oStruZZ3 := FWFormStruct(1, 'ZZ3')
+	Local oStruZZ6 := FWFormStruct(1, 'ZZ6')
+	Local oModel
+
+	//oStruZZ3:AddTrigger( "ZZ3_REVCTR", "ZZ3_DCTR"    , { || .t. }, { | x |INFCTR( x ) } )
+
+	oModel:= MPFormModel():New('SS3318SM')
+	oModel:AddFields('ZZ3MASTER',/*cOwner*/, oStruZZ3)
+	oModel:AddGrid('ZZ6DETAIL','ZZ3MASTER',oStruZZ6)
+	oModel:GetModel('ZZ6DETAIL'):SetMaxLine(10000)
+	oModel:SetRelation('ZZ6DETAIL',{{'ZZ6_FILIAL','xFilial("ZZ6")'}, {'ZZ6_CODIGO','ZZ3_CODIGO'}},ZZ6->(IndexKey(1)))
+	oModel:SetPrimaryKey({"ZZ3_FILIAL","ZZ3_CODIGO"})
+	oModel:GetModel( 'ZZ6DETAIL' ):SetUniqueLine( { 'ZZ6_TRABAL' } )
+	oModel:SetDescription('Atendimentos')
+	oModel:GetModel('ZZ3MASTER'):SetDescription('Atendimentos')
+	oModel:GetModel('ZZ6DETAIL'):SetDescription('Trabalhadores')
+	oModel:SetPrimaryKey( { "ZZ3_FILIAL", "ZZ3_CODIGO" } )
+
+
+	oStruZZ3:SetProperty('ZZ3_TPATEN',MODEL_FIELD_INIT,{||'I'})
+	oStruZZ3:SetProperty('ZZ3_PROCED',MODEL_FIELD_INIT,{||'999999'})
+	oStruZZ3:SetProperty('ZZ3_DTPATD',MODEL_FIELD_INIT,{||'IMUNIZACAO'})
+	oStruZZ3:SetProperty('ZZ3_DPROCE',MODEL_FIELD_INIT,{||'GESTO VACINAL'})
+
+
+Return( oModel )
+
+Static Function ViewDef()
+
+	Local oView
+	Local oModel  := FWLoadModel( 'SS3318S' )
+	Local oStruZZ3 := FWFormStruct(2, 'ZZ3')
+	Local oStruZZ6 := FWFormStruct(2, 'ZZ6')
+	Local oView
+
+	//oStruZZ3:RemoveField('ZZ3_ENF01')
+
+	oView:=FWFormView():New()
+	oView:SetModel(oModel)
+	oView:AddField('VIEW_ZZ3', oStruZZ3, 'ZZ3MASTER')
+	oView:AddGrid ('VIEW_ZZ6', oStruZZ6, 'ZZ6DETAIL')
+
+	// Cria o objeto de Estrutura
+	//oCalc1 := FWCalcStruct( oModel:GetModel( 'COMP015CALC1') )
+
+	oView:AddIncrementField( 'VIEW_ZZ6', 'ZZ6_ITEM' )
+	oView:EnableTitleView('VIEW_ZZ6','TRABALHADORES')
+	oView:CreateHorizontalBox ('SUPERIOR', 40)
+	oView:CreateHorizontalBox ('INFERIOR', 60)
+	//oView:CreateHorizontalBox ('CALCULO' , 12)
+	oView:SetOwnerView ('VIEW_ZZ3', 'SUPERIOR')
+	oView:SetOwnerView ('VIEW_ZZ6', 'INFERIOR')
+	//oView:SetOwnerView ('VIEW_CALC','CALCULO')
+	oView:AddUserButton( 'Importa Plan', 'CLIPS', {|oView| ProcImp()} )
+
+
+	oStruZZ3:RemoveField('ZZ3_PROCE1')
+	oStruZZ3:RemoveField('ZZ3_DPROC1')
+	oStruZZ3:RemoveField('ZZ3_PROCE2')
+	oStruZZ3:RemoveField('ZZ3_DPROC2')
+	oStruZZ3:RemoveField('ZZ3_PROCE3')
+	oStruZZ3:RemoveField('ZZ3_DPROC3')
+
+	oStruZZ3:SetProperty('ZZ3_TPATEN' , MVC_VIEW_CANCHANGE , .F. )
+	oStruZZ3:SetProperty('ZZ3_PROCED' , MVC_VIEW_CANCHANGE , .F. )
+
+Return( oView )
+
+/*/{Protheus.doc} GerLanc
+//Rotina criada para gerar Guia de Atendimento, 
+//a partir da Rotina de Guia de Atendimentos em Lote. 
+@author sergio.salustiano
+@since 24/02/2016
+@version 6
+@return return, return_description
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+User Function SS3318SA()
+
+	Local lRet		:= .T.
+	Local aAreaAtu  := GetArea()
+	Local oModel 	:= FwLoadModel('SS3318S')
+	Local oMdlCab	:= oModel:GetModel( "ZZ3MASTER" )
+	//Local oMdlGrd	:= oModel:GetModel( "ZZ3DETAIL" )
+	Local cFilLan	:= " "
+	Local cCodLan   := " "
+	Local cFilCTR   := " "
+	Local cQuery    := " "
+	Local cQuery1   := " "
+	Local cQuery2   := " "
+	Local aCposCab  := {}
+	Local aCposDet  := {}
+	Local aAux      := {}
+	Local nReg      := 0
+	Local nRecTra   := 0
+	Local cNumCTR   := " "
+	Local cRevCTR   := " "
+	Local cValInd   := 0
+	Local cValCom   := 0
+	Local cCliInd   := GetNewPar("MV_XCLIIND") //Clientela Industria
+	Local cCliCom   := GetNewPar("MV_XCLICOM") //Clientela Comunidade
+	Local nDAplCom  := 0 //Doses Aplicadas Comunidade
+	Local nDAplTra  := 0 //Doses Aplicadas Trabalhador
+	Local nDAplDep  := 0 //Doses Aplicadas Dependente Trabalhador
+	Private oModel1, oAux1, oStruct1, oAux2, oStruct2, aAux1, aAux2
+	//-----------------------------------------------------------------------------
+	oModel1 := FWLoadModel('SS3306S')
+	oModel1:SetOperation(3)
+	//oModel1:Activate()
+
+	oAux1     := oModel1:GetModel('ZZMMASTER')
+	oStruct1  := oAux1:GetStruct()
+	aAux1     := oStruct1:GetFields()
+
+	oAux2     := oModel1:GetModel('ZZNDETAIL')
+	oStruct2  := oAux2:GetStruct()
+	aAux2     := oStruct2:GetFields()
+
+	oModel:Activate()
+
+	cFilLan	:= oMdlCab:GetValue( "ZZ3_FILIAL" )
+	cCodLan	:= oMdlCab:GetValue( "ZZ3_CODIGO" )
+	cNumCTR := oMdlCab:GetValue( "ZZ3_CONTRA" )
+	cRevCTR := oMdlCab:GetValue( "ZZ3_REVCTR" )
+	cFilCTR := oMdlCab:GetValue( "ZZ3_FILCTR" )
+
+
+	If Empty(ZZ3_CONTRA)
+		Help( ,, 'Help',, 'Preencha o Numero da Solicitação e Confirme', 1, 0 )
+
+	Else
+
+		If Select("TRA") > 0
+			DbSelectarea("TRA")
+			DbCloseArea()
+		Endif
+
+		cQuery := " "
+		cQuery += "SELECT  * FROM "      + RETSQLNAME("ZZ6") + " ZZ6 "
+		cQuery += "INNER JOIN "+ RETSQLNAME("ZZ3") + " ZZ3 ON ZZ3_CODIGO = ZZ6_CODIGO AND ZZ3_FILIAL = ZZ6_FILIAL "
+		cQuery += "WHERE ZZ6_FILIAL = '" + cFilLan + "'"
+		cQuery += "AND ZZ6_CODIGO = '" + cCodLan + "'"
+		cQuery += "AND ZZ3_GERADO = 'N' "
+		cQuery += "AND ZZ6_VACINA = 'S' "
+		cQuery += "AND ZZ6.D_E_L_E_T_ <> '*' "
+		cQuery += "AND ZZ3.D_E_L_E_T_ <> '*' "
+		
+
+		TCQUERY cQuery NEW ALIAS "TRA"
+
+		If Select("TRB") > 0
+			DbSelectarea("TRB")
+			DbCloseArea()
+		Endif
+
+		cQuery1 := " "
+		cQuery1 += "SELECT ADY_FILIAL, ADY_PROPOS, ADY_REVISA, ADZ_PRODUT, ADZ_PRCVEN FROM " + RETSQLNAME("ADY") + " ADY "
+		cQuery1 += "INNER JOIN "+ RETSQLNAME("ADZ") + " ADZ ON ADY.ADY_FILIAL = ADZ.ADZ_FILIAL AND ADY.ADY_PROPOS = ADZ.ADZ_PROPOS AND ADY.ADY_REVISA = ADZ.ADZ_REVISA "  
+		cQuery1 += "WHERE ADY.D_E_L_E_T_ <> '*' "
+		cQuery1 += "AND   ADZ.D_E_L_E_T_ <> '*' "
+		cQuery1 += "AND ADY_XCONTR = '"+ cNumCTR + "' "
+		cQuery1 += "AND ADY_XREVCT = '"+ cRevCTR + "' "
+		cQuery1 += "AND ADY_FILIAL = '"+ cFilCTR + "' " 
+
+		TCQUERY cQuery1 NEW ALIAS "TRB"
+
+		DBSelectArea("TRB")
+		DBGoTop()
+		While .Not. TRB->( EOF() )
+			IF(TRB->ADZ_PRODUT = '000000000025401')
+				cValInd := TRB->ADZ_PRCVEN
+			ElseIF(TRB->ADZ_PRODUT = '000000000033385')
+				cValCom := TRB->ADZ_PRCVEN
+			EndIf
+			TRB->(DBSKIP())
+		EndDo
+
+		DBSelectArea("TRA")
+		Count To nRecTra
+		ProcRegua(nRecTra)
+		DBGoTop()
+
+		While .Not. TRA->( EOF() )
+			IncProc("Registro " + StrZero(nReg,3) + "  /  "  + STRZERO(nRecTRA,3))
+			nReg++
+
+			//Comunidade
+			If (TRA->ZZ6_TIPO $ ('CA'))
+				nDAplCom++
+			ElseIf(TRA->ZZ6_TIPO $ ('T'))
+				nDAplTra++
+			ElseIf(TRA->ZZ6_TIPO $ ('D'))
+				nDAplDep++
+			EndIf
+
+			aCposCab := {}
+			aCposDet := {}
+
+			aAdd(aCposCab, {'ZZM_FILIAL', TRA->ZZ3_FILIAL       })
+			aAdd(aCposCab, {'ZZM_DTPROC', STOD(TRA->ZZ3_DTPROC) })
+			aAdd(aCposCab, {'ZZM_TPATEN', TRA->ZZ3_TPATEN       })
+			aAdd(aCposCab, {'ZZM_ATNDFO', TRA->ZZ3_ATNDFO       })
+			aAdd(aCposCab, {'ZZM_CODCLI', TRA->ZZ3_CODCLI       })
+			aAdd(aCposCab, {'ZZM_LOJA'  , TRA->ZZ3_LOJA         })
+			aAdd(aCposCab, {'ZZM_CEI'   , TRA->ZZ3_CEI          })
+			aAdd(aCposCab, {'ZZM_TIPO'  , TRA->ZZ6_TIPO         })
+			aAdd(aCposCab, {'ZZM_TRABAL', TRA->ZZ6_TRABAL       })
+			aAdd(aCposCab, {'ZZM_ATENLT', TRA->ZZ3_CODIGO       })
+			aAdd(aCposCab, {'ZZM_ITEMLT', TRA->ZZ6_ITEM         })
+			aAdd(aCposCab, {'ZZM_NUMCTR', CNUMCTR               })
+			aAdd(aCposCab, {'ZZM_REVCTR', CREVCTR               })
+			aAdd(aCposCab, {'ZZM_FILCTR', cFilCTR               })
+			aAdd(aCposCab, {'ZZM_ORIGEM','SS3318S'              })
+
+			aAux := {}
+			aAdd(aAux, {'ZZN_ITEM'  , '001' })
+			aAdd(aAux, {'ZZN_PROCED', TRA->ZZ3_PROCED})
+			aAdd(aAux, {'ZZN_CODCRE', TRA->ZZ3_CODCRE})
+
+			If(TRA->ZZ6_TIPO $ cCliInd )
+				aAdd(aAux, {'ZZN_VUNIT',cValInd })
+			ElseIf(TRA->ZZ6_TIPO $ cCliCom)
+				aAdd(aAux, {'ZZN_VUNIT',cValCom })
+			EndIf
+
+			aAdd( aCposDet, aAux )
+
+			If !GRVGA('ZZM', 'ZZN', aCposCab, aCposDet)
+				lRet := .F.
+			EndIf
+
+			TRA->(DBSKIP())
+		EndDo
+
+		TRA->(DbCloseArea())
+		
+		If Select("TRV") > 0
+			DbSelectarea("TRV")
+			DbCloseArea()
+		Endif
+		
+		cQuery2 := " "
+		cQuery2 += "SELECT COUNT(ZZ6_FILIAL) AS NVAC  FROM "      + RETSQLNAME("ZZ6") + " ZZ6 "
+		cQuery2 += "WHERE ZZ6_FILIAL = '" + cFilLan + "' "
+		cQuery2 += "AND ZZ6_CODIGO = '" + cCodLan + "'"
+		cQuery2 += "AND ZZ6_VACINA = 'N' "
+		cQuery2 += "AND ZZ6.D_E_L_E_T_ <> '*' "
+		
+		TCQUERY cQuery2 NEW ALIAS "TRV"
+		
+		cQuery3 := " "
+		cQuery3 += "SELECT SUM(ZZ3_DAPLIC) AS APLICA "
+		cQuery3 += "FROM " + RETSQLNAME("ZZ3") + " ZZ3 "
+		cQuery3 += "WHERE ZZ3_FILIAL = '" + cFilLan + "' "
+		cQuery3 += "AND   ZZ3_CONTRA = '" + cNumCTR + "' "
+		cQuery3 += "AND   ZZ3_REVCTR = '" + cRevCTR + "' "
+		cQuery3 += "AND   ZZ3.D_E_L_E_T_ <> '*' "
+
+		TCQUERY cQuery3 NEW ALIAS "TRT"
+		
+		DbSelectArea('ZZ3')
+		DbSetOrder(1)
+		DbSeek(xFilial()+cCodLan)
+		
+		If RecLock("ZZ3",.F.)
+			ZZ3->ZZ3_DAPLIC  := nReg
+			ZZ3->ZZ3_DAPLCO  := nDAplCom
+			ZZ3->ZZ3_DAPLTR  := nDAplTra
+			ZZ3->ZZ3_DAPLDE  := nDAplDep
+			ZZ3->ZZ3_QTDNAP  := TRV->NVAC
+			ZZ3->ZZ3_SLDCRT  := ZZ3->ZZ3_DCTR - (TRT->APLICA + nReg)
+			ZZ3->ZZ3_GERADO  := 'S'
+
+			ZZ3->(MsUnlock())
+		EndIf
+
+		Alert("G.A Gerado com sucesso")
+
+		RestArea(aAreaAtu)
+		oModel:DeActivate()
+	EndIf
+	TRV->(DbCloseArea())
+	TRT->(DbCloseArea())	
+Return
+
+/*/{Protheus.doc} GRVGA
+//Rotina grava as Guias de Atendimento. 
+Geradas a partir das informações da função GERALANC
+@author sergio.salustiano
+@since 05/02/2016
+@version 1
+@return return, return_description
+@example
+(examples)
+@see (links_or_references)
+/*/		
+Static Function GRVGA(cMaster, cDetail, aCpoMaster, aCpoDetail)
+	Local oModel, oAux, oStruct
+	Local nI        := 0
+	Local nJ        := 0
+	Local nPos      := 0
+	Local lRet      := .T.
+	Local aAux      := {}
+	Local aC        := {}
+	Local aH        := {}
+	Local nItErro   := 0
+	Local lAux      := .T.
+	Local cNGA      := ' '
+
+	DBSelectArea(cDetail)
+	DBSetOrder(1)
+
+	DBSelectArea(cMaster)
+	DBSetOrder(1)
+
+	//oModel := FWLoadModel('SS3306S')
+	oModel1:SetOperation(3)
+	oModel1:Activate()
+
+	//oAux     := oModel:GetModel(cMaster + 'MASTER')
+	//oStruct  := oAux:GetStruct()
+	//aAux     := oStruct:GetFields()
+
+	If lRet
+		For nI := 1 to Len(aCpoMaster)
+			//If(nPos := aScan(aAux,{|x| AllTrim(x[3]) == AllTrim(aCpoMaster[nI][1])}))
+			If ( nPos := aScan( aAux1, { |x| AllTrim( x[3] ) == AllTrim( aCpoMaster[nI][1] ) } ) ) > 0
+				If !(lAux := oModel1:SetValue(cMaster + 'MASTER', aCpoMaster[nI][1], aCpoMaster[nI][2] ))
+					lRet := .F.
+					Exit
+				EndIf
+			EndIf
+		Next
+	EndIf
+
+	If lRet
+		/*oAux     := oModel:GetModel(cDetail + 'DETAIL')
+		oStruct  := oAux:GetStruct()
+		aAux     := oStruct:GetFields()*/
+
+		nItErro := 0
+
+		For nI := 1 to Len(aCpoDetail)
+			If nI >1
+				If(nItErro := oAux2:addLine()) <> nI
+					lRet := .F.
+					Exit
+				EndIf
+			EndIf
+			For nJ := 1 to Len(aCpoDetail[nI])
+				If (nPos := aScan(aAux2,{|X| AllTrim(X[3]) == AllTrim(aCpoDetail[nI][nJ][1])})) > 0
+					If !(lAux := oModel1:SetValue(cDetail + 'DETAIL', aCpoDetail[nI] [nJ] [1], aCpoDetail[nI] [nJ] [2]))
+						lRet    := .F.
+						nItErro := nI
+
+						Exit
+
+					EndIf
+				EndIf
+			Next
+
+			If !lRet
+				Exit
+
+			EndIf
+		Next
+	EndIf
+
+	If lRet
+		If (lRet := oModel1:VldData())
+			oModel1:CommitData()
+		EndIf
+		oModel1:DeActivate()
+
+	EndIf
+
+	If !lRet
+		aErro := oModel1:GetErrorMessage()
+		AutoGrLog( "Id do formulário de origem:" + ' [' + AllToChar( aErro[1] ) + ']' )
+		AutoGrLog( "Id do campo de origem:     " + ' [' + AllToChar( aErro[2] ) + ']' )
+		AutoGrLog( "Id do formulário de erro:  " + ' [' + AllToChar( aErro[3] ) + ']' )
+		AutoGrLog( "Id do campo de erro:       " + ' [' + AllToChar( aErro[4] ) + ']' )
+		AutoGrLog( "Id do erro:                " + ' [' + AllToChar( aErro[5] ) + ']' )
+		AutoGrLog( "Mensagem do erro:          " + ' [' + AllToChar( aErro[6] ) + ']' )
+		AutoGrLog( "Mensagem da solução:       " + ' [' + AllToChar( aErro[7] ) + ']' )
+		AutoGrLog( "Valor atribuído:           " + ' [' + AllToChar( aErro[8] ) + ']' )
+		AutoGrLog( "Valor anterior:            " + ' [' + AllToChar( aErro[9] ) + ']' )
+
+		MostraErro()
+	EndIf
+
+Return
+
+/*/{Protheus.doc} VERCEI
+//Verifica se a empresa possui C.E.I
+@author sergio.salustiano
+@since 22/03/2016
+@version 6
+@return return, return_description
+@example
+(examples)
+@see (links_or_references)
+/*/
+Static Function VERCEI()
+	Local lRetorno       := .T.
+	Local aAreaAtu       := GetArea()
+	Local oModel 		 := FwModelActive()
+	Local oGrdZZ3		 := oModel:GetModel('ZZ3MASTER')
+	Local cCliente       := oGrdZZ3:GetValue('ZZ3_CODCLI')
+	Local cLoja          := oGrdZZ3:GetValue('ZZ3_LOJA')
+	Local cCEI           := oGrdZZ3:GetValue('ZZ3_CEI')
+
+	dbSelectArea('ZZP')
+	dbSetOrder(3)
+	dbGoTop()
+	If DbSeek(xFilial('ZZP')+ cCliente + cLoja)
+		Help( ,, 'Help',, 'Cliente Possui C.E.I.', 1, 0 )
+	EndIf
+	dbCloseArea('ZZP')
+
+return
+
+/*/{Protheus.doc} InfCTR
+//Retorna as Informações do Contrato
+@author sergio.salustiano
+@since 06/04/2017
+@version 6
+@return return, return_description
+@example
+(examples)
+@see (links_or_references)
+/*/
+User Function InfCTR()
+	Local lRetorno       := .T.
+	Local aAreaAtu       := GetArea()
+	Local oModel 		 := FwModelActive()
+	Local oGrdZZ3		 := oModel:GetModel ('ZZ3MASTER')
+	Local cCliente       := oGrdZZ3:GetValue('ZZ3_CODCLI')
+	Local cLoja          := oGrdZZ3:GetValue('ZZ3_LOJA')
+	Local cNumCTR        := oGrdZZ3:GetValue('ZZ3_CONTRA')
+	Local cRevCTR        := oGrdZZ3:GetValue('ZZ3_REVCTR')
+	Local cFilCTR        := " "
+	Local _nQuant        := 0
+
+	Local lRet		     := .T.
+	Local cQuery         := ' '
+	
+	cFilCTR := SD3->D3_XFILCN9
+	cQuery := "SELECT " + CRLF 
+	cQuery += " ADY.ADY_PROPOS, " + CRLF 
+	cQuery += " ADY.ADY_PREVIS, " + CRLF 
+	cQuery += " ADY.ADY_PREVIS, " + CRLF 
+	cQuery += "	SA1.A1_NOME, " + CRLF 
+	cQuery += "	ADZ.ADZ_TPALDO, " + CRLF
+	cQuery += "	SUM(ADZ_QTDVEN) AS ADZ_QTDVEN, " + CRLF 
+	cQuery += "	SUM(ADZ_XQTDDO) AS ADZ_XQTDDO " + CRLF
+	cQuery += "FROM " + CRLF 
+	cQuery += RetSqlName("CN9") + " CN9 " + CRLF 
+	cQuery += "LEFT JOIN " + RetSqlName("CN1") + " CN1 " + CRLF 
+	cQuery += "ON " + CRLF 
+	cQuery += "  ( " + CRLF 
+	cQuery += "    CN1.D_E_L_E_T_   = ' ' " + CRLF 
+	cQuery += "  AND CN1.CN1_FILIAL = '         ' " + CRLF 
+	cQuery += "  AND CN1.CN1_CODIGO = CN9.CN9_TPCTO " + CRLF 
+	cQuery += "  ) " + CRLF 
+	cQuery += "LEFT JOIN " + RetSqlName("ADY") + " ADY " + CRLF 
+	cQuery += "ON " + CRLF 
+	cQuery += "  ( " + CRLF 
+	cQuery += "    ADY.D_E_L_E_T_   = ' ' " + CRLF 
+	cQuery += "  AND ADY.ADY_FILIAL = CN9.CN9_FILIAL " + CRLF 
+	cQuery += "  AND ADY.ADY_OPORTU = CN9.CN9_XOPORT " + CRLF 
+	cQuery += "  AND ADY.ADY_REVISA = CN9.CN9_XREVOP " + CRLF 
+	cQuery += "  ) " + CRLF 
+	cQuery += "LEFT JOIN " + RetSqlName("ADZ") + " ADZ " + CRLF 
+	cQuery += "ON " + CRLF 
+	cQuery += "  ( " + CRLF 
+	cQuery += "    ADZ.D_E_L_E_T_   = ' ' " + CRLF 
+	cQuery += "  AND ADZ.ADZ_FILIAL = ADY.ADY_FILIAL " + CRLF 
+	cQuery += "  AND ADZ.ADZ_PROPOS = ADY.ADY_PROPOS " + CRLF 
+	cQuery += "  AND ADZ.ADZ_REVISA = ADY.ADY_PREVIS " + CRLF 
+	cQuery += "  ) " + CRLF 
+	cQuery += "LEFT JOIN " + RetSqlName("SB1") + " SB1 " + CRLF 
+	cQuery += "ON " + CRLF 
+	cQuery += "  ( " + CRLF 
+	cQuery += "    SB1.D_E_L_E_T_  = ' ' " + CRLF 
+	cQuery += "  AND SB1.B1_FILIAL = '        ' " + CRLF 
+	cQuery += "  AND SB1.B1_COD    = ADZ.ADZ_PRODUT " + CRLF 
+	cQuery += "  ) " + CRLF 
+	cQuery += "LEFT JOIN " + RetSqlName("SA1") + " SA1 " + CRLF 
+	cQuery += "ON " + CRLF 
+	cQuery += "  ( " + CRLF 
+	cQuery += "    SA1.D_E_L_E_T_  = ' ' " + CRLF 
+	cQuery += "  AND SA1.A1_FILIAL = ' ' " + CRLF 
+	cQuery += "  AND SA1.A1_COD    = ADY.ADY_CODIGO " + CRLF 
+	cQuery += "  AND SA1.A1_LOJA   = ADY.ADY_LOJA " + CRLF 
+	cQuery += "  ) " + CRLF 
+	cQuery += "WHERE " + CRLF 
+	cQuery += "  CN9.D_E_L_E_T_   = ' ' " + CRLF 
+	cQuery += "AND ADY.ADY_STATUS = 'B' " + CRLF 
+	cQuery += "AND SB1.B1_TIPO    = 'IM' " + CRLF 
+	//CQuery += "AND CN9.CN9_FILIAL = '" + xFilial("CN9") + "' " + CRLF 
+	CQuery += "AND CN9.CN9_FILIAL = '" + cFilCTR + "' " + CRLF
+	cQuery += "AND CN9.CN9_NUMERO = '" + cNumCTR + "' " + CRLF 
+	cQuery += "AND CN9.CN9_REVISA = '" + cRevCTR + "' " + CRLF 
+	cQuery += "GROUP BY " + CRLF 
+	cQuery += "  ADY.ADY_PROPOS, " + CRLF 
+	cQuery += "  ADY.ADY_PREVIS, " + CRLF 
+	cQuery += "  ADZ.ADZ_TPALDO, " + CRLF
+	cQuery += "  SA1.A1_NOME " + CRLF	
+
+	TCQUERY cQuery NEW ALIAS "TRC"
+
+	If(TRC->ADZ_TPALDO = '1')
+		_nQuant := TRC->ADZ_QTDVEN + TRC->ADZ_XQTDDO
+	ElseIf(TRC->ADZ_TPALDO = '2')
+		_nQuant := TRC->ADZ_QTDVEN - TRC->ADZ_XQTDDO
+	Else
+		_nQuant := TRC->ADZ_QTDVEN 
+	EndIf
+
+	TRC->(DbCloseArea())
+
+Return(_nQuant)
+
+/*/{Protheus.doc} ProcImp
+//Chamada da Função de importação da Planilha.
+@author sergio.salustiano
+@since 12/04/2017
+@version 6
+@return return, return_description
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ProcImp()
+	Local lOk     := .T.
+
+	Processa({||lOk := ImpPlan()}, 'Aguarde','Processando...',.F.)
+
+	If lOk
+		ApMsgInfo('Processamento terminado com sucesso.','ATENÇÃO')
+	Else
+		ApMsgStop('Processamento realizado com Sucesso, Aguarde ','Atenção')
+	EndIf
+
+Return
+
+/*/{Protheus.doc} ImpPlan
+//Funçao para importar trabalhadores da Planilha para o SAS.
+//Verifica pelo CPF se o trabalhador ja está cadastrado.
+//Insere os trabalhadores na Grid.
+@author sergio.salustiano
+@since 07/04/2017
+@version 6
+@return return, return_description
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ImpPlan()
+	Local lRetorno       := .T.
+	Local aAreaAtu       := GetArea()
+	Local oModel 		 := FwModelActive()
+	Local oGrdZZ3		 := oModel:GetModel ('ZZ3MASTER')
+	Local oGrdZZ6        := oModel:GetModel ('ZZ6DETAIL')
+	Local cCliente       := oGrdZZ3:GetValue('ZZ3_CODCLI')
+	Local cLoja          := oGrdZZ3:GetValue('ZZ3_LOJA')
+	Local aCampos        := {}
+	Local aDados         := {}
+	Local _nTrab         := ' '
+	Local cPlaNew        := ' '
+	Local cPlaNew1       := ' '
+	Local oExcel         := FWMSEXCEL():New()
+	Local aLogTra        := { }
+	Local _cTipo         := ''
+	Local _nCont         := 0
+	Local cContLine      := " "
+	Local nRegT          := 0
+	Local nReg           := 0
+	Private oModTra, oAuxT, oStructT //Para evitar o erro na importação do trabalhador
+	//-----------------------------------------------------------------------------
+	oModTra := FWLoadModel('SS3301S')
+	oModTra:SetOperation(3)
+
+	oAuxT     := oModTra:GetModel('ZZ0MASTER')
+	oStructT  := oAuxT:GetStruct()
+	aAuxT     := oStructT:GetFields()
+
+
+	//cPlaNew := Upper(cGetFile('Arquivos TXT (*.TXT) |*.TXT|', 'Abrir Arquivo',,'C:\UTIL\',.T.,nOR( GETF_LOCALHARD, GETF_RETDIRECTORY ),.F.))
+	cPlaNew   := Upper( cGetFile('Arquivos TXT (*.txt) |*.txt|', 'Selecione o Arquivo', , 'C:\', .T., nOR( GETF_LOCALHARD, GETF_MULTISELECT ), .F., .T.) )
+
+	//---------------------------------------------------|
+	//Cria a Planilha de LOG de Inconsistencias          |        
+	//---------------------------------------------------|
+	oExcel:AddworkSheet("Trabalhador")
+	oExcel:AddTable ("Trabalhador","Inconsistencia")
+	oExcel:AddColumn("Trabalhador","Inconsistencia","CNPJ EMPRESA",1,1)
+	oExcel:AddColumn("Trabalhador","Inconsistencia","CPF",1,1)	
+	oExcel:AddColumn("Trabalhador","Inconsistencia","NOME",1,1)	
+	
+
+
+	cArqSX := FT_FUse(cPlaNew)
+
+	if cArqSX <> -1
+
+		//Posiciona na primeira linha
+		nRegT := FT_FLASTREC()
+		ProcRegua(nRegT)
+
+		FT_FGoTop()
+		FT_FSKIP()
+		//FT_FSKIP()
+
+		//Varre todas as linhas do arquivo
+		While !FT_FEOF()
+			//nReg  := nReg + 1
+			IncProc("Importando Planilha Aguarda " + StrZero(nReg,8))
+
+			aDados      := {}
+			cContLine   := FT_FReadLn()
+			aDados := StrToKarr(cContLine,';')
+			//FwCutOff(FT_FReadLn(),.T.)
+
+			DbSelectArea('SA1')
+			DbSetOrder(1)
+
+			If(MsSeek(xFilial('SA1')+cCliente+cLoja))
+				If(FwCutOff(aDados[1]) = SA1->A1_CGC)
+					If (!Empty(FwCutOff(aDados[3])) .AND. (FwCutOff(aDados[3]) <> '00000000000'))
+						DbSelectArea('ZZ0')
+						DbSetOrder(3)
+						If (MsSeek(xFilial('ZZ0') + FwCutOff(aDados[3])) = .F.)
+							aCampos := {}
+							aAdd(aCampos, {'ZZ0_FILIAL' , xFilial()})	
+							aAdd(aCampos, {'ZZ0_CPF'    , FwCutOff(aDados[3]) })
+							aAdd(aCampos, {'ZZ0_NOME'   , UPPER(FwCutOff(aDados[4])) })
+							aAdd(aCampos, {'ZZ0_DTNASC' , Ctod(FwCutOff(aDados[5]))})
+							aAdd(aCampos, {'ZZ0_NOMMAE' , UPPER(FwCutOff(aDados[7])) })
+							aAdd(aCampos, {'ZZ0_CPFRES' , FwCutOff(aDados[8]) })
+							//aAdd(aCampos, {'ZZ0_NASRES' , CTOD(FwCutOff(aDados[9])) })
+							U_ImpTra('ZZ0',aCampos,'SS3301S',3)
+						EndIf
+						ZZ0->(DbCloseArea())
+					EndIf
+
+					//DbSetOrder(4)					
+					If (!Empty(FwCutOff(aDados[8])) .AND. (FwCutOff(aDados[3]) = '00000000000')) 
+						DbSelectArea('ZZ0')
+						DbSetOrder(5)
+						If (MsSeek(xFilial('ZZ0') + FwCutOff(aDados[8]) + UPPER(FwCutOff(aDados[4]))) = .F.)//
+							aCampos := {}
+							aAdd(aCampos, {'ZZ0_FILIAL' , xFilial()})	
+							aAdd(aCampos, {'ZZ0_CPF'    , " "      })
+							aAdd(aCampos, {'ZZ0_NOME'   , UPPER(FwCutOff(aDados[4])) })
+							aAdd(aCampos, {'ZZ0_DTNASC' , CTOD(FwCutOff(aDados[5])) })
+							aAdd(aCampos, {'ZZ0_NOMMAE' , UPPER(FwCutOff(aDados[7])) })
+							aAdd(aCampos, {'ZZ0_CPFRES' , FwCutOff(aDados[8]) })
+							//If(!Empty(FwCutOff(aDados[9]))
+							//	aAdd(aCampos, {'ZZ0_NASRES' , CTOD(FwCutOff(aDados[9])) })
+							//EndIf
+							U_ImpTra('ZZ0',aCampos,'SS3301S',3)
+						EndIf
+					EndIf
+
+				//EndIf
+				//For nX := 1 to Len(aCampos)
+				_nCont++
+				If(!Empty(FwCutOff(aDados[3])) .AND. (FwCutOff(aDados[3]) <> '00000000000' ))
+					DbSelectArea('ZZ0')
+					DbSetOrder(3)
+					If(MsSeek(xFilial()+FwCutOff(aDados[3])))
+						_nTrab := ZZ0->ZZ0_CODIGO
+					EndIf
+
+				ElseIf(!Empty(FwCutOff(aDados[8])) .AND. (FwCutOff(aDados[3]) = '00000000000' ))
+					DbSelectArea('ZZ0')
+					dbSetOrder(5)
+					//If(MsSeek(xFilial('ZZ0') + FwCutOff(aDados[8])))
+					If(MsSeek(xFilial('ZZ0') + FwCutOff(aDados[8]) + UPPER(FwCutOff(aDados[4]))))
+						_nTrab := ZZ0->ZZ0_CODIGO
+						//ZZ0->(DbCloseArea())
+					EndIf
+				//Else
+					oExcel:AddRow("Trabalhador","Inconsistencia",{FwCutOff(aDados[1]),FwCutOff(aDados[3]),FwCutOff(aDados[4])})
+					//Alert('Nao Encontrado' + FwCutOff(aDados[3]),'teste')
+				EndIf
+
+				//If oGrdZZ6:AddLine() ==  _nCont
+				oGrdZZ6:AddLine()
+				If(FwCutOff(aDados[6]) = 'Tra' )
+					_cTipo := 'T'
+				ElseIf(FwCutOff(aDados[6]) = 'Dep do Tra')
+					_cTipo := 'D'
+				ElseIf(FwCutOff(aDados[6]) = 'Com')
+					_cTipo := 'C'
+
+				ElseIf(FwCutOff(aDados[6]) = 'Com Dem da Ind')
+					_cTipo := 'A'
+				EndIf
+
+				oGrdZZ6:SetValue( 'ZZ6_TIPO'	, _cTipo     )
+				oGrdZZ6:SetValue( 'ZZ6_TRABAL'	, _nTrab     )
+				nReg  := nReg + 1
+			EndIf
+			ZZ0->(DbCloseArea())
+		EndIf 
+
+			//EndIf
+			//EndIf	
+			FT_FSKIP()
+		EndDo
+		oGrdZZ6:GoLine(1)
+
+		oExcel:Activate()
+		cPlaNew1 := Upper(cGetFile('Arquivos XLS (*.xls) |*.xls|', 'Salvar Planilha Inconsistencias',,'C:\UTIL\',.T.,nOR( GETF_LOCALHARD, GETF_LOCALFLOPPY, GETF_RETDIRECTORY ),.F.))
+		oExcel:GetXMLFile(cPlaNew1+"Log.XLS")
+
+	EndIf
+
+Return 
+
+/*/{Protheus.doc} ImpTra
+//Importa Trabalhador.
+@author sergio.salustiano
+@since 27/04/2017
+@version 6
+@return return, return_description
+@example
+(examples)
+@see (links_or_references)
+/*/
+User Function ImpTra(cAlias,aCampos,_cModelo,_cOperac)
+	Local oModel, oAux, oStruct
+	Local nI    := 0
+	Local nPos  := 0
+	Local lRet  := .T.
+	Local aAux  := {}
+
+	dbSelectArea(cAlias)
+	dbSetOrder(1)
+
+	//Aqui ocorre o instanciamento do Modelo de dados (Model)
+
+	//oModel := FWLoadModel(_cModelo)
+
+	//Temos que definir qual a operação que sera executada: 3 - Inclusão / 4 - Alteração / 5 - Exclusao
+	oModTra:SetOperation(_cOperac)
+
+	//Antes de Atribuirmos os Valores dos Campos temos que Ativar o Modelo
+	oModTra:Activate()
+
+	//Instanciamos apenas referentes aos Dados
+	//oAux :=oModel:GetModel(cAlias + 'MASTER')
+
+	//Obtemos a estrutura de dados
+	//oStruct := oAux:GetStruct()
+	//aAux    := oStruct:GetFields()
+
+	For nI := 1 To Len(aCampos)
+		//Verificar se os campos passados existem na estrutura do Modelo
+		//If (nPos := aScan(aAux,{|x| AllTrim(x[3] ) == Alltrim(aCampos[nI][1])})) > 0
+		If ( nPos := aScan(aAuxT,{|x| AllTrim( x[3] )== AllTrim(aCampos[nI][1]) } ) ) > 0
+
+			// É feita a atribuição do dado ao campo do Model
+			If !(lAux := oModTra:SetValue(cAlias + 'MASTER', aCampos[nI][1], aCampos[nI][2]))
+				//Caso a atribuição não possa ser feita, por algum motivo (Validação, por exemplo)
+				//O método SetValue retorna .F.
+				lRet := .F.
+				Exit
+			EndIf
+		EndIf
+	Next nI
+
+	If lRet
+		//Faz-se a validação dos dados, note que diferentemente das tradicionais "rotinas automaticas"
+		//Nesse momento os dados não são gravados, são somento validados.
+		If (lRet := oModTra:VldData())
+			//Se os dados foram validados faz-se a gravação efetiva dos dados (commit)
+			oModTra:CommitData()
+		EndIf
+	EndIf
+
+	If !lRet
+
+		//Se os dados não foram validados obtemos a descrição do erro para gerar LOG ou mensagem de aviso
+		aErro := oModTra:GetErrorMessage()
+		//A estrutura do vetor com o erro é:
+		// [1] Identificador (ID) do formulario de origem
+		// [2] Identificador (ID) do campo de origem
+		// [3] Identificador (ID) do formulario de erro
+		// [4] Identificador (ID) do campo de erro
+		// [5] Identificador (ID) do erro
+		// [6] Mensagem do erro
+		// [7] Mensagem da solução
+		// [8] Valor Atribuido
+		// [9] Valor Anterior
+
+		AutoGrLog("Id do Formulário de Origem:" + ' [' + AllToChar( aErro[1] ) + ']')
+		AutoGrLog("Id do Campo de Origem:     " + ' [' + AllToChar( aErro[2] ) + ']')
+		AutoGrLog("Id do Formulário de Erro:  " + ' [' + AllToChar( aErro[3] ) + ']')
+		AutoGrLog("Id do Campo de Erro:       " + ' [' + AllToChar( aErro[4] ) + ']')
+		AutoGrLog("Id do Erro:                " + ' [' + AllToChar( aErro[5] ) + ']')
+		AutoGrLog("Mensagem do Erro:          " + ' [' + AllToChar( aErro[6] ) + ']')
+		AutoGrLog("Mensagem da Solução:       " + ' [' + AllToChar( aErro[7] ) + ']')
+		AutoGrLog("Valor Atribuido:           " + ' [' + AllToChar( aErro[8] ) + ']')
+		AutoGrLog("Valor Anterior:            " + ' [' + AllToChar( aErro[9] ) + ']')
+
+		MostraErro()
+	EndIf
+
+	//Desativamos o Model
+	oModTra:DeActivate()
+
+
+Return lRet
+
+/*/{Protheus.doc} EXTGA
+//Fonte utilizado para Extornar Guia de Atendimento .
+@author sergio.salustiano
+@since 11/05/2017
+@version undefined
+@return return, return_description
+@example
+(examples)
+@see (links_or_references)
+/*/
+User Function EXTGA()
+Local cQuery := " "
+Local lRet		:= .T.
+Local aAreaAtu  := GetArea()
+Local oModel 	:= FwLoadModel('SS3318S')
+Local oModZZ3	:= oModel:GetModel( "ZZ3MASTER" )
+Local cFilLan   := " "
+Local cCodLan   := " "
+Local cGerado   := " "
+Local nI		:= 0
+Local nJ		:= 0
+Local nPos		:= 0
+Local lRet		:= .T.
+Local aAux		:= {}
+Local aC		:= {}
+Local aH		:= {}
+Local nItErro	:= 0
+Local lAux		:= .T.
+Local oModZZM, oAux, oStruct
+Local cModelo  := 'SS3306S'
+Local cOperac  := 5 
+Local cMaster  := 'ZZM'
+Local cDetail  := 'ZZN'
+Local aCpoMaster := {}
+Local aCpoDetail := {}
+
+	oModZZ3:Activate()
+	cFilLan	:= oModZZ3:GetValue( "ZZ3_FILIAL" )
+	cCodLan	:= oModZZ3:GetValue( "ZZ3_CODIGO" )
+	cGerado := oModZZ3:GetValue( "ZZ3_GERADO" )
+
+ If(AllTrim(cGerado) <> 'S' )
+ 	Help( ,, 'Help',, 'A Pre GA ainda nao foi Gerada. ', 1, 0 )
+	
+	Else
+	If Select("TRM") > 0
+			DbSelectarea("TRM")
+			DbCloseArea()
+	Endif
+
+	cQuery := " "
+	cQuery += "SELECT  * FROM "      + RETSQLNAME("ZZM") + " ZZM "
+	cQuery += "WHERE ZZM_FILIAL = '" + cFilLan + "' "
+	cQuery += "AND ZZM_ATENLT = '" + cCodLan + "' "
+	cQuery += "AND D_E_L_E_T_ <> '*' "
+	//cQuery += "AND ZZ3.D_E_L_E_T_ <> '*' "
+	
+	TCQUERY cQuery NEW ALIAS "TRM"
+	
+	DBSelectArea("TRM")
+	DBGoTop()
+	While .Not. TRM->( EOF() )
+	
+		DBSelectArea('ZZM')
+		DBSetOrder(1)
+		If(MsSeek(cFillan + TRM->ZZM_ATEND))
+			RecLock("ZZM",.F.)
+			DbDelete()
+			MsUnLock()
+			
+		DBSelectArea('ZZN')
+		DBSetOrder(1)
+		
+		MsSeek(cFillan + TRM->ZZM_ATEND)
+			While (.Not. ZZN->( EOF() )) .AND. (ZZN->ZZN_FILIAL = TRM->ZZM_FILIAL) .AND. (ZZN->ZZN_ATEND = TRM->ZZM_ATEND) 
+				RecLock("ZZN",.F.)
+				DbDelete()
+				MsUnLock()
+				ZZN->(DbSkip())
+			
+			EndDo
+				
+		EndIf
+		
+		TRM->(DBSKIP())
+		
+	EndDo
+	
+	If RecLock("ZZ3",.F.)
+			ZZ3->ZZ3_DAPLIC  := 0
+			ZZ3->ZZ3_DAPLCO  := 0
+			ZZ3->ZZ3_DAPLTR  := 0
+			ZZ3->ZZ3_DAPLDE  := 0
+			ZZ3->ZZ3_QTDNAP  := 0
+			ZZ3->ZZ3_GERADO  := 'N'
+			ZZ3->ZZ3_SLDCRT  := 0
+
+			ZZ3->(MsUnlock())
+		EndIf
+	
+	Alert("G.A Excluida com sucesso")
+	
+	TRM->(DbCloseArea())
+	ZZM->(DbCloseArea())
+	ZZN->(DbCloseArea())
+	
+EndIf
+
+Return
+
+/*/{Protheus.doc} SS3318M
+//Ponto de Entrada MVC para a Rotina de Vacina.
+@author sergio.salustiano
+@since 26/04/2017
+@version 6
+@return return, return_description
+@example
+(examples)
+@see (links_or_references)
+/*/
+User Function SS3318SM()
+	Local aParam  := PARAMIXB
+	Local aButtons 	:= {}
+	Local aParam 	:= PARAMIXB
+	Local cIdModel	:= ''
+	Local cIdPonto	:= ''
+	Local cCodVen	:= ''
+	Local nOper     := 0
+	Local oObj, oMdZZ3 
+	Local xRet		:= .T.
+	//Local oGrdZZ3	:= oModel:GetModel ('ZZ3MASTER')
+
+
+	If aParam <> NIL
+		oObj     := aParam[1]
+		cIdPonto := aParam[2]
+		cIdModel := aParam[3]
+		oMdZZ3 := oObj:GetModel('ZZ3MASTER')
+
+	EndIf
+
+	Do Case
+		Case cIdPonto == "MODELPOS"				     //Na validacao total do modelo
+		xRet := .T.
+		Case cIdPonto == "FORMPOS"					//Na validação total do formulário
+		xRet := .T.
+		Case cIdPonto == "FORMLINEPRE"				//Antes da alteração da linha do formulário FWFORMGRID
+		xRet := .T.
+		Case cIdPonto == "FORMLINEPOS"				//Na validação total da linha do formulario FWFORMGRID
+		xRet := .T.
+		Case cIdPonto == "MODELCOMMITTTS"			//Após a gravação total do modelo e dentro da transacao
+		xRet := Nil
+		Case cIdPonto == "MODELCOMMITNTTS"			//Após a gravação total do modelo e fora da gravação
+		xRet := Nil
+		Case cIdPonto == "FORMCOMMITTTSPRE"		 //Antes da gravação da tabela do formulário
+		xRet := .T.
+		Case cIdPonto == "FORMCOMMITTTSPOS"		 //Após a gravação da tabela do formulário
+		xRet := Nil
+		Case cIdPonto == "MODELCANCEL"			//Na ação do botão Cancelar
+		xRet := .T.
+		Case cIdPonto == "MODELVLDACTIVE"		//Na ativação do modelo
+			nOper := oMdZZ3:GetOperation()
+			If(nOper = 4) .OR. (nOper = 5) 
+				If  ZZ3->ZZ3_GERADO = 'S'
+					Help(, , 'Help', , 'Guia de Atendimento Gerada, Não é permitido a Alteração', 1, 0)
+					xRet := .F.
+				Else
+					xRet := .T.
+				EndIf
+			Else
+				xRet := .T.
+			EndIf
+		Case cIdPonto == "MODELPRE"				 //Antes da alteracao de qualquer campo
+		xRet := .T.
+		Case cIdPonto == "FORMPRE"					//Antes da alteracao de qualquer campo de formulário
+		xRet := .T.
+		Case cIdPonto == "FORMCANCEL"				//No cancelamento do botão
+		xRet := .T.
+		Case cIdPonto == "BUTTONBAR"				//Para inclusão de botões na ControlBar
+		xRet := aButtons
+	EndCase
+
+
+	Return xRet
+
+
+Return(Nil)
+
+
+

@@ -1,0 +1,205 @@
+#Include 'Protheus.ch'
+#Include "TopConn.ch"
+
+/*/{Protheus.doc} SACI008
+O ponto de entrada SACI008 sera executado apos gravar todos os dados da baixa a receber. 
+Neste momento todos os registros já foram atualizados e destravados e a contabilizacao efetuada.
+
+@author 	Sergio Ricardo Leite Salustiano
+@since 	03/12/2014
+@version 	1.0
+@return Nil, Nulo
+@see http://tdn.totvs.com/pages/releaseview.action?pageId=6071312
+@history 08/09/2019, Franklin de Brito de Oliveira, adicionado tratativa na SE5 que originalmente estava no ponto de entrada F70GRSE1.
+/*/
+User Function SACI008()
+
+	Local _aArea  	:= GetArea()
+	Local _aHistCob	:= Array(9)
+
+	//Tratamento para baixa dos titulos Cartao de Credito
+	If SE5->E5_MOTBX == 'MAS' .OR. SE5->E5_MOTBX == 'VIS' 
+		fGrvSE5()
+	EndIf	
+	
+	//Tratamento para baixa dos titulos RM
+	If SE5->E5_PREFIXO $ 'RMC/RMX/SGE/REN'
+		if(SE5->E5_MOTBX = 'DAC' )
+		fGrvZZU()
+		EndIf
+	EndIf
+	
+	//------------------------------------------------------
+	//-- Grava Histórico de cobrança
+	//------------------------------------------------------
+	If ( SE1->E1_SALDO > 0 .AND. SE1->E1_VENCREA < dDatabase )
+		_aHistCob[1]:= SA1->A1_COD
+		_aHistCob[2]:= SA1->A1_LOJA
+		_aHistCob[3]:= SE1->E1_PREFIXO 
+		_aHistCob[4]:= SE1->E1_NUM
+		_aHistCob[5]:= SE1->E1_PARCELA
+		_aHistCob[6]:= SE1->E1_TIPO
+		_aHistCob[7]:= STOD("//")
+		_aHistCob[8]:= "RECEBIMENTO PARCIAL " + CRLF 
+		_aHistCob[8]+= "Valor Recebido: R$ "+Str(SE5->E5_VALOR,TamSX3("E5_VALOR")[1],TamSX3("E5_VALOR")[2]) 
+		_aHistCob[9]:= SE5->E5_SEQ
+	
+		//---------------------------------------	
+		//-- Chama Função que grava historico
+		//---------------------------------------
+		U_SF06A74X(_aHistCob,"FINA070")
+	EndIf 
+	
+	If AllTrim(SE1->E1_TIPO) $ 'CC|CD' .or. IsInCallStack('U_SFFNBX1A')
+		dbSelectArea('SE5')
+		SE5->(dbSetOrder(7)) //E5_FILIAL+E5_PREFIXO+E5_NUMERO+E5_PARCELA+E5_TIPO+E5_CLIFOR+E5_LOJA+E5_SEQ
+		If dbSeek(xFilial('SE5') + SE1->E1_PREFIXO + SE1->E1_NUM + SE1->E1_PARCELA + SE1->E1_TIPO + SE1->E1_CLIENTE + SE1->E1_LOJA)
+			While .not. SE5->(Eof()) .and.; 
+						SE5->E5_FILIAL == xFilial('SE5') .and.;
+						SE5->E5_PREFIXO == SE1->E1_PREFIXO .and.;
+						SE5->E5_NUMERO == SE1->E1_NUM .and.;
+						SE5->E5_PARCELA == SE1->E1_PARCELA .and.; 
+						SE5->E5_TIPO == SE1->E1_TIPO .and.; 
+						SE5->E5_CLIFOR == SE1->E1_CLIENTE .and.; 
+						SE5->E5_LOJA == SE1->E1_LOJA
+
+				If SE5->E5_RECPAG = 'R'
+					RecLock('SE5', .F.)
+						If AllTrim(SE1->E1_TIPO) $ 'CC|CD' .and. SE5->E5_TIPODOC = 'VL'
+							SE5->E5_XVTXADM := SE1->E1_VLRREAL - SE1->E1_VALOR
+						ElseIf IsInCallStack('U_SFFN462A') .and. SE5->E5_MOTBX == 'CRT'
+							SE5->E5_ORIGEM	:= 'SFFN462A'
+						ElseIf IsInCallStack('U_SFINA20') .and. SE5->E5_MOTBX == 'REN'
+							SE5->E5_ORIGEM 	:= 'SFINA20'							
+						EndIf
+					MsUnLock()
+				EndIf
+				SE5->(dbSkip())
+			EndDo
+		EndIf
+	EndIf
+	
+	RestArea(_aArea)
+
+Return
+
+/** {Protheus.doc} fGrvSE5
+Funcao para gravar tabelas intermediarias do Financeiro RM
+
+@author 	Sergio Ricardo Leite Salustiano
+@since 	03/12/2014
+@Uso: 		SFIEMT
+*/
+Static Function fGrvSE5()
+
+	Local _cQuery   := '' 
+	Local _cFilial  := SE1->E1_FILIAL
+	Local _cNumTit  := SE1->E1_NUM
+	Local _cParcela := ''
+	Local _cCodCli  := ''
+	Local _cLoja    := ''
+	
+	If Select("TRA") > 0
+		DbSelectArea("TRA")
+		TRA->(DbCloseArea())
+	EndIf
+	
+	_cQuery := " SELECT MAX(E1_PARCELA) PARCELA FROM "+ RetSqlName("SE1") +" SE1 "
+	_cQuery += "WHERE SE1.E1_FILIAL = '"+_cFilial+"' AND SE1.E1_NUM = '"+_cNumTit+"'" 
+	_cQuery += "AND SE1.E1_PREFIXO = 'CRT' "
+	_cQuery += "AND SE1.D_E_L_E_T_ = ' '"
+	
+	TCQUERY _cQuery NEW ALIAS "TRA"
+
+	_cParcela := TRA->PARCELA
+	
+	DBSelectArea('SE1')
+	SE1->( DBSetOrder(1) )
+	SE1->( DbGoTop() )
+	If SE1->( DBSeek(_cFilial + 'CRT' + _cNumTit + _cParcela + 'CC') )
+		
+		_cCodCli := SE1->E1_CLIENTE
+		_cLoja   := SE1->E1_LOJA
+		
+		If RECLOCK('SE5', .F.)
+			SE5->E5_DOCUMEN := _cCodCli + _cLoja
+		EndIf
+		 
+		SE5->( MSUNLOCK() )
+	EndIf
+	
+	TRA->( DBCloseArea() )
+	
+Return
+
+
+/** {Protheus.doc} fGrvZZU
+Funcao para gravar tabela de controle de baixa de contas a receber protheus x rm
+
+@author 	Jose Leite de Barros Neto
+@since 	28/01/2016
+@Uso: 		SFIEMT
+*/
+Static Function fGrvZZU()
+	
+	Local _cE5Filial	:= SE5->E5_FILIAL
+	Local _cE5Prefix	:= SE5->E5_PREFIXO
+	Local _cE5Numero	:= SE5->E5_NUMERO
+	Local _cE5Parcel	:= SE5->E5_PARCELA
+	Local _cE5Tipo		:= SE5->E5_TIPO
+	Local _cE5Seq		:= SE5->E5_SEQ
+	Local _cE5MotBx		:= SE5->E5_MOTBX
+	Local _cQuery		:= ""
+	Local _cChvRen		:= ""
+	
+	If _cE5Prefix == 'REN'
+		
+		If Select("TRA") > 0
+			DbSelectArea("TRA")
+			TRA->(DbCloseArea())
+		EndIf
+	
+		_cQuery := " SELECT * " + CRLF
+		_cQuery += " FROM "+ RetSqlName("ZZU")
+		_cQuery += " WHERE ZZU_CHVREN = '"+ _cE5Filial + _cE5Prefix + _cE5Numero + _cE5Tipo +"' " + CRLF
+		_cQuery += " AND D_E_L_E_T_ <> '*'"
+		
+		TCQUERY _cQuery NEW ALIAS "TRA"
+		
+		_cChvRen := TRA->ZZU_CHVREN
+		
+		TRA->(DbCloseArea())
+		
+		If Empty(_cChvRen)
+			Return
+		EndIf
+		
+	EndIf
+	
+	If _cE5MotBx = 'REN'
+	Else
+		DbSelectArea('SE1') //E1_FILIAL+E1_PREFIXO+E1_NUM+E1_PARCELA+E1_TIPO
+		SE1->(DbSetOrder(1))
+		SE1->(DbGoTop())
+		If SE1->(DbSeek( _cE5Filial + _cE5Prefix + _cE5Numero + _cE5Parcel + _cE5Tipo ))
+			
+			DbSelectArea('ZZU')
+			ZZU->( DbSetOrder(1) ) //ZZU_FILIAL + ZZU_PREFIXO + ZZU_NUMERO + ZZU_PARCELA + ZZU_TIPO
+			ZZU->( DbGoTop() )
+			If RecLock('ZZU',.T.)
+				ZZU->ZZU_FILIAL	:= _cE5Filial 
+				ZZU->ZZU_PROBX 	:= '1'
+				ZZU->ZZU_PREFIX	:= _cE5Prefix
+				ZZU->ZZU_NUMERO	:= _cE5Numero
+				ZZU->ZZU_PARCEL	:= _cE5Parcel
+				ZZU->ZZU_TIPO	:= _cE5Tipo
+				ZZU->ZZU_SEQBX	:= _cE5Seq
+				ZZU->ZZU_MOTBX	:= _cE5MotBx
+				ZZU->( MsUnlock() )
+			EndIf
+		  
+			ZZU->( DbCloseArea() )
+		EndIf
+	EndIf
+	
+Return

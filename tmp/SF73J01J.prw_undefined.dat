@@ -1,0 +1,160 @@
+#Include 'Protheus.ch'
+#Include 'Topconn.ch'
+#Include 'Tbiconn.ch'
+
+/*/{Protheus.doc} SF73J01J
+Funcao responsavel por realizar leitura via JOB de Clientes no Protheus e verificar se precisa de atualizacao dos
+campos da politica comercial.
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	22/08/2016
+@version 	1.0
+
+@return Nil, Nulo
+/*/
+User Function SF73J01J( _aParams )
+	
+	Local _aArea	:= GetArea()
+
+	ConOut(" ")
+  	ConOut(Replicate("=",80))
+  	ConOut('SF73J01J: Iniciando Job atualizacao de politica comercial - CRM')
+  	
+  	If Valtype( _aParams ) != "U"
+		//+--------------------------------------------------------------+
+		//| Se for SCHEDULE prepara o ambiente                           |
+		//+--------------------------------------------------------------+
+		PREPARE ENVIRONMENT EMPRESA _aParams[1] FILIAL _aParams[2]    
+		
+		If _aParams != Nil
+			ConOut("SF73J01J: Empresa: "+ _aParams[1])   
+			ConOut("SF73J01J: Filial: "+ _aParams[2])
+		EndIf
+		
+		ConOut('SF73J01J: Processando atualizacao de clientes')
+		AtuSA1()
+		
+	Else
+		FWMsgRun(, {|| AtuSA1() }, "Processando atualizacao de clientes", "Aguarde..." )
+		Aviso(FunName()+"/"+ProcName(),"Politica Comercial - CRM -> Os clientes foram atualizados",{"OK"})
+	EndIf
+	
+	ConOut('SF73J01J: Finalizando Job atualizacao de politica comercial - CRM')
+	ConOut(Replicate("=",80))
+	ConOut(" ")
+  	
+  	RestArea(_aArea)
+
+Return
+
+
+/** {Protheus.doc} AtuSA1
+Funcao que realiza a atualizacao do cliente
+
+@author: 	Jose Leite de Barros Neto
+@since: 	20/10/2015
+@Uso: 		SFIEMT
+*/
+Static Function AtuSA1()
+	
+	Local _cQuery 	:= ""
+	Local _nDiasICD	:= 180 // 06 meses
+	Local _nDiasICI	:= 360 // 12 meses
+	Local _nCont		:= 0
+	Local _lAltera	:= .F.
+	Local _cMsgAlt	:= ""
+	
+	If Select("TRA") > 0
+		DbSelectarea("TRA")
+		TRA->(DbCloseArea())
+	EndIf
+	
+	_cQuery := "SELECT "+ CRLF
+	_cQuery += "ROUND(TO_DATE(A1_XDTVLAR, 'YYYY-MM-DD') - SYSDATE,2) * -1 A1_XDTVLAR,"+ CRLF
+  	_cQuery += "A1_XICDSEN, "+ CRLF
+  	_cQuery += "A1_XICDSES, "+ CRLF
+  	_cQuery += "A1_XICISEN, "+ CRLF
+  	_cQuery += "A1_XICISES, "+ CRLF
+  	_cQuery += "A1_CGC      "+ CRLF
+  	_cQuery += "FROM "+ RetSqlName("SA1") + " SA1	" + CRLF
+	_cQuery += "WHERE							"+ CRLF
+  	_cQuery += "A1_PESSOA = 'J'				"+ CRLF
+  	_cQuery += "AND A1_XDTVLAR <> ' '		"+ CRLF
+  	_cQuery += "AND D_E_L_E_T_ <> '*'		"+ CRLF
+	_cQuery += "ORDER BY A1_XDTVLAR DESC	"+ CRLF
+	
+	TCQUERY _cQuery NEW ALIAS "TRA"
+	
+	Begin Transaction
+		
+		DbSelectArea("TRA")
+		TRA->(DbGoTop())
+		While .Not. TRA->( EoF() )
+			
+			If TRA->A1_XDTVLAR >= 180
+				
+				Do Case 
+					//Direta e Indireta - 180 dias
+					Case TRA->A1_XICDSEN == 'S' .And. TRA->A1_XICDSES == 'S' .And. TRA->A1_XICISEN == 'S' .And. TRA->A1_XICISES == 'S' .And. TRA->A1_XDTVLAR >= _nDiasICD
+						_lAltera := .T.
+						_cMsgAlt := "Atualizado JOB CRM - Pol. Comercial ICD/ICI: "+ DtoC(dDataBase) + " - " + AllTrim(Time())
+					//Direta - 180 dias
+					Case TRA->A1_XICDSEN == 'S' .And. TRA->A1_XICDSES == 'S' .And. TRA->A1_XDTVLAR >= _nDiasICD
+						_lAltera := .T.
+						_cMsgAlt := "Atualizado JOB CRM - Pol. Comercial ICD: "+ DtoC(dDataBase) + " - " + AllTrim(Time())
+					//Indireta - 360 dias
+					Case TRA->A1_XICISEN == 'S' .And. TRA->A1_XICISES == 'S' .And. TRA->A1_XDTVLAR >= _nDiasICI
+						_lAltera := .T.
+						_cMsgAlt := "Atualizado JOB CRM - Pol. Comercial ICI: "+ DtoC(dDataBase) + " - " + AllTrim(Time())
+					OTHERWISE
+						_lAltera := .F.
+				End Case
+				
+				If _lAltera
+					_nCont++
+					DbSelectArea('SA1')
+					SA1->(DbSetOrder(3))
+					SA1->(DbGoTop())
+					If SA1->(DbSeek( xFilial('SA1') + TRA->A1_CGC ))
+						If RecLock('SA1',.F.)
+							SA1->A1_CNAE		:= ""
+						  	SA1->A1_XDSCNAE	:= ""
+						  	SA1->A1_XSITREC	:= ""
+						  	SA1->A1_XCNAEIN	:=	""
+						  	SA1->A1_XTRATIN	:=	""
+						  	SA1->A1_XICDSEN	:=	""
+						  	SA1->A1_XICDSES	:=	""
+						  	SA1->A1_XVLCDSN	:= 0
+						  	SA1->A1_XVLCDSS	:= 0
+						  	SA1->A1_XICISEN	:= ""
+						  	SA1->A1_XICISES	:= ""
+						  	SA1->A1_XVLCISN	:= 0
+						  	SA1->A1_XVLCISS	:= 0
+						  	SA1->A1_XFPAS	:=	""
+						  	SA1->A1_XQTEMP	:= 0
+						  	SA1->A1_XFAIXFU	:= ""
+							SA1->A1_XALTARR	:= _cMsgAlt
+							SA1->A1_XORIGEM	:= _cMsgAlt
+							SA1->A1_XDTVLAR	:= CTOD("")
+							SA1->A1_XCNTSIN	:= ""
+							SA1->A1_XCNTCON	:= ""
+							SA1->A1_XCODSIN	:= ""
+							SA1->A1_XDSCSIN	:= ""
+						EndIf
+						SA1->(MsUnlock())
+					EndIf
+					SA1->(DbCloseArea())
+				EndIf
+				
+			EndIf
+			TRA->( DbSkip() )	
+		End
+		
+	End Transaction
+	
+	If _nCont > 0
+		ConOut("SF73J01J: Politica Comercial - CRM -> "+ cValToChar(_nCont) +" clientes foram atualizados.")
+	EndIf
+	
+Return

@@ -1,0 +1,514 @@
+#include 'protheus.ch'
+#Include 'FWMVCDEF.CH'
+#Include 'Topconn.ch'
+
+
+/*/{Protheus.doc} SF0104S
+	Browse MVC da rotina de Movimentação de bens duráveis
+	
+@author Sergio Ricardo Leite Salustiano 
+@since 14/09/2016
+
+@type function
+/*/
+user function SF0104S()
+	
+	Local oBrowse
+	
+	Private _cFilCod :=  FWCODFIL()    
+	
+	oBrowse := FWMBrowse():New()
+	oBrowse:SetAlias('ZEC')
+	oBrowse:SetDescription('Transferencia / Emprestimo de Bens Duraveis')
+	
+	oBrowse:SetFilterDefault("ZEC_MSFIL == _cFilCod .OR. ZEC_FILDES == _cFilCod")
+	
+	oBrowse:AddLegend("ZEC_ACEITE == 'R'						"	, "RED" , "Movimentação rejeitada"		)
+	oBrowse:AddLegend("Empty(ZEC_ACEITE)"							, "PINK"  , "Aguardando Aceite"			)
+	oBrowse:AddLegend("ZEC_ACEITE == 'A' .And. ZEC_TPMOV == 'B'"	, "BLACK" , "Bem Baixado"				)
+	oBrowse:AddLegend("ZEC_ACEITE == 'A' .And. ZEC_TPMOV == 'T'"	, "BLUE"  , "Bem Transferido"			)
+	oBrowse:AddLegend("ZEC_ACEITE == 'A' .And. ZEC_TPMOV == 'R' .And. !Empty(ZEC_CODRET)"   , "GREEN" , "Devolução de empréstimo"		)
+	oBrowse:AddLegend("ZEC_ACEITE == 'A' .And. ZEC_TPMOV == 'E' .And. ZEC_TPEMPR $ 'EM/EF'"	, "YELLOW", "Bem Emprestado"				)
+	oBrowse:AddLegend("ZEC_ACEITE == 'A' .And. ZEC_TPMOV == 'E' .And. ZEC_TPEMPR $ 'PU/PP'"	, "GRAY"  , "Bem Emprestado para Terceiro"	)
+	
+	oBrowse:Activate()
+
+Return ( Nil )
+
+/*/{Protheus.doc} MenuDef
+	Menu MVC da rotina de Movimentação de bens duráveis
+	
+@author Sergio Ricardo Leite Salustiano
+@since 14/09/2016
+
+@type function
+/*/
+Static Function MenuDef()
+
+	Local aRotina := {}
+
+	ADD OPTION aRotina Title 'Visualizar' 			Action 'VIEWDEF.SF0104S' OPERATION 2 ACCESS 0
+	ADD OPTION aRotina Title 'Incluir'    			Action 'VIEWDEF.SF0104S' OPERATION 3 ACCESS 0
+	ADD OPTION aRotina Title 'Alterar'    			Action 'VIEWDEF.SF0104S' OPERATION 4 ACCESS 0
+	ADD OPTION aRotina Title 'Excluir'    			Action 'VIEWDEF.SF0104S' OPERATION 5 ACCESS 0
+	ADD OPTION aRotina Title 'Imprimir'   			Action 'VIEWDEF.SF0104S' OPERATION 8 ACCESS 0
+	ADD OPTION aRotina Title 'Copiar'     			Action 'VIEWDEF.SF0104S' OPERATION 9 ACCESS 0
+	ADD OPTION aRotina Title 'Dev. Empréstimo'		Action 'U_F0104SDV' 	 OPERATION 4 ACCESS 0
+	ADD OPTION aRotina Title 'Rel. Transf./Baixa'	Action 'U_SF0102X'       OPERATION 8 ACCESS 0
+	ADD OPTION aRotina Title 'Rel. Mov. Temporaria'	Action 'U_SF0107X'      OPERATION 8 ACCESS 0
+	
+
+Return ( aRotina )
+
+/*/{Protheus.doc} ModelDef
+	Definição do modedo de dados da rotina de movimentação de bens duráveis 
+	
+@author Sergio Ricardo Leite Salustiano 
+@since 14/09/2016
+
+@type function
+/*/
+Static Function ModelDef()
+
+	Local oStruZEC := FWFormStruct(1, 'ZEC')
+	Local oStruZED := FWFormStruct(1, 'ZED')
+	Local oModel
+	
+	oModel:= MPFormModel():New('SF0104SM', , { |oModel| fTudoOk(oModel) })
+	oModel:AddFields('ZECMASTER',/*cOwner*/, oStruZEC, , )
+	oModel:AddGrid('ZEDDETAIL','ZECMASTER',oStruZED, , { |oModelGrid| fLinhaOk(oModelGrid) })
+	oModel:SetRelation('ZEDDETAIL',{{'ZED_FILIAL','xFilial("ZED")'}, {'ZED_CODIGO','ZEC_CODIGO'}},ZED->(IndexKey(2)))
+	oModel:SetPrimaryKey({"ZEC_FILIAL","ZEC_CODIGO"})
+	oModel:SetDescription('Emprestimo / Baixa')
+	oModel:GetModel('ZECMASTER'):SetDescription('Emprestimo / Baixa')
+	oModel:GetModel('ZEDDETAIL'):SetDescription('Emprestimo / Baixa')
+	
+	// Liga o controle de não repetição de linha
+	oModel:GetModel( 'ZEDDETAIL' ):SetUniqueLine( { 'ZED_CODBEM' } )
+	
+	//Remove o campo Usuário de Aprovação da rotina de movimentação do bem
+	If IsInCallStack('SF0104S')
+		oStruZEC: RemoveField('ZEC_NMUSAP')
+	//Remove o campo Usuário de Inclusão da rotina de movimentação do bem
+	ElseIf IsInCallStack('SF0105S')
+		oStruZEC: RemoveField('ZEC_USUARI')
+	EndIf
+	
+	//Validação da ativação do modelo
+	oModel:SetVldActivate( { |oModel| F0104SACT( oModel ) } )
+
+Return ( oModel )
+
+/*/{Protheus.doc} ViewDef
+	Definição da visualização de dados da rotina de movimentação de bens duráveis
+
+@author Sergio Ricardo Leite Salustiano 
+@since 14/09/2016
+
+@type function
+/*/
+Static Function ViewDef()
+
+	Local oModel   := FWLoadModel('SF0104S')
+	Local oStruZEC := FWFormStruct(2, 'ZEC')
+	Local oStruZED := FWFormStruct(2, 'ZED')
+	Local oView
+
+	oView:=FWFormView():New()
+	oView:SetModel(oModel)
+	oView:AddField('VIEW_ZEC', oStruZEC, 'ZECMASTER')
+	oView:AddGrid ('VIEW_ZED', oStruZED, 'ZEDDETAIL')
+	oView:AddIncrementField( 'VIEW_ZED', 'ZED_ITEM' )
+	oView:CreateHorizontalBox ('SUPERIOR', 40)
+	oView:CreateHorizontalBox ('INFERIOR', 60)
+	oView:SetOwnerView ('VIEW_ZEC', 'SUPERIOR')
+	oView:SetOwnerView ('VIEW_ZED', 'INFERIOR')
+	
+	//Metodo que seta um bloco de código para verificar se a janela deve ou não ser fechada após a execução do botão OK na View.
+	oView:SetCloseOnOk( {|| .t.} )
+	
+Return ( oView )
+
+/*/{Protheus.doc} fLinhaOk
+	Função para validação de linha da grid
+
+@author franklin.oliveira
+@since 20/09/2016
+@param oModelGrid, object, modelo de dados da grid
+
+@type function
+/*/
+Static Function fLinhaOk(oModelGrid)
+
+Local oModel	:= oModelGrid:GetModel()
+Local cCodBem 	:= oModelGrid:GetValue('ZED_CODBEM', oModelGrid:GetLine())
+Local cSitBem	:= Posicione('ZEA', 1, xFilial('ZEA') + cCodBem, 'ZEA_SITBEM')
+Local cFilOri	:= Posicione('ZEA', 1, xFilial('ZEA') + cCodBem, 'ZEA_FILORI')
+Local cFilAtu	:= Posicione('ZEA', 1, xFilial('ZEA') + cCodBem, 'ZEA_FILATU')
+Local cTpMov	:= oModel:GetValue('ZECMASTER', 'ZEC_TPMOV')
+Local cTpEmpr	:= oModel:GetValue('ZECMASTER', 'ZEC_TPEMPR')
+Local lRet 		:= .T.
+	
+	//Só é possível adicionar bem ativo
+	If FunName() == 'SF0104S' 
+		If .Not. (cSitBem == 'A') .And. .Not. (cTpMov == 'R') 
+			Help( , , 'Help', , 'O bem [' + cCodBem + '] não está Ativo.', 1, 0)
+			lRet := .F.
+		EndIf
+	EndIf	
+	
+	//Valido o Bem conforme o tipo de movimentação
+	If lRet
+		Do Case
+			//Quando for retorno de empréstimo
+			Case cTpMov == 'R'
+				If (cTpEmpr == 'EF' .And. .Not. (cFilAtu == cFilAnt))
+					Help( , , 'Help', , 'O bem [' + cCodBem + '] não está emprestado para a filial [' + cFilAnt + '].', 1, 0)
+					lRet := .F.
+				EndIf
+			//Outros Tipos
+			OtherWise
+				If (.Not. (cFilOri == cFilAnt))
+					Help( , , 'Help', , 'O bem [' + cCodBem + '] não pertence a filial [' + cFilAnt + '].', 1, 0)
+					lRet := .F.
+				EndIf
+				
+				//Valido se o bem já possui movimentação pendente de aceite
+				If lRet .And. fExsMov(cCodBem)
+						Help( , , 'Help', , 'O bem [' + cCodBem + '] possui movimentação pendente de aceite.', 1, 0)
+						lRet := .F.
+				EndIf
+		EndCase
+	EndIf
+		
+Return lRet
+
+/*/{Protheus.doc} fTudoOk
+	Função para validação do modelo de dados
+	
+@author franklin.oliveira
+@since 20/09/2016
+@param oModel, object, Modelo de dados
+
+@type function
+/*/
+Static Function fTudoOk(oModel)
+
+Local lRet			:= .T.
+Local oModelZED		:= oModel:GetModel('ZEDDETAIL')
+Local nI			:= 0
+Local aSaveLines	:= FWSaveRows()
+Local cCodBem		:= ""
+Local cSitBem		:= ""
+Local cTpMov		:= oModel:GetValue('ZECMASTER', 'ZEC_TPMOV')
+Local cCodRet		:= oModel:GetValue('ZECMASTER', 'ZEC_CODRET')
+Local cTpEmp		:= oModel:GetValue('ZECMASTER', 'ZEC_TPEMPR')
+Local cFilDes		:= oModel:GetValue('ZECMASTER', 'ZEC_FILDES')
+Local cTpEmpr		:= oModel:GetValue('ZECMASTER', 'ZEC_TPEMPR')
+Local cFilOri		:= ""
+Local cFilAtu		:= ""
+	
+	If FunName() == 'SF0104S'
+		For nI := 1 To oModelZED:Length()
+			oModelZED:GoLine(nI)
+		
+			//linhas não deletadas
+			If .Not. oModelZED:IsDeleted()
+				cCodBem := oModelZED:GetValue('ZED_CODBEM', nI)
+				cSitBem := Posicione('ZEA', 1, xFilial('ZEA') + cCodBem, 'ZEA_SITBEM')
+				cFilOri	:= Posicione('ZEA', 1, xFilial('ZEA') + cCodBem, 'ZEA_FILORI')
+				cFilAtu := Posicione('ZEA', 1, xFilial('ZEA') + cCodBem, 'ZEA_FILATU')
+				
+				//Só é possível adicionar bem ativo
+				If .Not. (cSitBem == 'A') .And. .Not. (cTpMov == 'R') 
+					Help( , , 'Help', , 'O bem inserido na linha [' + StrZero(nI, 3) + '] não está ativo.', 1, 0)
+					lRet := .F.
+					Exit
+				EndIf
+				
+				//Valido o Bem conforme o tipo de movimentação
+				If lRet
+					Do Case
+						//Quando for retorno de empréstimo
+						Case cTpMov == 'R'
+							If (cTpEmpr == 'EF' .And. .Not. (cFilAtu == cFilAnt))
+								Help( , , 'Help', , 'O bem [' + cCodBem + '] não está emprestado para a filial [' + cFilAnt + '].', 1, 0)
+								lRet := .F.
+							EndIf
+						//Outros Tipos
+						OtherWise
+							If (.Not. (cFilOri == cFilAnt))
+								Help( , , 'Help', , 'O bem [' + cCodBem + '] não pertence a filial [' + cFilAnt + '].', 1, 0)
+								lRet := .F.
+							EndIf
+					EndCase
+				EndIf
+			EndIf
+		Next nI
+	EndIf
+	
+	If lRet 
+		//Movimentação do tipo R=Retorno, deve ser realizada pelo ações relacionadas
+		If cTpMov == 'R' .And. Empty(cCodRet)
+			Help( , , 'Help', , 'Para movimentação do tipo [' + cTpMov + ' = Retorno] deve ser realizada em Ações Relacionadas-> Dev. Empréstimo.', 1, 0)
+			lRet := .F.
+		ElseIf ( (cTpMov == 'T') .Or. (cTpMov == 'E' .And. cTpEmp == 'EF') ) .And. ;
+				( .Not. ( SubStr(cFilDes, 1, 2) == SubStr(cFilAnt, 1, 2) ) ) 
+			Help( , , 'Help', , 'A filial de destino deve pertencer ao mesmo grupo de empresas [' + FWCompanyName() +'].', 1, 0)
+			lRet := .F.
+		EndIf
+	EndIf
+	
+	FWRestRows(aSaveLines)
+
+Return lRet
+
+/*/{Protheus.doc} F0104SACT
+	Função para validação da ativação do modelo de dados.
+
+@author franklin.oliveira
+@since 20/09/2016
+@param oModel, object, Modelo de dados
+
+@type function
+/*/
+Static function F0104SACT(oModel)
+
+Local aArea	:= GetArea()
+Local lRet	:= .T.
+Local nOper	:= oModel:GetOperation()
+
+	If (nOper == MODEL_OPERATION_UPDATE) .Or. (nOper == MODEL_OPERATION_DELETE)
+		If .Not. Empty(ZEC->ZEC_ACEITE)
+			Help( , , 'Help', , 'Não é possível modificar um registro que já foi Aceitado/Rejeitado.', 1, 0)
+			lRet := .F.
+		EndIf
+	EndIf
+	
+	RestArea(aArea)
+
+Return lRet
+
+/*/{Protheus.doc} F0104SDV
+	Função para retorno de empréstimo de bens duráveis
+	
+@author franklin.oliveira
+@since 20/09/2016
+
+@type function
+/*/
+User Function F0104SDV()
+
+Local oCodMov, oTpEmpr, oDtEnvio, oDtRetorno, oLocDes, oCodRes, oCodCCRes, oHist
+Local aTpEmpr		:= {}
+Local aArea			:= GetArea()
+Local aCposZEC
+Local aCposZED
+Local aAux
+Local cCodMov		:= ""
+Local cTpEmpr		:= ""
+Local cLocDes		:= Space(TamSX3('ZEC_LOCDES')[1])
+Local cCodRes		:= Space(TamSX3('ZEC_CODRES')[1])
+Local cCodCCRes		:= Space(TamSX3('ZEC_CCORES')[1]) 
+Local cHist			:= Space(TamSX3('ZEC_HISTMV')[1])
+Local dDtEnvio
+Local dDtRetorno
+Local nOpc
+Local nX
+
+Private oDlg
+
+	//Valido se é um movimento de empréstimo
+	If .Not. (ZEC->ZEC_TPMOV == 'E')
+		Help( , , 'Help', , 'É necessário selecionar um registro do tipo [E = Empréstimo] para efetuar uma devolução.', 1, 0)
+	//Valido se o movimento já foi aceito
+	ElseIf Empty(ZEC->ZEC_DTACEI) .Or. ZEC->ZEC_ACEITE != 'A'  
+		Help( , , 'Help', , 'É necessário selecionar um Empréstimo aceito para efetuar uma devolução.', 1, 0)
+	//Valido se já existe uma devolução
+	ElseIf .Not. fExsDev(ZEC->ZEC_FILIAL, ZEC->ZEC_CODIGO)
+		Help( , , 'Help', , 'Já existe um movimento de devolução para o empréstimo [' + ZEC->ZEC_CODIGO + ']', 1, 0)
+	Else
+		cCodMov 	:= ZEC->ZEC_CODIGO
+		dDtEnvio 	:= ZEC->ZEC_DTMOVI
+		cTpEmpr		:= ZEC->ZEC_TPEMPR  
+		dDtRetorno	:= dDataBase		
+		cLocDes		:= ZEC->ZEC_LOCDES
+		cCodRes		:= ZEC->ZEC_CODRES
+		cCodCCRes	:= ZEC->ZEC_CCORES
+		
+		DEFINE MSDIALOG oDlg TITLE "Devolução de Empréstimo" FROM 000, 000  TO 270, 530 PIXEL
+	
+		@ 010, 015 SAY   "Código da Mov.:"   				SIZE 040, 007 OF oDlg PIXEL 
+		@ 009, 055 MSGET oCodMov   			VAR cCodMov   	SIZE 045, 010 OF oDlg PIXEL WHEN .F.
+		
+		@ 010, 110 SAY   "Tipo de empréstimo"				SIZE 050, 007 OF oDlg PIXEL
+		@ 009, 170 MSGET oTpEmpr 			VAR cTpEmpr		SIZE 045, 010 OF oDlg PIXEL WHEN .F.
+		
+		@ 030, 015 SAY   "Data de Envio"               		SIZE 040, 007 OF oDlg PIXEL
+		@ 028, 055 MSGET oDtEnvio 			VAR dDtEnvio   	SIZE 060, 010 OF oDlg PIXEL WHEN .F.
+		
+		@ 030, 120 SAY   "Data de Retorno"         			SIZE 050, 007 OF oDlg PIXEL
+		@ 028, 170 MSGET oDtRetorno 		VAR dDtRetorno	SIZE 060, 010 OF oDlg PIXEL WHEN .F.
+		
+		@ 050, 015 SAY   "Local"         					SIZE 050, 007 OF oDlg PIXEL
+		@ 048, 055 MSGET oLocDes 			VAR cLocDes		SIZE 045, 010 OF oDlg PIXEL WHEN .T. F3 'SNL'
+		
+		@ 070, 015 SAY   "Responsável" 	        			SIZE 050, 007 OF oDlg PIXEL
+		@ 068, 055 MSGET oCodRes 			VAR cCodRes		SIZE 045, 010 OF oDlg PIXEL WHEN .T. F3 'RD0'
+		
+		@ 070, 110 SAY   "Co-Responsável"         			SIZE 050, 007 OF oDlg PIXEL
+		@ 068, 170 MSGET oCodCCRes 			VAR cCodCCRes	SIZE 045, 010 OF oDlg PIXEL WHEN .T. F3 'RD0'
+		
+		@ 090, 015 SAY   "Histórico"	         			SIZE 050, 007 OF oDlg PIXEL COLOR CLR_HBLUE
+		@ 088, 055 GET   oHist 				VAR cHist		SIZE 180, 020 OF oDlg PIXEL
+	
+		DEFINE SBUTTON FROM 120, 170 TYPE 1 ACTION ( nOpc := 1, oDlg:End() ) ENABLE OF oDlg PIXEL
+		DEFINE SBUTTON FROM 120, 215 TYPE 2 ACTION ( nOpc := 0, oDlg:End() ) ENABLE OF oDlg PIXEL
+		
+		ACTIVATE MSDIALOG oDlg CENTERED
+		
+		If nOpc == 1
+			aCposZEC := {}
+			aCposZED := {}
+			
+			//Seleciono o cabeçalho
+			aAdd(aCposZEC, {'ZEC_FILIAL', xFilial('ZEC') 	})
+			aAdd(aCposZEC, {'ZEC_DTMOVI', dDtRetorno 		})
+			aAdd(aCposZEC, {'ZEC_TPMOV',  'R'				})
+			aAdd(aCposZEC, {'ZEC_TPEMPR', cTpEmpr			})
+			
+			If cTpEmpr == 'EF'
+				aAdd(aCposZEC, {'ZEC_FILDES', ZEC->ZEC_MSFIL	})
+				aAdd(aCposZEC, {'ZEC_NOMFIL', FwFilialName(cEmpAnt, ZEC->ZEC_MSFIL)				})
+				aAdd(aCposZEC, {'ZEC_LOCDES', Iif(Empty(cLocDes ), ZEC->ZEC_LOCDES, cLocDes) 	})
+				aAdd(aCposZEC, {'ZEC_CODRES', Iif(Empty(cCodRes), ZEC->ZEC_CODRES, cCodRes)  	})
+				aAdd(aCposZEC, {'ZEC_NOMRES', Iif(Empty(cCodRes), ZEC->ZEC_NOMRES, Posicione("RD0", 1, xFilial('RD0') + cCodRes, "RD0_NOME"))   	})
+				aAdd(aCposZEC, {'ZEC_CCORES', Iif(Empty(cCodCCRes), ZEC->ZEC_CCORES, cCodCCRes)  })
+				aAdd(aCposZEC, {'ZEC_NCORES', Iif(Empty(cCodCCRes), ZEC->ZEC_NCORES, Posicione("RD0", 1, xFilial('RD0') + cCodCCRes, "RD0_NOME")) 	})
+			EndIf
+			
+			If .Not. (cTpEmpr == 'EF') 
+				aAdd(aCposZEC, {'ZEC_TPENTD', ZEC->ZEC_TPENTD  	})
+				aAdd(aCposZEC, {'ZEC_CODCLI', ZEC->ZEC_CODCLI  	})
+				aAdd(aCposZEC, {'ZEC_LOJA'  , ZEC->ZEC_LOJA  	})
+				aAdd(aCposZEC, {'ZEC_NROCTO', ZEC->ZEC_NROCTO  	})
+				aAdd(aCposZEC, {'ZEC_TRCIRO', ZEC->ZEC_TRCIRO  	})
+			EndIf
+			
+			aAdd(aCposZEC, {'ZEC_HISTMV', cHist  			})
+			aAdd(aCposZEC, {'ZEC_CODRET', ZEC->ZEC_CODIGO  	})
+			
+			//Seleciono os itens
+			DbSelectArea("ZED")
+			DbSetOrder(2)
+			
+			If ZED->(DbSeek( ZEC->ZEC_FILIAL + ZEC->ZEC_CODIGO ))
+				While .Not. ZED->( EoF() ) .And. ZEC->ZEC_FILIAL + ZEC->ZEC_CODIGO == ZED->ZED_FILIAL + ZED->ZED_CODIGO
+					aAux := {}
+					aAdd( aAux, { 'ZED_FILIAL', xFilial('ZED')  } )
+					aAdd( aAux, { 'ZED_ITEM'  , ZED->ZED_ITEM   } )
+					aAdd( aAux, { 'ZED_CODBEM', ZED->ZED_CODBEM } )
+					aAdd( aAux, { 'ZED_DESBEM', ZED->ZED_DESBEM } )
+					aAdd( aAux, { 'ZED_FILORI', ZED->ZED_FILORI } )
+					aAdd( aAux, { 'ZED_NFILOR', ZED->ZED_NFILOR } )
+					aAdd( aCposZED, aAux )
+					
+					ZED->( DbSkip() )
+				EndDo
+				
+				//Inclusão do registro de retorno do empréstimo
+				If U_IMPM01F('ZEC', 'ZED', aCposZEC, aCposZED, 'SF0104S', 3)
+					Alert("Retorno do empréstimo incluído com sucesso.")
+				EndIf
+			EndIf
+		EndIf	
+	EndIf
+	
+	RestArea(aArea)
+
+Return (Nil)
+
+
+/*/{Protheus.doc} fExsDev
+	Função para validar se já existe devolução para o empréstimo selecionado
+	
+@author franklin.oliveira
+@since 20/09/2016
+@param cFilMov, characters, Filial da movimentação
+@param cCodMov, characters, código da movimentação
+
+@type function
+/*/
+Static Function fExsDev( cFilMov, cCodMov)
+
+Local aArea	:= GetArea()
+Local cQry	:= ""
+Local lRet	:= .T.
+		
+		cQry := " "
+		cQry += "SELECT ZEC_CODIGO FROM " + RetSQLName("ZEC") + " ZEC "
+		cQry += "WHERE ZEC_FILIAL = '" + cFilMov + "'"  
+		cQry += "AND ZEC_CODRET = '" + cCodMov + "'"	
+		cQry += "AND ZEC.D_E_L_E_T_ = ' ' "	
+
+		TCQUERY cQry NEW ALIAS "TRB"
+
+		DbSelectArea("TRB")
+		
+		If TRB->( EoF() )
+			lRet := .T.
+		Else
+			lRet := .F.	
+		EndIf
+		
+		TRB->( DbCloseArea() )
+		
+		RestArea(aArea)
+
+Return lRet
+
+/*/{Protheus.doc} fExsMov
+	Função para verificar se existe movimentação pendente de aceite para o
+		produto informado.
+		
+@author Franklin de Brito de Oliveira
+@since 14/11/2016
+@param cCodBem, characters, código do bem a ser avaliado
+@return lRet, lógico, se .T. existe movimentação, se .F. não existe movimentação
+
+@type function
+/*/
+Static Function fExsMov(cCodBem)
+
+Local aArea	:= GetArea()
+Local cQry	:= ""
+Local lRet	:= .T.
+		
+		cQry := " "
+		cQry += "SELECT ZEC.ZEC_CODIGO " + CRLF
+		cQry += "FROM ZEC010 ZEC	" + CRLF
+		cQry += "INNER JOIN ZED010 ZED	" + CRLF
+		cQry += "ON ZED.D_E_L_E_T_    = ' ' " + CRLF
+		cQry += "AND ZED.ZED_FILIAL   = ZEC.ZEC_FILIAL " + CRLF
+		cQry += "AND ZED.ZED_CODIGO   = ZEC.ZEC_CODIGO " + CRLF
+		cQry += "WHERE ZEC.D_E_L_E_T_ = ' '	" + CRLF
+		cQry += "AND ZEC.ZEC_FILIAL   = '" + xFilial("ZEC") + "'	" + CRLF
+		cQry += "AND ZEC.ZEC_MSFIL    = '" + _cFilCod + "' " + CRLF
+		cQry += "AND ZEC.ZEC_ACEITE   = ' ' " + CRLF
+		cQry += "AND ZED.ZED_CODBEM   = '" + cCodBem + "' " + CRLF
+
+		TCQUERY cQry NEW ALIAS "TRB"
+
+		DbSelectArea("TRB")
+		
+		If TRB->( EoF() )
+			lRet := .F.
+		Else
+			lRet := .T.	
+		EndIf
+		
+		TRB->( DbCloseArea() )
+		
+		RestArea(aArea)
+
+Return lRet

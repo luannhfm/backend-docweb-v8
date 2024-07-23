@@ -1,0 +1,664 @@
+#Include "Protheus.Ch"
+#Include "Topconn.Ch"
+#Include "MsOle.Ch"
+
+#Define oleWdFormatDocument "0"
+#Define oleWdFormatHTML "102"
+#Define oleWdFormatPDF "17"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ SF69R01X   ºAutor ³ Paulo César P. Schwind ºData³03/06/2019º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ PROTHEUS x WORD  - TEMPLATE Minuta Termo de Parceria.      º±±
+±±º          ³  				  Gera PDF.								  º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function SF69R01X()
+	
+	Local _aArea 	:= GetArea()
+	Local _lRet		:= .T.
+	Local _cMsgErro	:= ""
+	
+	Private _cCtrNr		:= CN9->CN9_NUMERO				// Número do Contrato
+	Private _cNrCtrVen	:= CN9->CN9_XNROCV				// Número do Contrato de Venda / Seq Termo de Adesão
+	Private _cCtrNrRev	:= CN9->CN9_REVISA				// Número da revisão do Contrato
+	Private _cFilCtr	:= CN9->CN9_FILIAL				// Filial do contato
+	Private _cNroOpor	:= CN9->CN9_XOPORT				// Codigo da Oportunidade
+	Private _cRevOpor	:= CN9->CN9_XREVOP				// Codigo da Revisao da Oportunidade
+
+	Private _aCondPg	:= Condicao(CN9->CN9_VLINI, CN9->CN9_CONDPG, ,CN9->CN9_DTULST)	//Gera as parcelas atraves da [Cond. Pagto]
+
+	Private _nValorIn	:= CN9->CN9_VLINI				// Valor do Contrato
+	Private _cValorIn	:= Extenso(_nValorIn)			// Valor do Contrato por Extenso
+	Private _cIniVige	:= DtoC(CN9->CN9_DTINIC)		// Data Inicio da Vigencia do Contrato
+	Private _cFimVige	:= DtoC(CN9->CN9_DTFIM)			// Data Fim da Vigencia do Contrato
+	Private _cIniExec	:= DtoC(CN9->CN9_XDTINI)		// Data Inicio da Execução 
+	Private _cFimExec	:= DtoC(CN9->CN9_XDTFIM)		// Data Fim da Execução 
+
+	Private _cGerNome	:= ""
+	Private _cGerCPF	:= ""
+	Private _cGerRG		:= ""
+	Private _cGerFunc	:= ""
+	Private _cGerOrEx	:= ""
+	
+	FWMsgRun(,{|| fExpTrAd()},"Gerando o arquivo Word, Termo de Adesão...", "Aguarde...")
+
+	If !_lRet
+		Aviso(FunName()+"/"+ProcName(), _cMsgErro, {"OK"})
+	EndIf
+	
+	RestArea(_aArea)
+
+Return( _lRet )
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ fExpTrAd  ºAutor ³ Paulo César P. Schwind º Data³04/06/2019º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Gera arquivo WORD, através de DocVariables.                º±±
+±±º          ³  				               				              º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function fExpTrAd()
+	
+	Local _aAreaSM0		:= SM0->(GetArea())
+	Local _aAreaSA1		:= SA1->(GetArea())
+	Local _cArqNome		:= "MNT_TA_"+ Alltrim(CN9->CN9_NUMERO) + DtoS(dDataBase) + StrTran(Time(),":","")
+	Local _cEmpNome		:= fCompEmp()
+	Local _cEmpCNPJ		:= ""
+	Local _cEmpTel		:= ""
+	Local _cEmpEnd		:= ""
+	Local _cEmpCEP		:= ""
+	Local _cEmpBair		:= ""
+	Local _cEmpMun		:= ""
+	Local _cEmpUF		:= ""
+
+	Local _cRespNom1	:= ""
+	Local _cRespCrg1	:= ""
+	Local _cRespRG1		:= ""
+	Local _cRespCPF1	:= ""
+	Local _cRespNom2	:= ""
+	Local _cRespCrg2	:= ""
+	Local _cRespRG2		:= ""
+	Local _cRespCPF2	:= ""
+	Local _cRespTel		:= ""
+	Local _cRespLeg2	:= ""
+
+	Local _cPropNr		:= ""
+	Local _cPropRv		:= ""
+
+	Local _cRAlim  		:= ""
+	Local _cRApos  		:= ""
+	Local _cRCert  		:= ""
+	Local _cRHosp  		:= ""
+	Local _cRVPH   		:= ""
+	Local _cREstF  		:= ""
+	Local _cROutr  		:= ""
+	Local _cRAdVi  		:= ""
+	Local _nCtaA 		:= 0 			
+	Local _hWord		:= ""
+
+	Local _cAliasRM 	:= GetNewPar("MV_XSGEABD", "")
+	Local _cTipoPrd		:= ""	
+	Local _cCodPrd		:= ""
+	Local _cDscPrd		:= ""
+	Local _cModulo		:= ""
+	Local _cQtdBenf 	:= ""
+	Local _cCurso  		:= ""
+	Local _cModal  		:= ""
+
+	Local _dDtIniT		:= dDataBase
+	Local _dDtIniF		:= dDataBase
+	Local _cCargaH 		:= ""
+	Local _cTurno  		:= ""
+	Local _cDtInic 		:= ""
+	Local _cDtFinl 		:= ""
+	Local _cPrdDesp		:= AllTrim(GetNewPar("MV_XCTRPDV", ""))
+	Local _cPathFull	:= ""
+
+	Private _aMacroExc	:= {}
+	Private _cArqDOT	:= fMTrmAds()   //"MODELO_Minuta_termo_de_parceria_adesao_padrao_SENAI.dotx" 
+
+	Private _cPathDOT	:= SuperGetMv("MV_XGCTDOT",,"")
+	Private _cPathDOC	:= SuperGetMv("MV_XGCTDOC",,"")
+	Private _cPathREP	:= SuperGetMv("MV_XGCTREP",,"")
+
+	Private _aParamVLD	:= {      { "_cPathDOT"	,"MV_XGCTDOT - Repositorio DOT docs de Integracao WORD (GCT)" 		},;
+								  { "_cPathDOC"	,"MV_XGCTDOC - Repositorio DOC docs de Integracao WORD (GCT)" 		},;
+								  { "_cPathREP"	,"MV_XGCTREP - Repositorio LOCAL p/emissao dos documentos (GCT)" 	}}
+	
+	//Valida se os parametros estao preenchidos
+	For _nCtaA := 1 To Len(_aParamVLD)
+		_cValorVar	:= &(_aParamVLD[_nCtaA,1])
+		If _cValorVar == ""
+			Aviso(FunName()+"/"+ProcName(),"Integração não pode ser realizada. Preencha o parametro ["+_aParamVLD[_nCtaA,2]+"] corretamente.",{"OK"})
+			Return .f.
+		Endif
+	Next _nCtaA
+	
+	_hWord := OLE_CreateLink()	
+	
+	OLE_SetProperty( _hWord, oleWdVisible, .F. )
+	
+	If _hWord == "-1"
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel estabelecer comunicação com o Microsoft Word",{"OK"})
+		Return
+	EndIf
+	
+	If File(_cPathREP + _cArqDOT)
+		FErase(_cPathREP + _cArqDOT)
+	Endif	
+	
+	_cPathFull := _cPathDOT +_cArqDOT
+	_cPathFull := Alltrim(_cPathFull)
+	
+	If !CpyS2T(_cPathFull,Alltrim(_cPathREP),.T.)
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel copiar TEMPLATE de "+_cPathFull+" para gerar "+Alltrim(_cPathREP)+" a integração!",{"OK"})
+		Return
+	Endif
+	
+	//Tabela - Empresas
+	DbSelectArea("SM0")
+	SM0->(DbSetOrder(1))
+	If (SM0->(DbSeek( cEmpAnt + _cFilCtr)))
+		_cEmpCNPJ	:= Transform(AllTrim(SM0->M0_CGC),Iif(Len(AllTrim(SM0->M0_CGC))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+		_cEmpEnd	:= AllTrim(SM0->M0_ENDENT)
+		_cEmpCEP	:= Transform(AllTrim(SM0->M0_CEPENT), "@R 99999-999")
+		_cEmpBair	:= AllTrim(SM0->M0_BAIRENT)
+		_cEmpMun	:= AllTrim(SM0->M0_CIDENT)
+		_cEmpUF	    := AllTrim(SM0->M0_ESTENT)
+		_cEmpTel 	:= Transform(SubStr(SM0->M0_TEL,4,2) + SubStr(SM0->M0_TEL,7,11), "@R (99)9999-9999")
+	Else
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar a empresa no sigamat!",{"OK"})
+		Return
+	Endif
+	
+	RestArea(_aAreaSM0)
+
+	//Busca dados do Cliente
+	DbSelectArea("SA1")
+	SA1->(DbSetOrder(1))
+	If SA1->(DbSeek( xFilial("SA1") + CN9->CN9_CLIENT + CN9->CN9_LOJACL ))
+		_cCliNome := AllTrim(SA1->A1_NOME)
+		_cCliFant := AllTrim(SA1->A1_NREDUZ)
+		_cCliCNPJ := Transform(AllTrim(SA1->A1_CGC),Iif(Len(AllTrim(SA1->A1_CGC))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+		_cCliIE   := AllTrim(SA1->A1_INSCR)
+		_cCliEnd  := AllTrim(SA1->A1_END)
+		_cCliBair := AllTrim(SA1->A1_BAIRRO)
+		_cCliCep  := Transform(AllTrim(SA1->A1_CEP), "@R 99999-999")
+		_cCliMun  := AllTrim(SA1->A1_MUN)
+		_cCliUF   := AllTrim(SA1->A1_EST)
+		_cCliTel  := AllTrim(SA1->A1_TEL)
+	Else
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o cliente!",{"OK"})
+		Return
+	EndIf
+	
+	RestArea(_aAreaSA1)
+
+	If Select("TRA") > 0
+		DbSelectArea("TRA")
+		TRA->(DbCloseArea())
+	EndIf
+		
+	_cSql := "SELECT "+CRLF
+	_cSql += "  U5_CONTAT, U5_CPF, U5_RG, U5_XORGEXP, U5_FUNCAO, U5_DDD, U5_FONE, U5_FCOM1 "+CRLF
+	_cSql += "FROM "+CRLF
+	_cSql += "  "+RetSqlName("CN9")+" CN9 "+CRLF
+	_cSql += "  INNER JOIN "+RetSqlName("AD1")+" AD1 ON AD1.D_E_L_E_T_ = ' ' AND CN9_FILIAL = AD1_FILIAL AND CN9_XOPORT = AD1_NROPOR "+CRLF
+	_cSql += "  INNER JOIN "+RetSqlName("AD9")+" AD9 ON AD9.D_E_L_E_T_ = ' ' AND AD1_FILIAL = AD9_FILIAL AND AD1_NROPOR = AD9_NROPOR AND AD1_REVISA = AD9_REVISA "+CRLF
+	_cSql += "  INNER JOIN "+RetSqlName("SU5")+" SU5 ON SU5.D_E_L_E_T_ = ' ' AND  U5_FILIAL = '"+xFilial("SU5")+"' AND AD9_CODCON = U5_CODCONT "+CRLF
+	_cSql += "WHERE "+CRLF
+	_cSql += "  CN9.D_E_L_E_T_ = ' ' "+CRLF
+	_cSql += "  AND CN9_FILIAL = '"+ _cFilCtr +"' "+CRLF
+	_cSql += "  AND CN9_NUMERO = '"+ _cCtrNr +"' "+CRLF
+	_cSql += "  AND CN9_REVISA = '"+ _cCtrNrRev +"' "+CRLF
+	_cSql += "  AND AD9_XREPRE = '1' "+CRLF			//Somente contatos do tipo Representante (1=Sim)
+	
+	TCQUERY _cSql NEW ALIAS "TRA"	
+		
+	DbSelectArea('TRA')
+	TRA->(DbGoTop())
+	
+	_nCont := 0
+	While ! TRA->( EOF() )
+		
+		_nCont++
+		
+		If _nCont == 1
+			_cRespNom1 := AllTrim(TRA->U5_CONTAT)
+			_cRespCrg1 := AllTrim(Posicione("SUM",1,xFilial("SUM") + TRA->U5_FUNCAO,"UM_DESC"))
+			_cRespRG1  := AllTrim(TRA->U5_RG)
+			_cRespCPF1 := Transform(AllTrim(TRA->U5_CPF),Iif(Len(AllTrim(TRA->U5_CPF))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+			If .Not. Empty(TRA->U5_FONE)
+				_cRespTel  := Transform(AllTrim(TRA->U5_DDD) + AllTrim(TRA->U5_FONE), "@R (999) 9999-9999")
+			Else
+				_cRespTel  := Transform(AllTrim(TRA->U5_DDD) + AllTrim(TRA->U5_FCOM1), "@R (999) 9999-9999")
+			EndIf
+		Else
+			_cRespNom2 := AllTrim(TRA->U5_CONTAT)
+			_cRespCrg2 := AllTrim(Posicione("SUM",1,xFilial("SUM") + TRA->U5_FUNCAO,"UM_DESC"))
+			_cRespRG2  := AllTrim(TRA->U5_RG)
+			_cRespCPF2 := Transform(AllTrim(TRA->U5_CPF),Iif(Len(AllTrim(TRA->U5_CPF))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+		EndIf
+		
+		TRA->( DbSkip() )
+	End
+	
+	TRA->(DbCloseArea())
+	
+	If _nCont == 0
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o responsavel Legal, Favor Verificar!",{"OK"})
+		Return
+	EndIf
+	
+	If Select("TRA") > 0
+		DbSelectArea("TRA")
+		TRA->(DbCloseArea())
+	EndIf
+
+	_cSql := "SELECT ADY_FILIAL, ADY_PROPOS, ADY_PREVIS, ADY_OPORTU, ADY_REVISA, ADY_STATUS "+CRLF
+	_cSql += "FROM "+RetSqlName("ADY")+" ADY "+CRLF
+	_cSql += "WHERE ADY.D_E_L_E_T_	= ' ' "+CRLF
+	_cSql += "AND ADY_FILIAL   		= '"+ _cFilCtr  +"'	"+CRLF
+	_cSql += "AND ADY_OPORTU  	   	= '"+ _cNroOpor +"'	"+CRLF
+	_cSql += "AND ADY_REVISA		= '"+ _cRevOpor +"'	"+CRLF
+	_cSql += "AND ADY_STATUS 		= 'E' "+CRLF
+	
+	TCQUERY _cSql NEW ALIAS "TRA"	
+	
+	DbSelectArea('TRA')
+	TRA->(DbGoTop())
+	
+	_cPropNr := AllTrim(TRA->ADY_PROPOS)
+	_cPropRv := AllTrim(TRA->ADY_PREVIS)
+
+	TRA->(DbCloseArea())
+	
+	If Empty(_cPropNr)
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar a Proposta Comercial. Favor Verificar !",{"OK"})		
+		Return
+	EndIf
+	
+	If Select("TRA") > 0
+		DbSelectArea("TRA")
+		TRA->(DbCloseArea())
+	EndIf
+
+    DbSelectArea("CNB")
+    CNB->(DbSetOrder(1))
+    if ! DbSeek( _cFilCtr + _cCtrNr )
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o Produto na tabela [CNB]. Favor Verificar!",{"OK"})
+		Return
+	EndIf
+		
+	//Abre integracao com Word
+	OLE_NewFile(_hWord, _cPathREP + _cArqDOT)
+	
+	//+--------------------------------------------------------------------+
+	//| Codigo do Termo de Adesão                                          |
+	//+--------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"DocCodTermo"	, _cNrCtrVen)
+	
+	//+--------------------------------------------------------------------+
+	//| Dados da Contratada                                                |
+	//+--------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"DocEmpNome"		, _cEmpNome)
+	OLE_SetDocumentVar(_hWord,"DocEmpEnd"		, _cEmpEnd)
+	OLE_SetDocumentVar(_hWord,"DocEmpCEP"		, _cEmpCEP)
+	OLE_SetDocumentVar(_hWord,"DocEmpBai"		, _cEmpBair)
+	OLE_SetDocumentVar(_hWord,"DocEmpMunic"		, _cEmpMun)
+	OLE_SetDocumentVar(_hWord,"DocEmpUF"		, _cEmpUF)
+	OLE_SetDocumentVar(_hWord,"DocEmpCNPJ"		, _cEmpCNPJ)
+	
+	//+--------------------------------------------------------------------+
+	//| Dados do Contratante                                               |
+	//+--------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"DocCliNome"  	, _cCliNome)
+	OLE_SetDocumentVar(_hWord,"DocCliEnd"		, _cCliEnd)
+	OLE_SetDocumentVar(_hWord,"DocCliBairro"	, _cCliBair)
+	OLE_SetDocumentVar(_hWord,"DocCliMunic"		, _cCliMun)
+	OLE_SetDocumentVar(_hWord,"DocCliUF"		, _cCliUF)
+	OLE_SetDocumentVar(_hWord,"DocCliCNPJ"		, _cCliCNPJ)
+	OLE_SetDocumentVar(_hWord,"DocCliIE"		, _cCliIE)
+	OLE_SetDocumentVar(_hWord,"DocCliCep"		, _cCliCep)
+
+	//+--------------------------------------------------------------------+
+	//| Objeto do Contrato e Vigência                                      |
+	//+--------------------------------------------------------------------+
+	_cObjeto := IF( Empty(CNB->CNB_DESCRI) , "*** CAMPO CNB_DESCRI NÃO PREENCHIDO ***" , CNB->CNB_DESCRI )
+	
+	OLE_SetDocumentVar(_hWord,"DocObjeto"   	, _cObjeto)
+	OLE_SetDocumentVar(_hWord,"DocVigINI"   	, _cIniVige)
+	OLE_SetDocumentVar(_hWord,"DocVigFIM"   	, _cFimVige)
+	
+	OLE_SetDocumentVar(_hWord,"DocServINI"   	, _cIniExec)
+	OLE_SetDocumentVar(_hWord,"DocServFIM"   	, _cFimExec)
+
+	//+--------------------------------------------------------------------+
+	//| Dados do Responsavel Legal                                         |
+	//+--------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"DocRespNome1"	, _cRespNom1)
+	OLE_SetDocumentVar(_hWord,"DocRespCrg1"	    , _cRespCrg1)
+	OLE_SetDocumentVar(_hWord,"DocRespRG1"		, _cRespRG1)
+	OLE_SetDocumentVar(_hWord,"DocRespCPF1"	    , _cRespCPF1)
+	OLE_SetDocumentVar(_hWord,"DocRespTel"		, _cRespTel)
+	
+	If .Not. Empty(_cRespNom2)
+		_cRespLeg2 := "RESP. LEGAL: "+ _cRespNom2 + "  CARGO: "+ _cRespCrg2 + "  RG: "+ _cRespRG2 + " CPF: " + _cRespCPF2
+	EndIf
+	
+	OLE_SetDocumentVar(_hWord,"DoccRespLeg2"	, _cRespLeg2)
+	
+	OLE_SetDocumentVar(_hWord,"DocRespNome2"	, _cRespNom2)
+	OLE_SetDocumentVar(_hWord,"DocRespRG2"		, _cRespRG2)
+	OLE_SetDocumentVar(_hWord,"DocRespCPF2"	    , _cRespCPF2)
+	
+
+	
+	_nValorIn := ADZ->ADZ_TOTAL
+	_cValorIn := Extenso(_nValorIn)
+	
+	//OLE_SetDocumentVar(_hWord,"Doc_VlrIni"		, AllTrim(Transform(_nValorIn,"@E 999,999,999.99")))
+	//OLE_SetDocumentVar(_hWord,"Doc_VlrExt"		, _cValorIn)
+	
+	//+--------------------------------------------------------------------+
+	//| Dados da cidade - dia / mes / ano                                  |
+	//+--------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"DocCidade"	, _cEmpMun)
+	OLE_SetDocumentVar(_hWord,"DocDia"		, Day(dDataBase))
+	OLE_SetDocumentVar(_hWord,"DocMes"		, fMes(Month(dDataBase)))
+	OLE_SetDocumentVar(_hWord,"DocAno"		, LEFT(DTOS(dDataBase),4))
+	
+	//+--------------------------------------------------------------------+
+	//| Dados das assinaturas                                              |
+	//+--------------------------------------------------------------------+
+	If !fGerFil()
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o Representante da Contratada!",{"OK"})
+		
+		OLE_CloseFile(_hWord)
+		OLE_CloseLink(_hWord)
+
+		If File(_cPathREP + _cArqDOT)
+			FErase(_cPathREP + _cArqDOT)
+		Endif
+
+		Return
+	Else
+		OLE_SetDocumentVar(_hWord,"DocGerenteNome"	, _cGerNome)
+		OLE_SetDocumentVar(_hWord,"DocGerenteRG"	, _cGerRG	)
+	    OLE_SetDocumentVar(_hWord,"DocGerenteCPF"	, _cGerCPF)
+	EndIf
+
+	//+---------------------------------------------------------------------+
+	//| Atualizando as variaveis do documento do Word                       |
+	//+---------------------------------------------------------------------+
+	OLE_UpdateFields(_hWord)
+	
+	//+---------------------------------------------------------------------+
+	//| Verifica se o arquivo a ser gerado ja existe no repositorio, se     |
+	//| existir apaga                                                       |
+	//+---------------------------------------------------------------------+
+	If File(_cPathREP + _cArqNome)
+		FErase(_cPathREP + _cArqNome)
+	Endif
+	
+	//+---------------------------------------------------------------------+
+	//| Salva no repositorio LOCAL o arquivo gerado                         |
+	//+---------------------------------------------------------------------+
+	OLE_SaveAsFile(_hWord, _cPathREP + _cArqNome +".pdf", '', '', .F., oleWdFormatPDF)
+	
+	//+---------------------------------------------------------------------+
+	//| Verifica se o arquivo existe no repositorio de AUDITORIA, se existir|
+	//| apaga.                                                              |
+	//+---------------------------------------------------------------------+
+	If File(_cPathDOC + _cArqNome)
+		FErase(_cPathDOC + _cArqNome)
+	Endif
+	
+	//+---------------------------------------------------------------------+
+	//| Gera copia para AUDITORIA.                                          |
+	//+---------------------------------------------------------------------+
+	CpyT2S(_cPathREP + _cArqNome +".*", _cPathDOC, .T.)
+	
+	//+---------------------------------------------------------------------+
+	//| Fecha o TEMPLATE utilizado para Gerar o Arquivos de Remessa         |
+	//+---------------------------------------------------------------------+
+	OLE_CloseFile(_hWord)
+	
+	//+---------------------------------------------------------------------+
+	//| Fecha o Link com Arquivo de Remessa "Impressao"                     |
+	//+---------------------------------------------------------------------+
+	OLE_CloseLink(_hWord)
+	
+	//+---------------------------------------------------------------------+
+	//| Apaga na unidade LOCAL o TEMPLATE utilizado para gerar o documento. |
+	//+---------------------------------------------------------------------+
+	If File(_cPathREP + _cArqDOT)
+		FErase(_cPathREP + _cArqDOT)
+	Endif
+	
+	Aviso(FunName()+"/"+ProcName(),"Integração finalizada!"+ CRLF +"Gerado documento WORD ["+ _cArqNome +"]."+ CRLF +"Disponivel em ["+ _cPathREP +"].",{"OK"})
+	
+Return
+
+
+
+
+/*/{Protheus.doc} fCompEmp
+	Função para identificar e retornar complemento do nome comercial, cadastrado
+	na tabela genérica Z1
+	
+@author Franklin de Brito de Oliveira
+@since 19/01/2016
+@version 1.00
+
+@return cCompEmp, Complemento do nome da empresa
+/*/
+Static Function fCompEmp()
+	
+	Local cCompEmp	:= ""
+	Local cEmpres	:= FWCodEmp('SX5')
+	Local cUnidad	:= FWUnitBusiness('SX5')
+	Local cFilCod	:= FWFilial()
+
+	cEmpUni := PadR( cEmpres + cUnidad , FWSizeFilial() )
+	SX5->( dbSetOrder(1) )
+	If( SX5->( dbSeek( cEmpUni + 'Z1' + cFilCod ) ) )
+		cCompEmp  := SX5->X5_DESCRI
+	EndIf
+
+Return cCompEmp
+
+
+/*/{Protheus.doc} fMes
+	Função para identificar e retornar complemento do mes passado por parametro
+	
+@author 	Jose Leite de Barros Neto
+@since 	19/01/2016
+@version 	1.00
+
+@return 	_cMes, Retorna o mes completo
+/*/
+Static Function fMes( p_cMes )
+	
+	Local _cMes := ""
+	
+	Do Case
+	
+		Case p_cMes == 1
+			_cMes := "Janeiro"
+		Case p_cMes == 2
+			_cMes := "Fevereiro"
+		Case p_cMes == 3
+			_cMes := "Março"
+		Case p_cMes == 4
+			_cMes := "Abril"
+		Case p_cMes == 5
+			_cMes := "Maio"
+		Case p_cMes == 6
+			_cMes := "Junho"
+		Case p_cMes == 7
+			_cMes := "Julho"
+		Case p_cMes == 8
+			_cMes := "Agosto"
+		Case p_cMes == 9
+			_cMes := "Setembro"
+		Case p_cMes == 10
+			_cMes := "Outubro"
+		Case p_cMes == 11
+			_cMes := "Novembro"
+		Case p_cMes == 12
+			_cMes := "Dezembro"
+	
+	End Case
+	
+Return( _cMes )
+
+
+/*/{Protheus.doc} nomeStaticFunction
+@description Funcao para selecionar o gerente da unidade
+@type Static Function
+@author Jose Leite de Barros Neto
+@since 28/09/2016
+@version 11.0
+@return lRet, logico, negativo se não encontrar o cadastro da filial na SX5 ou do gerente na SRA.
+@history 27/03/2018, Franklin B. Oliveira, removido validação da Filial na tabela de funcionários (SRA). Conforme solicitação no suporte 264548.
+@history 13/03/2019, Alan Teles de Oliveira, adicionado a clausula where validações para desconsiderar funcionários autônomos e alterado estrutura da função. 
+/*/
+Static Function fGerFil()
+
+	Local cEmpUni	:= ''
+	Local cDados	:= ''
+	Local cEmpres	:= FWCodEmp('SX5')
+	Local cUnidad	:= FWUnitBusiness('SX5')
+	Local cFilCod	:= FWFilial()
+	Local cAlTMP	:= GetNextAlias()
+	Local cCPF		:= ""
+	Local lRet		:= .T.
+	Local aArea		:= GetArea()
+	Local aGerInf 	:= {}
+
+	cEmpUni := PadR( cEmpres + cUnidad , FWSizeFilial() )
+
+	SX5->( dbSetOrder(1) )
+
+	If( SX5->( dbSeek( cEmpUni + 'Z5' + cFilCod ) ) )
+
+		cDados  := SX5->X5_DESCRI
+		cDados  := StrTran(cDados, ",", "|")
+		cDados  := StrTran(cDados, ";", "|")
+		aGerInf := StrTokArr(cDados, '|')
+		cCPF := AllTrim(StrTran(StrTran(aGerInf[2], ".", ""), "-", ""))
+
+	Else
+
+		lRet := .F.
+
+	EndIf
+
+	If lRet
+
+		If Select(cAlTMP) > 0
+			(cAlTMP)->(dbCloseArea())
+		EndIf
+
+		BeginSQL Alias cAlTMP
+
+			SELECT 
+				TRIM(SRA.RA_NOMECMP) 							AS RA_NOME,
+				TRIM(SRA.RA_RG) 								AS RA_RG,
+				TRIM(SRA.RA_RGORG) || '/' || TRIM(SRA.RA_RGUF)	AS RA_RGEXP,
+				SRA.RA_CIC,
+				SRA.RA_CODFUNC,
+				SRA.RA_COMPLRG
+
+			FROM %Table:SRA% SRA
+
+			WHERE
+				TRIM(SRA.RA_NOMECMP)	IS NOT NULL AND
+				SRA.RA_MAT 				< '900000' AND
+				SRA.RA_CIC 				= %Exp:cCPF% AND
+				SRA.RA_SITFOLH 			NOT IN ('D', 'T') AND
+				SRA.%NotDel%
+
+		EndSQL
+
+		(cAlTMP)->(dbGotop())
+
+		If .not. (cAlTMP)->(Eof()) .and. .not. (cAlTMP)->(Bof())
+
+			_cGerNome	:= AllTrim((cAlTMP)->RA_NOME)
+			_cGerCPF	:= Transform((cAlTMP)->RA_CIC, Iif(Len(AllTrim((cAlTMP)->RA_CIC)) == 11, "@R 999.999.999-99", "@R 99.999.999/9999-99"))
+			_cGerRG		:= AllTrim((cAlTMP)->RA_RG) + IIf(Empty(AllTrim((cAlTMP)->RA_RGEXP)), "", " " + AllTrim((cAlTMP)->RA_RGEXP))
+			_cGerOrEx	:= AllTrim((cAlTMP)->RA_COMPLRG)
+			_cGerFunc	:= AllTrim(Posicione("SRJ", 1, xFilial("SRJ") + (cAlTMP)->RA_CODFUNC, "RJ_DESC"))
+
+		Else
+
+			lRet := .F.
+
+		EndIf
+
+		(cAlTMP)->(dbCloseArea())
+
+		RestArea(aArea)
+
+	EndIf
+
+Return lRet
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ fMTrmAds() ºAutor ³ Paulo César P. Schwind ºData³03/06/2019º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Pesquisa pelo Tipo do Contrato a Minuta cadastrada em ZG3. º±±
+±±º          ³ Gera PDF.								                  º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function fMTrmAds()
+
+	Local _cArqDOT		:= ""
+	Local _cMsgErro		:= ""
+	Local _lRet			:= .T.
+
+	DbSelectArea("CN1")
+	CN1->(DbSetOrder(1))
+	If CN1->(DbSeek(xFilial("CN1")+CN9->CN9_TPCTO))
+	   DbSelectArea("ZG3")
+	   ZG3->(DbSetOrder(1))
+	   If ZG3->(DbSeek(xFilial("ZG3")+CN1->CN1_XMINUT))
+		  If ZG3->ZG3_STATUS == '1'
+		  	 _cArqDOT	:= AllTrim(ZG3->ZG3_ARQUIV)
+		  Else
+			 _cMsgErro := 'Minuta ['+ZG3->ZG3_CODMIN+'] não está ativa!'+CRLF+'Verifique o Cadastro de Minutas.'
+		  EndIf
+	   Else
+		  _cMsgErro := 'Minuta ['+CN1->CN1_XMINUT+'] não encontrada !'
+	   EndIf
+	 Else
+		 _cMsgErro := 'Tipo de Contrato, não encontrado !'+CRLF
+	 EndIf
+
+	 If ! Empty(_cMsgErro)
+		Aviso(FunName()+"/"+ProcName(), _cMsgErro, {"OK"})
+	 EndIf
+
+Return _cArqDOT

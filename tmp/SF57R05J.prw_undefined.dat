@@ -1,0 +1,456 @@
+#Include 'Protheus.ch'
+#Include 'Topconn.ch'
+
+/*/{Protheus.doc} SF57R05J
+Relatorio PCO - Financeiro Mensalizado
+De Orcamento
+Ate Orcamento
+
+@author 	Jose Leite de Barros Neto
+@since 	08/08/2014
+@version 	1.0
+
+@return Nil, Nulo
+
+/*/
+User Function SF57R05J()
+	
+	Local _lRet := .T.
+	
+	Private _cPerg 	:= "SF57R05J"
+		
+	//Alias	
+	Private _cTmp		:= GetNextAlias()
+	Private _cTmp2		:= GetNextAlias()
+	
+	//Total Geral
+	Private _aTotal		:= {}
+	Private _nTotJan 	:= 0
+	Private _nTotFev 	:= 0
+	Private _nTotMar 	:= 0
+	Private _nTotAbr 	:= 0
+	Private _nTotMai 	:= 0
+	Private _nTotJun 	:= 0
+	Private _nTotJul 	:= 0
+	Private _nTotAgo 	:= 0
+	Private _nTotSet 	:= 0
+	Private _nTotOut 	:= 0
+	Private _nTotNov 	:= 0
+	Private _nTotDez 	:= 0
+	Private _nTotPro	:= 0
+	
+	//Variaveis da Tela
+	Private cCadastro	:= "Impressão do Relatorio PCO - Financeiro Mensalizado"
+	Private aSays		:= {}
+	Private aButtons	:= {}
+	Private nOpca 		:= 0
+	
+	Private _cCCAuth	:= ""
+	Private _cAno		:= ""
+	Private _cAno2		:= ""
+	
+	AjustaSx1(_cPerg)
+	
+	If .Not. Pergunte(_cPerg,.T.)
+		Return( Nil )
+	EndIf
+	
+	AADD(aSays,"Este programa irá realizar a Impressão do Relatório PCO - Financeiro Mensalizado." )
+
+	AADD(aButtons, { 5,.T.,{|| Pergunte(_cPerg,.T. )}})
+	AADD(aButtons, { 1,.T.,{|o| nOpca := 1,FechaBatch()}})
+	AADD(aButtons, { 2,.T.,{|o| FechaBatch() }} )
+
+	FormBatch( cCadastro, aSays, aButtons )
+
+	If nOpca == 1
+		
+		_cCCAuth := U_SF57E01J(mv_par01)
+			
+		If .Not. Empty(_cCCAuth)
+			
+			//Total Geral
+			_lRet := GetTotal()
+			
+			If _lRet
+				//Gera Excel
+				Processa({|| FGeraExcel()})
+			EndIf
+			
+		Endif
+	
+	EndIf
+	
+Return( Nil )
+
+/** {Protheus.doc} GetTotal
+Funcao para retornar o valor total
+
+@author: 	Jose Leite de Barros Neto
+@since: 	08/08/2014
+@Uso: 		SFIEMT
+*/
+Static Function GetTotal()
+	
+	Local _cQuery	:= ""
+	
+	_cQuery := " SELECT SUBSTR(ZDA_DATA,1,6) ZDA_DATA, SUM(ZDA_VALOR) ZDA_VALOR "
+	_cQuery += " FROM " + RetSqlName("ZDA")
+	_cQuery += " WHERE ZDA_FILIAL 	>= '"+mv_par01+"' 				"
+	_cQuery += " AND ZDA_FILIAL 	<= '"+mv_par02+"' 				"
+	_cQuery += " AND ZDA_CODIGO  	>= '"+mv_par03+"' 				"
+	_cQuery += " AND ZDA_CODIGO  	<= '"+mv_par05+"' 				"
+	_cQuery += " AND ZDA_VERSAO    	>= '"+mv_par04+"'				"
+	_cQuery += " AND ZDA_VERSAO    	<= '"+mv_par06+"'				"
+	
+	If mv_par07 = 2
+		_cQuery += " AND ( ZDA_TIPO = '2' OR ZDA_TIPO = '3' )	"   
+	Else
+		_cQuery += " AND ZDA_TIPO    	= '"+cValToChar(mv_par07)+"'" //1=RECEITA; 2=DESPESA; 3=FOLHA
+	EndIf
+	
+	//_cQuery += " AND ZDA_CTCUST		IN (" + _cCCAuth + ")			"
+	_cQuery += " AND D_E_L_E_T_ 	<> '*' 							"
+	_cQuery += " GROUP BY SUBSTR(ZDA_DATA,1,6) 						"
+	_cQuery += " ORDER BY SUBSTR(ZDA_DATA,1,6) 						"
+	
+	_cQuery := ChangeQuery( _cQuery )
+
+	dbUseArea( .T., "TOPCONN", TcGenQry(,,_cQuery), _cTmp, .T., .T. )
+	
+	If (_cTmp)->( Eof() )
+		Alert( "Não há dados para emissão do relatorio!" )
+		(_cTmp)->( dbCloseArea() )
+		Return( .F. )
+	Else
+		_lRet := .T.
+	EndIf
+	
+	_cAno := SubStr((_cTmp)->( ZDA_DATA ),1,4)
+	
+	While .Not. (_cTmp)->( EOF() )
+		aAdd(_aTotal,{(_cTmp)->( ZDA_DATA ), (_cTmp)->( ZDA_VALOR )} )
+		(_cTmp)->( DbSkip() )
+	End
+	
+	For i := 1 to Len(_aTotal)
+		
+		If SubStr(_aTotal[i][1],0,6) == _cAno+'01'
+			
+			If _aTotal[i][2] > 0
+				_nTotJan := _aTotal[i][2]
+			Endif
+			
+		ElseIf SubStr(_aTotal[i][1],0,6) == _cAno+'02'
+		
+			If _aTotal[i][2] > 0
+				_nTotFev := _aTotal[i][2]
+			EndIf
+			
+		ElseIf SubStr(_aTotal[i][1],0,6) == _cAno+'03'
+		
+			If _aTotal[i][2] > 0
+				_nTotMar := _aTotal[i][2]
+			EndIf
+			
+		ElseIf SubStr(_aTotal[i][1],0,6) == _cAno+'04'
+		
+			If _aTotal[i][2] > 0
+				_nTotAbr := _aTotal[i][2]
+			EndIf
+			
+		ElseIf SubStr(_aTotal[i][1],0,6) == _cAno+'05'
+		
+			If _aTotal[i][2] > 0
+				_nTotMai := _aTotal[i][2]
+			EndIf
+			
+		ElseIf SubStr(_aTotal[i][1],0,6) == _cAno+'06'
+			
+			If _aTotal[i][2] > 0
+				_nTotJun := _aTotal[i][2]
+			EndIf
+			
+		ElseIf SubStr(_aTotal[i][1],0,6) == _cAno+'07'
+			
+			If _aTotal[i][2] > 0
+				_nTotJul := _aTotal[i][2]
+			EndIf
+			
+		ElseIf SubStr(_aTotal[i][1],0,6) == _cAno+'08'
+			
+			If _aTotal[i][2] > 0
+				_nTotAgo := _aTotal[i][2]
+			EndIf
+			
+		ElseIf SubStr(_aTotal[i][1],0,6) == _cAno+'09'
+		
+			If _aTotal[i][2] > 0
+				_nTotSet := _aTotal[i][2]
+			EndIf
+			
+		ElseIf SubStr(_aTotal[i][1],0,6) == _cAno+'10'
+			
+			If _aTotal[i][2] > 0
+				_nTotOut := _aTotal[i][2]
+			EndIf
+			
+		ElseIf SubStr(_aTotal[i][1],0,6) == _cAno+'11'
+			
+			If _aTotal[i][2] > 0
+				_nTotNov := _aTotal[i][2]
+			EndIf
+			
+		ElseIf SubStr(_aTotal[i][1],0,6) == _cAno+'12'
+			
+			If _aTotal[i][2] > 0
+				_nTotDez := _aTotal[i][2]
+			EndIf
+			
+		EndIf
+		
+	Next
+	
+	//Total Proposto
+	_nTotPro := _nTotJan + _nTotFev + _nTotMar + _nTotAbr + _nTotMai + _nTotJun + _nTotJul + _nTotAgo + _nTotSet + _nTotOut + _nTotNov + _nTotDez
+	
+	(_cTmp)->( dbCloseArea() )
+	
+Return( _lRet )
+
+/** {Protheus.doc} FGeraExcel
+Funcao para que gera o Excel
+
+@param: 	<Nil>
+@author 	Jose Leite de Barros Neto
+@since 	08/08/2014
+@Uso: 		SFIEMT
+*/
+Static Function FGeraExcel()
+
+	Local oExcel 		:= FWMSEXCEL():New()
+	Local cPlaNew 		:= ""
+	Local _cCodUni		:= ""
+	Local _cDscUni		:= ""
+	Local _cFilial		:= AllTrim(Posicione("SM0",1,FWGrpCompany()+MV_PAR01,"M0_FILIAL"))
+	Local _cPlanilha 	:= "Financeiro Mensalizado"
+	Local _cTitulo		:= ""
+	Local _cQuery		:= ""
+	Local _cCodCR		:= ""
+	Local _cDesCR		:= ""
+	Local _cCodCta		:= ""
+	Local _cDesCta		:= ""
+	Local _cCodCus		:= ""
+	Local _cDesCus		:= ""
+	Local _nValJan		:= 0
+	Local _nValFev		:= 0
+	Local _nValMar		:= 0
+	Local _nValAbr		:= 0
+	Local _nValMai		:= 0
+	Local _nValJun		:= 0
+	Local _nValJul		:= 0
+	Local _nValAgo		:= 0
+	Local _nValSet		:= 0
+	Local _nValOut		:= 0
+	Local _nValNov		:= 0
+	Local _nValDez		:= 0
+	Local _nValPro		:= 0
+	Local _nRegs			:= 0
+	Local _lFecha		:= .F.
+	
+	If mv_par07 == 1
+		_cTitulo := "RECEITA - "+_cFilial
+	Else
+		_cTitulo := "DESPESA - "+_cFilial
+	EndIf
+	
+	oExcel:AddworkSheet(_cPlanilha)
+	oExcel:AddTable(_cPlanilha,	_cTitulo)
+																					//1-Esq,2-Cen,3-Dir	//1-General,2-Number,3-Monetário,4-DateTime
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Cod Uni"				,1							,1)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Des Uni"				,1							,1)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Cod CR"				,1							,1)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Des CR"				,1							,1)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Cod Conta"			,1							,1)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Des Conta"			,1							,1)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Jan"					,1							,2			,.T.)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Fev"					,1							,2			,.T.)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Mar"					,1							,2			,.T.)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Abr"					,1							,2			,.T.)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Mai"					,1							,2			,.T.)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Jun"					,1							,2			,.T.)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Jul"					,1							,2			,.T.)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Ago"					,1							,2			,.T.)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Set"					,1							,2			,.T.)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Out"					,1							,2			,.T.)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Nov"					,1							,2			,.T.)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Dez"					,1							,2			,.T.)
+	oExcel:AddColumn(_cPlanilha,		_cTitulo,	"Proposto"			,1							,2			,.T.)
+	
+	//Primeira Linha - Totalizadora
+	//oExcel:AddRow(_cPlanilha,	_cTitulo,	{_cCodUni, _cDscUni, _cCodCR, _cDesCR, _cCodCta, _cDesCta, _nTotJan, _nTotFev, _nTotMar, _nTotAbr, _nTotMai, _nTotJun, _nTotJul, _nTotAgo, _nTotSet, _nTotOut, _nTotNov, _nTotDez, _nTotPro})
+	 
+	_cQuery := " SELECT SUBSTR(ZDA_DATA,1,6) ZDA_DATA, ZDA_CONTA, ZDA_ITCONT, ZDA_CTCUST, SUM(ZDA_VALOR) ZDA_VALOR "
+	_cQuery += " FROM " + RetSqlName("ZDA")
+	_cQuery += " WHERE ZDA_FILIAL 	>= '"+mv_par01+"' 				"
+	_cQuery += " AND ZDA_FILIAL 	<= '"+mv_par02+"' 				"
+	_cQuery += " AND ZDA_CODIGO  	>= '"+mv_par03+"' 				"
+	_cQuery += " AND ZDA_CODIGO  	<= '"+mv_par05+"' 				"
+	_cQuery += " AND ZDA_VERSAO    	>= '"+mv_par04+"'				"
+	_cQuery += " AND ZDA_VERSAO    	<= '"+mv_par06+"'				"
+	
+	If mv_par07 = 2
+		_cQuery += " AND ( ZDA_TIPO = '2' OR ZDA_TIPO = '3' )	"   
+	Else
+		_cQuery += " AND ZDA_TIPO    	= '"+cValToChar(mv_par06)+"'" //1=RECEITA; 2=DESPESA; 3=FOLHA
+	EndIf
+	
+	//_cQuery += " AND ZDA_CTCUST		IN (" + _cCCAuth + ")			"
+	_cQuery += " AND D_E_L_E_T_ 	<> '*' 							"
+	_cQuery += " GROUP BY ZDA_ITCONT, ZDA_CONTA, SUBSTR(ZDA_DATA,1,6) , ZDA_CTCUST 	"
+	_cQuery += " ORDER BY ZDA_ITCONT,  ZDA_CTCUST,  ZDA_CONTA,  SUBSTR(ZDA_DATA,1,6) "
+	
+	_cQuery := ChangeQuery( _cQuery )
+
+	dbUseArea( .T., "TOPCONN", TcGenQry(,,_cQuery), _cTmp2, .T., .T. )
+	
+	If (_cTmp2)->( Eof() )
+		Alert( "Não há dados para emissão do relatorio!" )
+		(_cTmp2)->( dbCloseArea() )
+		Return( Nil )
+	Else
+		While .Not. (_cTmp2)->( EOF() )
+			_nRegs++
+			(_cTmp2)->( DbSkip() )
+		End
+	EndIf
+	
+	ProcRegua(_nRegs)
+	
+	(_cTmp2)->( DbGoTop() )
+	
+	_cAno2 := SubStr((_cTmp2)->( ZDA_DATA ),1,4)
+	
+	//Flag
+	_lFecha := .F.
+	
+	While .Not. (_cTmp2)->( EOF() )
+		
+		IncProc("Processando...")
+		
+		If SubStr((_cTmp2)->( ZDA_DATA ),1,6) == _cAno2 + '01'
+			_nValJan := (_cTmp2)->( ZDA_VALOR )
+		ElseIf SubStr((_cTmp2)->( ZDA_DATA ),1,6) == _cAno2 + '02'
+			_nValFev := (_cTmp2)->( ZDA_VALOR )
+		ElseIf SubStr((_cTmp2)->( ZDA_DATA ),1,6) == _cAno2 + '03'
+			_nValMar := (_cTmp2)->( ZDA_VALOR )
+		ElseIf SubStr((_cTmp2)->( ZDA_DATA ),1,6) == _cAno2 + '04'
+			_nValAbr := (_cTmp2)->( ZDA_VALOR )
+		ElseIf SubStr((_cTmp2)->( ZDA_DATA ),1,6) == _cAno2 + '05'
+			_nValMai := (_cTmp2)->( ZDA_VALOR )
+		ElseIf SubStr((_cTmp2)->( ZDA_DATA ),1,6) == _cAno2 + '06'
+			_nValJun := (_cTmp2)->( ZDA_VALOR )
+		ElseIf SubStr((_cTmp2)->( ZDA_DATA ),1,6) == _cAno2 + '07'
+			_nValJul := (_cTmp2)->( ZDA_VALOR )
+		ElseIf SubStr((_cTmp2)->( ZDA_DATA ),1,6) == _cAno2 + '08'
+			_nValAgo := (_cTmp2)->( ZDA_VALOR )
+		ElseIf SubStr((_cTmp2)->( ZDA_DATA ),1,6) == _cAno2 + '09'
+			_nValSet := (_cTmp2)->( ZDA_VALOR )
+		ElseIf SubStr((_cTmp2)->( ZDA_DATA ),1,6) == _cAno2 + '10'
+			_nValOut := (_cTmp2)->( ZDA_VALOR )
+		ElseIf SubStr((_cTmp2)->( ZDA_DATA ),1,6) == _cAno2 + '11'
+			_nValNov := (_cTmp2)->( ZDA_VALOR )
+		ElseIf SubStr((_cTmp2)->( ZDA_DATA ),1,6) == _cAno2 + '12'
+			_nValDez := (_cTmp2)->( ZDA_VALOR )
+			_lFecha := .T.
+		EndIf		
+		
+		If _lFecha
+			
+			_cCodCus := (_cTmp2)->( ZDA_CTCUST )
+			_cDscUni := AllTrim(Posicione("CTT",1,xFilial("CTT")+_cCodCus,"CTT_DESC01"))
+			_cCodCta := (_cTmp2)->( ZDA_CONTA  )
+			_cDesCta := AllTrim(Posicione("CT1",1,xFilial("CT1")+_cCodCta,"CT1_DESC01"))
+			
+			_cCodCR  := (_cTmp2)->( ZDA_ITCONT )
+			_cDesCR := AllTrim(Posicione("CTD",1,xFilial("CTD")+_cCodCR,"CTD_DESC01"))
+	
+			If Empty(_cDesCR)
+				_cDesCR := AllTrim(Posicione("ZZX",1,xFilial("ZZX")+_cCodCus+_cCodCR,"ZZX_DITEM"))
+			EndIf
+			
+			_nValPro := _nValJan + _nValFev + _nValMar + _nValAbr + _nValMai + _nValJun + _nValJul + _nValAgo + _nValSet + _nValOut + _nValNov + _nValDez
+			
+			oExcel:AddRow(_cPlanilha,	_cTitulo,	{_cCodCus, _cDscUni, _cCodCR, _cDesCR, _cCodCta, _cDesCta, _nValJan, _nValFev, _nValMar, _nValAbr, _nValMai, _nValJun, _nValJul, _nValAgo, _nValSet, _nValOut, _nValNov, _nValDez, _nValPro})
+			
+			_nValJan	:= 0
+			_nValFev	:= 0
+			_nValMar	:= 0
+			_nValAbr	:= 0
+			_nValMai	:= 0
+			_nValJun	:= 0
+			_nValJul	:= 0
+			_nValAgo	:= 0
+			_nValSet	:= 0
+			_nValOut	:= 0
+			_nValNov	:= 0
+			_nValDez	:= 0
+			_nValPro	:= 0
+		 	_lFecha	:= .F.
+		 	
+		EndIf
+		
+		(_cTmp2)->( DbSkip() )
+	End		
+							
+	(_cTmp2)->( dbCloseArea() )
+	
+	oExcel:Activate()
+	
+	cPlaNew := Upper(cGetFile('Arquivos XLS (*.xls) |*.xls|', 'Salvar Planilha Como',,'C:\UTIL\',.T.,nOR( GETF_LOCALHARD, GETF_LOCALFLOPPY, GETF_RETDIRECTORY ),.F.))
+	
+	oExcel:GetXMLFile(cPlaNew+".XLS")
+	
+	MsgInfo("O Arquivo foi salvo em: "+cPlaNew+".XLS")
+
+Return( Nil )
+
+/** {Protheus.doc} AjustaSx1
+Funcao para criacao das perguntas
+
+@param: 	<Nil>
+@author 	Jose Leite de Barros Neto
+@since 	08/08/2014
+@Uso: 		SFIEMT
+*/
+Static Function AjustaSx1()
+	
+	Local aHelp := {}
+
+	AAdd(aHelp, {{"Informe a Filial Inicial. Ex.: 02MT0001"				}, {""}, {""}})
+	AAdd(aHelp, {{"Informe a Filial Final.   Ex.: 02MT0015"				}, {""}, {""}})
+	AAdd(aHelp, {{"Informe o Codigo do Orçamento Inicial"				}, {""}, {""}})
+	AAdd(aHelp, {{"Informe a Versão do Orçamento Inicial"				}, {""}, {""}})
+	AAdd(aHelp, {{"Informe o Codigo do Orçamento Final"					}, {""}, {""}})
+	AAdd(aHelp, {{"Informe a Versão do Orçamento Final"					}, {""}, {""}})
+	AAdd(aHelp, {{"Informe o tipo do relatorio: Receita ou Despesa" 	}, {""}, {""}})
+	
+	//????????????????????????????????
+	//?MV_PAR01  Filial de           ?
+	//?MV_PAR02  Filial ate          ?
+	//?MV_PAR03  Codigo do Orcamento ?
+	//?MV_PAR04  Versao do Orcamento ?
+	//?MV_PAR05  Codigo do Orcamento ?
+	//?MV_PAR06  Versao do Orcamento ?
+	//?MV_PAR07  1=Receita 2=Despesa ?
+	//????????????????????????????????
+	
+	u_SFPUTSX1( _cPerg, "01","Filial de..?","","","mv_ch1","C",08								,0,0,"G","","SM0"		,"","","mv_par01"		,""				,"","","",""				,"","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")
+	u_SFPUTSX1( _cPerg, "02","Filial Ate.?","","","mv_ch2","C",08								,0,0,"G","","SM0"		,"","","mv_par01"		,""				,"","","",""				,"","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")
+	u_SFPUTSX1( _cPerg, "03","Codigo De..?	","","","mv_ch3","C",TamSX3("ZDA_CODIGO")[1]	,0,0,"G","","ZDA"		,"","","mv_par02"		,""				,"","","",""				,"","","","","","","","","","","",aHelp[2,1],aHelp[2,2],aHelp[2,3],"")
+	u_SFPUTSX1( _cPerg, "04","Versao De..?	","","","mv_ch4","C",TamSX3("ZDA_VERSAO")[1]	,0,0,"G","",""			,"","","mv_par03"		,""				,"","","",""				,"","","","","","","","","","","",aHelp[3,1],aHelp[3,2],aHelp[3,3],"")
+	u_SFPUTSX1( _cPerg, "05","Codigo Ate.?	","","","mv_ch5","C",TamSX3("ZDA_CODIGO")[1]	,0,0,"G","","ZDA"		,"","","mv_par04"		,""				,"","","",""				,"","","","","","","","","","","",aHelp[4,1],aHelp[4,2],aHelp[4,3],"")
+	u_SFPUTSX1( _cPerg, "06","Versao Ate.?	","","","mv_ch6","C",TamSX3("ZDA_VERSAO")[1]	,0,0,"G","",""			,"","","mv_par05"		,""				,"","","",""				,"","","","","","","","","","","",aHelp[5,1],aHelp[5,2],aHelp[5,3],"")
+	u_SFPUTSX1( _cPerg, "07","Tipo.......?	","","","mv_ch7","C",01								,0,0,"C","",""   		,"","","mv_Par06"		,"Receita"	,"","","","Despesa"	,"","","","","","","","","","","",aHelp[6,1],aHelp[6,2],aHelp[6,3],"")
+
+Return( Nil )

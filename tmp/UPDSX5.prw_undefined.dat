@@ -1,0 +1,286 @@
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE 'RWMAKE.CH'
+#INCLUDE "DBSTRUCT.CH"
+
+#DEFINE nTamFil SX5->(DbFieldInfo(DBS_LEN, FieldPos( 'X5_FILIAL')))
+#DEFINE nTamTab SX5->(DbFieldInfo(DBS_LEN, FieldPos( 'X5_TABELA')))
+#DEFINE nTamChv SX5->(DbFieldInfo(DBS_LEN, FieldPos( 'X5_CHAVE')))
+	
+
+/*/{Protheus.doc} UPDSX5
+@description Abstração do dicionario SX5
+
+@author	Helitom Silva
+@since	16/05/2012
+
+@obs method	{create}  cria um novo objeto
+	 method {add} 	  adiciona um registro a tabela generica
+	 method {s}		  seta os atributos do indice
+	 method {remove}  remove uma tabela generica se existir
+	 method	{confirm} comita uma tabela generica adicionada
+	 method	{setlog}  seta o objeto responsavel pelo log
+
+/*/
+CLASS UPDSX5
+
+	DATA STRUCT
+	DATA MODEL
+	DATA MODELS //ACUMULA OS MODELOS ATE O CONFIRMA
+	DATA OLOG
+	DATA CFILIAL
+
+	METHOD CREATE() CONSTRUCTOR
+	METHOD ADDTABELA()
+	METHOD ADDITENS()
+	METHOD S()
+	METHOD REMOVE()
+	METHOD CONFIRM()
+	METHOD SETLOG()
+
+ENDCLASS
+
+
+/*/{Protheus.doc} CREATE
+@description METODO CONSTRUTOR DA CLASSE UPDSX5
+
+@author	Helitom Silva
+@since	20/10/2011
+
+/*/
+METHOD CREATE() CLASS UPDSX5
+
+	::STRUCT := {'FILIAL', 'TABELA', 'CHAVE', 'DESCRI', 'DSCSPA', 'DSCENG'}
+	::MODELS := {}
+
+	::CFILIAL := xFilial('SX5')
+
+	IF TYPE("OLOG") != "U"
+		::OLOG 	 := OLOG
+	ELSE
+		::OLOG 	 := UPDLOG():CREATE()
+	ENDIF
+
+RETURN SELF
+
+
+/*/{Protheus.doc} ADDTABELA
+@description Inclusão TABELA GENERICA
+
+@author	Helitom Silva
+@since	16/05/2012
+
+/*/
+METHOD ADDTABELA(CFILIAL, CTABELA, CDESCRI, CDSCSPA, CDSCENG, LCOMPART) CLASS UPDSX5
+
+	DEFAULT CFILIAL  := ""
+	DEFAULT CTABELA  := ""
+	DEFAULT LCOMPART := .T.
+	
+    IF EMPTY(CFILIAL) .AND. !LCOMPART
+       CFILIAL := ::CFILIAL
+    ENDIF
+
+	::MODEL := 	{ ::CFILIAL  	,;//FILIAL
+					  '00' 		,;//TABELA
+					   ''		,;//CHAVE - TABELA
+					   ''		,;//DESCRIC
+					   ''		,;//DSCSPA
+					   ''		} //DSCENG
+
+	AADD(::MODELS, ::MODEL)	  //REGISTRA O MODELO NA LISTA DE MODELOS
+
+	SELF:S('FILIAL'	, PadR(CFILIAL, nTamFil))
+	SELF:S('CHAVE'  , PadR(CTABELA, nTamChv))
+	SELF:S('DESCRI' , CDESCRI)
+	SELF:S('DSCSPA' , CDSCSPA)
+	SELF:S('DSCENG'	, CDSCENG)
+
+RETURN SELF
+
+
+/*/{Protheus.doc} ADDITENS
+@description Inclusão ITEM DA TABELA GENERICA
+
+@author	Helitom Silva
+@since	16/05/2012
+
+/*/
+METHOD ADDITENS(CFILIAL, CTABELA, CCHAVE, CDESCRI, CDSCSPA, CDSCENG, LCOMPART) CLASS UPDSX5
+
+	DEFAULT CFILIAL  := ""
+	DEFAULT CTABELA  := ""
+	DEFAULT CCHAVE   := ""
+	DEFAULT LCOMPART := .T.
+	
+    IF EMPTY(CFILIAL) .AND. !LCOMPART
+       CFILIAL := ::CFILIAL
+    ENDIF
+
+	::MODEL := { ::CFILIAL  	,;//FILIAL
+				   '' 			,;//TABELA
+				   ''			,;//CHAVE
+				   ''			,;//DESCRIC
+				   ''			,;//DSCSPA
+				   ''			} //DSCENG
+
+	AADD(::MODELS, ::MODEL)	  //REGISTRA O MODELO NA LISTA DE MODELOS
+
+	SELF:S('FILIAL'	, PadR(CFILIAL, nTamFil))
+	SELF:S('TABELA' , PadR(CTABELA, nTamTab))
+	SELF:S('CHAVE'  , PadR(CCHAVE, nTamChv))
+	SELF:S('DESCRI' , CDESCRI)
+	SELF:S('DSCSPA' , CDSCSPA)
+	SELF:S('DSCENG'	, CDSCENG)
+
+RETURN SELF
+
+
+/*/{Protheus.doc} S
+@description Altera atributo do dicionario SX5
+
+@author	Helitom Silva
+@since	16/05/2012
+
+/*/
+METHOD S(ATTR, VALOR) CLASS UPDSX5
+
+	LOCAL nI := ASCAN(::STRUCT, ATTR)
+
+	IF nI = 0
+		::OLOG:LOG("ATENCAO: Não foi possível configurar o atributo: "+ATTR+"!")
+	ELSE
+		::MODEL[nI] := VALOR
+	ENDIF
+
+RETURN SELF
+
+
+/*/{Protheus.doc} CONFIRM
+@description CONFIRMA A GRAVAÇÃO DO REGISTRO
+
+@author	Helitom Silva
+@since	20/10/2011
+
+/*/
+METHOD CONFIRM() CLASS UPDSX5
+
+	LOCAL nI
+
+	::OLOG:LOG("Os seguintes paramêtros foram adicionados ao dicionário SX5")
+
+	DBSELECTAREA("SX5")
+	DBSETORDER(1)
+
+	FOR nI := 1 TO LEN(::MODELS)
+
+		::OLOG:LOG(" TABELA GENERICA ["+::MODELS[nI][02]+"]")
+
+        DBGOTOP()
+		IIF(DBSEEK(::MODELS[nI][01]+::MODELS[nI][02]+::MODELS[nI][03]), RLOCK(), DBAPPEND())
+
+			SX5->X5_FILIAL    	:= ::MODELS[nI][01]
+			SX5->X5_TABELA  	:= ::MODELS[nI][02]
+			SX5->X5_CHAVE     	:= ::MODELS[nI][03]
+			SX5->X5_DESCRI 	    := ::MODELS[nI][04]
+			SX5->X5_DESCSPA		:= ::MODELS[nI][05]
+			SX5->X5_DESCENG		:= ::MODELS[nI][06]
+
+		DBUNLOCK()
+
+	NEXT
+
+	::OLOG:LINE()
+
+	::MODELS := {}
+
+RETURN SELF
+
+
+/*/{Protheus.doc} REMOVE
+@description REMOVE TABELA DO DICIONARIO
+
+@author	Helitom Silva
+@since	16/05/2012
+
+/*/
+METHOD REMOVE(CFILIAL, CTABELA, CCHAVE, LTABELA, LTODOS, LCOMPART) CLASS UPDSX5
+	
+	::OLOG:LOG("As seguintes Tabelas Genericas foram excluidas do dicionário SX5")
+	
+	DEFAULT CFILIAL  := ''
+	DEFAULT CTABELA  := ''
+	DEFAULT CCHAVE   := CTABELA
+	DEFAULT LTABELA  := .F.
+	DEFAULT LTODOS   := .F.
+	DEFAULT LCOMPART := .T.
+	 
+    IF EMPTY(CFILIAL) .AND. !LCOMPART
+       CFILIAL := ::CFILIAL
+    ENDIF
+
+	DBSELECTAREA("SX5")
+	SX5->(DBSETORDER(1))
+    SX5->(DBGOTOP())
+
+	::OLOG:LOG(" TABELA GENERICA FILIAL[" + CFILIAL + " TABELA: " + CTABELA + "]")
+	
+	IF LTABELA
+	
+		If SX5->(DbSeek(PadR(CFILIAL, nTamFil) + '00' + PadR(CTABELA, nTamTab)))
+			RLOCK()
+				DBDELETE()
+			DBUNLOCK()
+		EndIf
+
+		If SX5->(DbSeek(PadR(CFILIAL, nTamFil) + PadR(CTABELA, nTamTab)))
+			
+			While .not. SX5->(EoF()) .and. SX5->X5_FILIAL = PadR(CFILIAL, nTamFil) .and. SX5->X5_TABELA == PadR(CTABELA, nTamTab)
+			
+				RLOCK()
+					DBDELETE()
+				DBUNLOCK()
+				
+				SX5->(DBSKIP())
+			End
+			
+		EndIf
+	
+	Else
+
+		If lTodos
+		
+			If SX5->(DbSeek(PadR(CFILIAL, nTamFil) + PadR(CTABELA, nTamTab)))
+				
+				While .not. SX5->(EoF()) .and. SX5->X5_FILIAL = PadR(CFILIAL, nTamFil) .and. SX5->X5_TABELA == PadR(CTABELA, nTamTab)
+				
+					RLOCK()
+						DBDELETE()
+					DBUNLOCK()
+					
+					SX5->(DBSKIP())
+				End
+				
+			EndIf
+		
+		Else
+		
+			If SX5->(DbSeek(PadR(CFILIAL, nTamFil) + PadR(CTABELA, nTamTab)))
+				
+				While .not. SX5->(EoF()) .and. SX5->X5_FILIAL = PadR(CFILIAL, nTamFil) .and. SX5->X5_TABELA == PadR(CTABELA, nTamTab) .and. (SX5->X5_CHAVE == PadR(CCHAVE, nTamChv))
+				
+					RLOCK()
+						DBDELETE()
+					DBUNLOCK()
+					
+					SX5->(DBSKIP())
+				End
+				
+			EndIf
+		
+		EndIf
+		
+	EndIf
+
+	::OLOG:LINE()
+
+RETURN SELF

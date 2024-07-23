@@ -1,0 +1,339 @@
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "PROTHEUS.CH"
+
+/*
+	{Protheus.doc} MT110TOK
+	@description O ponto se encontra no final da função e deve ser utilizado para validações 
+	especificas do usuario onde será controlada pelo retorno do ponto de entrada.
+	PE utilizado para validar o preenchimento do campo cJustCom (Justificativa de compra).
+	Uso Especifico CNI (GAP126) 
+	
+	@type  Function
+	@author Claudinei Ferreira º Data
+	@since 10/01/2012
+	@version 1.0
+	@param lRetorno, logico, no momento da chamada do ponto de entrada 
+	@param dA110Data, data, Data da solicitação de compras
+	@return lRet, logico, se for .F. o processo será interrompido e se .T. será validado.
+	@history 15/01/2019, Alan Teles de Oliveira, o campo C1_CODCOMP foi removido do aHeader na versão 12.1.17.
+	@history 29/08/2019, Franklin de Brito de oliveira, validação para não permitir exclusão de todos os itens da SC.
+	@history 29/08/2019, Franklin de Brito de oliveira, removido variáveis não utilizadas.
+	@see http://tdn.totvs.com/display/public/PROT/MT110TOK
+*/
+User Function MT110TOK()
+Local aArea     := SC1->( GetArea() )
+Local lRet      := Paramixb[1]
+Local nPosProd  := aScan(aHeader,{|x| Alltrim(x[2]) == "C1_PRODUTO"})
+Local nQtdDel	:= 0
+
+// Variáveis adicionadas por Peder Munksgaard (Do.it Sistemas) em 28/02/2014
+Local _nX        := 0
+Local _cComp     := Alltrim(M->CCODCOMPR)
+Local _nPosXComp := aScan(aHeader,{|x| Alltrim(x[2]) == "C1_XCODCOM"})
+
+// Varíáveis adicionadas por Walmir Junior em 27/01/2016
+/* Remoção da validação para tratar item a item no ponto de entrada MTA110CP.
+Local _nPosQuant	:= aScan(aHeader,{|x| AllTrim(x[2]) == "C1_QUANT"})
+Local _nPosCtr		:= aScan(aHeader,{|x| AllTrim(x[2]) == "C1_XCONTPR"})
+*/
+
+//Chamada da função de ordenação de itens da SC. Por Walmir Junior em 16/11/2016.
+fOrdItm()
+
+If Empty(M->_cJustCom) .Or. Empty(M->_cItCta) .Or. Empty(M->CCODCOMPR) .Or. Empty(M->_cLcEnt)
+	lRet  	:= .F.
+	If Empty(M->_cJustCom)
+		MsgStop("O campo [" + AllTrim(RetTitle("C1_XJUSTIF")) + "] deve ser preenchido!","Inconsistência..")
+	EndIf
+	
+	If Empty(M->_cItCta)
+		MsgStop("O campo [" + AllTrim(RetTitle("C1_ITEMCTA")) + "] deve ser preenchido!","Inconsistência..")
+	Endif
+	
+	If Empty(M->CCODCOMPR)
+	    MsgStop("O campo [" + Alltrim(RetTitle("C1_CODCOMP")) + "] deve ser preenchido!","Inconsistência..")
+	Endif
+	// Validação de obrigatoriedade de local de entrega. Por Walmir Junior em 03/11/2016.
+	If Empty(M->_cLcEnt)
+		MsgStop("O campo [" + Alltrim(RetTitle("C1_XLOCENT")) + "], localizado no cabeçalho da tela, deve ser preenchido!","Inconsistência..")		
+	EndIf
+Endif                    
+
+/*
+	20/05/2016 Franklin B. Oliveira:
+	A validação abaixo só ocorrerá caso lRet venha como .T. (Verdadeiro)
+*/ 
+If lRet
+// Autor....: Peder Munksgaard (Do.it Sistemas)
+// Data.....: 28/02/2014
+// Descrição: Garantir a integridade da informação do comprador.
+//            Não há distinção de compradores por SC no SFIEMT.
+	For _nX := 1 to Len(aCols)       
+		If !GdDeleted(_nX)   
+			aCols[_nX][_nPosXComp] := _cComp  	
+		Else
+			nQtdDel++
+		EndIf   
+		   
+		// Inclusão por Peder Munksgaard (Do.it Sistemas) em 13/03/2014
+		// Chamada de função para validar o campo B1_XXBLSC à fim de 
+		// bloquear ou não a inclusão de uma SC com um produto que não
+		// tenha permissão para abrir nova SC.   
+		lRet := u_CNIVldSC(aCols[_nX][nPosProd])
+		   
+		If !lRet
+			Exit
+		Endif
+		// Fim Validação B1_XXBLSC
+	Next _nX
+	
+	//Não permitir a exclusão de todos os itens ao alterar a SC
+	If lRet .And. IsInCallStack("A110Altera") .And. nQtdDel >= Len(aCols)
+		lRet := .F.
+		MsgStop("Não é permitido excluir todos os itens da SC.")
+	EndIf
+	
+EndIf
+
+// Autor....: Walmir Junior
+// Data.....: 27/01/2016
+// Descrição: Alertar o usuário quanto a existencia de ARP.
+/* Remoção da validação para tratar item a item no ponto de entrada MTA110CP.
+
+If lRet
+	For _nx := 1 to Len(aCols) 
+		BeginSQL Alias cTMP    
+		    
+		    //%NoParser%
+			SELECT CNB.CNB_SLDMED, CN9.CN9_NUMERO, CNA.CNA_FORNEC, CNB.CNB_VLUNIT, CNA.CNA_SALDO
+			FROM %Table:CNB% CNB, %Table:CN9% CN9, %Table:CNA% CNA, %Table:CN1% CN1
+			WHERE CN9.CN9_FILIAL = %xFilial:CN9% AND
+			CNB.CNB_FILIAL = %xFilial:CNB% AND
+			CNA.CNA_FILIAL = %xFilial:CNA% AND
+			CN1.CN1_FILIAL = %xFilial:CN1% AND 
+			CNB.CNB_CONTRA = CN9.CN9_NUMERO AND
+			CNB.CNB_REVISA = CN9.CN9_REVISA AND
+			CNB.CNB_CONTRA = CNA.CNA_CONTRA AND
+			CNB.CNB_REVISA = CNA.CNA_REVISA AND
+			CNB.CNB_NUMERO = CNA.CNA_NUMERO AND
+			CN9.CN9_TPCTO = CN1.CN1_CODIGO AND
+			CN1.CN1_MEDEVE = '1' AND
+			CN1.CN1_ESPCTR = '1' AND
+			CNB.CNB_PRODUT = %Exp:aCols[_nx][nPosProd]% AND
+			CN9.CN9_DTFIM >= %Exp:Date()% AND
+			CN9.CN9_SITUAC = '05' AND 
+			CN9.CN9_XREGP = '1' AND
+			%Exp:aCols[_nx][_nPosQuant]% <= (CNB.CNB_QUANT - CNB.CNB_QTDMED) AND 
+			CNB.CNB_SLDMED > '0' AND
+			CNB.%NotDel% AND
+			CNA.%NotDel% AND 
+			CN9.%NotDel% 
+			
+			UNION
+					
+			SELECT CNB.CNB_SLDMED, CN9.CN9_NUMERO, CNA.CNA_FORNEC, CNB.CNB_VLUNIT, CNA.CNA_SALDO
+			FROM %Table:CNB% CNB, %Table:CN9% CN9, %Table:CNA% CNA, %Table:CN1% CN1 //, "+RetSQLName("PB1")+" PB1 , "+RetSQLName("PA9")+" PA9 "
+			WHERE  CN9.CN9_FILIAL   <>   %xFilial:CN9%	AND
+			CNB.CNB_FILIAL  <>   %xFilial:CNB%    AND
+			CNA.CNA_FILIAL  <>   %xFilial:CNA%	AND*/
+
+			//Tratamento para compartilhamento das tabelas
+			/*If !lCN1cp
+				cQuery += "			CN1.CN1_FILIAL  <>   '"+xFilial("CN1")+"'	AND   "
+			Else
+				cQuery += "			CN1.CN1_FILIAL  =   '"+xFilial("CN1")+"'	AND   "
+			Endif*/
+ 
+			/*CNB.CNB_FILIAL = CN9.CN9_FILIAL AND 
+			CNB.CNB_FILIAL = CNA.CNA_FILIAL AND*/
+
+			/*If !lCN1cp
+					cQuery += "  		CNB.CNB_FILIAL = CN1.CN1_FILIAL AND "
+			Endif*/
+
+			/*CNB.CNB_CONTRA	=	CN9.CN9_NUMERO	AND 
+			CNB.CNB_REVISA	=	CN9.CN9_REVISA	AND 
+			CNB.CNB_CONTRA	=	CNA.CNA_CONTRA	AND 
+			CNB.CNB_REVISA	=	CNA.CNA_REVISA	AND 
+			CNB.CNB_NUMERO	=	CNA.CNA_NUMERO	AND 
+			CN9.CN9_TPCTO	=	CN1.CN1_CODIGO	AND 
+			CN1.CN1_MEDEVE	=	'1'				AND 
+			CN1.CN1_ESPCTR	=	'1'				AND 
+			CNB.CNB_PRODUT	= %Exp:aCols[_nx][nPosProd]% AND 
+			CN9.CN9_DTFIM	>= %Exp:Date()% AND
+			CN9.CN9_SITUAC	=	'05'					AND
+			CN9.CN9_XREGP	=	'1'			   			AND 
+				//Wjr CN9.CN9_FILIAL = PB1.PB1_FILCN9  AND 
+			CNB.CNB_VLUNIT * %Exp:aCols[_nx][_nPosQuant]% <= CNA.CNA_SALDO	AND 
+				//Wjr PB1.PB1_NUMERO = CN9.CN9_NUMERO     AND
+				//Wjr PB1.PB1_REVISA = CN9.CN9_REVISA     AND 
+			//PB1.PB1_EMP = '"+cEmp+"' AND 
+			//PB1.PB1_UNID = '"+cUnid+"' AND 
+			//PB1.PB1_FIL = '"+cFil+"' AND 
+				//Wjr PA9.PA9_NUMERO = PB1.PB1_NUMERO 
+				//Wjr AND PA9.PA9_REVISA = PB1.PB1_REVISA 
+				//Wjr AND PA9.PA9_FILCN9 = PB1.PB1_FILCN9 AND
+			CNB.CNB_SLDMED > '0' AND
+			CNB.D_E_L_E_T_ = ' ' AND
+			CNA.D_E_L_E_T_ = ' ' AND
+				//Wjr PB1.D_E_L_E_T_ = ' ' AND
+			CN9.D_E_L_E_T_ = ' ' //	AND
+				//Wjr PA9.D_E_L_E_T_ = ' '						
+		 
+		EndSQL       
+	
+		If(cTMP)->(!EOF()) .And. Empty(aCols[_nx][_nPosCtr])
+			If Aviso("Atenção!","Existe contrato vigente para o produto '" + aCols[_nx][nPosProd] + "'. Deseja continuar sem informar o Contr. Preco?", {"SIM", "Não"}) == 1
+			Else
+				lRet  	:= .F.
+				(cTMP)->(dbCloseArea())
+				Exit
+			EndIf				
+		EndIf		
+    
+	(cTMP)->(dbCloseArea()) 
+	
+	Next _nx
+	
+EndIf*/
+   
+
+// Retirado por Peder Munksgaard (Do.it Sistemas) em 28/02/2014
+// Não há fundamentação para não permitir a entrada de dois produtos iguais em linhas distintas.
+// Inclusive faz-se necessário caso tenhamos o mesmo produto com aplicações diferentes em que há
+// necessidade de utilizar contas contábeis e centros de custos separados.
+/*
+For nX:=1 to Len(aCols)
+	if !aCols[nX][Len(aHeader)+1]
+		cProduto := aCols[nX][nPosProd]
+		For nY:=1 to Len(aCols)
+			if !aCols[nY][Len(aHeader)+1]
+				if nX <> nY
+					if cProduto == aCols[nY][nPosProd]
+						msginfo("Produto não pode ser inserido duas vezes na mesma Solicitação de Compras. Checar o produto "+alltrim(cProduto)+" nos itens da SC "+aCols[nX][nPosItem]+ " e "+aCols[nY][nPosItem]+"." )
+						nX := nY := Len(aCols)
+						lRet := .F.
+					endif
+				endif
+			endif
+		Next nY
+	endif
+Next nX
+*/
+RestArea(aArea)
+Return(lRet)
+
+/*ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³fOrdItm   º Autor ³ Walmir Junior      º Data ³  16/11/16   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDescricao ³ Função para ordenar itens da SC,                           º±±
+±±º          ³                           						          º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ Chamada da Função                                          º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß*/
+Static Function fOrdItm()
+Local _nItm		:= 0
+Local _aAux		:= aClone(aCols)
+Local _aNew		:= aClone(aCols)
+Local _nAx		:= 1
+Local _nLcl		:= 0
+Local _lRep		:= .F.
+
+Private _aDePr	:= {}
+
+//Obtem o número de items da grade.
+_nItm := Len(aCols)
+//Se houver mais de um item na grade.
+If _nItm > 1
+	//Ordena o array auxíliar pelo produto.
+	aSort(_aAux,,, {|x,y| x[2]+x[1] < y[2]+y[1] })
+	
+	//Varre os itens da grade
+	For _nAx := 1 to _nItm
+		//Procura o primeiro produto do auxíliar nos itens da grade.				 
+		_nLcl := aScan(aCols, {|x| AllTrim(x[2]+x[1]) == AllTrim(_aAux[_nAx][2]+_aAux[_nAx][1])})
+		//Se houver reposicionamento.
+		If (aCols[_nLcl][2] + aCols[_nLcl][1]) !=  (_aAux[_nLcl][2] + _aAux[_nLcl][1])
+			_lRep		:= .T.
+		EndIf
+		//Altera valor do item
+		If _nLcl > 0
+			//Alimenta array controle (item de -> item para -> aux banco).
+			aAdd(_aDePr,{aCols[_nLcl][1],_nAx, 0})
+			_aNew[_nLcl][1] := StrZero(_nAx,4)			
+		EndIf
+	Next
+	If _lRep
+		//Se não for inclusão trata os itens para evitar erro de unique.
+		If	!INCLUI
+			Begin Transaction
+			//Reposiciona na base de dados os itens existentes para fora da faixa de itens.
+			fTrtaEx(_nItm)
+			//Posiciona corretamente os itens já existentes de acordo com a nova ordenação.
+			fTrtaEx(0)
+			End Transaction
+		EndIf
+		aSize(aCols,0)
+		aSort(_aNew,,, {|x,y| x[2]+x[1] < y[2]+y[1] })
+		For _nMx := 1 to Len(_aNew)
+			aAdd(aCols ,_aNew[_nMx])
+		Next
+	EndIf
+EndIf
+
+Return
+
+/*ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³fTrtaEx   º Autor ³ Walmir Junior      º Data ³  17/11/16   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDescricao ³ Função para tratar itens existentes na base de dados.      º±±
+±±º          ³                           						          º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ Chamada da Função                                          º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß*/
+Static Function fTrtaEx(_nItm)
+Local _nAx		:= 0
+Local _nPosItm	:= AScan( aHeader, {|X| AllTrim( Upper(X[2]) ) == AllTrim( Upper('C1_ITEM') )})
+Local _nItAx	:= Val(aCols[Len(aCols)][_nPosItm]) + 1
+Local _aSC1		:= SC1->(GetArea())
+Local _nPos		:= 0
+
+If _nItm > 0
+	//Liberando campo item para nova ordenação
+	For _nAx := 1 to _nItm
+		DBSelectArea("SC1")
+		SC1->(DBSetOrder(1))
+		If SC1->(DBSeek(M->CFILENT+M->CA110NUM+aCols[_nAx][1])) //C1_FILIAL+C1_NUM+C1_ITEM
+			_nPos := aScan(_aDePr, {|x| x[1] == aCols[_nAx][1]})
+			_aDePr[_nPos][3] := _nItAx
+			RecLock("SC1", .F.)
+					SC1->C1_ITEM := StrZero(_nItAx,4)
+			MsUnLock() 
+			_nItAx++
+		EndIf
+	Next
+Else
+	//Aplicando nova ordenação para registros do banco.
+	For _nAx := 1 to Len(aCols)
+		//Obtem a posição no array controle do antigo aCols.
+		If  (_nPos := aScan(_aDePr, {|x| x[1] == aCols[_nAx][1]})) > 0
+			DBSelectArea("SC1")
+			SC1->(DBSetOrder(1))
+			If SC1->(DBSeek(M->CFILENT+M->CA110NUM+ StrZero(_aDePr[_nPos][3],4) )) //C1_FILIAL+C1_NUM+C1_ITEM
+				RecLock("SC1", .F.)
+						SC1->C1_ITEM := StrZero(_aDePr[_nPos][2],4)
+				MsUnLock() 
+			EndIf
+		EndIf
+	Next
+EndIf
+RestArea(_aSC1)
+Return

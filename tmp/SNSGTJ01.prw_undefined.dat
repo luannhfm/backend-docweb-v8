@@ -1,0 +1,193 @@
+#Include 'Protheus.ch'
+#Include 'Topconn.ch'
+#Include 'Tbiconn.ch'
+
+/*/{Protheus.doc} SNSGTJ01
+Funcao responsavel por realizar a integração entre os produtos SGT x Protheus
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 		04/07/2017
+@version 	1.0
+@return 	Nil, Nulo
+/*/
+User Function SNSGTJ01(_aParams)
+	
+	Local _aArea 	:= GetArea()
+
+	ConOut(" ")
+  	ConOut(Replicate("=",80))
+	ConOut('SNSGTJ01: Iniciando Job - Integracao Produtos SGT x Protheus')
+		
+	If Valtype( _aParams ) != "U"
+		//+--------------------------------------------------------------+
+		//| Se for SCHEDULE prepara o ambiente                           |
+		//+--------------------------------------------------------------+
+		PREPARE ENVIRONMENT EMPRESA _aParams[1] FILIAL _aParams[2]    
+		
+		If _aParams != Nil
+			ConOut("SNSGTJ01: Empresa: "+ _aParams[1])   
+			ConOut("SNSGTJ01: Filial: "+ _aParams[2])
+		EndIf
+		 
+	EndIf
+	
+	IntSB1()
+		
+	RestArea( _aArea )
+	
+	If _aParams != Nil
+		RESET ENVIRONMENT
+	EndIf
+	
+	ConOut('SNSGTJ01: Finalizou Job - Integracao Produtos SGT x Protheus')
+	ConOut(Replicate("=",80))
+	ConOut(" ")
+	
+Return
+
+
+/** {Protheus.doc} IntSB1
+Funcao que realiza a comunicacao com o WebService do SGT e faz a 
+integracao dos produtos (Inclusao/Alteracao)
+
+@param: 	<Nil>
+@author 	Jose Leite de Barros Neto
+@since 		04/07/2017
+@Uso: 		SFIEMT
+*/
+Static Function IntSB1()
+	
+	Local _lOk		:= .T.	
+	Local _oIntSGT	:= SNWSSGT():NEW()
+	Local _nOpc		:= 0
+	Local _cCodigo	:= ""
+	Local _cDesc	:= ""
+	Local _cCodSGT	:= ""
+	Local _cTipo	:= GetNewPar( "MV_XSGTTPP", "ST")
+	Local _cUndM	:= GetNewPar( "MV_XSGTUMP", "HR")
+	Local _cContaC	:= GetNewPar( "MV_XSGTCCP", "41010403001")
+	Local _cItemC	:= ""
+	Local _cGrupo	:= GetNewPar( "MV_XSGTGRP", "0030")
+	Local _cLocPad	:= "01"
+	Local _cGarant 	:= "2"
+	Local _cXPrdVen	:= "S"
+	Local _cXPrdFil	:= SubStr(cFilAnt,0,2)
+	Local _cMsBlql	:= ""
+	Local _cXOrigem	:= ""
+	Local _cLocErr	:= GetNewPar( "MV_XSGTIER", "\xml\retorno\sgt\log\")
+	Local _aProduto	:= {}
+	Local _cHistBlq	:= ""
+	
+	Private lMsErroAuto := .F.
+	
+	_lOk := _oIntSGT:Auth()
+	
+	If .Not. _lOk
+		ConOut("Autenticacao Failed")
+		Return
+	EndIf
+	
+	_lOk := _oIntSGT:GetProdReg()
+	
+	If .Not. _lOk
+		ConOut("GetProdReg Failed")
+		Return
+	EndIf
+	
+	If _lOk
+		If ValType(_oIntSGT:aProdutosR) == "A"
+			For i := 1 to Len(_oIntSGT:aProdutosR)
+				
+				ConOut("Codigo Produto: "+ _oIntSGT:aProdutosR[i][1])
+				ConOut("Nome Produto: "+ _oIntSGT:aProdutosR[i][5])
+				ConOut("Item Contabil: "+ _oIntSGT:aProdutosR[i][3])
+				ConOut("Ativo: "+ _oIntSGT:aProdutosR[i][4])
+				
+				_cCodSGT := PADR(AllTrim(_oIntSGT:aProdutosR[i][1]),TamSX3('B1_XPRDSGT')[1],Space(TamSX3('B1_XPRDSGT')[1]))
+				_cDesc := AllTrim(_oIntSGT:aProdutosR[i][5])
+				_cItemC := AllTrim(_oIntSGT:aProdutosR[i][3])
+				
+				If _oIntSGT:aProdutosR[i][4] == "true" 
+					_cMsBlql := "2"
+				Else
+					_cMsBlql := "1"
+					_cHistBlq := "SGT - Bloqueio pelo Sistema de Gestão de Tecnologia (SGT) - " + DtoC(dDataBase) + " - "+ Alltrim( Time() )
+				EndIf
+				
+				_cCodigo := ""
+				
+				DbSelectArea('SB1')
+				SB1->( DbOrderNickName("SB1PRDSGT") )
+				SB1->( DbGoTop() )
+				If .Not. SB1->(DbSeek( xFilial('SB1') + _cCodSGT ))
+					_nOpc 		:= 3
+					_cXOrigem	:= "Importacao SGT - "+ DtoC(dDataBase) + " - "+ Alltrim( Time() )
+				Else
+					_nOpc := 4
+					_cCodigo	:= SB1->B1_COD
+					_cXOrigem	:= "Alteracao SGT - "+ DtoC(dDataBase) + " - "+ Alltrim( Time() )
+				EndIf
+				
+				_aProduto := {}
+				
+				If _nOpc == 4
+					aAdd( _aProduto ,{"B1_COD"   	,_cCodigo	,Nil}) // Codigo
+				EndIf
+				
+				aAdd( _aProduto ,{"B1_XPRDSGT" 	,_cCodSGT	,Nil}) // ID SGT
+				aAdd( _aProduto ,{"B1_DESC"  	,_cDesc		,Nil}) // Descricao
+				aAdd( _aProduto ,{"B1_TIPO"  	,_cTipo		,Nil}) // Tipo
+				aAdd( _aProduto ,{"B1_UM"  		,_cUndM		,Nil}) // Unidade de Medida
+				aAdd( _aProduto ,{"B1_CONTA" 	,_cContaC	,Nil}) // Conta Contabil
+				aAdd( _aProduto ,{"B1_ITEMCC" 	,_cItemC	,Nil}) // Item Contabil
+				aAdd( _aProduto ,{"B1_GRUPO" 	,_cGrupo	,Nil}) // Grupo de Produtos
+				aAdd( _aProduto ,{"B1_LOCPAD" 	,_cLocPad	,Nil}) // Local Padrao
+				aAdd( _aProduto ,{"B1_GARANT"  	,_cGarant	,Nil}) // Garantia
+				aAdd( _aProduto ,{"B1_MSBLQL"  	,_cMsBlql	,Nil}) // Bloqueio de Tela
+				If _cMsBlql == "1"
+					aAdd( _aProduto ,{"B1_XHSTBLQ" ,_cHistBlq ,Nil}) // Historico de Bloqueio
+				EndIf
+				aAdd( _aProduto ,{"B1_XPRDVEN" 	,_cXPrdVen	,Nil}) // Produto de Venda?
+				aAdd( _aProduto ,{"B1_XPRDFIL" 	,_cXPrdFil	,Nil}) // Produto vinculado a empresa
+				aAdd( _aProduto ,{"B1_XORIGEM" 	,_cXOrigem	,Nil}) // Origem da Informacao
+				
+				lMsErroAuto := .F.
+					
+				Begin Transaction
+		
+					MSExecAuto({|x,y| Mata010(x,y)},_aProduto,_nOpc) //3- Inclusão, 4- Alteração, 5- Exclusão
+					
+					If lMsErroAuto
+						MostraErro(_cLocErr, "Produto_"+ _cCodSGT +".LOG")
+						ConOut("SNSGTJ01: O Produto SGT: "+ _cCodSGT + " nao foi cadastrado no Protheus, verifique o log em: "+ _cLocErr)
+						//MostraErro()
+						RollBackSx8()
+						DisarmTransaction()
+					Else
+						_cCodigo := SB1->B1_COD
+						If _nOpc == 3
+							ConOut("SNSGTJ01: O Produto SGT: "+ _cCodSGT +" - foi cadastrado no Protheus: "+ _cCodigo)
+						Else
+							ConOut("SNSGTJ01: O Produto SGT: "+ _cCodSGT +" - foi alterado no Protheus: "+ _cCodigo)
+						EndIf
+	
+						DbSelectArea("SB5")
+						SB5->( DbSetOrder(1) ) //B5_FILIAL+B5_COD
+						If .Not. SB5->( DbSeek( xFilial("SB5") + _cCodigo) )
+							If RecLock("SB5", .T.)
+								SB5->B5_COD 	:= _cCodigo
+								SB5->B5_CEME	:= _cDesc
+							EndIf
+							SB5->(MsUnlock())
+						EndIf
+							
+						SB5->( DbCloseArea() )
+					EndIf
+					
+				End Transaction
+			Next
+		EndIf
+	EndIf
+	
+Return

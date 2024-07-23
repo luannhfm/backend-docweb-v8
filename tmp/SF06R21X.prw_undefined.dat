@@ -1,0 +1,847 @@
+#Include 'Totvs.ch'
+#Include 'TopConn.ch'
+
+/*/{Protheus.doc} SF06R21X
+	Relatório Posição de Recebimento de Cartões.	
+@author Walmir Junior
+@since 08/01/2018
+/*/
+
+User Function SF06R21X()
+	
+	Local   oReport	
+	Local   _cPerg	 := FunName()
+	Private aSalRec  := {} 
+	Private aFilial  := {}
+	Private _cA1CT	 := SuperGetMV("MV_XA1CARD",,"01027058")
+	Private _aCols	 := {}	
+	Private _cAlias	 := GetNextAlias()
+	Private _cAlSin	 := GetNextAlias()
+	Private _cAlFil	 := GetNextAlias()
+	Private oProcess
+	Private _cChv	 := ""
+	
+	//Variáveis para controle de impressão com quebra de seção, conforme valor do MV_PAR11.
+	Private _lImpLin 	:= .F.
+	Private _lSec2		:= .F.
+	Private _nCol		:= 12
+		
+
+	fCriaSx1(_cPerg)
+	If Pergunte(_cPerg)
+		//Se imprime não linear (Imprime A4).
+		_lImpLin := !mv_par11 == 1
+		
+		//Alerta usuário sobre limitações do relatório.
+		If _lImpLin
+			MsgInfo('Este modulo de visualização [PERGUNTA "Imprime A4 = Não"] é recomendado para geração de relatório em EXCEL, pois em outros formatos, pode não apresentar todos os resultados (max. '+AllTrim(Str(_nCol))+' filiais).', 'ATENÇÃO')
+		EndIf
+		
+		mv_par10 := Iif(mv_par10 == cToD("  /  /  "), dDataBase, mv_par10)
+		If !Empty(MV_PAR03) .AND. !Empty(MV_PAR04) 
+			oReport := ReportDef(_cPerg)
+			oReport:PrintDialog()
+		Else
+			MSGAlert("É necessário definir as datas para apresentação do relatório.","ATENÇÃO")
+		EndIf
+	EndIf
+
+Return (Nil)
+
+
+/*/{Protheus.doc} ReportDef
+	Função para definições do relatório.
+@author Walmir Junior
+@since 08/01/2018
+@param _cPerg, characters, nome do arquivo de perguntas
+/*/
+
+Static Function ReportDef(_cPerg)
+
+	Local   _cTit	  := "Posição de Recebimento de Cartões"
+	Local   _cDesc	  := ""
+	Local   cAuxFil   := ""
+	Local   oReport, _oSec, _oSec2, _oSec3
+	Local   _oFil,   _oDado
+	Local   _nReg	  := 0
+	//Private aSalRec   := {}
+	Private _cPicture := TM(999999999.99,14,2) // "@E 999,999,999.99"
+	
+	_cDesc := "Relatório para demonstrar Posição de Recebimento de Cartões."
+
+	If MV_PAR07 == 1
+		 _cTit	  := "Evolução Recebimento de Cartões"
+	EndIf
+	
+	If MV_PAR07 == 2
+		oReport := TReport():New(_cPerg, _cTit, _cPerg, {|oReport| PrintReport(oReport)}, _cDesc)
+	Else
+		oReport := TReport():New(_cPerg, _cTit, _cPerg, {|oReport| SinReport(oReport,_nReg)}, _cDesc)
+	EndIf
+	
+	oReport:SetLandScape()
+	oReport:oPage:SetPaperSize(9)
+	oReport:SetEnvironment(2)
+	
+	If  MV_PAR07 == 2
+	
+		_oSec:= TRSection():New(oReport, OemToAnsi("Recebimentos"), {_cAlias},,,,,.F.)
+		
+		//TRCell():New(/*_oSec*/, /*X3_CAMPO*/, /*Tabela*/, /*Titulo*/, /*Picture*/, /*Tamanho*/, /*lPixel*/, /*{|| code-block de impressao }*/)
+		TRCell():New(_oSec, "E1_FILIAL"		  , _cAlias, "FILIAL"		   ,								,TamSX3("E1_FILIAL")[1])
+		TRCell():New(_oSec, "E1_PREFIXO"	  , _cAlias, "PREFIXO"	       ,								,TamSX3("E1_PREFIXO")[1])
+		TRCell():New(_oSec, "E1_NUM"		  , _cAlias, "TITULO"		   ,								,TamSX3("E1_NUM")[1])
+		TRCell():New(_oSec, "E1_PARCELA"	  , _cAlias, "PARCELA"	       ,								,TamSX3("E1_PARCELA")[1])
+		TRCell():New(_oSec, "E1_CLIENTE"	  , _cAlias, "COD CLI"         ,								,TamSX3("E1_CLIENTE")[1])
+		TRCell():New(_oSec, "E1_NOMCLI"		  , _cAlias, "CLIENTE"	       ,								,TamSX3("E1_NOMCLI")[1])
+		TRCell():New(_oSec, "E1_EMISSAO"	  , _cAlias, "EMISSAO"	       ,								,12,,{|| SToD((_cAlias)->E1_EMISSAO)})
+		TRCell():New(_oSec, "E1_VENCTO"		  , _cAlias, "VENCTO"		   ,								,12,,{|| SToD((_cAlias)->E1_VENCTO)	})
+		TRCell():New(_oSec, "SALDO"			  , _cAlias, "SALDO"		   , ALLTRIM(X3PICTURE("E1_SALDO"))	,TamSX3("E1_SALDO")[1],,,,,"RIGHT")
+		TRCell():New(_oSec, "E1_VALOR"		  , _cAlias, "VALOR"		   , ALLTRIM(X3PICTURE("E1_VALOR"))	,TamSX3("E1_VALOR")[1],,,,,"RIGHT")
+		TRCell():New(_oSec, "TOTAL_BAIXADO"	  , _cAlias, "TOTAL BAIXADO"   , ALLTRIM(X3PICTURE("E1_VALOR"))	,TamSX3("E1_VALOR")[1],,,,,"RIGHT")
+		TRCell():New(_oSec, "JUROS_MULTA"	  , _cAlias, "JR/MULTA"		   , ALLTRIM(X3PICTURE("E1_VALOR"))	,TamSX3("E1_VALOR")[1],,,,,"RIGHT")
+		TRCell():New(_oSec, "E1_BAIXA"		  , _cAlias, "DT BAIXA"		   ,							    ,12,,{|| SToD((_cAlias)->E1_BAIXA)	})
+		TRCell():New(_oSec, "CT_TITULO"		  , _cAlias, "Titulo"		   ,							    ,TamSX3("E1_NUM")[1])
+		TRCell():New(_oSec, "CT_PARCELA"	  , _cAlias, "Parcela"		   ,							    ,TamSX3("E1_PARCELA")[1])
+		TRCell():New(_oSec, "CT_VAL_RECEBIDO" , _cAlias, "Valor Recebido"  , ALLTRIM(X3PICTURE("E1_SALDO"))	,TamSX3("E5_VALOR")[1],,,,,"RIGHT")
+		TRCell():New(_oSec, "CT_TP_BAIXA"	  , _cAlias, "Tipo Baixa"	   ,							    ,TamSX3("E5_TIPO")[1])
+		TRCell():New(_oSec, "CT_DT_BAIXA"	  , _cAlias, "Dt Baixa Cartao" ,							    ,12,,{|| SToD((_cAlias)->CT_DT_BAIXA)})
+		TRCell():New(_oSec, "CT_MOT_BAIXA"	  , _cAlias, "Mot Bx"		   ,							    ,TamSX3("E5_MOTBX")[1])
+		
+		_oSec2:= TRSection():New(oReport, OemToAnsi(""), {_cAlias})
+		_oSec2:SetLineStyle(.T.)
+		_oSec2:SetLinesBefore(2)
+		TRCell():New(_oSec2, "E1_FILIAL", _cAlias, "UNIDADE"	    ,,50,,{||(_cAlias)->E1_FILIAL + " - " + FWFilName(cEmpAnt,(_cAlias)->E1_FILIAL)})
+		TRCell():New(_oSec2, "PERIODO"	, _cALSin, "PERIODO EMISSAO",,400,,{|| dToC(MV_PAR03) + " - " +  dToC(MV_PAR04)	+ "  PERIODO VENCTO: " + dToC(MV_PAR08) + " - " +  dToC(MV_PAR09) + "  DATA BASE: " + dToC(MV_PAR10)}, "LEFT",,"RIGHT")
+
+		oBreak := TRBreak():New(_oSec, _oSec:Cell("E1_FILIAL"))
+		TRFunction():New(_oSec:Cell("CT_VAL_RECEBIDO"),,"SUM",oBreak,,,,.F.,.T.,.F.)
+		TRFunction():New(_oSec:Cell("E1_VALOR"),,"SUM",oBreak,,,,.F.,.T.,.F.)
+		TRFunction():New(_oSec:Cell("TOTAL_BAIXADO"),,"SUM",oBreak,,,,.F.,.T.,.F.)
+		
+	Else
+		
+		oProcess := MsNewProcess():New( { | lEnd | _nReg := GerQry() }, 'Processando...', 'Aguarde, processando FILIAIS...', .F. )
+		oProcess:Activate()
+			
+		_oFil	 := TRSection():New(oReport, OemToAnsi("Unidade"), {_cALSin})
+		
+		_oDado	 := TRSection():New(oReport,"Demonstrativo",{_cALSin},,,,,,,,,,,,,.T.)
+		_oDado:SetLineStyle(.F.)
+		TRCell():New(_oDado,  "MONTH" ,_cALSin, "Mês-Ano" ,/*_cPicture*/ , 27, , {|| MesExtenso((_cALSin)->MONTH)+ "-"+SubStr(AllTrim(Str((_cALSin)->YEAR)),3,2) }, "LEFT",,,,,.F. )
+		
+		//Se impressão linear (Excel)
+		If _lImpLin
+			For _nx  := 1 To Len(_aCols)
+				TRCell():New(_oDado,  _aCols[_nx,1]           ,_cALSin, _aCols[_nx,2] ,_cPicture , 20, , /*{|| 0 }*/, "RIGHT",,"RIGHT" )
+				TRCell():New(_oDado,  _aCols[_nx,1] + "_PERC" ,_cALSin, "% EVO"       ,_cPicture , 10, , /*{|| 0 }*/, "RIGHT",,"RIGHT" )
+			Next _nx
+		//Se impressão quebrando seção
+		Else
+			Private _nCols := 0
+			
+			_nCols := Iif(Len(_aCols) < _nCol, Len(_aCols), _nCol)
+					
+			For _nx  := 1 To _nCols
+				TRCell():New(_oDado,  _aCols[_nx,1]           ,_cALSin, _aCols[_nx,2] ,_cPicture , 20, , /*{|| 0 }*/, "RIGHT",,"RIGHT" )
+				TRCell():New(_oDado,  _aCols[_nx,1] + "_PERC" ,_cALSin, "% EVO"       ,_cPicture , 10, , /*{|| 0 }*/, "RIGHT",,"RIGHT" )
+			Next _nx
+			TRCell():New(_oDado,"ESPACO_SEG", _cALSin, " ",,10)
+			
+			If Len(_aCols) > _nCol
+				_lSec2	:= .T.
+				_oDado2	:= TRSection():New(oReport,"Demonstrativo",{_cALSin})
+				_oDado2:SetLineStyle(.F.)
+				TRCell():New(_oDado2,  "MONTH" ,_cALSin, "Mês-Ano" ,/*_cPicture*/ , 27, , {|| MesExtenso((_cALSin)->MONTH)+ "-"+SubStr(AllTrim(Str((_cALSin)->YEAR)),3,2) }, "LEFT",,,,,.F. )
+				For _nx  := _nCol+1 To Len(_aCols)
+					TRCell():New(_oDado2,  _aCols[_nx,1]           ,_cALSin, _aCols[_nx,2] ,_cPicture , 20, , /*{|| 0 }*/, "RIGHT",,"RIGHT" )
+					TRCell():New(_oDado2,  _aCols[_nx,1] + "_PERC" ,_cALSin, "% EVO"       ,_cPicture , 10, , /*{|| 0 }*/, "RIGHT",,"RIGHT" )
+				Next _nx	
+				TRCell():New(_oDado2,"ESPACO_SEG", _cALSin, " ",,10)
+			EndIf
+		EndIf
+		
+		_oSec2 := TRSection():New(oReport, OemToAnsi(""), {_cALSin})
+		_oSec2:SetLineStyle(.T.)
+		_oSec2:SetLinesBefore(2)		
+		TRCell():New(_oSec2, "PERIODO"	, _cALSin, "PERIODO EMISSAO",,400,,{|| dToC(MV_PAR03) + " - " +  dToC(MV_PAR04)	+ "  PERIODO VENCTO: " + dToC(MV_PAR08) + " - " +  dToC(MV_PAR09) + "  DATA BASE: " + dToC(MV_PAR10)}, "LEFT",,"RIGHT")
+			
+		aSalRec := RetArrImp()
+		
+	EndIf
+	
+Return (oReport)
+
+/*/{Protheus.doc} ValAnt
+	@description Evolução
+	@type  Static Function
+	@author Rafael Karczevski
+	@since 07/08/2019
+	@version 1.0
+	@param param, param_type, param_descr
+	@return return, return_type, return_description
+	/*/
+Static Function ValAnt( p_ValAtu, p_ValAnt, p_lIni)
+
+	Local nRet := 0
+
+	If p_lIni .Or. p_ValAnt == 0 .And. p_ValAtu == 0
+		nRet := 0
+	ElseIf  p_ValAnt == 0 .And. p_ValAtu != 0
+		nRet := 100	
+	ElseIf p_ValAtu <= p_ValAnt
+		nRet := Round(((p_ValAtu / p_ValAnt)) * 100, 2) - 100
+	Else
+		nRet := Round(((p_ValAtu / p_ValAnt)) * 100, 2) - 100
+	EndIf
+
+Return nRet
+/*/{Protheus.doc} SinReport
+	Função responsável por impressão do relatório sintético.
+	
+@author Walmir Junior
+@since 17/01/2018
+@param oReport, object, objeto do relatório do tipo TReport
+/*/
+Static Function SinReport(oReport, _nTotReg)
+
+	Local _oFil		:= oReport:Section(1)
+	Local _oDado	:= oReport:Section(2)
+	Local _oSec2
+	Local _oSec4
+	Local _aValAnt  := {}
+	Local cAlSE1    := GetNextAlias()
+	Local cSql      := "" 
+	Local cAuxFil   := ""
+	Local cAuxAM    := ""
+	Local nValTotal := 0
+	Private nkValAnt := 0
+	Private nkFilAnt := ""
+	
+	If !_lSec2
+		_oSec2    := oReport:Section(3)
+		_oSec4    := oReport:Section(4)
+	Else
+		_oDado2   := oReport:Section(3)
+		_oSec2    := oReport:Section(4)
+		_oSec4    := oReport:Section(5)
+	EndIf
+	
+	oReport:SetMeter( _nTotReg )
+	
+	_oDado:Init()
+	
+	//Cria posições no array de valores anteriores para primeiro registro.
+	For _nx := 1 To Len(_aCols)
+			aAdd(_aValAnt, 0 )
+	Next _nx
+	
+	_lFirst := .T.
+	
+	//Se impressão linear (Excel)
+	If _lImpLin
+		//Adiciona blocos para obter os valores das colunas por filial e para calculo do percentual de evolução.
+		For _nx := 1 to Len(_aCols)
+			_oDado:Cell(_aCols[_nx,1]):SetBlock( &("{ || U_SF06R22X((_cALSin)->YEAR, (_cALSin)->MONTH , '" + _aCols[_nx, 1] + "',MV_PAR03,MV_PAR04,MV_PAR05,MV_PAR06 )}"))//{|| fGetVal((_cALSin)->YEAR,(_cALSin)->MONTH, _aCols[_nx, 1])
+			_oDado:Cell(_aCols[_nx,1]+"_PERC"):SetBlock(&("{ || ValAnt(Val(Replace(_oDado:Cell('" + _aCols[_nx, 1] + "'):GetText(),'.','')), _aValAnt["+ Str(_nx) +"], _lFirst) }"))
+			//_oDado:Cell(_aCols[_nx,1]+"_PERC"):SetBlock(&("{ || Val(Replace(_oDado:Cell('" + _aCols[_nx, 1] + "'):GetText(),'.',''))/_aValAnt["+ Str(_nx) +"] }"))
+		Next _nx
+	//Se impressão quebrando seção (A4)
+	Else
+		_nCols := 0
+		
+		_nCols := Iif(Len(_aCols) < _nCol, Len(_aCols), _nCol)
+				
+		//Adiciona blocos para obter os valores das colunas por filial e para calculo do percentual de evolução.
+		For _nx := 1 to _nCols
+			_oDado:Cell(_aCols[_nx,1]):SetBlock( &("{ || U_SF06R22X((_cALSin)->YEAR, (_cALSin)->MONTH , '" + _aCols[_nx, 1] + "',MV_PAR03,MV_PAR04,MV_PAR05,MV_PAR06 )}"))
+			_oDado:Cell(_aCols[_nx,1]+"_PERC"):SetBlock(&("{ || ValAnt(Val(Replace(_oDado:Cell('" + _aCols[_nx, 1] + "'):GetText(),'.','')), _aValAnt["+ Str(_nx) +"], _lFirst) }"))
+		Next _nx
+		
+		If Len(_aCols) > _nCol
+			//Adiciona blocos para obter os valores das colunas por filial e para calculo do percentual de evolução.
+			For _nx := _nCol+1 to Len(_aCols)
+				_oDado2:Cell(_aCols[_nx,1]):SetBlock( &("{ || U_SF06R22X((_cALSin)->YEAR, (_cALSin)->MONTH , '" + _aCols[_nx, 1] + "',MV_PAR03,MV_PAR04,MV_PAR05,MV_PAR06 )}"))
+				_oDado2:Cell(_aCols[_nx,1]+"_PERC"):SetBlock(&("{ || ValAnt(Val(Replace(_oDado2:Cell('" + _aCols[_nx, 1] + "'):GetText(),'.','')), _aValAnt["+ Str(_nx) +"], _lFirst) }"))
+			Next _nx			
+		EndIf
+	EndIf
+		
+	_oSec2:Init()
+	_oSec2:PrintLine()
+	_oSec2:Finish()
+	
+	//Imprime primeira seção.
+	While !(_cALSin)->(EoF())
+	
+		_oDado:PrintLine()
+		
+		//Variável impacta no cálculo do campo de evolução.	
+		_lFirst := .F.
+		//Array para manter valores anteriores, para o calculo de percentual de evolução.
+		ASIZE(_aValAnt, 0)
+		//Quando impressão linear (Excel)
+		If _lImpLin
+			For _nx := 1 To Len(_aCols)
+				aAdd(_aValAnt, Val(Replace(_oDado:Cell(_aCols[_nx, 1]):GetText(),".","")) )
+			Next _nx
+		//Quando impressão quebrando seção (A4).
+		Else
+			For _nx := 1 To Iif(_nCol > Len(_aCols), Len(_aCols),_nCol) 
+				aAdd(_aValAnt, Val(Replace(_oDado:Cell(_aCols[_nx, 1]):GetText(),".","")) )
+			Next _nx
+		EndIf
+		
+		(_cALSin)->(DbSkip())	
+		oReport:IncMeter(1)	
+	EndDo
+	_oDado:Finish()
+	
+	//Se tiver duas seções, imprime segunda seção.
+	If _lSec2
+		//Retoma Topo do álias para impressão na segunda seção.
+		(_cALSin)->(DBGoTop())
+		
+		//Variável impacta no cálculo do campo de evolução.	
+		_lFirst := .T.
+		
+		//Cria itens para primeira impressão no array de valores anteriores zerados.
+		ASIZE(_aValAnt, 0)
+		For _nx := 1 To Len(_aCols)
+			aAdd(_aValAnt, 0 )
+		Next _nx
+				
+		While !(_cALSin)->(EoF())
+		
+			If _lFirst
+				_oDado2:Init()
+			EndIf
+
+			_oDado2:PrintLine()
+			
+			//Variável impacta no cálculo do campo de evolução.	
+			_lFirst := .F.
+			
+			//Cria itens no array de valores anteriores.
+			ASIZE(_aValAnt, 0)
+			For _nx := 1 To Len(_aCols)
+				If _nx <= _nCol
+					//Alimenta com 0 primeiros registros pois já imprimiu na primeira seção.
+					aAdd(_aValAnt, 0 )
+				Else
+					//Alimenta array para calculo de evolução.
+					aAdd(_aValAnt, Val(Replace(_oDado2:Cell(_aCols[_nx, 1]):GetText(),".","")) )
+				EndIf
+			Next _nx
+						
+			(_cALSin)->(DbSkip())	
+			oReport:IncMeter(1)	
+		EndDo
+		_oDado2:Finish()
+	EndIf*/
+	
+	(_cALSin)->(DbCloseArea())
+	
+Return (Nil)
+
+/*/{Protheus.doc} PrintReport
+	Função responsável por impressão do relatório analítico.
+@author Walmir Junior
+@since 24/05/2016
+@param oReport, object, objeto do relatório do tipo TReport
+/*/
+Static Function PrintReport(oReport)
+
+	Local _nTotReg  := 0
+	Local _oSec     := oReport:Section(1)
+	Local _oSec2    := oReport:Section(2)
+	Local _oSec3    := oReport:Section(3)	
+	Local _lCtrl    := .F.
+	Local _cCtTit   := "XXX"
+	Local _nSld	    := 0
+	Local _nTotBx   := 0
+	Local _nVlRec   := 0
+	Local _lTit	    := .F.
+	
+	_nTotReg	    := GeraQry()
+	
+	oReport:SetMeter( _nTotReg )
+	
+	//Adição de setBlocks para não apresentar valores do mesmo título. Melhora da legibilidade.
+	//_oSec:Cell("E1_FILIAL"):SetBlock(		{|| Iif(_lTit ,"",(_cAlias)->E1_FILIAL)})
+	
+	_oSec:Cell("E1_PREFIXO")    :SetBlock( {|| Iif(_lTit ,"",(_cAlias)->E1_PREFIXO       )})
+	_oSec:Cell("E1_NUM")        :SetBlock( {|| Iif(_lTit ,"",(_cAlias)->E1_NUM           )})
+	_oSec:Cell("E1_PARCELA")    :SetBlock( {|| Iif(_lTit ,"",(_cAlias)->E1_PARCELA       )})
+	_oSec:Cell("E1_CLIENTE")    :SetBlock( {|| Iif(_lTit ,"",(_cAlias)->E1_CLIENTE       )})
+	_oSec:Cell("E1_NOMCLI")     :SetBlock( {|| Iif(_lTit ,"",(_cAlias)->E1_NOMCLI        )})
+	_oSec:Cell("E1_EMISSAO")    :SetBlock( {|| Iif(_lTit ,"",SToD((_cAlias)->E1_EMISSAO ))})
+	_oSec:Cell("E1_VENCTO")     :SetBlock( {|| Iif(_lTit ,"",SToD((_cAlias)->E1_VENCTO  ))})
+	_oSec:Cell("SALDO")         :SetBlock( {|| Iif(_lTit ,0 ,(_cAlias)->SALDO            )})
+	_oSec:Cell("E1_VALOR")      :SetBlock( {|| Iif(_lTit ,0 ,(_cAlias)->E1_VALOR         )})
+	_oSec:Cell("TOTAL_BAIXADO") :SetBlock( {||(_cAlias)->TOTAL_BAIXADO   				  })
+	//_oSec:Cell("TOTAL_BAIXADO") :SetBlock( &("{ || U_SF06R22X(Val(SubStr((_cAlias)->E1_EMISSAO,1,4)), Val(SubStr((_cAlias)->E1_EMISSAO,5,2)) , (_cAlias)->E1_FILIAL,MV_PAR03,MV_PAR04,MV_PAR05,MV_PAR06,{(_cAlias)->E1_PREFIXO,(_cAlias)->E1_NUM,(_cAlias)->E1_PARCELA,(_cAlias)->E1_CLIENTE} )}"))
+	//SetBlock( &("{ || U_SF06R22X((_cALSin)->YEAR, (_cALSin)->MONTH , (_cAlias)->E1_FILIAL),MV_PAR03,MV_PAR04,MV_PAR05,MV_PAR06,{(_cAlias)->E1_PREFIXO,(_cAlias)->E1_NUM,(_cAlias)->E1_PARCELA,(_cAlias)->E1_CLIENTE} )}"))
+	_oSec:Cell("JUROS_MULTA")   :SetBlock( {|| Iif(_lTit ,0 , (_cAlias)->JUROS_MULTA     )})
+	_oSec:Cell("E1_BAIXA")      :SetBlock( {|| Iif(_lTit ,"",SToD((_cAlias)->E1_BAIXA   ))})
+	
+	While !(_cAlias)->( EoF() )
+		
+		If oReport:Cancel()
+			Exit
+		EndIf
+		//Controla quebra por Filial
+		If _cChv != (_cAlias)->(E1_FILIAL)
+			_cChv := (_cAlias)->(E1_FILIAL)
+			If _lCtrl
+				_oSec:Finish()
+			EndIf
+			_lCtrl	:= .T.
+			
+			_oSec2:Init()
+			_oSec2:PrintLine()
+			_oSec2:Finish()
+					
+			_oSec:Init()		
+		EndIf
+		//Controle de alteração de filial.
+		_lTit := _cCtTit == (_cAlias)->E1_FILIAL + (_cAlias)->E1_PREFIXO + (_cAlias)->E1_NUM + (_cAlias)->E1_PARCELA + (_cAlias)->E1_CLIENTE
+		_oSec:PrintLine()
+		//Alimenta variáveis totalizadoras
+		_nSld		+= Iif( _lTit ,0, (_cAlias)->SALDO)
+		_nTotBx		+= Iif( _lTit ,0, (_cAlias)->TOTAL_BAIXADO)
+		_nVlRec		+= (_cAlias)->CT_VAL_RECEBIDO
+		//Mantém chave do ultimo título.
+		_cCtTit := (_cAlias)->E1_FILIAL + (_cAlias)->E1_PREFIXO + (_cAlias)->E1_NUM + (_cAlias)->E1_PARCELA + (_cAlias)->E1_CLIENTE
+		
+		(_cAlias)->( DbSkip() )
+		oReport:IncMeter(1)	
+	EndDo
+
+	(_cAlias)->(DbCloseArea())
+	
+	_oSec:Finish()
+	
+Return(Nil)
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} fGetACol
+funcao que retorna um array com cada coluna do relatorio
+@author Walmir Junior
+@since 19/01/2018
+/*/
+//------------------------------------------------------------------
+
+Static Function fGetACol()
+
+	Local _aRet 	:= {}
+	Local _cEmp		:= cEmpAnt
+	Local _cFlAnt	:= cFilAnt
+	Local _aASM0	:= GetArea("SM0")
+	
+	oProcess:IncRegua2( 'Processando colunas de filiais... ')
+	
+	DBSelectArea("SM0")
+	SM0->(dbSetOrder(1))
+	SM0->(dbGoTop())
+	
+	While !SM0->(Eof())
+		If  SM0->M0_CODFIL >= MV_PAR01 .AND. SM0->M0_CODFIL <= MV_PAR02
+			If aScan(_aRet, {|x| x[1] == SM0->M0_CODFIL}) <= 0
+				Aadd(_aRet , { SM0->M0_CODFIL , FWFilName(cEmpAnt,SM0->M0_CODFIL)  } )
+			EndIf
+			oProcess:IncRegua2( 'Processando colunas de filiais... ')
+		EndIf
+		SM0->(DBSkip())
+	EndDo
+	
+	RestArea(_aASM0)
+
+Return(_aRet)
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} GerQry
+funcao consulta para rel. sintético.
+@author Walmir Junior
+@since 19/01/2018
+/*/
+//------------------------------------------------------------------
+
+Static Function GerQry()
+
+	Local _nRet		:= 0
+	Local _cSQL 	:= ""
+	Local _cFilter	:= ""
+	
+	_cSQL += " WITH "+CRLF
+	_cSQL += "   SE5_REC AS ( "+CRLF
+	_cSQL += "		SELECT SE1.R_E_C_N_O_ As E1_REC, SE1.E1_FILIAL, SE1.E1_PREFIXO, SE1.E1_NUM, SE1.E1_PARCELA, SE1.E1_TIPO, "+CRLF
+	_cSQL += "		SE5.E5_FILIAL, SE5.E5_PREFIXO, SE5.E5_NUMERO, SE5.E5_PARCELA, SE5.E5_TIPO, SE5.E5_CLIFOR, E5_VALOR, E5_DATA, E5_TIPODOC "+CRLF
+	_cSQL += "		FROM "+ RetSQLName("SE5") +" SE5 INNER JOIN "+CRLF 
+	_cSQL += "		"+ RetSQLName("SE1") +" SE1 ON SE1.D_E_L_E_T_ = ' ' AND SE1.E1_TIPO Not In ('CC', 'CD') AND "+CRLF
+	_cSQL += "  	SE1.E1_BAIXA BETWEEN '"+ GravaData(MV_PAR03,.F.,8) +"' AND '"+ GravaData(MV_PAR04,.F.,8) +"' AND "+CRLF 
+	_cSQL += "  	SE1.E1_FILIAL = SE5.E5_FILIAL AND SE1.E1_PREFIXO = SE5.E5_PREFIXO AND SE1.E1_NUM = SE5.E5_NUMERO AND  "+CRLF
+	_cSQL += "  	SE1.E1_PARCELA = SE5.E5_PARCELA AND SE1.E1_TIPO = SE5.E5_TIPO AND SE1.E1_CLIENTE = SE5.E5_CLIFOR "+CRLF
+	_cSQL += "		WHERE	SE5.D_E_L_E_T_ = ' ' AND SE5.E5_TIPODOC = 'BA' AND SE5.E5_RECPAG = 'R' "+CRLF
+	_cSQL += "				AND SE5.E5_TIPODOC  NOT IN ('ES','TE','JR', 'MT') "+CRLF 	// ('RA' , 'ES','TE' ,'EC' , 'JR', 'MT', 'PR')
+	_cSQL += "				AND SE5.E5_MOTBX    IN ('VIS', 'MAS', 'CRT')  "+CRLF 					//('FAT','LIQ','CMP','CAN','CCO'            )
+	_cSQL += "				AND SE5.E5_SITUACA  NOT IN ('C')  "+CRLF					//('C'  , 'E' ,'X'                          )
+	_cSQL += "  			AND SE5.E5_DATA BETWEEN '"+ GravaData(MV_PAR03,.F.,8) +"' AND '"+ GravaData(MV_PAR04,.F.,8) +"' "+CRLF 
+	_cSQL += "  			AND SE5.E5_DATA <= '"+ GravaData(mv_par10,.F.,8) +"' "+CRLF 
+	_cSQL += "  			AND SE1.E1_EMISSAO <= '"+ GravaData(mv_par10,.F.,8) +"' "+CRLF 
+	If !Empty(MV_PAR01) .And. !Empty(MV_PAR02) .And. MV_PAR01 == MV_PAR02
+		_cSQL += "   AND SE5.E5_FILIAL = '" + MV_PAR01 + "' "+ CRLF
+	ElseIf !Empty(MV_PAR02) .And. ( AllTrim(MV_PAR01) != '' .And. AllTrim(MV_PAR02) != Replicate("Z",TAMSX3("E1_FILIAL")[1]) )
+		_cSQL += "   AND SE5.E5_FILIAL BETWEEN '" + MV_PAR01 + "' AND '" + MV_PAR02 + "' "+ CRLF
+	EndIf
+	If !Empty(mv_par08) .And. !Empty(mv_par09)
+		_cSQL += "   AND SE1.E1_VENCREA BETWEEN '" + dToS(mv_par08) + "' AND '" + dToS(mv_par09) + "' "+ CRLF
+	EndIf
+	If !Empty(MV_PAR05) .And. !Empty(MV_PAR06) .And. MV_PAR05 == MV_PAR06
+		_cSQL += " AND SE5.E5_CLIFOR = '" + MV_PAR05 + "' "
+	ElseIf !Empty(MV_PAR06) .And. ( AllTrim(MV_PAR05) != '' .And. AllTrim(MV_PAR06) != Replicate("Z",TAMSX3("E5_CLIFOR")[1]) )
+		_cSQL += " AND SE5.E5_CLIFOR BETWEEN '" + MV_PAR05 + "' AND '" + MV_PAR06 + "' "
+	EndIf
+	_cSQL += "		) "+ CRLF
+
+
+
+
+	
+	_cSQL += "		SELECT " + CRLF
+	_cSQL += "			EXTRACT( YEAR FROM TO_DATE(SE1.E5_DATA, 'yyyymmdd')) AS YEAR,  "+ CRLF 
+	_cSQL += "			EXTRACT( MONTH FROM TO_DATE(SE1.E5_DATA, 'yyyymmdd')) AS MONTH, "+ CRLF 
+	_cSQL += "			0 As E5_VALOR "+ CRLF 
+	_cSQL += "		FROM SE5_REC SE1 " + CRLF
+	_cSQL += "		GROUP BY EXTRACT( YEAR FROM TO_DATE(SE1.E5_DATA, 'yyyymmdd')) , EXTRACT( MONTH FROM TO_DATE(SE1.E5_DATA, 'yyyymmdd')) "+ CRLF 
+	_cSQL += "		ORDER BY EXTRACT( YEAR FROM TO_DATE(SE1.E5_DATA, 'yyyymmdd')) , EXTRACT( MONTH FROM TO_DATE(SE1.E5_DATA, 'yyyymmdd'))  "+ CRLF
+	
+	MemoWrite("c:\temp\" + ProcName() + "_" + FunName() + ".txt", _cSQL )
+	
+	If Select( _cAlSin ) > 0
+		(_cAlSin)->(DbCloseArea())
+	EndIf
+	
+	//DBUseArea(.T., "TOPCON", TCGenQry(,,ChangeQuery(_cSQL)),_cAlias,.F.,.F.)
+	TCQUERY _cSQL NEW ALIAS (_cAlSin)
+	
+	If (TCSQLExec(_cSQL) < 0)
+		Alert("Não foi possível executar a consulta [ERRO SQL].")
+	   	Return 0
+	EndIf
+	oProcess:SetRegua1(2)
+	oProcess:SetRegua2(3)
+	oProcess:IncRegua1( 'Processando... ' )
+	
+	_cFilter :=	" !Empty((_cAlSin)->YEAR) "
+	(_cAlSin)->(dbSetFilter({||&(_cFilter)},_cFilter))
+	(_cAlSin)->(dbGoTop())
+	
+	//Conta registros no Alias
+	dbEval( {|x| _nRet++ },,{|| !(_cAlSin)->(EoF())})
+	(_cAlSin)->(DbGoTop())
+	
+	oProcess:IncRegua1( 'Processando... ' )
+	oProcess:IncRegua2( 'Processando colunas de filiais... ' )
+	//Obtem colunas do relatório.
+	_aCols := fGetACol()
+	
+	If Len(_aCols) > (_nCol*2) .And. !_lImpLin
+		MsgInfo('Este modulo de visualização [PERGUNTA "Imprime A4 = Sim"] se limita a apresentação de até '+Str(_nCol*2)+' filiais. Você selecionou [' + AllTrim(Str(Len(_aCols))) + '] filiais.', 'ATENÇÃO')
+	EndIf
+	
+Return _nRet
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} GeraQry
+funcao consulta para rel. analítico.
+@author Walmir Junior
+@since 08/01/2018
+/*/
+//------------------------------------------------------------------
+
+Static Function GeraQry()
+
+	Local _nRet	:= 0
+	Local _cSQL := ""
+	
+	_cSQL += " WITH "+CRLF
+	_cSQL += "   SE5_REC AS ( "+CRLF
+	_cSQL += "		SELECT SE1.R_E_C_N_O_ As E1_REC, SE1.E1_FILIAL, SE1.E1_PREFIXO, SE1.E1_NUM, SE1.E1_PARCELA, SE1.E1_TIPO, E5_MOTBX, E1_BAIXA, "+CRLF
+	_cSQL += "		SE5.E5_FILIAL, SE5.E5_PREFIXO, SE5.E5_NUMERO, SE5.E5_PARCELA, SE5.E5_TIPO, SE5.E5_CLIFOR, E5_VALOR, E5_DATA, E5_TIPODOC, "+CRLF
+	_cSQL += "		E1_VALOR, E1_SALDO, E1_VENCTO, E1_EMISSAO, E1_NOMCLI, E1_CLIENTE "+CRLF
+	_cSQL += "		FROM "+ RetSQLName("SE5") +" SE5 INNER JOIN "+CRLF 
+	_cSQL += "		"+ RetSQLName("SE1") +" SE1 ON SE1.D_E_L_E_T_ = ' ' AND SE1.E1_TIPO Not In ('CC', 'CD')  AND "+CRLF
+	_cSQL += "  	SE1.E1_BAIXA BETWEEN '"+ GravaData(MV_PAR03,.F.,8) +"' AND '"+ GravaData(MV_PAR04,.F.,8) +"' AND "+CRLF 
+	_cSQL += "  	SE1.E1_FILIAL = SE5.E5_FILIAL AND SE1.E1_PREFIXO = SE5.E5_PREFIXO AND SE1.E1_NUM = SE5.E5_NUMERO AND  "+CRLF
+	_cSQL += "  	SE1.E1_PARCELA = SE5.E5_PARCELA AND SE1.E1_TIPO = SE5.E5_TIPO AND SE1.E1_CLIENTE = SE5.E5_CLIFOR "+CRLF
+	_cSQL += "		WHERE	SE5.D_E_L_E_T_ = ' '  AND SE5.E5_RECPAG = 'R' "+CRLF //AND SE5.E5_TIPODOC = 'BA'
+	_cSQL += "				AND SE5.E5_TIPODOC IN ('BA' ,'ES','TE','JR', 'MT') "+CRLF 	// ('RA' , 'ES','TE' ,'EC' , 'JR', 'MT', 'PR')
+	_cSQL += "				AND SE5.E5_MOTBX IN ('VIS', 'MAS', 'CRT') "+CRLF 					//('FAT','LIQ','CMP','CAN','CCO'            )
+	_cSQL += "				AND SE5.E5_SITUACA  NOT IN ('C')  "+CRLF					//('C'  , 'E' ,'X'                          )
+	_cSQL += "				AND E5_DTCANBX  = ' ' "+CRLF
+	_cSQL += "  			AND SE5.E5_DATA BETWEEN '"+ GravaData(MV_PAR03,.F.,8) +"' AND '"+ GravaData(MV_PAR04,.F.,8) +"' "+CRLF 
+	_cSQL += "  			AND SE5.E5_DATA <= '"+ GravaData(mv_par10,.F.,8) +"' "+CRLF 
+	_cSQL += "  			AND SE1.E1_EMISSAO <= '"+ GravaData(mv_par10,.F.,8) +"' "+CRLF 
+	If !Empty(MV_PAR01) .And. !Empty(MV_PAR02) .And. MV_PAR01 == MV_PAR02
+		_cSQL += "   AND SE5.E5_FILIAL = '" + MV_PAR01 + "' "+ CRLF
+	ElseIf !Empty(MV_PAR02) .And. ( AllTrim(MV_PAR01) != '' .And. AllTrim(MV_PAR02) != Replicate("Z",TAMSX3("E1_FILIAL")[1]) )
+		_cSQL += "   AND SE5.E5_FILIAL BETWEEN '" + MV_PAR01 + "' AND '" + MV_PAR02 + "' "+ CRLF
+	EndIf
+	If !Empty(mv_par08) .And. !Empty(mv_par09)
+		_cSQL += "   AND SE1.E1_VENCREA BETWEEN '" + dToS(mv_par08) + "' AND '" + dToS(mv_par09) + "' "+ CRLF
+	EndIf
+	If !Empty(MV_PAR05) .And. !Empty(MV_PAR06) .And. MV_PAR05 == MV_PAR06
+		_cSQL += " AND SE5.E5_CLIFOR = '" + MV_PAR05 + "' "
+	ElseIf !Empty(MV_PAR06) .And. ( AllTrim(MV_PAR05) != '' .And. AllTrim(MV_PAR06) != Replicate("Z",TAMSX3("E5_CLIFOR")[1]) )
+		_cSQL += " AND SE5.E5_CLIFOR BETWEEN '" + MV_PAR05 + "' AND '" + MV_PAR06 + "' "
+	EndIf
+	_cSQL += "		) ,"+ CRLF
+	
+	
+_cSQL += "   SE5_REC2 AS ( "+CRLF
+	_cSQL += "		SELECT SE1.R_E_C_N_O_ As E1_REC, SE1.E1_FILIAL, SE1.E1_PREFIXO, SE1.E1_NUM, SE1.E1_PARCELA, SE1.E1_TIPO, E5_MOTBX, E1_BAIXA, "+CRLF
+	_cSQL += "		SE5.E5_FILIAL, SE5.E5_PREFIXO, SE5.E5_NUMERO, SE5.E5_PARCELA, SE5.E5_TIPO, SE5.E5_CLIFOR, E5_VALOR, E5_DATA, E5_TIPODOC, "+CRLF
+	_cSQL += "		E1_VALOR, E1_SALDO, E1_VENCTO, E1_EMISSAO, E1_NOMCLI, E1_CLIENTE "+CRLF
+	_cSQL += "		FROM "+ RetSQLName("SE5") +" SE5 INNER JOIN "+CRLF 
+	_cSQL += "		"+ RetSQLName("SE1") +" SE1 ON SE1.D_E_L_E_T_ = ' ' AND SE1.E1_TIPO  In ('CC', 'CD') AND E1_ORIGEM = 'LOJA701' AND "+CRLF
+	_cSQL += "  	SE1.E1_EMISSAO BETWEEN '"+ GravaData(MV_PAR03,.F.,8) +"' AND '"+ GravaData(MV_PAR04,.F.,8) +"' AND "+CRLF 
+	_cSQL += "  	SE1.E1_FILIAL = SE5.E5_FILIAL AND SE1.E1_PREFIXO = SE5.E5_PREFIXO AND SE1.E1_NUM = SE5.E5_NUMERO AND  "+CRLF
+	_cSQL += "  	SE1.E1_PARCELA = SE5.E5_PARCELA AND SE1.E1_TIPO = SE5.E5_TIPO AND SE1.E1_CLIENTE = SE5.E5_CLIFOR "+CRLF
+	_cSQL += "		WHERE	SE5.D_E_L_E_T_ = ' '  AND SE5.E5_RECPAG = 'R' "+CRLF //AND SE5.E5_TIPODOC = 'BA'
+	_cSQL += "				AND SE5.E5_TIPODOC IN ('BA' ,'ES','VL') "+CRLF 	// ('RA' , 'ES','TE' ,'EC' , 'JR', 'MT', 'PR')
+	_cSQL += "				AND SE5.E5_MOTBX IN ('VIS', 'MAS', 'CCO') "+CRLF 					//('FAT','LIQ','CMP','CAN','CCO'            )
+	_cSQL += "				AND SE5.E5_SITUACA  NOT IN ('C')  "+CRLF					//('C'  , 'E' ,'X'                          )
+	_cSQL += "				AND E5_DTCANBX  = ' ' "+CRLF
+	If !Empty(MV_PAR01) .And. !Empty(MV_PAR02) .And. MV_PAR01 == MV_PAR02
+		_cSQL += "   AND SE5.E5_FILIAL = '" + MV_PAR01 + "' "+ CRLF
+	ElseIf !Empty(MV_PAR02) .And. ( AllTrim(MV_PAR01) != '' .And. AllTrim(MV_PAR02) != Replicate("Z",TAMSX3("E1_FILIAL")[1]) )
+		_cSQL += "   AND SE5.E5_FILIAL BETWEEN '" + MV_PAR01 + "' AND '" + MV_PAR02 + "' "+ CRLF
+	EndIf
+
+	If !Empty(MV_PAR05) .And. !Empty(MV_PAR06) .And. MV_PAR05 == MV_PAR06
+		_cSQL += " AND SE5.E5_CLIFOR = '" + MV_PAR05 + "' "
+	ElseIf !Empty(MV_PAR06) .And. ( AllTrim(MV_PAR05) != '' .And. AllTrim(MV_PAR06) != Replicate("Z",TAMSX3("E5_CLIFOR")[1]) )
+		_cSQL += " AND SE5.E5_CLIFOR BETWEEN '" + MV_PAR05 + "' AND '" + MV_PAR06 + "' "
+	EndIf
+	_cSQL += "		) "+ CRLF
+	
+	_cSQL += "		SELECT " + CRLF
+	_cSQL += "			 E1_FILIAL, "+ CRLF 
+	_cSQL += "			E1_PREFIXO, "+ CRLF 
+	_cSQL += "			E1_NUM, "+ CRLF 
+	_cSQL += "			E1_PARCELA, "+ CRLF 
+	_cSQL += "			E1_CLIENTE, "+ CRLF 
+	_cSQL += "			E1_NOMCLI, "+ CRLF 
+	_cSQL += "			E1_EMISSAO, "+ CRLF 
+	_cSQL += "			E1_VENCTO, "+ CRLF 
+	_cSQL += "			E1_SALDO, "+ CRLF 
+	_cSQL += "			E1_VALOR, "+ CRLF 
+	_cSQL += "			        E5_VALOR AS TOTAL_BAIXADO, "+ CRLF
+	_cSQL += "			(	SELECT SUM(E5_VALOR) FROM SE5_REC SE5SUM WHERE "+ CRLF 
+	_cSQL += "			        SE5SUM.E5_FILIAL = SE1.E1_FILIAL AND SE5SUM.E5_PREFIXO = SE1.E1_PREFIXO AND SE5SUM.E5_NUMERO = SE1.E1_NUM AND SE5SUM.E5_PARCELA = SE1.E1_PARCELA AND "+ CRLF 
+	_cSQL += "			        SE5SUM.E5_TIPO = SE1.E1_TIPO AND SE5SUM.E5_TIPODOC IN ('JR','MT') ) AS JUROS_MULTA, "+ CRLF 
+	_cSQL += "			SE1.E1_VALOR - ((	SELECT SUM(E5_VALOR) FROM SE5_REC SE5SUM WHERE "+ CRLF 
+	_cSQL += "			SE5SUM.E5_FILIAL = E1_FILIAL AND SE5SUM.E5_PREFIXO = E1_PREFIXO AND SE5SUM.E5_NUMERO = E1_NUM AND SE5SUM.E5_PARCELA = E1_PARCELA AND "+ CRLF 
+	_cSQL += "			SE5SUM.E5_TIPO = E1_TIPO AND SE5SUM.E5_TIPODOC IN ('BA' ,'VL')  ) - (	SELECT SUM(E5_VALOR) FROM SE5_REC SE5SUM WHERE  "+ CRLF 
+	_cSQL += "			SE5SUM.E5_FILIAL = E1_FILIAL AND SE5SUM.E5_PREFIXO = E1_PREFIXO AND SE5SUM.E5_NUMERO = E1_NUM AND SE5SUM.E5_PARCELA = E1_PARCELA AND "+ CRLF 
+	_cSQL += "			SE5SUM.E5_TIPO = E1_TIPO AND SE5SUM.E5_TIPODOC IN ('JR', 'MT') )) As SALDO, "+ CRLF 
+	_cSQL += "			E1_BAIXA, "+ CRLF 
+	_cSQL += "			E1_NUM AS CT_TITULO, "+ CRLF 
+	_cSQL += "			E1_PARCELA AS CT_PARCELA, "+ CRLF 
+	_cSQL += "			E5_VALOR AS CT_VAL_RECEBIDO, "+ CRLF 
+	_cSQL += "			E5_TIPO AS CT_TP_BAIXA, "+ CRLF 
+	_cSQL += "			E5_DATA AS CT_DT_BAIXA, "+ CRLF 
+	_cSQL += "			E5_MOTBX AS CT_MOT_BAIXA, "+ CRLF 
+	_cSQL += "			E5_TIPODOC, "+ CRLF 
+	_cSQL += "			E5_MOTBX "+ CRLF 
+	_cSQL += "		FROM SE5_REC SE1 " + CRLF
+	_cSQL += "		WHERE SE1.E5_DATA <> ' ' AND "+ CRLF 
+	_cSQL += "  	SE1.E1_BAIXA BETWEEN '"+ GravaData(MV_PAR03,.F.,8) +"' AND '"+ GravaData(MV_PAR04,.F.,8) +"' "+CRLF 
+	
+	_cSQL += "Union All "
+
+	_cSQL += "		SELECT " + CRLF
+	_cSQL += "			 E1_FILIAL, "+ CRLF 
+	_cSQL += "			E1_PREFIXO, "+ CRLF 
+	_cSQL += "			E1_NUM, "+ CRLF 
+	_cSQL += "			E1_PARCELA, "+ CRLF 
+	_cSQL += "			E1_CLIENTE, "+ CRLF 
+	_cSQL += "			E1_NOMCLI, "+ CRLF 
+	_cSQL += "			E1_EMISSAO, "+ CRLF 
+	_cSQL += "			E1_VENCTO, "+ CRLF 
+	_cSQL += "			E1_SALDO, "+ CRLF 
+	_cSQL += "			E1_VALOR, "+ CRLF 
+	_cSQL += "			        E5_VALOR AS TOTAL_BAIXADO, "+ CRLF
+	_cSQL += "			(	SELECT SUM(E5_VALOR) FROM SE5_REC2 SE5SUM WHERE "+ CRLF 
+	_cSQL += "			        SE5SUM.E5_FILIAL = SE1.E1_FILIAL AND SE5SUM.E5_PREFIXO = SE1.E1_PREFIXO AND SE5SUM.E5_NUMERO = SE1.E1_NUM AND SE5SUM.E5_PARCELA = SE1.E1_PARCELA AND "+ CRLF 
+	_cSQL += "			        SE5SUM.E5_TIPO = SE1.E1_TIPO AND SE5SUM.E5_TIPODOC IN ('JR','MT') ) AS JUROS_MULTA, "+ CRLF 
+	_cSQL += "			SE1.E1_VALOR - ((	SELECT SUM(E5_VALOR) FROM SE5_REC2 SE5SUM WHERE "+ CRLF 
+	_cSQL += "			SE5SUM.E5_FILIAL = E1_FILIAL AND SE5SUM.E5_PREFIXO = E1_PREFIXO AND SE5SUM.E5_NUMERO = E1_NUM AND SE5SUM.E5_PARCELA = E1_PARCELA AND "+ CRLF 
+	_cSQL += "			SE5SUM.E5_TIPO = E1_TIPO AND SE5SUM.E5_TIPODOC IN ('BA' ,'VL')  ) - (	SELECT SUM(E5_VALOR) FROM SE5_REC2 SE5SUM WHERE  "+ CRLF 
+	_cSQL += "			SE5SUM.E5_FILIAL = E1_FILIAL AND SE5SUM.E5_PREFIXO = E1_PREFIXO AND SE5SUM.E5_NUMERO = E1_NUM AND SE5SUM.E5_PARCELA = E1_PARCELA AND "+ CRLF 
+	_cSQL += "			SE5SUM.E5_TIPO = E1_TIPO AND SE5SUM.E5_TIPODOC IN ('JR', 'MT') )) As SALDO, "+ CRLF 
+	_cSQL += "			E1_BAIXA, "+ CRLF 
+	_cSQL += "			E1_NUM AS CT_TITULO, "+ CRLF 
+	_cSQL += "			E1_PARCELA AS CT_PARCELA, "+ CRLF 
+	_cSQL += "			E5_VALOR AS CT_VAL_RECEBIDO, "+ CRLF 
+	_cSQL += "			E5_TIPO AS CT_TP_BAIXA, "+ CRLF 
+	_cSQL += "			E5_DATA AS CT_DT_BAIXA, "+ CRLF 
+	_cSQL += "			E5_MOTBX AS CT_MOT_BAIXA, "+ CRLF 
+	_cSQL += "			E5_TIPODOC, "+ CRLF 
+	_cSQL += "			E5_MOTBX "+ CRLF 
+	_cSQL += "		FROM SE5_REC2 SE1 " + CRLF
+	_cSQL += "		WHERE SE1.E5_DATA <> ' ' AND "+ CRLF 
+	_cSQL += "  	SE1.E1_EMISSAO BETWEEN '"+ GravaData(MV_PAR03,.F.,8) +"' AND '"+ GravaData(MV_PAR04,.F.,8) +"' "+CRLF 
+
+	
+	_cSQL += "  	ORDER BY E1_FILIAL, E1_PREFIXO, E1_NUM, E1_PARCELA   "+CRLF 
+	
+	MemoWrite("c:\temp\" + ProcName() + "_" + FunName() + ".txt", _cSQL )
+	
+	If Select( _cAlias ) > 0
+		(_cAlias)->(DbCloseArea())
+	EndIf
+	
+	TCQUERY _cSQL NEW ALIAS (_cAlias)
+	
+	If (TCSQLExec(_cSQL) < 0)
+		Alert("Não foi possível executar a consulta [ERRO SQL].")
+	   	Return 0
+	EndIf
+	
+	//Conta registros no Alias
+	dbEval( {|x| _nRet++ },,{|| !(_cAlias)->(EoF())})
+	(_cAlias)->(DbGoTop())
+
+Return _nRet
+
+/*/{Protheus.doc} RetArrImp
+(long_description)
+@author j2a.luizjunior
+@since 29/03/2018
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function RetArrImp 
+
+	Local aRet      := {}
+	Local cAlSE1    := GetNextAlias()
+	Local cSql      := "" 
+	Local cAuxFil   := ""
+	//Local cParam    := ""
+	Local cAuxAM    := ""
+	Local nValTotal := 0
+	//Local aSalRec   := {}
+	
+	cSql += "	WITH "                                                                                                                                                + CRLF 
+   	cSql += "	     SE1_REC AS ( "                                                                                                                                   + CRLF
+	cSql += "		 	     			SELECT E1_FILIAL, "                                                                                                           + CRLF
+	cSql += "		 	    				   E1_VALOR, "                                                                                                            + CRLF
+	cSql += "		 	    				   E1_VENCREA "                                                                                                           + CRLF
+	cSql += "		 	  			    FROM  " + RetSqlName("SE1")                                                                                                   + CRLF
+	cSql += "		 	  		        WHERE  E1_CLIENTE NOT IN ('33398861','33641358','33665126','33564543','01027058') "                                           + CRLF
+	cSql += "		 	   		    	AND    E1_SALDO = E1_VALOR "                                                                                                  + CRLF
+	cSql += "		 	  			    AND    E1_BAIXA = ' '	  "        
+	cSql += "  							AND    E1_EMISSAO <= '"+ GravaData(mv_par10,.F.,8) +"' "+CRLF                                                                                            + CRLF
+	cSql += "		       			    AND    E1_VENCREA BETWEEN '" + DToS(MV_PAR08) + "' AND '" + DToS(MV_PAR09) + "'"                                              + CRLF	
+	cSql += "		 	  			    AND    D_E_L_E_T_ != '*'	 "                                                                                                + CRLF
+	
+	If !Empty(MV_PAR01) .And. !Empty(MV_PAR02)
+		cSql += " AND E1_FILIAL BETWEEN '" + MV_PAR01 + "' AND '" + MV_PAR02 + "'"                                                                                    + CRLF
+	EndIf	
+	
+	cSql += "		 		  	) "                                                                                                                                   + CRLF
+	cSql += "	     SELECT "                                                                                                                                         + CRLF
+    cSql += "	           EXTRACT( YEAR  FROM TO_DATE(SE1.E1_VENCREA, 'yyyymmdd')) AS YEAR,  "                                                                       + CRLF  
+	cSql += "		       EXTRACT( MONTH FROM TO_DATE(SE1.E1_VENCREA, 'yyyymmdd')) AS MONTH, "                                                                       + CRLF
+	cSql += "		       E1_VALOR, "                                                                                                                                + CRLF
+	cSql += "		       E1_FILIAL "                                                                                                                                + CRLF 
+	cSql += "	     FROM SE1_REC SE1  "                                                                                                                              + CRLF
+	cSql += "		 GROUP BY EXTRACT( YEAR FROM TO_DATE(SE1.E1_VENCREA, 'yyyymmdd')) , EXTRACT( MONTH FROM TO_DATE(SE1.E1_VENCREA, 'yyyymmdd')),E1_VALOR,E1_FILIAL " + CRLF 
+	cSql += "		 ORDER BY EXTRACT( YEAR FROM TO_DATE(SE1.E1_VENCREA, 'yyyymmdd')) , EXTRACT( MONTH FROM TO_DATE(SE1.E1_VENCREA, 'yyyymmdd')),E1_VALOR "           + CRLF
+	
+	TcQuery cSql New Alias (cAlSE1)
+	
+	While !(cAlSE1)->(Eof())
+	
+		If !(AllTrim((cAlSE1)->E1_FILIAL) $ cAuxFil) .Or. !( AllTrim(Str((cAlSE1)->YEAR)) + AllTrim(Str((cAlSE1)->MONTH)) $ cAuxAM)
+			
+			cAuxFil += AllTrim((cAlSE1)->E1_FILIAL) + "u"
+			cAuxAM  += AllTrim(Str((cAlSE1)->YEAR)) + AllTrim(Str((cAlSE1)->MONTH)) + "|"
+			
+			If nValTotal > 0
+				aAdd(aRet,{cFil,nValTotal,cAnoMes})
+				nValTotal := 0					
+			EndIf
+			
+			cFil    := AllTrim((cAlSE1)->E1_FILIAL)
+			cAnoMes := AllTrim(Str((cAlSE1)->YEAR)) + "-" + AllTrim(Str((cAlSE1)->MONTH)) 
+			
+		EndIf 
+		
+		nValTotal += (cAlSE1)->E1_VALOR
+		
+		(cAlSE1)->(DbSkip())
+		
+		If (cAlSE1)->(Eof()) .And. nValTotal > 0 
+			aAdd(aRet,{cFil,nValTotal,cAnoMes})
+		EndIf
+		
+	EndDo
+
+Return aRet
+
+/*/{Protheus.doc} fCriaSx1
+	Função responsável por criar arquivo de perguntas,
+	do relatório para apuração de contratos.
+	
+@author Walmir Junior
+@since 08/01/2018
+@param _cPerg, characters, Nome do arquivo de perguntas
+/*/
+
+Static Function fCriaSx1(_cPerg)
+
+	Local aHelp	:= {}
+	
+	AAdd(aHelp, {{"Informe a Filial Inicial"				}, {""}, {""}})
+	AAdd(aHelp, {{"Informe a Filial Final"					}, {""}, {""}})
+	AAdd(aHelp, {{"Rel. for Analítico: A Data é a Baixa do","Título Original; Rel. for Sintético: A","Data é a Baixa do Título p/ Conciliação."}, {""}, {""}})
+	AAdd(aHelp, {{"Rel. for Analítico: A Data é a Baixa do","Título Original; Rel. for Sintético: A","Data é a Baixa do Título p/ Conciliação."}, {""}, {""}})
+	//AAdd(aHelp, {{"Data de corte do Relatório"				}, {""}, {""}})
+	AAdd(aHelp, {{"Informe o Cliente Inicial"				}, {""}, {""}})
+	AAdd(aHelp, {{"Informe o Cliente Final"					}, {""}, {""}})
+	AAdd(aHelp, {{"Informe o tipo desejado"					}, {""}, {""}})
+	AAdd(aHelp, {{"Vencimento De"	        				}, {""}, {""}})
+	AAdd(aHelp, {{"Vencimento Ate"			        		}, {""}, {""}})
+	AAdd(aHelp, {{"Data base"				        		}, {""}, {""}})
+/*	
+	PutSx1( _cPerg, "01","Filial de?  					"    , "", "", "mv_ch1", "C",TamSX3("CN9_FILIAL")[1]	, 0, 0, "G","", "SM0"	, "", "", "mv_par01", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[1,1], aHelp[1,2], aHelp[1,3], "")
+	PutSx1( _cPerg, "02","Filial Ate?					"    , "", "", "mv_ch2", "C",TamSX3("CN9_FILIAL")[1]	, 0, 0, "G","", "SM0"	, "", "", "mv_par02", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[2,1], aHelp[2,2], aHelp[2,3], "")
+	PutSx1( _cPerg, "03","Data de?						"    , "", "", "mv_ch3", "D",8							, 0, 0, "G","", ""		, "", "", "mv_par03", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[3,1], aHelp[3,2], aHelp[3,3], "")
+	PutSx1( _cPerg, "04","Data Até?						"    , "", "", "mv_ch4", "D",8							, 0, 0, "G","", ""		, "", "", "mv_par04", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[4,1], aHelp[4,2], aHelp[4,3], "")
+	PutSx1( _cPerg, "05","Cliente De?					"    , "", "", "mv_ch5", "C",TamSX3("CN9_CLIENT")[1]	, 0, 0, "G","", "SA1"	, "", "", "mv_par05", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[5,1], aHelp[5,2], aHelp[5,3], "")
+	PutSx1( _cPerg, "06","Cliente Até?					"    , "", "", "mv_ch6", "C",TamSX3("CN9_CLIENT")[1]	, 0, 0, "G","", "SA1"	, "", "", "mv_par06", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[6,1], aHelp[6,2], aHelp[6,3], "")																																			 
+	PutSx1( _cPerg, "07","Tipo							"    , "", "", "mv_ch7", "N",1							, 0, 0, "C","", ""		, "", "", "mv_par07", "1-Sintético", "", "", "", "2-Analítico", "", "", "", "", "", "", "", "", "", "", "", aHelp[7,1], aHelp[7,2], aHelp[7,3], "")
+	PutSx1( _cPerg, "08","Vencimento de?				"    , "", "", "mv_ch8", "D",8							, 0, 0, "G","", ""		, "", "", "mv_par08", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[8,1], aHelp[8,2], aHelp[8,3], "")
+	PutSx1( _cPerg, "09","Vencimento Até?				"    , "", "", "mv_ch9", "D",8							, 0, 0, "G","", ""		, "", "", "mv_par09", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[9,1], aHelp[9,2], aHelp[9,3], "")
+*/
+// Ajustado por Paulo Schwind em 04/07/2019
+	u_SFPutSx1( _cPerg, "01","Filial de?  					"    , "", "", "mv_ch1", "C",TamSX3("CN9_FILIAL")[1]	, 0, 0, "G","", "SM0"	, "", "", "mv_par01", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[1,1], aHelp[1,2], aHelp[1,3], "")
+	u_SFPutSx1( _cPerg, "02","Filial Ate?					"    , "", "", "mv_ch2", "C",TamSX3("CN9_FILIAL")[1]	, 0, 0, "G","", "SM0"	, "", "", "mv_par02", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[2,1], aHelp[2,2], aHelp[2,3], "")
+	u_SFPutSx1( _cPerg, "03","Data de?						"    , "", "", "mv_ch3", "D",8							, 0, 0, "G","", ""		, "", "", "mv_par03", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[3,1], aHelp[3,2], aHelp[3,3], "")
+	u_SFPutSx1( _cPerg, "04","Data Até?						"    , "", "", "mv_ch4", "D",8							, 0, 0, "G","", ""		, "", "", "mv_par04", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[4,1], aHelp[4,2], aHelp[4,3], "")
+	u_SFPutSx1( _cPerg, "05","Cliente De?					"    , "", "", "mv_ch5", "C",TamSX3("CN9_CLIENT")[1]	, 0, 0, "G","", "SA1"	, "", "", "mv_par05", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[5,1], aHelp[5,2], aHelp[5,3], "")
+	u_SFPutSx1( _cPerg, "06","Cliente Até?					"    , "", "", "mv_ch6", "C",TamSX3("CN9_CLIENT")[1]	, 0, 0, "G","", "SA1"	, "", "", "mv_par06", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[6,1], aHelp[6,2], aHelp[6,3], "")																																			 
+	u_SFPutSx1( _cPerg, "07","Tipo							"    , "", "", "mv_ch7", "N",1							, 0, 0, "C","", ""		, "", "", "mv_par07", "1-Sintético", "", "", "", "2-Analítico", "", "", "", "", "", "", "", "", "", "", "", aHelp[7,1], aHelp[7,2], aHelp[7,3], "")
+	u_SFPutSx1( _cPerg, "08","Vencimento de?				"    , "", "", "mv_ch8", "D",8							, 0, 0, "G","", ""		, "", "", "mv_par08", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[8,1], aHelp[8,2], aHelp[8,3], "")
+	u_SFPutSx1( _cPerg, "09","Vencimento Até?				"    , "", "", "mv_ch9", "D",8							, 0, 0, "G","", ""		, "", "", "mv_par09", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[9,1], aHelp[9,2], aHelp[9,3], "")
+	u_SFPutSx1( _cPerg, "10","Data Base?    				"    , "", "", "mv_cha", "D",8							, 0, 0, "G","", ""		, "", "", "mv_par10", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[10,1], aHelp[10,2], aHelp[10,3], "")
+	u_SFPUTSX1( _cPerg, "11","Imprime A4?					"	 , "", "", "mv_chb", "N",1							, 0, 0, "C","", ""    	, "", "", "MV_PAR11", "1-Sim","","","","2-Não","","","","","","","","","","","",,"","","")
+Return (Nil)
+
+

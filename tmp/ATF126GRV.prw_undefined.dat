@@ -1,0 +1,242 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} ATF126GRV
+@type User function
+@history 14/09/202, Franklin de Brito de Oliveira, Correção para gravar alteração de local na tabela SN3 (Saldos e Valores).
+/*/
+User Function ATF126GRV()
+
+Local _nOpc := PARAMIXB[1]
+
+If _nOpc == 3 
+	fGrvFld()
+EndIf
+
+Return
+
+// ========================================================================================
+// === Funcao para gravar os campos adicionais ============================================
+// ========================================================================================
+Static Function fGrvFld()
+Local _aASNM	:= GetArea("SNM")
+Local _aASN1	:= GetArea("SN1")
+Local _aASN3	:= GetArea("SN3")
+Local _cCodSNM	:= _aFldUs[4]
+Local _cCdRsp	:= _aFldUs[5]
+Local _cReg		:= 0
+Local _cFilX	:= cFilAnt
+Local _nChvND	:= ""
+
+//Cria variável necessária para classificação.
+Public cMoedaATF :=	GetMV("MV_ATFMOEDA")
+						
+	
+dbSelectArea("SNM")
+SNM->(dbSetOrder(1))
+SNM->(dbGoTop())
+If SNM->(dbSeek(_cCodSNM) )
+	While (!SNM->(Eof())  .AND. _cCodSNM == SNM->NM_FILIAL + SNM->NM_CODIGO)
+		If M->(NM_TIPOSOL) == '1'
+			RecLock("SNM",.F.)
+			Replace SNM->NM_XPROCBX	With _aFldUs[1]
+			Replace SNM->NM_XRESBX	With _aFldUs[2]
+			Replace SNM->NM_CONDPG	With _aFldUs[3]
+			SNM->(MsUnLock())
+			
+			_cReg := ""
+			_cReg := fGetSN1(SNM->NM_FILIAL, SNM->NM_CBASE, SNM->NM_ITEM)
+			
+			//Posiciona no Ativo de Origem (SN1 e SN3)
+			If	!Empty(_cReg)
+				dbSelectArea("SN1")
+				SN1->(dbGoto(_cReg))
+				
+				RecLock("SN1",.F.)
+				Replace SN1->N1_XPROCBX	With _aFldUs[1]
+				Replace SN1->N1_XSOLBX	With _aFldUs[2]
+				SN1->(MsUnLock())
+			EndIf
+		Else
+			_cReg := ""
+			_cReg := fGetSN1(SNM->NM_FILIAL, SNM->NM_CBASE, SNM->NM_ITEM)
+			
+			//Posiciona no Ativo de Origem (SN1 e SN3)
+			If	!Empty(_cReg)
+				dbSelectArea("SN1")
+				SN1->(dbGoto(_cReg))
+				//Obtem Chave no cadastro Responsaveis X Bens.
+				//_nChvND := fGetSND(xFilial("SND", SN1->N1_FILIAL), SN1->N1_CBASE, SN1->N1_ITEM)
+			
+				
+				dbSelectArea("SN3")
+				SN3->(dbSetOrder(1))
+				SN3->(dbGoTop())
+				SN3->(dbSeek(SN1->N1_FILIAL+SN1->N1_CBASE+SN1->N1_ITEM))
+			EndIf
+			
+			//Persiste informações na Solicitação de Transferência
+			RecLock("SNM",.F.)
+			Replace SNM->NM_CCDESP	With _aFldUs[1]
+			Replace SNM->NM_CCUSTO	With _aFldUs[1]
+			Replace SNM->NM_LOCAL	With _aFldUs[2]
+			Replace SNM->NM_XRESP	With _aFldUs[3]
+			Replace SNM->NM_CCONTAB	With SN3->N3_CCONTAB
+			SNM->(MsUnLock())
+			
+			_cReg := ""
+			ExecAlt(_aFldUs)
+			_cReg := fGetSN1(SNM->NM_FILDEST, SNM->NM_CBASE)
+		
+			//Posiciona no Ativo de Destino (SN1 e SN3)
+			If	!Empty(_cReg)
+				//Persiste informações no Ativo de Destino.
+				dbSelectArea("SN1")
+				SN1->(dbGoto(_cReg))
+				RecLock("SN1",.F.)
+				Replace SN1->N1_LOCAL	With SNM->NM_LOCAL
+				SN1->(MsUnLock())
+				//Localizar a SN3 respectiva para atualizar campo de CC			
+				dbSelectArea("SN3")
+				SN3->(dbSetOrder(1))
+				SN3->(dbGoTop())
+				If SN3->(dbSeek(SN1->N1_FILIAL+SN1->N1_CBASE+SN1->N1_ITEM))
+					RecLock("SN3",.F.)
+					Replace SN3->N3_CCUSTO	With _aFldUs[1]
+					Replace SN3->N3_LOCAL	With SNM->NM_LOCAL
+					SN3->(MsUnLock())
+					
+					//Alert(xFilial("SNM"))
+					
+					If SNM->NM_FILDEST != SNM->NM_FILIAL
+						//Muda para filial de destino.
+						U_SF0205X(cEmpAnt, SNM->NM_FILDEST)
+						//Chama tela de Classificação.
+						_lRt := AF240Class("SN1",_cReg,3)
+						//Tratativa para alterar valor da variável statica "lMostraTela" do fonte ATFA240.
+						If ValType(_lRt) == "L"
+							AF240Class("SN1",_cReg,3)
+						EndIf
+						//Retorna a Filial anterior.
+						U_SF0205X(cEmpAnt, _cFilX)
+					EndIf
+				EndIf
+				/* 
+				//Estudo para transferencia de responsável automática.
+				If !Empty(_nChvND)
+					Alert("Vai pra SND")
+					DBSelectArea("SND")
+					SND->(DBGoTo(_nChvND))
+					private _lTest	:= .F.
+					//MsExecAuto( { |x,y| ATFA190(x,y)}, "SND",, 3)
+					Alert("Before TR Resp")
+					U_SF0205X(cEmpAnt, SNM->NM_FILDEST)
+					_lTest	:= Af190GrTrans(SN1->N1_CBASE, SN1->N1_ITEM,SND->ND_CODRESP,_cCdRsp)
+					U_SF0205X(cEmpAnt, _cFilX)
+					Alert(Iif(_lTest, "True...", "False..."))
+				Else
+					Alert("N - " + _nChvND )
+				EndIf
+				*/
+			EndIf
+		EndIf
+		SNM->(dbSkip())
+	EndDo
+	
+EndIf
+
+RestArea(_aASNM)
+RestArea(_aASN1)
+RestArea(_aASN3)
+
+Return
+
+Static Function fGetSN1(_cFil, _cCBs, _cIt)
+Local _nRet			:= 0
+Local _cQuery		:=	""
+Local _cAliasTMP	:= GetNextAlias()
+
+_cQuery := " Select Max(R_E_C_N_O_) As R_E_C_N_O_ From " + RetSQLName("SN1") + " "
+_cQuery += " WHERE D_E_L_E_T_ = ' ' AND N1_STATUS = '1' AND N1_FILIAL = '" + _cFil + "' AND N1_CBASE = '" + _cCBs + "' " 
+_cQuery += Iif(!Empty(_cIt), " AND N1_ITEM = '" + _cIt + "' ", "")
+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+
+DBUseArea(.T., "TOPCONN", TcGenQry(,,ChangeQuery(_cQuery)),_cAliasTMP, .F.,.F.)
+
+If !(_cAliasTMP)->(Eof())
+	_nRet := (_cAliasTMP)->R_E_C_N_O_ 
+EndIf 
+
+Return _nRet
+
+Static Function fGetSND(_cFil, _cCBs, _cIt)
+Local _nRet			:= 0
+Local _cQuery		:=	""
+Local _cAliasTMP	:= GetNextAlias()
+
+_cQuery := " Select Max(R_E_C_N_O_) As R_E_C_N_O_ From " + RetSQLName("SND") + " "
+_cQuery += " WHERE D_E_L_E_T_ = ' ' AND ND_STATUS = '1' " //"AND ND_FILIAL = '" + _cFil + "' "
+_cQuery += " AND ND_CBASE = '" + _cCBs + "' "  
+_cQuery += " AND ND_ITEM = '" + _cIt + "' "
+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+
+DBUseArea(.T., "TOPCONN", TcGenQry(,,ChangeQuery(_cQuery)),_cAliasTMP, .F.,.F.)
+
+If !(_cAliasTMP)->(Eof())
+	_nRet := (_cAliasTMP)->R_E_C_N_O_ 
+EndIf 
+
+Return _nRet
+
+Static Function ExecAlt(p_aRet)
+
+Local aRet := p_aRet
+Local nSeq := "0"
+	
+	dbSelectArea("SN1")
+	SN1->(dbSetOrder(1))
+	If SN1->( MsSeek( SNM->NM_FILDEST + SNM->NM_CBASE + SNM->NM_ITEM ) )
+		RecLock("SN1",.F.)
+			SN1->N1_LOCAL := aRet[2]
+		SN1->(MsUnlock())
+		dbSelectArea("SN3")
+		SN3->(dbSetOrder(1))
+		If SN3->( MsSeek( SNM->NM_FILDEST + SNM->NM_CBASE + SNM->NM_ITEM ) )
+			RecLock("SN3",.F.)
+				SN3->N3_CCUSTO := aRet[1]
+				SN3->N3_SUBCTA := aRet[6]
+			SN3->(MsUnlock())
+			dbSelectArea("SND")
+			SND->(dbSetOrder(3))
+			If SND->( MsSeek( SNM->NM_FILDEST + SNM->NM_CBASE + SNM->NM_ITEM ) )
+				While (SND->ND_CBASE == SNM->NM_CBASE)
+					If SND->ND_DTFIM == cToD("  /  /  ")
+						RecLock("SND",.F.)
+							SND->ND_DTFIM := Date()
+							SND->ND_STATUS := "2"
+							nSeq := SND->ND_SEQUENC
+							nSeq := Iif(nSeq == Nil, "1", nSeq)
+						SND->(MsUnlock())
+					EndIf
+					SND->(dbSkip())
+				End
+			EndIf
+			RecLock("SND",.T.)
+				SND->ND_FILIAL	:= SNM->NM_FILDEST
+				SND->ND_CBASE	:= SNM->NM_CBASE
+				SND->ND_ITEM	:= SNM->NM_ITEM
+				SND->ND_CODRESP	:= aRet[5]
+				SND->ND_STATUS	:= "1"
+				SND->ND_DTINI	:= Date()
+				SND->ND_DTFIM	:= cToD("  /  /  ")
+				SND->ND_SEQUENC	:= StrZero(Val(nSeq) + 1, 6)
+			SND->(MsUnlock())
+		EndIf
+	EndIf
+
+	SN1->(dbCloseArea())
+	SN3->(dbCloseArea())
+	SND->(dbCloseArea())
+
+Return aRet

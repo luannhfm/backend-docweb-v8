@@ -1,0 +1,314 @@
+#INCLUDE 'PROTHEUS.CH'
+
+
+/*/{Protheus.doc} UPDSXA
+@description Classe UPDSXA - Criação de Pastas/Abas
+
+@author	Helitom Silva
+@since	05/10/2012
+
+/*/
+CLASS UPDSXA
+
+	DATA STRUCT
+	DATA MODEL
+	DATA MODELS //ACUMULA OS MODELOS ATÉ O CONFIRMA
+	DATA OLOG
+
+	METHOD CREATE() CONSTRUCTOR
+	METHOD ADDPASTA()
+	METHOD ADDCAMPOS()
+	METHOD REMCAMPOS()
+	METHOD S()
+	METHOD REMOVE()
+	METHOD CONFIRM()
+	METHOD SETLOG()
+
+ENDCLASS
+
+
+/*/{Protheus.doc} CREATE
+@description Construtor da Classe UPDSXA
+
+@author	Helitom Silva
+@since	05/10/2012
+
+/*/
+METHOD CREATE() CLASS UPDSXA
+
+	::STRUCT := { 'ALIAS' , 'ORDEM' , 'DESCRIC'  , 'DESCSPA'  ,'DESCENG'  ,'PROPRI'}
+	::MODELS := {}
+
+	IF TYPE("OLOG") != "U"
+		::OLOG 	 := OLOG
+	ELSE
+		::OLOG 	 := UPDLOG():CREATE()
+	ENDIF
+
+RETURN SELF
+
+
+/*/{Protheus.doc} ADDPASTA
+@description Adiciona Pasta
+
+@author	Helitom Silva
+@since	05/10/2012
+
+@param CALIAS, Caracter, Alias da Tabela
+@param CORDEM, Caracter, Sequencia da Pasta (1, 2, 3...)
+@param CDESCRIC, Caracter, Descrição da Pasta em Portugues
+@param CDESCSPA, Caracter, Descrição da Pasta em Espanhol
+@param CDESCENG, Caracter, Descrição da Pasta em Ingles
+@param CPROPRI, Caracter, Define o Criador (S - Sistema ou U - Usuário)
+ 
+/*/
+METHOD ADDPASTA(CALIAS, CORDEM, CDESCRIC, CDESCSPA, CDESCENG, CPROPRI) CLASS UPDSXA
+
+	/*
+	 Exemplo de como sera feito a inclusão dos campos.
+
+	 XA_ALIAS   := CALIAS        //Tabela a qual as pastas serão criadas
+	 XA_ORDEM   := CORDEM        //Sequencia da Pasta/Codigo da pasta
+	 XA_DESCRIC := CDESCRIC      //Descricao da Pasta em Portugues
+	 XA_DESCSPA := CDESCSPA      //Descricao da Pasta em Espanhol
+	 XA_DESCENG := CDESCENG      //Descricao da Pasta em Ingles
+	 XA_PROPRI  := CPROPRI       //Valor Default 'U'
+	 
+	*/
+	
+	DEFAULT CPROPRI := 'U'
+
+	::MODEL := {'' ,;//XA_ALIAS
+				'' ,;//XA_ORDEM
+				'' ,;//XA_DESCRIC
+				'' ,;//XA_DESCSPA
+				'' ,;//XA_DESCENG
+				''} //XA_PROPRI
+
+	AADD(::MODELS, ::MODEL)	 //REGISTRA O MODELO NA LISTA DE MODELOS
+
+	SELF:S('ALIAS'	, CALIAS)
+	SELF:S('ORDEM'	, CORDEM)
+	SELF:S('DESCRIC', CDESCRIC)
+	SELF:S('DESCSPA', CDESCSPA)
+	SELF:S('DESCENG', CDESCENG)
+	SELF:S('PROPRI'	, CPROPRI)
+
+RETURN
+
+
+/*/{Protheus.doc} S
+@description Define valor para Atributo da Classe.
+
+@author	Helitom Silva
+@since	05/10/2012
+
+@param ATTR, Caracter, Nome do Atributo (Campo do Dicionario SXA sem XA_)
+@param VALOR, Indefinido, Valor do Atributo.
+ 
+/*/
+METHOD S(ATTR, VALOR) CLASS UPDSXA
+
+	LOCAL nI := ASCAN(::STRUCT, ATTR)
+
+	IF nI = 0
+		::OLOG:LOG("ATENCAO: Não foi possível configurar o atributo: "+ATTR+"!")
+	ELSE
+		::MODEL[nI] := VALOR
+	ENDIF
+
+RETURN
+
+
+/*/{Protheus.doc} CONFIRM
+@description Confirma dados da classe gravando no Dicionario de Dados.
+
+@author	Helitom Silva
+@since	05/10/2012
+ 
+/*/
+METHOD CONFIRM() CLASS UPDSXA
+
+	LOCAL nI
+
+	::OLOG:LOG("As seguintes Pastas foram adicionados ao dicionário SXA")
+
+	DBSELECTAREA("SXA")
+	SXA->(DBSETORDER(1))
+
+	FOR nI := 1 TO LEN(::MODELS)
+
+		::OLOG:LOG(" A Pasta : "+::MODELS[nI][02]+" da Tabela: "+::MODELS[nI][01]+"]")
+
+		SXA->(dbGoTop())
+		IIf(SXA->(dbSeek(::MODELS[nI][01] + ::MODELS[nI][02])), SXA->(RLock()), SXA->(dbAppend()))
+			SXA->XA_ALIAS   := ::MODELS[nI][01]
+			SXA->XA_ORDEM   := ::MODELS[nI][02]
+			SXA->XA_DESCRIC := ::MODELS[nI][03]
+			SXA->XA_DESCSPA := ::MODELS[nI][04]
+			SXA->XA_DESCENG := ::MODELS[nI][05]
+			SXA->XA_PROPRI  := ::MODELS[nI][06]
+		SXA->(DBUNLOCK())
+
+	NEXT
+
+	::OLOG:LINE()
+
+	::MODELS := {}
+
+RETURN
+
+
+/*/{Protheus.doc} REMOVE
+@description Remove Pastas
+
+@author	Helitom Silva
+@since	05/10/2012
+
+@param CALIAS, Caracter, Alias da Tabela
+@param CORDEM, Caracter, Sequencia da Pasta
+@param LTODAS, Logico, Se .T. remove todas as pastas da Tabela
+ 
+/*/
+METHOD REMOVE(CALIAS, CORDEM, LTODAS) CLASS UPDSXA
+
+	DEFAULT LTODAS := .F.
+
+	DBSELECTAREA("SXA")
+	SXA->(DBSETORDER(1))
+
+	If LTODAS
+		SXA->(dbGoTop())
+		If SXA->(dbSeek(CALIAS))
+			While .Not. SXA->(Eof()) .and. SXA->XA_ALIAS = CALIAS
+				
+				If SXA->(RLock())
+				
+					SXA->(dbDelete())
+					SXA->(dbUnLock())
+					
+					::REMCAMPOS(CALIAS, CORDEM)
+		
+				EndIf
+				
+				SXA->(dbSkip())
+			EndDo
+		EndIf
+	Else
+		SXA->(dbGoTop())
+		If SXA->(dbSeek(CALIAS + CORDEM))
+			If SXA->(RLock())
+			
+				SXA->(dbDelete())
+				SXA->(dbUnLock())
+				
+				::REMCAMPOS(CALIAS, CORDEM)
+				
+			EndIf
+		EndIf
+	EndIf
+
+RETURN
+
+
+/*/{Protheus.doc} SETLOG
+@description Define Log
+
+@author	Helitom Silva
+@since	05/10/2012
+
+/*/
+METHOD SETLOG(OLOG) CLASS UPDSXA
+
+	::OLOG := OLOG
+
+RETURN
+
+
+/*/{Protheus.doc} ADDCAMPOS
+@description Adiciona campos a pasta
+
+@author	Helitom Silva
+@since	05/10/2012
+
+@param CALIAS, Caracter, Alias da Tabela
+@param CORDEM, Caracter, Sequencia da Pasta
+@param ACAMPOS, Array, Array com campos a serem incluídos na Pasta conforme sequencia
+
+/*/
+METHOD ADDCAMPOS(CALIAS, CORDEM, ACAMPOS) CLASS UPDSXA
+
+	/*
+	 Exemplo de como sera feito a inclusão dos campos.
+
+	 CALIAS       //Tabela a qual as pastas serão criadas
+	 CORDEM       //Sequencia da Pasta
+	 ACAMPOS      //Array Unidimencional com nomes dos campos a serem vinculados a pasta
+	 ACAMPOS := {'A1_COD','A1_DESCR'}
+
+	*/
+
+	LOCAL        nI := 0
+	
+	DEFAULT ACAMPOS := {}
+
+	If Len(ACAMPOS) > 0
+		For nI := 1 to Len(ACAMPOS)
+			SX3 := UPDSX3():CREATE()
+			SX3:CLONE(ACAMPOS[nI], ACAMPOS[nI])
+			SX3:S('FOLDER', CORDEM)
+			SX3:CONFIRM()
+		Next
+	EndIf
+
+RETURN
+
+
+/*/{Protheus.doc} REMCAMPOS
+@description Remove campos da pasta
+
+@author	Helitom Silva
+@since	19/01/2015
+
+@param CALIAS, Caracter, Alias da Tabela
+@param CORDEM, Caracter, Sequencia da Pasta
+@param ACAMPOS, Array, Array com campos a serem incluídos na Pasta conforme sequencia
+
+/*/
+METHOD REMCAMPOS(CALIAS, CORDEM, ACAMPOS) CLASS UPDSXA
+
+	LOCAL        nI := 0
+	
+	DEFAULT ACAMPOS := {}
+
+	If Len(ACAMPOS) > 0
+	
+		For nI := 1 to Len(ACAMPOS)
+			SX3 := UPDSX3():CREATE()
+			SX3:CLONE(ACAMPOS[nI], ACAMPOS[nI])
+			SX3:S('FOLDER', CORDEM)
+			SX3:CONFIRM()
+		Next
+	
+	Else
+		
+		DbSelectArea('SX3')
+		SX3->(DbSetOrder(1))
+		If SX3->(DbSeek(CALIAS))
+		
+			While !SX3->(EoF()) .and. SX3->X3_ARQUIVO = CALIAS
+				
+				If SX3->X3_FOLDER = CORDEM
+					SX3->(RLock())
+					 	SX3->X3_FOLDER := ''							
+					SX3->(MSUNLOCK())
+				EndIf
+				
+				SX3->(DbSkip())
+			End
+		
+		EndiF
+		
+	EndIf
+
+RETURN

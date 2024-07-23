@@ -1,0 +1,268 @@
+#Include "Totvs.ch"
+
+/*/{Protheus.doc} SF535XC
+	@description Classe para geração de bilhetes por contrato.
+	@author Rafael Karczevski
+	@since 05/09/2019
+	@version 1.0
+/*/
+CLASS SF535XC
+
+	Data oObjRet
+	Data cNumCrt
+	Data cNumRev
+	Data oModel
+	Data oModelD
+	
+	METHOD New()
+	METHOD GerOrcam()
+	METHOD Print()
+	METHOD VerifCPF()
+	METHOD GravaCPF()
+	METHOD Importa()
+	METHOD ValidModel()
+
+ENDCLASS
+
+/*/{Protheus.doc} New
+	@description Metodo Construtor
+	@author Rafael Karczevski
+	@since 05/09/2019
+	@version 1.0
+/*/
+METHOD New() CLASS SF535XC	
+RETURN SELF
+
+/*/{Protheus.doc} GerOrcam
+	@description Gera dados ficticios de orçamento para gravação na ZH0.
+	@author Rafael Karczevski
+	@since 05/09/2019
+	@version 1.0
+/*/
+METHOD GerOrcam() CLASS SF535XC	
+
+	Local cAlTMP := GetNextAlias()
+	Local lRet := .T.
+	Local nLinAtu := 0
+	
+	::cNumCrt := ::oModel:GetValue("ZH0_NUMCRT")
+	::cNumRev := ::oModel:GetValue("ZH0_NUMREV")
+
+	ZH0->(dbSetOrder(3))
+	If !(ZH0->(MsSeek(xFilial("ZH0") + Self:cNumCrt + Self:cNumRev)))
+		
+		BeginSql Alias cAlTMP
+			SELECT
+				CNB_ITEM, CNB_PRODUT, CNB_DESCRI, CNB_VLUNIT, CNB_QUANT
+			FROM
+				CNB010
+			WHERE
+				CNB_FILIAL = %Exp:xFilial("CNB")%
+				AND CNB_CONTRA = %Exp:Self:cNumCrt%
+				AND CNB_REVISA = %Exp:Self:cNumRev%
+				AND %NotDel%
+		EndSql
+
+		If !((cAlTMP)->(eof()))
+			::oModel:LoadValue( "ZH0_NUMORC", SubsTr("CNT" + cValToChar(Val(::cNumCrt)) + cValToChar(Val(::cNumRev))  ,1,TamSx3("ZH0_NUMORC")[1]))
+			::oModel:LoadValue( "ZH0_NUMNOT", SubsTr(StrZero(Val(Self:cNumCrt), 9)	,1,TamSx3("ZH0_NUMNOT")[1]))
+			::oModel:LoadValue( "ZH0_SERIE"	, SubsTr("CNT"	,1,TamSx3("ZH0_SERIE")[1]))
+			
+			//Varro os registros retornados pela consulta
+			While !(cAlTMP)->(eof())
+				For nX := 1 To (cAlTMP)->(CNB_QUANT)
+					nQtdBil++
+					If ::oModelD:Length() < nQtdBil
+						::oModelD:AddLine()
+						::oModelD:GoLine(::oModelD:Length())
+					EndIf
+					::oModelD:LoadValue( "ZH0_COD"	, SubsTr((cAlTMP)->(CNB_PRODUT)	,1,TamSx3("ZH0_COD")[1]))
+					::oModelD:LoadValue( "ZH0_DESC"	, SubsTr((cAlTMP)->(CNB_DESCRI)	,1,TamSx3("ZH0_DESC")[1]))
+					::oModelD:LoadValue( "ZH0_VRUNIT", (cAlTMP)->(CNB_VLUNIT) )
+					::oModelD:LoadValue( "ZH0_NOMCLI", "        ")
+				Next nX
+				(cAlTMP)->(DbSkip())
+			EndDo
+			::oModelD:GoLine(1)
+		Else
+			MsgStop("Contrato não encontrado, por favor verifique!", "[Fonte: SF535XC]")
+			lRet := .F.
+		EndIf
+	Else
+		lRet := .F.
+		MsgStop("Contrato já utilizado, por favor verifique!", "[Fonte: SF535XC]")
+	EndIf
+	
+	(cAlTMP)->( DbCloseArea() )
+	
+Return lRet
+
+/*/{Protheus.doc} Print
+	@description Imprime os bilhetes
+	@author Rafael Karczevski
+	@since 05/09/2019
+	@version 1.0
+/*/
+METHOD Print() CLASS SF535XC
+	
+	Local oObj := SF0502X():New()
+
+	If ZH0->ZH0_DATA >= Date()
+		MsAguarde({|lEnd| oObj:Print(@lEnd,"ZH0")}, "Imprimindo bilhetes - SF535XC", "Imprimindo bilhetes aguarde...")
+	Else
+		MsgStop("Os cupons deste contrato já estão vencidos!", "[Fonte: SF535XC]")
+	EndIf
+
+RETURN .t.
+
+/*/{Protheus.doc} VerifCPF
+	@description Verifica o CPF
+	@author Rafael Karczevski
+	@since 05/09/2019
+	@version 1.0
+/*/
+METHOD VerifCPF() CLASS SF535XC
+	
+	If ::oModelD <> Nil
+		dbSelectArea("Z00")
+		Z00->(dbSetOrder(1))
+		If Z00->(MsSeek( xFilial("Z00") + ::oModelD:GetValue("ZH0_CPFCLI") ))
+			::oModelD:LoadValue("ZH0_NOMCLI", Z00->Z00_NOME)
+			::oModelD:LoadValue("ZH0_DTNASC", Z00->Z00_DTNASC)
+		Else
+			::oModelD:LoadValue("ZH0_NOMCLI", " ")
+			::oModelD:LoadValue("ZH0_DTNASC", cToD("  /  /  "))
+		EndIf
+	EndIf
+
+RETURN .t.
+
+/*/{Protheus.doc} GravaCPF
+	@description Grava o CPF
+	@author Rafael Karczevski
+	@since 05/09/2019
+	@version 1.0
+/*/
+METHOD GravaCPF() CLASS SF535XC
+	
+	If ::oModelD <> Nil
+		dbSelectArea("Z00")
+		Z00->(dbSetOrder(1))
+		For nX := 1 to ::oModelD:Length()
+			::oModelD:GoLine(nX)
+			If !(::oModelD:IsDeleted()) .and. !Empty(Self:oModelD:GetValue("ZH0_CPFCLI"))
+				If !(Z00->(MsSeek( xFilial("Z00") + ::oModelD:GetValue("ZH0_CPFCLI") )))
+				RecLock("Z00", .t.)
+					Z00->Z00_CPF	:= ::oModelD:GetValue("ZH0_CPFCLI")
+					Z00->Z00_NOME	:= ::oModelD:GetValue("ZH0_NOMCLI")
+					Z00->Z00_DTNASC	:= ::oModelD:GetValue("ZH0_DTNASC")
+				Z00->(MsUnlock())
+			EndIf
+		EndIf
+		Next nX
+	EndIf
+
+RETURN .t.
+
+//Local nOpcoes   := GETF_LOCALHARD+GETF_NETWORKDRIVE
+//cGetFile('Arquivos csv (*.csv) |*.csv|', "Selecione o arquivo CSV", , , .T., nOpcoes )
+
+/*/{Protheus.doc} Importa
+	@description importa dados para bilhetes
+	@author Rafael Karczevski
+	@since 05/09/2019
+	@version 1.0
+/*/
+METHOD Importa() CLASS SF535XC
+	
+	Local cArq
+	Local cLinha := ""
+	Local lPrim := .t.
+	Local lCont := .t.
+	Local aCampos := {}
+	Local aDados := {}
+	Local oError
+	Local bError := { |oError| MyErro(oError, "SF07A03X")}
+
+	Private aErro := {}
+
+	If ::oModelD <> Nil
+
+		cArq := cGetFile("*.csv|*.csv","Texto (CSV)", 1, "C:\", .f., GETF_LOCALHARD, .f.)
+
+		If !File(cArq)
+			MsgStop("Não foi possivel localizar o arquivo!","[Fonte SF535XC]")
+			lCont := .f.
+		EndIf
+
+		If lCont
+			FT_FUSE(cArq)
+			FT_FGOTOP()
+
+			While !FT_FEOF()
+				cLinha := FT_FREADLN()
+				//Ignoro a primeira linha da planilha
+				If lPrim
+					lPrim := .F.
+				Else
+					Aadd(aDados,Separa(cLinha,";",.T.))
+				EndIf
+				FT_FSKIP()
+			EndDo
+		EndIf
+
+		If lCont
+			For nY := 1 to Len(aDados)
+				If !Empty(aDados[nY][2])
+					If nY <= ::oModelD:Length()
+						::oModelD:GoLine(nY)
+						::oModelD:LoadValue( "ZH0_CPFCLI", aDados[nY][1] )
+						::oModelD:LoadValue( "ZH0_NOMCLI", aDados[nY][2] )
+						::oModelD:LoadValue( "ZH0_DTNASC", cToD(aDados[nY][3]) )
+					EndIf
+				EndIf
+			Next nY
+			::oModelD:GoLine(1)
+		EndIf
+	EndIf
+
+RETURN .t.
+
+/*/{Protheus.doc} MyErro
+@description Função para mostrar as informações de erro.
+
+@author  Geanderson Silva
+@since   26/06/2018
+@version 1.0
+/*/
+Static Function MyErro( oError, p_ProcName )
+
+	default p_ProcName := ProcName()
+
+	MsgStop( oError:Description , "Erro (Função:"+FunName()+"->"+p_ProcName+",Linha:"+cValToChar(ProcLine())+")" )
+	BREAK
+	
+Return( NIL )
+
+/*/{Protheus.doc} ValidModel
+	@description Grava o CPF
+	@author Rafael Karczevski
+	@since 05/09/2019
+	@version 1.0
+/*/
+METHOD ValidModel() CLASS SF535XC
+	
+	Local lRet := .t.
+
+	If INCLUI
+		If ::oModelD <> Nil
+			If ::oModelD:Length(.T.) <= nQtdBil
+				::GravaCPF()
+			Else
+				MsgStop("A Quantidade ultrapassou o maximo permitido! Verifique o contrato.", "[Fonte: SF0535X]")
+				lRet := .f.
+			EndIf
+		EndIf
+	EndIf
+
+RETURN lRet

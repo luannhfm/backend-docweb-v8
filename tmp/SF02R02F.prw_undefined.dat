@@ -1,0 +1,748 @@
+#Include "Protheus.Ch"
+#Include "Topconn.Ch"
+#Include "MsOle.Ch"
+
+#Define oleWdFormatDocument "0"
+#Define oleWdFormatHTML "102"
+#Define oleWdFormatPDF "17
+
+/*/{Protheus.doc} SF02R02F
+Rotina para impressão e envio do formulário ordem de fornecimento de material/serviço,
+utilizando integração Protheus x Word.
+
+@author Franklin de Brito de Oliveira
+@since 07/07/2017
+@type function
+@history 15/10/2019, Franklin de Brito de Oliveira, Removido o envio da OFMS por e-mail, conforme suporte 335261.
+@history 23/10/2019, Caio Lima j2a, #001 - dados adicionais na impressão da OFMS.
+@history 14/07/2020, Franklin de Brito de Oliveira, Adição do campo desconto.
+/*/
+User Function SF02R02F()
+
+	Local aArea		:= GetArea()
+	Local _cPedido := SC7->C7_NUM
+	Local _cFilial := SC7->C7_FILIAL
+	//Local cComCAQC	:= SuperGetMv("MV_XCOMCAQ")
+	
+	Private _aAreaSC7 := {"SC7", SC7->(IndexOrd()), SC7->(Recno())}// array com alias , ordem , numero do registro
+	
+	If Empty(SC7->C7_RESIDUO) .And. SC7->C7_CONAPRO == "L"
+		If fSelLocEnt()
+			dbSelectArea("SC7")
+			SC7->(dbSetOrder(1))
+			SC7->(dbGoTop())
+			If SC7->(dbSeek(xFilial("SC7",_cFilial)+_cPedido))
+				FWMsgRun(,{|| fExpOFMS()},"Gerando o formuláro de OFMS.", "Aguarde...")
+			EndIf
+		EndIf
+
+		/*
+		If .Not. (SC7->C7_XENOFMS) .And. (SC7->C7_USER $ cComCAQC)
+		FWMsgRun(,{|| fEnvOFMS()},"Enviando o formuláro de OFMS por e-mail.", "Aguarde...")
+		EndIf
+		*/
+
+	Else
+		Aviso(FunName() + "/" + ProcName(), "O pedido não está liberado ou sofreu eliminação de residuo.", {"OK"})
+	EndIf
+	
+	//integridade do sistema
+	DbSelectArea(_aAreaSC7[1]) ; SC7->(DbSetOrder(_aAreaSC7[2])) ; SC7->(DbGoTo(_aAreaSC7[3]))
+	RestArea(aArea)	
+Return ( Nil )
+
+/*/{Protheus.doc} fExpOFMS
+Função para impressão da OFMS, preenchendo variáveis de um
+arquivo de modelo (arquivo .dot).
+
+@author Franklin de Brito de Oliveira
+@since 07/07/2017
+
+@type function
+/*/
+Static Function fExpOFMS()
+
+	Local aArea		:= GetArea()
+	Local aAreaSM0  := SM0->(GetArea())
+	Local cArqNome	:= "OFMS" + Alltrim(SC7->C7_FILIAL) + Alltrim(SC7->C7_NUM)
+	Local cFilPed	:= SC7->C7_FILIAL
+	Local cNumPed	:= SC7->C7_NUM
+	Local cArqDOT	:= SuperGetMv("MV_XAROFMS",,"formulario_de_ofms.dotm")	//Repositorio onde os arquivos de modelo estão salvos
+	Local cPathDOT	:= SuperGetMv("MV_XCOMDOT",,"\system\DOT\COM\")	//Repositorio onde os arquivos de modelo estão salvos
+	// a linha estava comentada 
+	Local cPathDOC	:= SuperGetMv("MV_XCOMDOC",,"\system\DOC\COM\")	//Repositorio onde os arquivos gerados serão salvos
+	Local cDtAprov	:= ""
+
+	Local cPathREP	:= SuperGetMv("MV_XCOMREP",,"K:\UTIL\") 		//Repositorio LOCAL p/emissao dos documentos 
+	Local nQtdItm	:= 0
+	Local nVlTotIt	:= 0					               
+	Local nVlrTot	:= 0
+	Local nVlrDesc	:= 0
+	Local cCondPg	:= AllTrim(Posicione("SE4", 1, xFilial("SY1") + SC7->C7_COND, "E4_DESCRI"))
+	Local cPrzEnt	:= Posicione("SC8", 3, xFilial("SC8") + SC7->C7_NUMCOT + SC7->C7_PRODUTO + SC7->C7_FORNECE + SC7->C7_LOJA + SC7->C7_NUM + SC7->C7_ITEM, "C8_PRAZO")
+	Local cContato	:= AllTrim(Posicione("SC8", 3, xFilial("SC8") + SC7->C7_NUMCOT + SC7->C7_PRODUTO + SC7->C7_FORNECE + SC7->C7_LOJA + SC7->C7_NUM + SC7->C7_ITEM, "C8_CONTATO"))
+	Local cDest, cEnde, cBair, cCida, cUF, cCEP, cObs := ""
+	Local cTel		:= AllTrim(Posicione("SY1", 3, xFilial("SY1") + SC7->C7_USER, "Y1_TEL"))
+	Local cEmail	:= AllTrim(Posicione("SY1", 3, xFilial("SY1") + SC7->C7_USER, "Y1_EMAIL"))
+	Local _nx := 0
+	
+	Private hWord
+
+	//Conecta ao word
+	hWord := OLE_CreateLink()
+	OLE_SetProperty( hWord, oleWdVisible, .F. )
+
+	If hWord == "-1"
+		Aviso(FunName() + "/" + ProcName(),"Integração ABORTADA, não foi possivel estabelecer comunicação com o Microsoft Word", {"OK"})
+		Return
+	EndIf
+
+	If File(cPathREP + cArqDOT)
+		FErase(cPathREP + cArqDOT)
+	EndIf
+
+	//Alert(cPathDOT + cArqDOT)
+	//Alert(cPathREP)
+	If File(cPathREP + cArqDOT)
+		FErase(cPathREP + cArqDOT)
+	EndIf
+	If .Not. CpyS2T(cPathDOT + cArqDOT, cPathREP, .T.)
+		Aviso(FunName() + "/" + ProcName(), "Integração ABORTADA, não foi possivel copiar TEMPLATE para gerar a integração! erro:" + cValToChar(FError()), {"OK"})
+		Return
+	EndIf
+
+	// Retirado por Paulo Schwind, devido já estar posicionado no pedido
+	//SC7->(DbSeek(SC7->C7_FILIAL + SC7->C7_NUM))
+
+	OLE_NewFile(hWord, cPathREP + cArqDOT)
+
+	//Cabeçalho do formulário
+	OLE_SetDocumentVar(hWord, 'Doc_Filial'			, FWFilialName(cEmpAnt, SC7->C7_FILIAL, 2)	)
+	OLE_SetDocumentVar(hWord, 'Doc_NumSolicitacao'	, SC7->C7_NUMSC		)
+	OLE_SetDocumentVar(hWord, 'Doc_NumPedido'		, SC7->C7_NUM		)
+	OLE_SetDocumentVar(hWord, 'Doc_NumOFMS'			, SC7->C7_NUM		)
+	OLE_SetDocumentVar(hWord, 'Doc_DataEmissao'		, SC7->C7_XEMOFMS	)
+
+	//Entidade/Unidade
+	DbSelectArea("SM0")
+	SM0->( DbSetOrder(1) )
+	If (SM0->(DbSeek( cEmpAnt + SC7->C7_FILIAL)))
+		OLE_SetDocumentVar(hWord, 'Doc_NomeContratante'	, AllTrim(SM0->M0_NOMECOM)	)
+		OLE_SetDocumentVar(hWord, 'Doc_EndContratante'	, AllTrim(SM0->M0_ENDENT)	)
+		OLE_SetDocumentVar(hWord, 'Doc_BaiContratante'	, AllTrim(SM0->M0_BAIRENT)	)
+		OLE_SetDocumentVar(hWord, 'Doc_CidContratante'	, AllTrim(SM0->M0_CIDENT)	)
+		OLE_SetDocumentVar(hWord, 'Doc_CEPContratante'	, Transform(AllTrim(SM0->M0_CEPENT), "@R 99999-999")	)
+		OLE_SetDocumentVar(hWord, 'Doc_CGCContratante'	, Transform(AllTrim(SM0->M0_CGC), Iif(Len(AllTrim(SM0->M0_CGC))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))	)
+		//OLE_SetDocumentVar(hWord, 'Doc_TelContratante'	, Transform(SubStr(SM0->M0_TEL,4,2) + SubStr(SM0->M0_TEL,7,11), "@R (99)9999-9999")	)
+		OLE_SetDocumentVar(hWord, 'Doc_TelContratante'	, Transform(AllTrim(cTel), "@R (99)9999-9999"))
+		//OLE_SetDocumentVar(hWord, 'Doc_EmlContratante'	, AllTrim(UsrRetMail(SC7->C7_USER))	)
+		OLE_SetDocumentVar(hWord, 'Doc_EmlContratante'	, AllTrim(cEmail) 			)
+		OLE_SetDocumentVar(hWord, 'Doc_UFContratante'	, AllTrim(SM0->M0_ESTENT)	)
+		OLE_SetDocumentVar(hWord, 'Doc_IMContratante'	, AllTrim(SM0->M0_INSCM)	)
+		//Wjr OLE_SetDocumentVar(hWord, 'Doc_NomeComprador'	, UsrFullName(SC7->C7_USER)	)
+
+		// #001
+		OLE_SetDocumentVar(hWord, 'comprador'	, UsrFullName(SC7->C7_USER)	)
+	Else
+		Aviso(FunName() + "/" + ProcName(), "Integração ABORTADA, não foi possivel localizar a empresa no sigamat!", {"OK"})
+
+		OLE_CloseFile(hWord)
+		OLE_CloseLink(hWord)
+
+		If File(cPathREP + cArqDOT)
+			FErase(cPathREP + cArqDOT)
+		EndIf
+
+		Return
+	EndIf
+
+	// #001
+	_cC1_Solic := Posicione("SC1", 1, xFilial("SC1") + SC7->C7_NUMSC + SC7->C7_ITEMSC, "UsrFullName( SC1->C1_USER )")
+	If !Empty(_cC1_Solic)
+		OLE_SetDocumentVar(hWord, 'Doc_CCSC', SC1->C1_CC )
+		OLE_SetDocumentVar(hWord, 'Doc_ItemCbilSC', SC1->C1_ITEMCTA )
+		OLE_SetDocumentVar(hWord, 'justificativa', SC1->C1_XJUSTIF )
+		OLE_SetDocumentVar(hWord, 'solicitante', _cC1_Solic )
+	EndIf
+
+	//Preencho as variáveis do local de entrega/Execução
+	// C7_XTPIMEN == 1=Filial de entrega; 2=Outro 
+	If SC7->C7_XTPIMEN == '2'
+		cDest := SC7->C7_XDESTEN 
+		cEnde := SC7->C7_XENDENT 
+		cBair := SC7->C7_XBAIENT 
+		cCida := SC7->C7_XCIDENT 
+		cUF := SC7->C7_XUFENTR 
+		cCEP := Transform(AllTrim(SC7->C7_XCEPENT), "@R 99999-999") 
+	Else
+		If (SM0->(DbSeek( cEmpAnt + SC7->C7_FILENT)))
+			cDest := SM0->M0_NOMECOM 
+			cEnde := SM0->M0_ENDENT 
+			cBair := SM0->M0_BAIRENT 
+			cCida := SM0->M0_CIDENT 
+			cUF := SM0->M0_ESTENT 
+			cCEP := Transform(AllTrim(SM0->M0_CEPENT), "@R 99999-999")
+		Else
+			Aviso(FunName() + "/" + ProcName(), "Integração ABORTADA, não foi possivel localizar a empresa do local de entrega/execução no sigamat!", {"OK"})
+
+			OLE_CloseFile(hWord)
+			OLE_CloseLink(hWord)
+
+			If File(cPathREP + cArqDOT)
+				FErase(cPathREP + cArqDOT)
+			EndIf
+
+			Return
+		EndIf
+	EndIf
+
+	cObs := SC7->C7_XOBSENT
+
+	//Fornecedor
+	DbSelectArea("SA2")
+	SA2->( DbSetOrder(1) )
+	If SA2->(DbSeek( xFilial("SA2") + SC7->C7_FORNECE + SC7->C7_LOJA ))
+		OLE_SetDocumentVar(hWord, 'Doc_NomeContratada'	, AllTrim(SA2->A2_NOME)	)
+		OLE_SetDocumentVar(hWord, 'Doc_CodContratada'	, AllTrim(SA2->A2_COD)	)
+		OLE_SetDocumentVar(hWord, 'Doc_LojContratada'	, AllTrim(SA2->A2_LOJA)	)
+		OLE_SetDocumentVar(hWord, 'Doc_EndContratada'	, AllTrim(SA2->A2_END)	)
+		OLE_SetDocumentVar(hWord, 'Doc_BaiContratada'	, AllTrim(SA2->A2_BAIRRO)	)
+		OLE_SetDocumentVar(hWord, 'Doc_CidContratada'	, AllTrim(SA2->A2_MUN)	)
+		OLE_SetDocumentVar(hWord, 'Doc_CGCContratada'	, Transform(AllTrim(SA2->A2_CGC),Iif(Len(AllTrim(SA2->A2_CGC))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))	)
+		OLE_SetDocumentVar(hWord, 'Doc_EmlContratada'	, AllTrim(SA2->A2_EMAIL)	)
+		OLE_SetDocumentVar(hWord, 'Doc_ContContratada'	, cContato	) 
+		OLE_SetDocumentVar(hWord, 'Doc_UFContratada'	, AllTrim(SA2->A2_EST)	)
+		OLE_SetDocumentVar(hWord, 'Doc_CEPContratada'	, Transform(AllTrim(SA2->A2_CEP), "@R 99999-999")	)
+		OLE_SetDocumentVar(hWord, 'Doc_TelContratada'	, "(" + AllTrim(SA2->A2_DDD) + ") " + AllTrim(SA2->A2_TEL)	)
+
+		// #001
+		_cAg    := IIF( Empty(SA2->A2_XDVAGE), Alltrim(SA2->A2_AGENCIA) ,Alltrim(SA2->A2_AGENCIA) + "-" + Alltrim(SA2->A2_XDVAGE)) 
+		_cConta := IIF( Empty(SA2->A2_XDVCTA), Alltrim(SA2->A2_NUMCON)  ,Alltrim(SA2->A2_NUMCON)  + "-" + Alltrim(SA2->A2_XDVCTA))  
+		OLE_SetDocumentVar(hWord, 'dados_bancarios'		, SA2->A2_BANCO + "   Ag: " + _cAg +  "   Conta: " + _cConta )
+
+	Else
+		Aviso(FunName() + "/" + ProcName(), "Integração ABORTADA, não foi possivel localizar o fornecedor!", {"OK"})
+
+		OLE_CloseFile(hWord)
+		OLE_CloseLink(hWord)
+
+		If File(cPathREP + cArqDOT)
+			FErase(cPathREP + cArqDOT)
+		EndIf
+
+		Return
+	EndIf
+
+	//Itens
+	While !SC7->(EoF()) .And. SC7->C7_FILIAL == cFilPed .And. SC7->C7_NUM == cNumPed
+		nQtdItm++
+		//Variável para calcular o valor total do item
+		nVlTotIt := (SC7->C7_TOTAL - SC7->C7_VLDESC)
+		//Variável para calcular valor total do pedido
+		nVlrTot += nVlTotIt
+		//Variável para calcular o valor de desconto
+		nVlrDesc += SC7->C7_VLDESC
+		OLE_SetDocumentVar( hWord,"ProdItem" 	+ AllTrim(Str(nQtdItm)), Str(nQtdItm))
+		OLE_SetDocumentVar( hWord,"ProdCodigo" 	+ AllTrim(Str(nQtdItm)), SC7->C7_PRODUTO	)
+		OLE_SetDocumentVar( hWord,"ProdDescri" 	+ AllTrim(Str(nQtdItm)), SC7->C7_XXDESCR	)
+		OLE_SetDocumentVar( hWord,"ProdMarca" 	+ AllTrim(Str(nQtdItm)), SC7->C7_XXMARCA	)
+		OLE_SetDocumentVar( hWord,"ProdUM" 		+ AllTrim(Str(nQtdItm)), SC7->C7_UM			)
+		OLE_SetDocumentVar( hWord,"ProdQtde" 	+ AllTrim(Str(nQtdItm)), SC7->C7_QUANT		)
+		OLE_SetDocumentVar( hWord,"ProdVlrUnit" + AllTrim(Str(nQtdItm)), Transform(SC7->C7_PRECO,  "@E 999,999,999.99")		)
+		OLE_SetDocumentVar( hWord,"ProdVlrDesc" + AllTrim(Str(nQtdItm)), Transform(SC7->C7_VLDESC, "@E 999,999,999.99")		)
+		OLE_SetDocumentVar( hWord,"ProdVlrTot" 	+ AllTrim(Str(nQtdItm)), Transform(nVlTotIt,  "@E 999,999,999.99")		)
+		SC7->(DbSkip())
+	EndDo
+	
+	//integridade do sistema
+	DbSelectArea(_aAreaSC7[1]) ; SC7->(DbSetOrder(_aAreaSC7[2])) ; SC7->(DbGoTo(_aAreaSC7[3]))
+
+	OLE_SetDocumentVar(hWord, 'ProdNroItens', str(nQtdItm))   //variavel para identificar o numero total de linhas na parte variavel
+	
+	// #001
+	_aAssinatura := fBuscAss()
+	_aAssinRep := fBuscAssRep()
+	
+	//preencho a data de aprovação com a maior data
+	For _nx := 1 to Len(_aAssinatura)
+		If _aAssinatura[_nx,4] > cDtAprov
+			cDtAprov := _aAssinatura[_nx,4]
+		EndIf
+	Next _nx
+	
+	OLE_SetDocumentVar(hWord, "data_aprovacao", cDtAprov )
+			
+	If Len(_aAssinRep) > 0
+		_nPos := aScan(_aAssinatura , {|x,y| x[6] == _aAssinRep[6] } )
+		If _nPos > 0
+			// caso o representante da unidade efetuou a aprovação do pedido 
+			// a assinatura dele sai das assinaturas normais e vai pra assinatura exclusiva
+			aDel(_aAssinatura , _nPos)
+			aSize(_aAssinatura, Len(_aAssinatura) - 1 )
+		ELse
+			// apenas mostra a assinatura do representante caso ele tenha aprovado o pedido
+			_aAssinRep := {}
+		EndIf
+	EndIf
+	
+	_cDirDest := GetTempPath()
+	For _nx:= 1 to Len(_aAssinatura)
+		CPyS2T(_aAssinatura[_nx,2], _cDirDest)
+		OLE_SetDocumentVar(hWord, "Cargo" + cValToChar(_nx), _aAssinatura[_nx,1] )
+		OLE_SetDocumentVar(hWord, "Assinatura" + cValToChar(_nx), _cDirDest + _aAssinatura[_nx,3] )
+		
+		If _nx = Len(_aAssinatura)
+			OLE_SetDocumentVar(hWord, "data_aprovacao", _aAssinatura[_nx,4] )
+		EndIf
+	Next
+	
+	OLE_SetDocumentVar(hWord, 'nQtdAss', str(Len(_aAssinatura)))   //variavel para identificar o numero total de linhas na parte variavel
+	
+	If Len(_aAssinRep) > 0
+		CPyS2T(_aAssinRep[2], _cDirDest)
+		OLE_SetDocumentVar(hWord, 'CargoRep', _aAssinRep[1] )
+		OLE_SetDocumentVar(hWord, 'AssinRep', _cDirDest + _aAssinRep[3] )
+	Else
+		OLE_SetDocumentVar(hWord, 'AssinRep', "FALSE" )
+		OLE_SetDocumentVar(hWord, 'CargoRep', "Representante da unidade" )
+	EndIf
+	
+	OLE_ExecuteMacro(hWord,"TabItens")
+
+	// #001 - deleta as assinaturas
+	For _nx:= 1 to Len(_aAssinatura)
+		If File(_cDirDest + _aAssinatura[_nx,3])
+			FErase(_cDirDest + _aAssinatura[_nx,3])
+		EndIf
+	Next
+
+	//Valor total
+	OLE_SetDocumentVar(hWord, 'Doc_Descontos'		, Transform(nVlrDesc,  "@E 999,999,999.99") + " (" + Lower( Extenso(nVlrDesc, .F., 1) ) + ")"	)
+	OLE_SetDocumentVar(hWord, 'Doc_ValorTotal'		, Transform(nVlrTot,  "@E 999,999,999.99") + " (" + Lower( Extenso(nVlrTot, .F., 1) ) + ")"	)
+	OLE_SetDocumentVar(hWord, 'Doc_PrazoPagamento'	, Lower(cCondPg))
+	OLE_SetDocumentVar(hWord, 'Doc_PrazoEntrega'	, cPrzEnt		)
+
+	//Local de entrega/Execução
+	OLE_SetDocumentVar(hWord, 'Doc_DestinatarioLocEnt'	, cDest	)
+	OLE_SetDocumentVar(hWord, 'Doc_EnderecoLocEnt'		, cEnde	)
+	OLE_SetDocumentVar(hWord, 'Doc_BairroLocEnt'		, cBair	)
+	OLE_SetDocumentVar(hWord, 'Doc_CidadeLocEnt'		, cCida	)
+	OLE_SetDocumentVar(hWord, 'Doc_UFLocEnt'			, cUF	)
+	OLE_SetDocumentVar(hWord, 'Doc_CEPLocEnt'			, cCEP	)
+	OLE_SetDocumentVar(hWord, 'Doc_ObservacaoLocEnt'	, cObs	)
+
+	OLE_UpdateFields(hWord)    // Atualizando as variaveis do documento do Word
+
+	//Verifica se o arquivo a ser gerado ja existe no repositorio, se existir apaga
+	If File(cPathREP + cArqNome)
+		FErase(cPathREP + cArqNome)
+	Endif
+
+	// Salva no repositorio LOCAL o arquivo gerado                         |
+	OLE_SaveAsFile(hWord, cPathREP + cArqNome +".pdf", '', '', .F., oleWdFormatPDF)
+
+
+	// Verifica se o arquivo existe no repositorio de AUDITORIA, se existir apaga.                                                              
+
+	If File(cPathDOC + cArqNome)
+		FErase(cPathDOC + cArqNome)
+	Endif
+
+	// Gera copia para AUDITORIA.                                          
+	CpyT2S(cPathREP + cArqNome +".*", cPathDOC, .T.) 
+
+
+	// Fecha o TEMPLATE utilizado para Gerar o Arquivos de Remessa
+	OLE_CloseFile(hWord)
+
+	// Fecha o Link com Arquivo de Remessa "Impressao"
+	OLE_CloseLink(hWord)
+
+	// Apaga na unidade LOCAL o TEMPLATE utilizado para gerar o documento.
+	If File(cPathREP + cArqDOT)
+		FErase(cPathREP + cArqDOT)
+	Endif
+
+	ShellExecute("Open", cPathREP + cArqNome +".pdf", "", "", 1)
+
+	Aviso(FunName() + "/" + ProcName(), "Integração finalizada!" + CRLF + "Gerado documento WORD [" + cArqNome + "]." + CRLF + "Disponivel em [" + cPathREP + "].", {"OK"})
+
+	RestArea(aAreaSM0)
+	RestArea(aArea)
+
+Return ( Nil )
+
+/*/{Protheus.doc} fBuscAssRep
+busca a assinatura do representante
+@author j2a.caiolima
+@since 24/10/2019
+
+@return return, return_description
+/*/
+Static Function fBuscAssRep()
+	Local _aRet := {}
+	Local _cALias := GetNextAlias()
+	Local _cSql := ""
+	Local _cCargo := "Representante da unidade"
+	Local _cPath := SuperGetMv("MV_LOCASS",.T.,"\ASSINATURAS\") // + AllTrim(xFilial("SAK"))+SAK->AK_USER+".jpg"
+	
+	_cSql += " SELECT * FROM "+RetSQLName("SAK")+" SAK " + CRLF
+	_cSql += " WHERE SAK.D_E_L_E_T_<>'*' " + CRLF
+	
+	If Right(SC7->C7_FILIAL,4) = "0001"
+		//_cCargo := "SuperIntendente"
+		_cSql += " AND AK_COD='"+ SuperGetMV("MV_XSUPER" ,, "") +"' " + CRLF
+	Else
+		//_cCargo := "Gerente"
+		_cSql += " AND AK_XCARGO='G' " + CRLF
+		_cSql += " AND AK_XFILIAL LIKE '%"+SC7->C7_FILIAL+"%' " + CRLF
+	EndIf
+	
+	If Select(_cALias) > 0
+		(_cALias)->(dbClosearea())
+	Endif
+	
+	MemoWrite("C:\LOGSQL\"+FunName()+"-"+ProcName()+".txt" , _cSql)
+	
+	DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSql)), _cALias, .F., .F.)
+	
+	IF !(_cAlias)->(Eof())
+		If File(_cPath + AllTrim(xFilial("SAK"))+(_cAlias)->AK_USER+".jpg")
+			_aRet := { AllTrim((_cAlias)->AK_NOME) + CRLF + _cCargo,;
+					  _cPath + AllTrim(xFilial("SAK"))+(_cAlias)->AK_USER+".jpg",;
+					  AllTrim(xFilial("SAK"))+(_cAlias)->AK_USER+".jpg",;
+					  "",;
+					  (_cAlias)->AK_COD,;
+					  (_cAlias)->AK_USER  }
+		EndIf
+	EndIf
+	
+	If Select(_cALias) > 0
+		(_cALias)->(dbClosearea())
+	Endif
+	
+Return(_aRet)
+
+/*/{Protheus.doc} fBuscAss
+busca aprovadores e assinaturas
+@author j2a.caiolima
+@since 23/10/2019
+@return return, return_description
+/*/
+Static Function fBuscAss()
+	Local _aRet := {}
+	Local _cALias := GetNextAlias()
+	Local _cSql := ""
+	Local _cPath := SuperGetMv("MV_LOCASS",.T.,"\ASSINATURAS\") // + AllTrim(xFilial("SAK"))+SAK->AK_USER+".jpg"
+
+	If Select(_cALias) > 0
+		(_cALias)->(dbClosearea())
+	Endif
+
+	_cSql += " SELECT * FROM "+RetSQLName("SCR")+" " + CRLF
+	_cSql += " WHERE D_E_L_E_T_<>'*' " + CRLF
+	_cSql += " AND CR_FILIAL='"+xFilial("SCR")+"' " + CRLF
+	_cSql += " AND CR_STATUS='03' " + CRLF
+	_cSql += " AND CR_TIPO='PC' " + CRLF
+	_cSql += " AND CR_NUM='"+ Padr(SC7->C7_NUM,TamSx3("CR_NUM")[1]) +"' " + CRLF
+
+	MemoWrite("D:\LOGSQL\"+FunName()+"-"+ProcName()+".txt" , _cSql)
+	DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSql)), _cALias, .F., .F.)
+
+	dbSelectArea("SAK")
+	SAK->(dbSetOrder(1)) // CR_FILIAL + CR_APROV
+
+	_cCargo := Posicione("SX3", 2, Padr("AK_XCARGO",10) ,"AllTrim(X3_CBOX)")
+	_aCargo := StrTokArr(_cCargo, ";")
+	AEval(_aCargo, {|x,y| _aCargo[y] := StrTokArr(_aCargo[y], "=") } )
+
+	//Aviso( "VarInfo", VarInfo("_aCargo", _aCargo , , .F. ) ,{"ok"} ,4,,,, .T.)
+
+	while !(_cAlias)->(Eof())
+		If SAK->(dbSeek(xFilial("SAK") + (_cAlias)->CR_APROV))
+
+			_cCargo := SAK->AK_XCARGO
+			If !Empty(_cCargo)
+				_nPCargo := aScan(_aCargo, {|x| x[1] = _cCargo } )
+				If _nPCargo > 0
+					_cCargo := _aCargo[_nPCargo,2]
+				EndIf
+			EndIf
+
+			If File(_cPath + AllTrim(xFilial("SAK"))+SAK->AK_USER+".jpg")
+				Aadd(_aRet, {AllTrim(SAK->AK_NOME) + CRLF + _cCargo,;
+							 _cPath + AllTrim(xFilial("SAK"))+SAK->AK_USER+".jpg", ;
+							 AllTrim(xFilial("SAK"))+SAK->AK_USER+".jpg",;
+							 DToC(SToD((_cAlias)->CR_DATALIB)) + " " + (_cAlias)->CR_XHRALIB,;
+							 SAK->AK_COD,;
+							 SAK->AK_USER } )
+			EndIf
+		EndIf
+		(_cAlias)->(dbSkip())
+	End
+
+	//Aviso( "VarInfo", VarInfo("_aRet", _aRet , , .F. ) ,{"ok"} ,4,,,, .T.)
+
+Return(_aRet)
+
+/*/{Protheus.doc} fSelLocEnt
+Função para seleção e preenchimendo do local de entrega/execução;
+Para alterar o local de entrega/execução, o usuário que criou o pedido
+de compra poderá:
+- Selecionar a opção filial de entrega, desta forma, o local de entrega/
+execução será preenchido com os dados da filial de entrega do pedido;
+- Selecionar a opção filial de entrega, preenchendo os demais campos 
+para impressão dos respectivos campos na OFMS;
+
+@author Franklin de Brito de Oliveira
+@since 07/07/2017
+
+@type function
+/*/
+Static Function fSelLocEnt()
+
+	Local aArea		:= GetArea()
+	Local aItens	:= {'1=Filial de entrega','2=Outro'}                                                                                                    
+	Local cComb		:= SC7->C7_XTPIMEN
+	Local cDest		:= SC7->C7_XDESTEN
+	Local cEnde		:= SC7->C7_XENDENT
+	Local cBair		:= SC7->C7_XBAIENT
+	Local cCida		:= SC7->C7_XCIDENT
+	Local cUF		:= SC7->C7_XUFENTR
+	Local cCEP		:= SC7->C7_XCEPENT
+	Local cObs		:= SC7->C7_XOBSENT
+	Local cUsrPed	:= SC7->C7_USER
+	Local cUsrLog	:= RetCodUsr()
+	Local lRet		:= .F.
+	Local lCanUpd	:= (lCanUpd := (cComb == '2') .And. (cUsrPed == cUsrLog))
+	Local lChgCom	:= (cUsrPed == cUsrLog)
+	Local nOpcao	:= 0	
+	Local oDlg, oCombo
+
+	//Cria diálogo para selecionar local de entrega da OFMS
+	DEFINE DIALOG oDlg TITLE 'Local de entrega da OFMS' FROM 010, 010 TO 300, 600 COLOR CLR_BLACK, CLR_WHITE PIXEL
+
+	@ 005, 005 Say "Local de Entrega/Execução: " SIZE 100, 010 OF oDlg PIXEL
+	@ 003, 120 MSCOMBOBOX oCombo VAR cComb ITEMS aItens  ON CHANGE (lCanUpd := (cComb == '2') .And. (cUsrPed == cUsrLog)) ;
+	Size 100,010 OF oDlg PIXEL WHEN lChgCom
+
+	@ 025, 005 Say "Destinatário: " SIZE 050, 010 OF oDlg PIXEL
+	@ 023, 070 MSGET oGet1 VAR cDest SIZE 200, 010 OF oDlg PIXEL WHEN lCanUpd
+
+	@ 040, 005 Say "Endereço: " SIZE 050, 010 OF oDlg PIXEL
+	@ 038, 070 MSGET oGet2 VAR cEnde SIZE 200, 010 OF oDlg PIXEL WHEN lCanUpd
+
+	@ 055, 005 Say "Bairro: " SIZE 050, 010 OF oDlg PIXEL
+	@ 053, 070 MSGET oGet3 VAR cBair SIZE 100, 010 OF oDlg PIXEL WHEN lCanUpd
+
+	@ 070, 005 Say "Cidade: " SIZE 050, 010 OF oDlg PIXEL
+	@ 068, 070 MSGET oGet4 VAR cCida SIZE 100, 010 OF oDlg PIXEL WHEN lCanUpd
+
+	@ 085, 005 Say "UF: " SIZE 050, 010 OF oDlg PIXEL
+	@ 083, 070 MSGET oGet5 VAR cUF SIZE 010, 010 OF oDlg PIXEL WHEN lCanUpd
+
+	@ 100, 005 Say "CEP: " SIZE 050, 010 OF oDlg PIXEL
+	@ 098, 070 MSGET oGet6 VAR cCEP SIZE 050, 010 OF oDlg PIXEL WHEN lCanUpd PICTURE "@R 99999-999"
+
+	@ 115, 005 Say "Observação: " SIZE 050, 010 OF oDlg PIXEL
+	@ 113, 070 MSGET oGet7 VAR cObs SIZE 200, 010 OF oDlg PIXEL WHEN lChgCom
+
+	oConfirm := SButton():New( 130, 200, 1, {|| nOpcao := 1, oDlg:End()}, oDlg, .T., , )
+	oCancel  := SButton():New( 130, 250, 2, {|| nOpcao := 2, oDlg:End()}, oDlg, .T., , )
+
+	ACTIVATE DIALOG oDlg CENTER VALID .T.
+
+	cFilPed := SC7->C7_FILIAL
+	cNumPed := SC7->C7_NUM
+
+	//Caso o campo de data de emissão da OFMS não tenha sido preenchido
+	//Preencho a data, hora e usuário da primeira emissão.
+	If Empty(SC7->C7_XEMOFMS)
+		If SC7->(DbSeek(cFilPed + cNumPed))
+			While !SC7->( EoF() ) .And. SC7->C7_FILIAL == cFilPed .And. SC7->C7_NUM == cNumPed
+				RecLock("SC7", .F.)
+				Replace SC7->C7_XEMOFMS With DtoC(dDatabase) +  " " + Time()
+				Replace SC7->C7_XUSOFMS With UsrRetName( RetCodUsr() )
+				MsUnlock()
+				SC7->( DbSkip() )
+			EndDo
+		EndIf
+	EndIf
+
+	If nOpcao == 1
+		lRet := .T.
+
+		If SC7->(DbSeek(cFilPed + cNumPed))
+			If lCanUpd
+				While !SC7->( EoF() ) .And. SC7->C7_FILIAL == cFilPed .And. SC7->C7_NUM == cNumPed
+					RecLock("SC7", .F.)
+					Replace SC7->C7_XTPIMEN With cComb
+					Replace SC7->C7_XDESTEN With cDest
+					Replace SC7->C7_XENDENT With cEnde
+					Replace SC7->C7_XBAIENT With cBair
+					Replace SC7->C7_XCIDENT With cCida
+					Replace SC7->C7_XUFENTR With cUF
+					Replace SC7->C7_XCEPENT With cCEP
+					Replace SC7->C7_XOBSENT With cObs
+					MsUnlock()
+					SC7->( DbSkip() )
+				EndDo
+			Else
+				While !SC7->( EoF() ) .And. SC7->C7_FILIAL == cFilPed .And. SC7->C7_NUM == cNumPed
+					RecLock("SC7", .F.)
+					Replace SC7->C7_XOBSENT With cObs
+					MsUnlock()
+					SC7->( DbSkip() )
+				EndDo
+			EndIf
+		EndIf
+	Else
+		lRet := .F.
+	EndIf
+
+	RestArea(aArea)
+
+Return (lRet)
+
+/*/{Protheus.doc} fEnvOFMS
+Função de envio da OFMS para a presidência.
+O envio deve ocorrer na primeira impressão 	da OFMS de um pedido 
+gerado por um comprador da CAQC; o e-mail deve ter como remetente,
+a coordenação da CAQC.
+-Parâmetro para e-mail da presidência:
+-Parâmetro para e-mail da coordenação da CAQC:
+
+@author Franklin de Brito de Oliveira
+@since 01/08/2017
+
+@type function
+/*/
+Static Function fEnvOFMS()
+
+	Local aArea		:= GetArea()
+	Local cFilPed	:= SC7->C7_FILIAL
+	Local cNumPed	:= SC7->C7_NUM
+	Local cCondPg	:= AllTrim(Posicione("SE4", 1, xFilial("SY1") + SC7->C7_COND, "E4_DESCRI"))
+	Local nPrzEnt	:= Posicione("SC8", 3, xFilial("SC8") + SC7->C7_NUMCOT + SC7->C7_PRODUTO + SC7->C7_FORNECE + SC7->C7_LOJA + SC7->C7_NUM + SC7->C7_ITEM, "C8_PRAZO")
+	Local cJustif	:= Posicione("SC1", 6, xFilial("SC1") + SC7->C7_NUM + SC7->C7_ITEM + SC7->C7_PRODUTO, "C1_XJUSTIF")
+	Local cFornec	:= Posicione("SA2", 1, xFilial("SA2") + SC7->C7_FORNECE + SC7->C7_LOJA, "A2_NOME")
+	Local cAssunto	:= "OFMS: " + cNumPed
+	Local cMens		:= ""
+	Local cEmlPres	:= AllTrim(GetMv("MV_XEMPRES"))
+	Local cEmlCAQC	:= AllTrim(GetMv("MV_XEMCRCA"))
+	Local cAcCAQC	:= AllTrim(GetMv("MV_XACCAQC"))
+	Local cPaCAQC	:= AllTrim(GetMv("MV_XPACAQC"))
+	Local nQtdItm	:= 0
+	Local nVlrTot	:= 0
+	Local _cSvSMTP	:= AllTrim(SuperGetMv("MV_XSVCAQC",,"smtp.office365.com"))
+	Local _lSvSSL	:= SuperGetMv("MV_XSSLCAQ",,.F.)
+
+	SC7->(DbSeek(SC7->C7_FILIAL + SC7->C7_NUM))
+
+	cMens	:= '<!DOCTYPE html>' + CRLF
+	cMens	+= '<html>' + CRLF
+	cMens	+= '	<head>' + CRLF
+	cMens	+= '		<style>' + CRLF
+	cMens	+= '			table {' + CRLF
+	cMens	+= '				font-family: arial, sans-serif;' + CRLF
+	cMens	+= '				border-collapse: collapse;' + CRLF
+	cMens	+= '				width: 910px;' + CRLF
+	cMens	+= '			}' + CRLF
+	cMens	+= '			td, th {' + CRLF
+	cMens	+= '				border: 1px solid #000000;' + CRLF
+	cMens	+= '				text-align: left;' + CRLF
+	cMens	+= '				padding: 8px;' + CRLF
+	cMens	+= '			}' + CRLF
+	cMens	+= '			th {' + CRLF
+	cMens	+= '				background-color: #dddddd;' + CRLF
+	cMens	+= '			}' + CRLF
+	cMens	+= '		</style>' + CRLF
+	cMens	+= '	</head>' + CRLF
+	cMens	+= '	<body>' + CRLF
+	cMens	+= '		<img src="http://www.fiemt.com.br/portal/images/fiemt-logo.svg" height="80">' + CRLF
+	cMens	+= '		<p>Prezado presidente,</p>' + CRLF
+	cMens	+= '		<p>Segue para sua análise e aprovação.</p>' + CRLF
+	cMens	+= '		<br>' + CRLF
+	cMens	+= '		<table>' + CRLF
+	cMens	+= '			<tr>' + CRLF
+	cMens	+= '				<th>Filial</th>' + CRLF
+	cMens	+= '			   	<th>Solicitação de compra</th>' + CRLF
+	cMens	+= '			    <th>Pedido de compra</th>' + CRLF
+	cMens	+= '			</tr>' + CRLF
+	cMens	+= '			<tr>' + CRLF
+	cMens	+= '				<td>' + SC7->C7_FILIAL + ' - ' + FWFilialName(cEmpAnt, SC7->C7_FILIAL, 2) + '</td>' + CRLF
+	cMens	+= '				<td>' + SC7->C7_NUMSC + '</td>' + CRLF
+	cMens	+= '				<td>' + SC7->C7_NUM + '</td>' + CRLF
+	cMens	+= '			</tr>' + CRLF
+	cMens	+= '		</table>' + CRLF
+	cMens	+= '		<br>' + CRLF
+	cMens	+= '		<table>' + CRLF
+	cMens	+= '			<tr>' + CRLF
+	cMens	+= '				<th>Item</th>' + CRLF
+	cMens	+= '		    	<th>Código</th>' + CRLF
+	cMens	+= '		    	<th>Descrição</th>' + CRLF
+	cMens	+= '				<th>Marca</th>' + CRLF
+	cMens	+= '				<th>UM</th>' + CRLF
+	cMens	+= '				<th>Qtde</th>' + CRLF
+	cMens	+= '				<th>Valor Unit.</th>' + CRLF
+	cMens	+= '				<th>Valor Total</th>' + CRLF
+	cMens	+= '		  	</tr>' + CRLF
+
+	While .Not. SC7->( Eof() ) .And. SC7->C7_FILIAL == cFilPed .And. SC7->C7_NUM == cNumPed
+		nQtdItm++
+		cMens	+= '			<tr>' + CRLF
+		cMens	+= '		    	<td>' + Str(nQtdItm) + '</td>' + CRLF
+		cMens	+= '		    	<td>' + SC7->C7_PRODUTO + '</td>' + CRLF
+		cMens	+= '		    	<td>' + SC7->C7_XXDESCR + '</td>' + CRLF
+		cMens	+= '				<td>' + SC7->C7_XXMARCA + '</td>' + CRLF
+		cMens	+= '				<td>' + SC7->C7_UM + '</td>' + CRLF
+		cMens	+= '				<td>' + Transform(SC7->C7_QUANT, "@E 999,999,999.99") + '</td>' + CRLF
+		cMens	+= '				<td>' + Transform(SC7->C7_PRECO, "@E 999,999,999.99") + '</td>' + CRLF
+		cMens	+= '				<td>' + Transform(SC7->C7_TOTAL, "@E 999,999,999.99") + '</td>' + CRLF
+		cMens	+= '		  	</tr>' + CRLF
+		//Variável para calcular valor total do pedido
+		nVlrTot += SC7->C7_TOTAL
+
+		SC7->(DbSkip())
+	EndDo
+
+	cMens	+= '		</table>' + CRLF
+	cMens	+= '		<br>' + CRLF
+	cMens	+= '		<table>' + CRLF
+	cMens	+= '			<tr>' + CRLF
+	cMens	+= '		    	<th>Valor Total</th>' + CRLF
+	cMens	+= '		    	<th>Prazo de Pagamento</th>' + CRLF
+	cMens	+= '		    	<th>Prazo de entrega</th>' + CRLF
+	cMens	+= '		  	</tr>' + CRLF
+	cMens	+= '		  	<tr>' + CRLF
+	cMens	+= '		    	<td>' + Transform(nVlrTot,  "@E 999,999,999.99") + '</td>' + CRLF
+	cMens	+= '		    	<td>' + Lower(cCondPg) + '</td>' + CRLF
+	cMens	+= '		    	<td>' + Str(nPrzEnt) + " dias" + '</td>' + CRLF
+	cMens	+= '		  	</tr>' + CRLF
+	cMens	+= '		</table>' + CRLF
+	cMens	+= '		<table>' + CRLF
+	cMens	+= '			<tr>' + CRLF
+	cMens	+= '				<td><b>Justificativa: </b>' + AllTrim(cJustif) + '</td>' + CRLF
+	cMens	+= '			</tr>' + CRLF
+	cMens	+= '		</table' + CRLF
+	cMens	+= '		<br>' + CRLF
+	cMens	+= '		<p Style="font-size:125%"><b>Fornecedor: </b>' + AllTrim(cFornec) + '</p>' + CRLF
+	cMens	+= '	</body>' + CRLF
+	cMens	+= '</html>' + CRLF
+
+	If U_SFEnvUMail(cEmlCAQC, cEmlPres, , , cAssunto, cMens, , , _cSvSMTP, cAcCAQC, cPaCAQC, _lSvSSL)
+		SC7->(DbSeek(cFilPed + cNumPed))
+		While .Not. SC7->( Eof() ) .And. SC7->C7_FILIAL == cFilPed .And. SC7->C7_NUM == cNumPed
+			RecLock("SC7", .F.)
+			Replace SC7->C7_XENOFMS With .T.
+			SC7->( MsUnlock() )
+			SC7->(DbSkip())
+		EndDo
+		Aviso(FunName() + "/" + ProcName(), "E-mail para presidência enviado.", {"OK"})
+	Else
+		Aviso(FunName() + "/" + ProcName(), "Erro ao enviar e-mail para presidência.", {"OK"})
+	EndIf
+
+	RestArea(aArea)
+
+Return ( Nil )

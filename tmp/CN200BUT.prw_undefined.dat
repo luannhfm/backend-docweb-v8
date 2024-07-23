@@ -1,0 +1,372 @@
+/*/
+===============================================================================
+Autor.............: Peder Munksgaard (Do.it Sistemas)
+-------------------------------------------------------------------------------
+Data..............: 12/08/2014
+-------------------------------------------------------------------------------
+Descrição.........: O Ponto de Entrada deve ser usado para adicionar botões de 
+                    usuário através do retorno de um Array com a estrutura do 
+                    botão a adicionar. Está localizado na função CN200Manut, 
+                    depois de montar os demais componentes visuais da tela.
+-------------------------------------------------------------------------------
+Alteração.........: (dd/mm/aaaa) - Motivo
+-------------------------------------------------------------------------------
+Partida...........: CNTA200()
+-------------------------------------------------------------------------------
+Função............: u_CN200BUT()
+===============================================================================
+/*/
+
+#Include "Protheus.ch"
+#Include "Topconn.ch"
+
+User Function CN200BUT()
+
+   Local _aButtons := {} // Botoes a adicionar 
+   
+   aadd(_aButtons,{"FILTRO1",{|| Processa({||U_FMTA002(oGetDados)},"Montando grade de pedidos...")},"PC Filial","PC Filial"}) 
+
+   SetKey( VK_F7, { || Iif(cEspctr=="1",Processa({||U_FMTA002(oGetDados)},"Montando grade de pedidos..."),) } )    
+
+Return {_aButtons}
+
+/*/
+===============================================================================
+Autor.............: Peder Munksgaard (Do.it Sistemas)
+-------------------------------------------------------------------------------
+Data..............: 12/08/2014
+-------------------------------------------------------------------------------
+Descrição.........: Função utilizada para abrir uma tela de seleção de pedidos
+                    de compras à serem importados para a planilha de medição.                    
+-------------------------------------------------------------------------------
+Alteração.........: (dd/mm/aaaa) - Motivo
+-------------------------------------------------------------------------------
+Partida...........: u_CN200BUT()
+-------------------------------------------------------------------------------
+Função............: u_FMTA002(oGetDados)
+===============================================================================
+/*/
+
+User Function FMTA002(oGetDados)
+
+Local oDlg
+Local oMark
+
+Local cMarca	 := GetMark()
+Local lInverte	 := .F.
+Local lPedido    := IF(SuperGetMv("MV_RESTPED")=="S",.T.,.F.)
+
+Local aFields 	 := {}
+Local aArea		 := GetArea()
+Local aGrupo     := UsrGrComp(RetCodUsr())
+Local aAreaSX3	 := SX3->(GetArea())
+Local aAreaSC7	 := SC7->(GetArea())
+Local aCpos		 := {}
+Local aMarca	 := {}
+Local aCampos	 := {"C7_OK","C7_FILIAL","C7_NUM","C7_ITEM","C7_PRODUTO","C7_QUANT","C7_PRECO","C7_DESCRI","C7_GRUPCOM"}
+Local aButEnc	 := {}
+Local aHeader    := oGetDados:aHeader
+Local aCols      := oGetDados:aCols
+Local aMark      := {}
+Local aFiltro    := {}
+Local aCab       := {}
+Local aCN200PED  := {}
+Local aCN200CRP  := {}
+Local aCTBEnt		:= If(FindFunction("CTBEntArr"),CTBEntArr(),{})
+
+Local cCampoOk	 := "C7_OK"
+Local cCpoPre    := If(GetMV("MV_CNPRECO"),"B1_UPRC","B1_CUSTD")
+Local cCadastro  := OemToAnsi("Pedido FIEMT")    
+Local cCN200PID  := ""
+
+Local nOpcA      := 0
+Local nPosCod	 := ASCAN(aHeader,{|x| AllTrim(x[2]) == "CNB_PRODUT"})
+Local nPosPrc	 := ASCAN(aHeader,{|x| AllTrim(x[2]) == "CNB_VLUNIT"})
+Local nPosQuant  := ASCAN(aHeader,{|x| AllTrim(x[2]) == "CNB_QUANT"})
+Local nPosTotal  := ASCAN(aHeader,{|x| AllTrim(x[2]) == "CNB_VLTOT"})
+Local nPosNmSc   := ASCAN(aHeader,{|x| AllTrim(x[2]) == "CNB_NUMSC"})
+Local nPosItSc   := ASCAN(aHeader,{|x| AllTrim(x[2]) == "CNB_ITEMSC"})
+Local nPosFlPC   := ASCAN(aHeader,{|x| AllTrim(x[2]) == "CNB_XFILPC"})
+Local nPosNmPC   := ASCAN(aHeader,{|x| AllTrim(x[2]) == "CNB_XPC"})
+Local nPosItPC   := ASCAN(aHeader,{|x| AllTrim(x[2]) == "CNB_XITMPC"})
+Local nExistIt   := 0
+Local nDeleta    := 0
+Local nx         := 0
+Local ny         := 0
+
+Local _aStru     := SC7->(dbStruct())
+Local _cQry      := ""
+Local _cAlias    := GetNextAlias()
+Local _cIndex    := "C7_FILIAL+C7_NUM+C7_ITEM"
+
+Local cArqTrab   := CriaTrab(_aStru,.T.)
+
+Private cAlias   := GetNextAlias()
+Private aGrupoPC := UsrGrComp(RetCodUsr())
+
+USE &cArqTrab ALIAS (cAlias) NEW
+
+Index on &_cIndex To (cAlias)
+
+_cQry := "SELECT * FROM " + RetSqlName("SC7")                    + CRLF
+_cQry += "WHERE D_E_L_E_T_ <> '*'"                               + CRLF
+_cQry += "AND SUBSTR(C7_FILIAL,1,4) = '" + Left(cFilAnt,4) + "'" + CRLF 
+_cQry += "AND C7_QUANT - C7_QUJE - C7_QTDACLA > 0 "              + CRLF
+_cQry += "AND C7_RESIDUO <> 'S'"                                 + CRLF
+_cQry += "AND C7_TPOP <> 'P'"                                    + CRLF
+_cQry += "AND C7_CONTRA = ' '"                                   + CRLF
+_cQry += "AND C7_FORNECE = '" + M->CNA_FORNEC + "'"              + CRLF
+_cQry += "AND C7_LOJA = '" + M->CNA_LJFORN + "'"                 + CRLF 
+_cQry += "AND C7_CONAPRO = 'L'"                                  + CRLF
+_cQry += "AND C7_XGERGCT <> 'S'"                                 + CRLF
+_cQry += "AND C7_XCONTRA = ' '"                                  + CRLF
+_cQry += "ORDER BY C7_FILIAL,C7_NUM,C7_ITEM"                     + CRLF
+
+_cQry := ChangeQuery(_cQry)
+
+TcQuery _cQry Alias (_cAlias) New
+
+ProcRegua(SC7->(Reccount()))
+
+While (_cAlias)->(!Eof())
+
+   IncProc()
+   
+   dbSelectArea((cAlias))
+   RecLock((cAlias),.T.)
+   
+   For nX := 1 to Len(_aStru)
+       
+      If _aStru[nX][2] == 'C'  
+         Replace &(_aStru[nX][1]) With (_cAlias)->&(_aStru[nX][1])
+      Elseif _aStru[nX][2] == 'N'
+         Replace &(_aStru[nX][1]) With Val(Alltrim((_cAlias)->&(_aStru[nX][1])))
+      Elseif _aStru[nX][2] == 'D'
+         Replace &(_aStru[nX][1]) With StoD(Alltrim((_cAlias)->&(_aStru[nX][1])))
+      Endif
+      
+      If _aStru[nX][1] == "C7_OK
+         Replace &(_aStru[nX][1]) With '  '
+      Endif
+      
+   Next nX
+    
+   (cAlias)->(MsUnlock())
+   
+   (_cAlias)->(dbSkip())
+
+End
+
+(cAlias)->(dbGotop())
+ 	                                                   
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Monta os botoes da enchoice passando o filtro para ser restaurado na saida da visualizacao ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ         
+//arrumar
+aButEnc	:=  {	{"PESQUISA",{|| axPesqui() },OemToAnsi("Pesquisar")} ,; 			      	//"Pesquisar"    
+{"ANALITIC",{||C200VisuPC(RecNo())},OemToAnsi("Visualizar")} }	//"Visualizar" -- Usa funcao de visualizacao do pedido de compra
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Monta o Header com os titulos do MsSelect             ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+dbSelectArea("SX3")
+dbSetOrder(2)
+For nx	:= 1 to Len(aCampos)
+	If MsSeek(aCampos[nx])
+		If AllTrim(aCampos[nx])=="C7_OK"
+			AADD(aCpos,{aCampos[nx],""," ",X3_PICTURE})
+		Else
+			AADD(aCpos,{aCampos[nx],"",AllTrim(X3Titulo()),X3_PICTURE})
+		EndIf
+	EndIf
+Next
+
+dbSelectArea("SX3")
+dbSetOrder(1)
+MsSeek("SC7")
+While !Eof() .And. SX3->X3_ARQUIVO == "SC7"
+	IF ( SX3->X3_BROWSE=="S".And.SX3->X3_CONTEXT <> "V" .And. X3Uso(SX3->X3_USADO).And. Ascan(aCpos,{|x| Alltrim(x[1]) == Alltrim(SX3->X3_CAMPO)})==0 )
+		Aadd(aCpos,{SX3->X3_CAMPO,"",AllTrim(X3Titulo()),X3_PICTURE})
+	EndIf
+	dbSkip()
+Enddo              
+
+DEFINE MSDIALOG oDlg TITLE cCadastro From 30,30 To 285,600 OF oMainWnd PIXEL
+
+oMark := MsSelect():New((cAlias),cCampoOk,"",aCpos,@lInverte,@cMarca,{ 17,2,113,285})
+oMark:bMark := {|| FMTA2Mark(cMarca,@aMarca,cCampoOk,(cAlias)),oMark:OBROWSE:Refresh()}
+
+
+ACTIVATE MSDIALOG oDlg ON INIT EnchoiceBar(oDlg,{||(nOpcA:=1),(oDlg:End())},{||oDlg:End()},,aButEnc)
+
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Monta o aCols com os PCs selecionados                ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If nOpcA== 1
+	
+	For nx := 1 to Len(aMarca)
+		
+		dbSelectArea("SC7")
+		MsGoto(aMarca[nx])
+		
+		If !( lPedido .And. aScan(aGrupo,SC7->C7_GRUPCOM) <= 0 ) .Or. Empty(SC7->C7_GRUPCOM)
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Varre o aCols e compara se ja existe o item do PC           ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			nExistIT := Ascan(aCols,{|x| x[nPosFlPC] == FieldGet(FieldPos(aCampos[2])) .And. x[nPosNmPC] == FieldGet(FieldPos(aCampos[3])) .And. x[nPosItPC] == FieldGet(FieldPos(aCampos[4]))})
+
+			If nExistIT = 0
+				If aMarca[nx] > 0
+					
+					nDeleta := Ascan(aCols,{|x| x[nPosCod] = " "})
+					If nDeleta >0
+						Adel(aCols,nDeleta)//Exclui linha em branco
+						Asize(aCols,Len(aCols)-1)
+					Endif
+					
+					cItem := IIf(Empty(aCols),StrZero(1,Len(CNB->CNB_ITEM)),Soma1(aCols[Len(aCols)][1]))
+					AADD(aCols,Array(Len(aHeader)+1))//inclui novo item
+					
+					For nY := 1 To Len(aHeader)//Preenche os campos
+						Do Case
+							Case Trim(aHeader[nY][2]) == "CNB_ITEM"
+								aCols[Len(aCols)][nY] := cItem
+							Case Trim(aHeader[nY][2]) == "CNB_NUMERO"
+								aCols[Len(aCols)][nY] := M->CNA_NUMERO
+							Case Trim(aHeader[nY][2]) == "CNB_REVISAO"
+								aCols[Len(aCols)][nY] := M->CNA_REVISAO
+							Case Trim(aHeader[nY][2]) == "CNB_CONTRA"
+								aCols[Len(aCols)][nY] := M->CNA_CONTRA
+							Case Trim(aHeader[nY][2]) == "CNB_QUANT"
+								aCols[Len(aCols)][nY] := SC7->(C7_QUANT-C7_QUJE)
+							Case Trim(aHeader[nY][2]) == "CNB_PRODUT"
+								aCols[Len(aCols)][nY] := SC7->C7_PRODUTO
+							Case Trim(aHeader[nY][2]) == "CNB_QTDSOL"
+								aCols[Len(aCols)][nY] := SC7->(C7_QUANT-C7_QUJE)
+							Case Trim(aHeader[nY][2]) == "CNB_DESCRI"
+								aCols[Len(aCols)][nY] := SC7->C7_DESCRI
+							Case Trim(aHeader[nY][2]) == "CNB_UM"
+								aCols[Len(aCols)][nY] := SC7->C7_UM
+							Case Trim(aHeader[nY][2]) == "CNB_VLUNIT"
+								aCols[Len(aCols)][nY] := SC7->C7_PRECO    
+							Case Trim(aHeader[nY][2]) == "CNB_TE"
+								aCols[Len(aCols)][nY] := SC7->C7_TES
+							Case Trim(aHeader[nY][2]) == "CNB_XFILPC"
+								aCols[Len(aCols)][nY] := SC7->C7_FILIAL						  								
+							Case Trim(aHeader[nY][2]) == "CNB_XPC"
+								aCols[Len(aCols)][nY] := SC7->C7_NUM
+							Case Trim(aHeader[nY][2]) == "CNB_XITMPC"
+								aCols[Len(aCols)][nY] := SC7->C7_ITEM																
+							Case IsHeadRec(Trim(aHeader[nY][2])) == .T.
+								aCols[Len(aCols)][nY] := CNB->(Recno())
+							Case IsHeadAlias(Trim(aHeader[nY][2])) == .T.
+								aCols[Len(aCols)][nY] := "CNB"
+							OtherWise
+								aCols[Len(aCols)][nY] := CriaVar(aHeader[ny,2])
+						EndCase
+					Next nY
+					
+					For nY := 1 To Len(aCTBEnt)
+						If GDFieldPos("CNB_EC"+aCTBEnt[nY]+"CR",aHeader) > 0 .And. SC7->(FieldPos("C7_EC"+aCTBEnt[nY]+"CR")) > 0
+							aTail(aCols)[GDFieldPos("CNB_EC"+aCTBEnt[nY]+"CR",aHeader)] := SC7->&("C7_EC"+aCTBEnt[nY]+"CR")
+						EndIf
+						If GDFieldPos("CNB_EC"+aCTBEnt[nY]+"DB",aHeader) > 0 .And. SC7->(FieldPos("C7_EC"+aCTBEnt[nY]+"DB")) > 0
+							aTail(aCols)[GDFieldPos("CNB_EC"+aCTBEnt[nY]+"DB",aHeader)] := SC7->&("C7_EC"+aCTBEnt[nY]+"DB")
+						EndIf
+					Next nY
+					
+					aCols[Len(aCols)][nPosTotal] := Round(aCols[Len(aCols)][nPosPrc]*aCols[Len(aCols)][nPosQuant], TamSX3("CNB_VLTOT")[2])
+					aCols[Len(aCols)][Len(aHeader)+1] := .F.
+					
+					//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+					//³ Impede que o item da planilha seja deletado pela getdados                             ³
+					//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+					oGetDados:lNewLine:=.F.                   
+                    								
+					//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+					//³Varre array para preenchimento.													³
+					//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+					If len(aFields) > 0
+						For nY := 1 To Len(afields)
+							If (nposfield:= aScan(aHeader, {|x|AllTrim(x[2])==afields[nY,1]})) > 0
+								aCols[len(aCols),nposfield]:= &(afields[nY,2])
+							Endif
+						Next ny
+					EndIf
+				EndIf
+			EndIf
+		EndIf
+
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Ponto de entrada executado no carregamento do aCols ao Item da Planilha     ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		If ExistBlock("CN200PED")
+			aCN200PED := ExecBlock("CN200PED",.F.,.F.,{aHeader,aCols[len(aCols)]})
+			If ValType(aCN200PED) == "A" 
+				aCols[len(aCols)] := aClone(aCN200PED)  
+			EndIf
+		EndIf
+						
+	Next
+EndIf
+
+oGetDados:Refresh()
+
+(cAlias)->(dbCloseArea())
+
+FErase((cAlias)+".dtc")
+
+RestArea(aAreaSC7)
+RestArea(aAreaSX3)
+
+RestArea(aArea)
+Return(.T.)
+
+Static Function FMTA2Mark(cMarca,aMarca,cCampoOk,cAlias)
+
+Local cFilCod   := (cAlias)->C7_FILIAL
+Local cNum      := (cAlias)->C7_NUM
+Local cItem     := (cAlias)->C7_ITEM
+        
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Posiciona no inicio da solicitacao de compra / Pedido de Compras  ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	
+	(cAlias)->(dbSeek(cFilCod+cNum))
+		
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Percorre os itens da mesma solicitacao/ Pedido de Compras  ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	While (cAlias)->(C7_FILIAL+C7_NUM) == cFilCod+cNum
+	 
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Verifica se a solicitação de compra / Pedido de Compras já esta marcada   ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		SC7->(dbSeek((cAlias)->(C7_FILIAL+C7_NUM+C7_ITEM)))
+		
+		If aScan(aMarca,SC7->(RecNo()))> 0		   
+			aMarca[aScan(aMarca,SC7->(RecNo()))] := 0
+			//Altera campo de marcacao para todos os itens
+			If (cAlias)->C7_OK == cMarca
+				RecLock((cAlias),.F.)
+				(cAlias)->C7_OK := ""
+				MsUnlock()
+			EndIf
+		Else
+			AADD(aMarca,SC7->(Recno()))
+			//Altera campo de marcacao para todos os itens
+			If (cAlias)->C7_OK != cMarca
+				RecLock((cAlias),.F.)
+				(cAlias)->C7_OK := cMarca
+				MsUnlock()
+			EndIf
+		EndIf
+		
+		(cAlias)->(dbSkip())
+		
+	End
+
+   (cAlias)->(dbSeek((cAlias)->(cFilCod+cNum+cItem)))
+   
+Return

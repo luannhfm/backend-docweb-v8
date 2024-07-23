@@ -1,0 +1,273 @@
+#Include 'Protheus.ch'
+#Include "Topconn.ch"
+#Include "Tbiconn.ch"
+
+/*/{Protheus.doc} IMPM030RM
+Funcao responsavel por realizar a integracao dos Clientes RM Classis x Protheus
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	12/11/2015
+@version 	1.0
+
+@param p_nSeq, Numerico, Codigo Sequencial RM
+@param p_cColig, Caracter, Codigo Coligada RM
+@param p_cRa, Caracter, Codigo RA RM
+@param p_cCodCtr, Caracter, Codigo Contrato RM
+@param p_cIdPlet, Caracter, Codigo IdPerlet RM
+@param p_cAliasRM, Caracter, Codigo do Alias (Banco) RM
+@param p_cCodCFO, Caracter, Codigo do CFO - Senai
+@param p_Lck, Lógico para verificar Lock da tabela.
+@param p_aParam, Array para preparo de ambiente no caso de execução via Job.
+
+@return _lRet, T - Verdadeiro ou F - Falso
+/*/
+User Function IMPM030RM(p_nSeq, p_cColig, p_cRa, p_cCodCtr, p_cIdPlet, p_cAliasRM, p_cCodCFO, p_Lck, p_aParam, p_cLog)
+	
+	Local _aArea			:= GetArea()
+	Local _lRet			:= .F.
+	Local _cPessoa		:= ""
+	Local _cNome			:= ""
+	Local _cNReduz		:= ""
+	Local _cEnd			:= ""
+	Local _cTipo			:= ""
+	Local _cEst			:= ""
+	Local _cCodMun		:= ""
+	Local _cMun			:= ""
+	Local _cBairro		:= ""
+	Local _cCep			:= ""
+	Local _cEndCob		:= ""
+	Local _cCGC			:= ""
+	Local _cBairroC		:= ""
+	Local _cCEPC		:= ""
+	Local _cMunC		:= ""
+	Local _cEstC		:= ""
+	Local _cContaC		:= ""
+	Local _cComplem		:= ""
+	Local _nOpc			:= 0
+	Local _aCliente 	:= {}
+	Local _cLocErr		:= GetNewPar( "MV_XLOCERR", "\xml\retorno\rmc\log\")
+	Local _cQuery		:= ""
+	Local cCodImp       := ""
+	Local _cDDDTlx		:= ""
+	Local _cTelex		:= ""	
+	Local _cDDD			:= ""
+	Local _cTel			:= ""
+	Local _cDDDCon		:= ""
+	Local _cTelCon		:= ""
+	Local _cEml			:= ""	
+	
+	Private lMsErroAuto	:= .F.
+	
+	ConOut("["+ dToC(Date()) + " " + Time() + "] - IMPM030RM: Empresa: " + cEmpAnt + " FIL: " + cFilAnt )
+	
+	If Valtype( p_aParam ) != "U"
+		//+--------------------------------------------------------------+
+		//| Se for SCHEDULE prepara o ambiente                           |
+		//+--------------------------------------------------------------+
+		PREPARE ENVIRONMENT EMPRESA p_aParam[1] FILIAL p_aParam[2]
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - IMPM030RM: Prepare Environment EMPRESA:"+ p_aParam[1] + " FILIAL: "+ p_aParam[2] )
+	Else
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - IMPM030RM: Não executou Prepare Environment [p_aParam] == U ")
+	EndIf
+	
+	If Select('TMPSA1') > 0
+		DbSelectArea('TMPSA1')
+		TMPSA1->( DbCloseArea() )
+	EndIf
+	
+	_cQuery := " SELECT *															"
+
+	If Empty(p_cAliasRM)
+		_cQuery += " FROM RM.PROT_SA1 											"
+	Else
+		_cQuery += " FROM RM.PROT_SA1" + p_cAliasRM
+	EndIf
+
+	_cQuery += " WHERE 	CODCOLIGADA 			= "		+ p_cColig 			
+	_cQuery += " 			AND RA 				= "	+ cValToChar(p_cRa) 
+	_cQuery += "				AND CODCONTRATO 	= '"	+ p_cCodCtr 	+"'		" 
+	_cQuery += "				AND IDPERLET 		= "		+ p_cIdPlet
+	
+	If .Not. Empty(_cAliasRM) .And. .Not. Empty(p_cCodCFO)
+		_cQuery += " 		AND A1_COD = "+ p_cCodCFO
+	EndIf
+	
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPSA1',.T.,.F.)
+	
+	If .Not. TMPSA1->(EOF())
+		_cFilial	:= xFilial('SA1')
+		_cCliente	:= PADR(AllTrim(cValToChar(TMPSA1->( A1_CGC ))),TamSX3('A1_COD')[1],Space(TamSX3('A1_COD')[1]))
+		_cLoja 		:= PADR('00PF',TamSX3('A1_LOJA')[1],Space(TamSX3('A1_LOJA')[1]))
+		_cPessoa	:= PADR(AllTrim(TMPSA1->( A1_PESSOA )),TamSX3('A1_PESSOA')[1],Space(TamSX3('A1_PESSOA')[1]))
+		_cNome		:= PADR(AllTrim(TMPSA1->( A1_NOME )),TamSX3('A1_NOME')[1],Space(TamSX3('A1_NOME')[1]))
+		_cNReduz	:= PADR(AllTrim(TMPSA1->( A1_NREDUZ )),TamSX3('A1_NREDUZ')[1],Space(TamSX3('A1_NREDUZ')[1]))
+		_cEnd		:= PADR(AllTrim(TMPSA1->( A1_END )),TamSX3('A1_END')[1],Space(TamSX3('A1_END')[1]))
+		_cTipo		:= PADR(AllTrim(TMPSA1->( A1_TIPO )),TamSX3('A1_TIPO')[1],Space(TamSX3('A1_TIPO')[1]))
+		_cEst		:= PADR(AllTrim(TMPSA1->( A1_EST )),TamSX3('A1_EST')[1],Space(TamSX3('A1_EST')[1]))
+		_cCodMun	:= PADR(AllTrim(TMPSA1->( A1_COD_MUN )),TamSX3('A1_COD_MUN')[1],Space(TamSX3('A1_COD_MUN')[1]))
+		_cMun		:= PADR(AllTrim(TMPSA1->( A1_MUN )),TamSX3('A1_MUN')[1],Space(TamSX3('A1_MUN')[1]))
+		_cBairro	:= PADR(AllTrim(TMPSA1->( A1_BAIRRO )),TamSX3('A1_BAIRRO')[1],Space(TamSX3('A1_BAIRRO')[1]))
+		_cCep		:= PADR(AllTrim(TMPSA1->( A1_CEP )),TamSX3('A1_CEP')[1],Space(TamSX3('A1_CEP')[1]))
+		_cEndCob	:= PADR(AllTrim(TMPSA1->( A1_ENDCOB )),TamSX3('A1_ENDCOB')[1],Space(TamSX3('A1_ENDCOB')[1]))
+		_cCGC		:= PADR(AllTrim(TMPSA1->( A1_CGC )),TamSX3('A1_CGC')[1],Space(TamSX3('A1_CGC')[1]))
+		_cBairroC	:= PADR(AllTrim(TMPSA1->( A1_BAIRROC )),TamSX3('A1_BAIRROC')[1],Space(TamSX3('A1_BAIRROC')[1]))
+		_cCEPC		:= PADR(AllTrim(TMPSA1->( A1_CEPC )),TamSX3('A1_CEPC')[1],Space(TamSX3('A1_CEPC')[1]))
+		_cMunC		:= PADR(AllTrim(TMPSA1->( A1_MUNC )),TamSX3('A1_MUNC')[1],Space(TamSX3('A1_MUNC')[1]))
+		_cEstC		:= PADR(AllTrim(TMPSA1->( A1_ESTC )),TamSX3('A1_ESTC')[1],Space(TamSX3('A1_ESTC')[1]))
+		_cContaC	:= PADR(AllTrim(TMPSA1->( A1_CONTA )),TamSX3('A1_CONTA')[1],Space(TamSX3('A1_CONTA')[1]))
+		_cComplem	:= PADR(AllTrim(TMPSA1->( A1_COMPLEM )),TamSX3('A1_COMPLEM')[1],Space(TamSX3('A1_COMPLEM')[1]))
+		_cDDDTlx	:= PADR(AllTrim(TMPSA1->(A1_XDDDTLX)),TamSX3('A1_XDDDTLX')[1],Space(TamSX3('A1_XDDDTLX')[1]))
+		_cTelex		:= PADR(AllTrim(TMPSA1->(A1_TELEX)),TamSX3('A1_TELEX')[1],Space(TamSX3('A1_TELEX')[1]))
+		_cDDD		:= PADR(AllTrim(TMPSA1->(A1_DDD)),TamSX3('A1_DDD')[1],Space(TamSX3('A1_DDD')[1]))
+		_cTel		:= PADR(AllTrim(TMPSA1->(A1_TEL)),TamSX3('A1_TEL')[1],Space(TamSX3('A1_TEL')[1]))
+		_cDDDCon	:= PADR(AllTrim(TMPSA1->(A1_XDDDCON)),TamSX3('A1_XDDDCON')[1],Space(TamSX3('A1_XDDDCON')[1]))
+		_cTelCon	:= PADR(AllTrim(TMPSA1->(A1_XTELCON)),TamSX3('A1_XTELCON')[1],Space(TamSX3('A1_XTELCON')[1]))
+		_cEml		:= PADR(AllTrim(TMPSA1->(A1_EMAIL)),TamSX3('A1_EMAIL')[1],Space(TamSX3('A1_EMAIL')[1]))
+		
+		//Jose Leite - 04-09-14 - Classe Valor
+		_cClvl 	:= PADR(AllTrim("CF" + AllTrim(_cCliente)),TamSX3('A1_CLVL')[1],Space(TamSX3('A1_CLVL')[1]))
+
+		_aCliente := {}
+
+		DbSelectArea("SA1")
+		SA1->(DbSetOrder(1)) //A1_FILIAL+A1_COD+A1_LOJA
+		SA1->(DbGotop())
+		If .Not. SA1->(DbSeek(xFilial("SA1") + _cCliente + _cLoja ))
+			_nOpc := 3
+			ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'IMPM030RM: Incluindo Cliente')
+		Else
+			_nOpc := 4
+			ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'IMPM030RM: Alterando Cliente')
+		EndIf
+		
+		aAdd( _aCliente ,{"A1_TIPO"   	,_cTipo	,Nil}) // Tipo
+		aAdd( _aCliente ,{"A1_PESSOA"  	,_cPessoa	,Nil}) // Pessoa
+		if _nOpc == 3
+			aAdd( _aCliente ,{"A1_CGC"  ,_cCGC	  	,Nil}) // CGC
+		else
+			aAdd( _aCliente ,{"A1_COD"		,_cCliente	,Nil}) // Codigo
+			aAdd( _aCliente ,{"A1_LOJA"  	,_cLoja  		,Nil}) // Loja
+		endif
+		aAdd( _aCliente ,{"A1_NOME"    	,_cNome 		,Nil}) // Nome
+		aAdd( _aCliente ,{"A1_NREDUZ"  	,_cNReduz		,Nil}) // Nome reduz.
+		aAdd( _aCliente ,{"A1_END"     	,_cEnd			,Nil}) // Endereco
+		aAdd( _aCliente ,{"A1_EST"     	,_cEst			,Nil}) // Estado
+		aAdd( _aCliente ,{"A1_COD_MUN" 	, Posicione("CC2", 1, xFilial("CC2")+_cEst+_cCodMun,"CC2_CODMUN"), Nil}) // Cod Municipio
+		aAdd( _aCliente ,{"A1_MUN"     	,_cMun			,Nil}) // Cidade
+		aAdd( _aCliente ,{"A1_BAIRRO"  	,_cBairro		,Nil}) // Bairro
+		aAdd( _aCliente ,{"A1_DDD"  	,_cDDD				,Nil}) // DDD Telefone
+		aAdd( _aCliente ,{"A1_TEL"  	,_cTel				,Nil}) // Telefone
+		aAdd( _aCliente ,{"A1_CEP"     	,_cCep			,Nil}) // CEP
+		aAdd( _aCliente ,{"A1_COMPLEM" 	,_cComplem	,Nil}) // Complemento
+		aAdd( _aCliente ,{"A1_ENDCOB"  	,_cEndCob		,Nil}) // End. Cobrança
+		aAdd( _aCliente ,{"A1_MUNC"    	,_cMunC   	,Nil}) // Mun. Cobrança
+		aAdd( _aCliente ,{"A1_BAIRROC" 	,_cBairroC	,Nil}) // Bairro Cobrança
+		aAdd( _aCliente ,{"A1_CEPC"    	,_cCEPC		,Nil}) // CEP Cobrança
+		aAdd( _aCliente ,{"A1_ESTC"    	,_cEstC  		,Nil}) // Estado Cobrança
+		aAdd( _aCliente ,{"A1_CONTA"   	,_cContaC		,Nil}) // Conta Contabil
+		aAdd( _aCliente ,{"A1_MSBLQL"  	,'2'			,Nil}) // Bloqueio de Tela = Nao
+		aAdd( _aCliente ,{"A1_XDDDTLX"  ,_cDDDTlx			,Nil}) // DDD Telex 
+		aAdd( _aCliente ,{"A1_TELEX"  	,_cTelex			,Nil}) // Telex
+		aAdd( _aCliente ,{"A1_XDDDCON"  ,_cDDDCon			,Nil}) // DDD Telefone Contato
+		aAdd( _aCliente ,{"A1_XTELCON"  ,_cTelCon			,Nil}) // Telefone Contato
+		aAdd( _aCliente ,{"A1_EMAIL"  	,_cEml				,Nil}) // Email
+		
+		lMsErroAuto := .F.
+		
+		// Walmir Junior 13/09/2018 - Validação para verificar Lock no Registro.
+		Private _cChvA1 := xFilial("SA1") + _cCliente + _cLoja 
+		Private _lLck	:= .T.
+		If _nOpc == 4
+			DBSelectArea("SA1")
+			SA1->(DBSeek(_cChvA1))
+			If	SA1->(DBRLock())
+				MSUnLock()	//SA1->(DBRUnLock(SA1->(Recno())))
+			Else
+				_lLck		:= .F.
+			EndIf
+		EndIf
+		
+		If _lLck
+			Begin Transaction
+				
+			MSExecAuto({|x,y| MATA030(x,y)},_aCliente, _nOpc) //3- Inclusão, 4- Alteração, 5- Exclusão
+				
+			If lMsErroAuto
+				p_cLog :=	MostraErro(_cLocErr, _cCGC+".LOG")
+				
+				If _nOpc == 3
+					_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + 'IMPM030RM: Erro de Inclusao do cliente'
+				Else
+					_cMsg := "["+ dToC(Date()) + " " + Time() + "] - " + "IMPM030RM: Erro de Alteração do cliente"
+				EndIf				
+				cCodImp := "002"
+				ConOut(_cMsg)
+				_lRet := .F.
+				U_fGrvStRM( p_nSeq, p_cColig, p_cRa, p_cCodCtr, p_cIdPlet, _lRet, _cMsg, 3,cCodImp )
+			Else
+				
+				If _nOpc == 3
+					ConOut("["+ dToC(Date()) + " " + Time() + "] - " + "IMPM030RM: Inclusao do cliente efetuada: "+ _cCliente + " - "+ _cLoja + " - "+ _cNome)
+				Else
+					ConOut("["+ dToC(Date()) + " " + Time() + "] - " + "IMPM030RM: Alteracao do cliente efetuada: "+ _cCliente + " - "+ _cLoja + " - "+ _cNome)
+				EndIf
+				
+				_lRet	:= .T.
+			EndIf
+			
+			End Transaction
+		Else
+			lMsErroAuto := .T.
+			_lRet := .F.
+			p_Lck := .T.
+			ConOut("["+ dToC(Date()) + " " + Time() + "] - " + "IMPM030RM: Erro de Alteração do cliente [" + _cCliente + " - "+ _cLoja + "] - Registro bloqueado.")		
+		EndIf
+		
+		//Verifica a Classe valor.
+		If _lRet
+			
+			DbSelectArea("SA1")
+			SA1->(DbSetOrder(3))
+			SA1->(DbGotop())
+			If SA1->(DbSeek(xFilial("SA1") + _cCGC ))
+				
+				If SA1->A1_CLVL <> _cClvl
+					If RecLock("SA1",.F.)
+						SA1->A1_CLVL := _cClvl
+						SA1->(MsUnlock())
+					EndIf
+				EndIf
+				
+				DbSelectArea("CTH")
+				CTH->(DbSetOrder(1)) //CTH_FILIAL+CTH_CLVL
+				CTH->( DbGotop() )
+				If .Not. CTH->(DbSeek(xFilial("CTH") + _cClvl ))
+					If RecLock("CTH",.T.)
+						Replace CTH_FILIAL		WITH xFilial("CTH")
+						Replace CTH_CLVL 		WITH _cClvl 							//Codigo Classe de Valor
+						Replace CTH_CLASSE		WITH "2"								//Classe - 2= Analitico
+						Replace CTH_DESC01		WITH AllTrim(_cNome)				//Descricao - Nome do Cliente
+						Replace CTH_DTEXIS   	WITH CTOD("01/01/80")				//Data Inicio Existencia
+						Replace CTH_BLOQ		WITH "2"
+						CTH->(MsUnlock())
+					EndIf
+				EndIf
+				
+				CTH->(DbCloseArea())
+				
+			EndIf
+			
+			SA1->(DbCloseArea())
+			
+		EndIf
+	
+	Else
+		_lRet := .F.
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + 'IMPM030RM: Cliente nao existe no RM')
+		Return( _lRet )
+	EndIf
+	
+	RestArea( _aArea )
+	
+Return( _lRet )

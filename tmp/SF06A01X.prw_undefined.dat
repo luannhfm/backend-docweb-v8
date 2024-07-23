@@ -1,0 +1,1133 @@
+#Include 'Protheus.ch'
+#Include 'FWMVCDEF.ch'
+#Include 'FWEditPanel.ch'
+
+//-----------------------------------------------------
+/*/{Protheus.doc} SF06A01X
+Historico de cobrança 
+
+@author Allan da Silva Faria
+@since 11/04/2016
+@version 1.0
+/*/
+//-----------------------------------------------------
+
+/*/
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³ Data     ³ Analista      ³ Alteração                                   ³±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³30/05/2019³ Paulo Schwind ³ Ajustado tamanho das Grids 50% SE1 e 50% ZF1³±±
+±±³          ³               ³                                             ³±±      
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+/*/
+
+User Function SF06A01X()
+
+	Local   _oBrowse	:= Nil	
+	Private aRotina     := MenuDef()
+	Private _cVisHistor := ""
+	Private _oVisHistor := Nil
+	Private _nRad	    := 1
+	Private _oGet2, _oGet3 
+	Private _dAgend, _dProc, _dDtInfo  
+	Private _oPanel
+	Private _xcAcao 
+
+	//---------------------------------------
+	//-- Instanciamento de Classe do Browse
+	//---------------------------------------
+	_oBrowse:= FWMBrowse():New()
+
+	//---------------------------------------
+	//-- DefinIção de tabela do Browse
+	//---------------------------------------
+	_oBrowse:SetAlias("SA1")
+
+	//---------------------------------------
+	//-- Activa Classe
+	//---------------------------------------
+	_oBrowse:Activate()
+
+Return Nil
+
+//-----------------------------------------------------
+/*/{Protheus.doc} MenuDef
+Define Menu do Browse
+
+@author Allan da Silva Faria
+@since 11/04/2016
+@version 1.0
+@return Array, Menu do Browse
+/*/
+//-----------------------------------------------------
+
+Static Function MenuDef()
+
+	Local _aRotina := {}
+
+	ADD OPTION _aRotina Title 'Historico' 	Action 'VIEWDEF.SF06A01X' 						OPERATION 2 ACCESS 0
+	ADD OPTION _aRotina Title 'Visualizar' 	Action 'STATICCALL(SF06A01X,VisCliente)'		OPERATION 2 ACCESS 0
+
+Return(_aRotina)
+
+//-----------------------------------------------------
+/*/{Protheus.doc} ModelDef
+Model
+
+@author Allan da Silva Faria
+@since 20/04/2016
+@version 1.0
+@return Objeto, Model
+/*/
+//-----------------------------------------------------
+
+Static function ModelDef()
+
+	Local _oModel := MPFormModel():New("SF06A01")
+	Local _oStrSA1:= FWFormStruct(1,"SA1",{|X| IsUsoField(X)}) 	   //-- Clientes
+	Local _oStrSE1:= FWFormStruct(1,"SE1",{|X| IsUsoField(X)},.F.) //-- Títulos a Receber
+	Local _oStrZF1:= FWFormStruct(1,"ZF1"/*,{|X| IsUsoField(X)}*/) //-- Historico de Cobrança
+
+	//--------------------------------------------------------------------------
+	//-- Adiciona campo legenda na grid títulos a receber.
+	//--------------------------------------------------------------------------
+	_oStrSE1:AddField("","Legenda","E1_LEG","C",02,0,NIL,NIL,NIL,.T.,NIL,NIL,.F.,.F.)
+
+	//--------------------------------------------------------------------------
+	//-- Field Cliente
+	//--------------------------------------------------------------------------	
+	_oModel:AddFields("CLIENTE",,_oStrSA1)
+
+	//--------------------------------------------------------------------------
+	//-- Grid Títulos a Receber
+	//--------------------------------------------------------------------------
+	_oModel:AddGrid("TITULO","CLIENTE",_oStrSE1,,,,,{|_oMdlSE1| LoadSE1(_oMdlSE1)}) 
+
+	//--------------------------------------------------------------------------
+	//-- Grid Histórico de Cobrança
+	//--------------------------------------------------------------------------
+	_oModel:AddGrid("HISTOR","TITULO",_oStrZF1)
+
+	//--------------------------------------------------------------------------
+	//-- Permite salvar submodel sem registro ( vazio ).
+	//--------------------------------------------------------------------------
+	_oModel:SetOptional("HISTOR",.T.)
+
+	//--------------------------------------------------------------------------
+	//-- Seta relacionamento entre tabelas.
+	//--------------------------------------------------------------------------
+	_oModel:SetRelation("TITULO",{{"E1_FILIAL","FWxFilial('SE1')"},{"E1_CLIENTE","A1_COD"},{"E1_LOJA","A1_LOJA"}})
+	_oModel:SetRelation("HISTOR",{{"ZF1_FILIAL","E1_FILIAL"},{"ZF1_CLIENT","A1_COD"},{"ZF1_LOJA","A1_LOJA"},{"ZF1_PREF","E1_PREFIXO"},{"ZF1_NUM","E1_NUM"},{"ZF1_PARC","E1_PARCELA"},{"ZF1_TIPO","E1_TIPO"}})
+
+	//Walmir Junior 28/06/2017 - Tratativa da coluna de descrição da Interação Jurídica
+	//--------------------------------------------------------------------------
+	//-- Interação Juridica
+	//--------------------------------------------------------------------------	
+	/*_oStrZF1:SetProperty("ZF1_XINTJU",MODEL_FIELD_INIT, {|| U_SF06A21X()} )
+	_oStrZF1:SetProperty("ZF1_XINTJU",MODEL_FIELD_VIRTUAL,.T.)*/
+
+	//--------------------------------------------------------------------------
+	//-- Seta Título do model
+	//--------------------------------------------------------------------------
+	_oModel:SetDescription("Histórico de Cobrança")
+
+	//--------------------------------------------------------------------------
+	//-- Valida ativação do Model
+	//--------------------------------------------------------------------------
+	_oModel:SetVldActivate({|_oModel| VldActModel(_oModel)})
+
+Return(_oModel)
+
+//-----------------------------------------------------
+/*/{Protheus.doc} ViewDef
+View
+
+@author Allan da Silva Faria
+@since 20/04/2016
+@version 1.0
+@return Objeto, View
+/*/
+//-----------------------------------------------------
+
+Static function ViewDef()
+
+	Local _oModel := ModelDef()//FWLoadModel("SF06A01X")//-- Pega model
+	Local _oView  := FWFormView():New()								//-- Instancia View	
+	Local _oStrSA1:= FWFormStruct(2,"SA1",{|X| IsUsoField(X)}) 		//-- Clientes  
+	Local _oStrSE1:= FWFormStruct(2,"SE1",{|X| IsUsoField(X)},.F.)  //-- Títulos a receber
+	Local _oStrZF1:= FWFormStruct(2,"ZF1",{|X| IsUsoField(X)})  	//-- Historico de cobrança
+
+	//--------------------------------------------------------------------------
+	//-- Adiciona campo legenda na grid títulos a receber.
+	//--------------------------------------------------------------------------
+	_oStrSE1:AddField("E1_LEG","00","","Legenda",NIL,"GET","@BMPS02",,"",.F.,,,,,,.F.)	
+	//--------------------------------------------------------------------------
+	//-- Combo Box da Origem de Historico
+	//--------------------------------------------------------------------------	
+	//Walmir Junior 26/06/2017 - Coluna de descrição da Interação Jurídica
+
+	//_oView:SetAfterViewActive({|| ChangeZF1() })
+	_oStrZF1:SetProperty("ZF1_ORIGEM",MVC_VIEW_COMBOBOX,Origem("A"))  //_oStrZF1:SetProperty("ZF1_ORIGEM",MVC_VIEW_TITULO,Origem("A",_xcAcao))	//
+
+	//Paulo Schwind 16/05/2019 - Coluna de descrição da Ação / Origem      
+	//_oStrZF1:SetProperty("ZF1_ACAO",MVC_VIEW_COMBOBOX,AcaoOrig("A"))	
+
+	//--------------------------------------------------------------------------
+	//-- Interação Juridica
+	//--------------------------------------------------------------------------
+	// Paulo Schwind - 30/05/2019 - Campo sem utilização  	
+	//_oStrZF1:SetProperty("ZF1_XINTJU",MVC_VIEW_TITULO, "Interação Jurídica" )
+	//_oStrZF1:SetProperty("ZF1_XINTJU",MVC_VIEW_VIRTUAL,.T.)
+	//--------------------------------------------------------------------------
+	//-- Altera ordem dos campos
+	//--------------------------------------------------------------------------
+	OrderField("SE1",_oStrSE1)
+	OrderField("ZF1",_oStrZF1)	
+	//--------------------------------------------------------------------------
+	//-- Define Model da View
+	//--------------------------------------------------------------------------
+	_oView:SetModel(_oModel)			
+	//--------------------------------------------------------------------------
+	//-- Grid Títulos a Receber
+	//--------------------------------------------------------------------------
+	_oView:AddGrid("VIEW_SE1",_oStrSE1,"TITULO")	
+	//--------------------------------------------------------------------------
+	//-- Grid Historico
+	//--------------------------------------------------------------------------
+	_oView:AddGrid("VIEW_ZF1",_oStrZF1,"HISTOR")	
+	_oView:SetViewProperty("TITULO","CHANGELINE",{{|_oView,_cViewID| ChangeZF1(_oView,_cViewID)}})	
+	_oView:SetViewProperty("HISTOR","CHANGELINE",{{|_oView,_cViewID| ChangeZF1(_oView,_cViewID)}})	
+
+	//--------------------------------------------------------------------------
+	//-- Grid Historico de Cobrança
+	//--------------------------------------------------------------------------
+	_oView:AddOtherObject("VIEW_SA1",{|_| PnlCabec(_oPanel) })			
+	_oView:AddOtherObject("VIEW_RODP1",{|_oPanel| PnlAddHist(_oPanel) })	
+	_oView:AddOtherObject("VIEW_RODP2",{|_oPanel| PnlVsuHist(_oPanel) })
+	//--------------------------------------------------------------------------
+	//-- Cri box horizontal para receber alguns elementos da view (containet)
+	//--------------------------------------------------------------------------	
+	_oView:CreateHorizontal("CABEC",08)
+	_oView:CreateHorizontal("DETAL",57)
+	_oView:CreateHorizontal("RODAP",35)	
+	//--------------------------------------------------------------------------
+	//-- Cri box vertical para receber alguns elementos da view (containet)
+	//--------------------------------------------------------------------------	
+	_oView:CreateVertical("DETAL_SE1",50,"DETAL")   // _oView:CreateVertical("DETAL_SE1",60,"DETAL")
+	_oView:CreateVertical("DETAL_ZF1",50,"DETAL")	// _oView:CreateVertical("DETAL_ZF1",40,"DETAL")
+	_oView:CreateVertical("RODAP_SE1",50,"RODAP")   // _oView:CreateVertical("RODAP_SE1",60,"RODAP")
+	_oView:CreateVertical("RODAP_ZF1",50,"RODAP")   // _oView:CreateVertical("RODAP_ZF1",40,"RODAP")   //	
+	//--------------------------------------------------------------------------
+	//-- Relaciona o identificador da view com o box exebição
+	//--------------------------------------------------------------------------		
+	_oView:SetOwnerView("VIEW_SA1","CABEC")	
+	_oView:SetOwnerView("VIEW_SE1","DETAL_SE1")
+	_oView:SetOwnerView("VIEW_ZF1","DETAL_ZF1")	
+	_oView:SetOwnerView("VIEW_RODP1","RODAP_SE1")	
+	_oView:SetOwnerView("VIEW_RODP2","RODAP_ZF1")	
+	//--------------------------------------------------------------------------
+	//-- Seta Títulos dos objetos
+	//--------------------------------------------------------------------------		
+	_oView:EnableTitleView("VIEW_SE1","Título a Receber")
+	_oView:EnableTitleView("VIEW_ZF1","Histórico")	
+	//--------------------------------------------------------------------------
+	//-- Define que Grid não podera ser editada somente visualizar
+	//--------------------------------------------------------------------------	
+	//	_oView:SetOnlyView("TITULO" )
+	//	_oView:SetOnlyView("HISTOR" )
+	//--------------------------------------------------------------------------
+	//-- Define que será exibido a filtro na grid.
+	//--------------------------------------------------------------------------	
+	_oView:SetViewProperty("TITULO","GRIDFILTER",{.T.})		
+	//--------------------------------------------------------------------------
+	//-- Define que sera exibido pesquisa na grid.
+	//--------------------------------------------------------------------------	
+	_oView:SetViewProperty("TITULO","GRIDSEEK",{.T.})	
+	//--------------------------------------------------------------------------
+	//-- Define que sera exibido SCROLL vertical na grid.
+	//--------------------------------------------------------------------------	
+	_oView:SetViewProperty("TITULO","GRIDVSCROLL",{.T.})
+	_oView:SetViewProperty("HISTOR","GRIDVSCROLL",{.T.})
+	//--------------------------------------------------------------------------
+	//-- Habilita nova Grid
+	//--------------------------------------------------------------------------		
+	_oView:SetViewProperty("TITULO","ENABLENEWGRID")
+	_oView:SetViewProperty("HISTOR","ENABLENEWGRID")
+	_oView:SetUseCursor(.T.)
+	//--------------------------------------------------------------------------
+	//-- Força o fechamento da tela ao salvar o model
+	//--------------------------------------------------------------------------			
+	_oView:SetCloseOnOk({|| .T. })		
+	//--------------------------------------------------------------------------
+	//-- Ativa o uso do Msg na carga do formulario
+	//--------------------------------------------------------------------------		
+	_oView:SetProgressBar(.T.)	
+	_oView:EnableControlBar(.T.)	
+	//--------------------------------------------------------------------------
+	//-- Adiciona novos botóes a enchoice
+	//--------------------------------------------------------------------------
+	_oView:AddUserButton("Posição Titulo Rec","NOTE",{|| PosTitRec()},"Posição do Título a Receber")
+	_oView:AddUserButton("Legenda","NOTE",{|| Legenda()},"Legenda")
+	//--------------------------------------------------------------------------
+	//-- Bloco executado depois de ativar a view
+	//--------------------------------------------------------------------------	
+	_oView:SetAfterViewActive({|| ChangeZF1() })
+
+Return(_oView)
+
+
+//-----------------------------------------------------
+/*/{Protheus.doc} VldActModel
+Valida de permite ativar model.
+
+@author Allan da Silva Faria
+@since 22/04/2016
+@version 1.0
+@param _oModel	, Objeto	, Model 
+@return Boleano , .t. ativo model, .F. não ativa
+/*/
+//-----------------------------------------------------
+
+Static Function VldActModel(_oModel)
+
+	Local _lRet  := .T. 
+	Local _cTrab := GetNextAlias()
+
+	//--------------------------------------
+	//-- Valida existe titulo para o cliente
+	//--------------------------------------
+	If Select(_cTrab)>0
+		(_cTrab)->(dbCloseArea())
+	EndIf
+
+	BeginSQL Alias _cTrab
+
+		SELECT *
+		FROM %table:SE1% 
+		WHERE %notDel%
+		AND E1_FILIAL 	= %xFilial:SE1%
+		AND E1_CLIENTE 	= %exp:SA1->A1_COD%
+		AND E1_LOJA 	= %exp:SA1->A1_LOJA%
+
+	EndSQL
+
+	dbSelectArea(_cTrab)
+	(_cTrab)->(dbGoTop())
+
+	_lRet := !((_cTrab)->(EOF()) .AND. (_cTrab)->(BOF()))
+
+	If Select(_cTrab)>0
+		(_cTrab)->(dbCloseArea())
+	EndIf
+
+	If .NOT. _lRet
+		Help("",1,"NOTITULO",,"Cliente não possui  títulos a receber.",1,0)
+	EndIf
+
+Return(_lRet)
+
+//-----------------------------------------------------
+/*/{Protheus.doc} LoadSE1
+Carrega dados para GRID SE1.
+
+@author Allan da Silva Faria
+@since 15/04/2016
+@version 1.0
+@param _oMdlSE1	, Objeto, Model da Grid SE1
+@return Array	, Registro da grid SE1
+/*/
+//-----------------------------------------------------
+
+Static Function LoadSE1(_oMdlSE1)
+
+	Local _aArea  	:= SE1->(GetArea())
+	Local _aSE1   	:= {}
+	Local _oStrSE1	:= _oMdlSE1:GetStruct()
+	Local _aFldSE1	:= _oStrSE1:GetFields()
+	Local _cSelect	:= ""
+	Local _nn := 0
+
+	For _nn:=1 To Len(_aFldSE1)
+		If .Not. _aFldSE1[_nn,03] $ "E1_LEG"
+			_cSelect += AllTrim(_aFldSE1[_nn,03])+","
+		EndIf 				
+	Next _nn
+
+	_cSelect := "%"+SubStr(_cSelect,1,Rat(",",_cSelect)-1)+"%"
+
+	//--------------------------------------
+	//-- Valida existe titulo para o cliente
+	//--------------------------------------
+	If Select("SE1")>0
+		SE1->(dbCloseArea())
+	EndIf
+
+	//--------------------------------------
+	//-- Filtra títulos a receber
+	//--------------------------------------
+	BeginSQL Alias "SE1"
+
+		SELECT %exp:_cSelect%
+		FROM %table:SE1%
+		WHERE %notDel%
+		AND E1_FILIAL 	= %xFilial:SE1%
+		AND E1_CLIENTE 	= %exp:SA1->A1_COD%
+		AND E1_LOJA 	= %exp:SA1->A1_LOJA%
+		ORDER BY %exp:_cSelect%
+
+	EndSQL
+
+	For _nn:=1 To Len(_aFldSE1)
+		If ( .Not. _aFldSE1[_nn,03] $ "E1_LEG" )
+			TcSetField("SE1",_aFldSE1[_nn,3],_aFldSE1[_nn,4],_aFldSE1[_nn,5],_aFldSE1[_nn,6])
+		EndIf 				
+	Next _nn
+
+	//--------------------------------------
+	//-- Alimenta array
+	//--------------------------------------	
+	dbSelectArea("SE1")
+	SE1->(dbGoTop())
+
+	Do While SE1->(!EOF()) 
+
+		aAdd(_aSE1,{0,{}})
+
+		For _nn:=1 To Len(_aFldSE1)
+			If ( _aFldSE1[_nn,3] == "E1_LEG" )
+				If ( ROUND(SE1->E1_SALDO,2) == 0 )
+					aAdd(_aSE1[Len(_aSE1),2],"BR_VERMELHO")
+				ElseIf IsAgenda()
+					aAdd(_aSE1[Len(_aSE1),2],"BR_AMARELO")
+				ElseIf  ( ROUND(SE1->E1_SALDO,2) # ROUND(SE1->E1_VALOR,2))
+					aAdd(_aSE1[Len(_aSE1),2],"BR_AZUL")
+				Else
+					aAdd(_aSE1[Len(_aSE1),2],"BR_VERDE")	
+				EndIf		
+			Else
+				aAdd(_aSE1[Len(_aSE1),2],&("SE1->"+_aFldSE1[_nn,3]))
+			EndIf
+		Next _nn
+
+		SE1->(dbSkip())
+	EndDo
+
+	If Select("SE1")>0
+		SE1->(dbCloseArea())
+	EndIf
+
+	dbSelectArea("SE1")
+
+	RestArea(_aArea)
+
+Return(_aSE1)
+
+//-----------------------------------------------------
+/*/{Protheus.doc} PnlCabec
+Cabecalho da rotina
+
+@author Allan da Silva Faria
+@since 13/04/2016
+@version 1.0
+@param _oPanel, Objecto, Painel aonde será ancorado 
+/*/
+
+//-----------------------------------------------------
+
+Static Function PnlCabec(_oPanel)
+
+	Local _oFont 
+
+	DEFINE FONT _oFont NAME 'Arial' SIZE 0, -18 BOLD 
+
+	@007,005 SAY SA1->A1_COD+"/"+SA1->A1_LOJA+" - "+SA1->A1_NOME SIZE 300,010 OF _oPanel PIXEL COLOR CLR_BLUE FONT _oFont
+
+Return Nil
+
+//-----------------------------------------------------
+/*/{Protheus.doc} PnlAddHist
+Painel do rodape do lado direito.
+
+@author Allan da Silva Faria
+@since 13/04/2016
+@version 1.0
+@param _oPanel, Objecto, Painel aonde será ancorado 
+/*/
+//-----------------------------------------------------
+
+Static Function PnlAddHist(_oPanel)
+
+	Local _oGet1,_oGet2,_oGet3,_oRad
+	Local _cHistor := ""
+	Local _aRad	   := {}
+
+	Public _dAgend := STOD("//")
+	Public _dProc  := STOD("//")
+	Public _dDtInfo:= STOD("//") //dDataBase
+	Public _lHb	   := .T. 
+
+	  
+	@010,005 GROUP TO 090,290 LABEL "Digitar Histórico" OF _oPanel PIXEL
+	//
+	//@020,010 GET _oGet1 VAR _cHistor SIZE 185,065 MEMO OF _oPanel PIXEL
+
+	//20/06/2017	Walmir Junior - Adição de checkbox para controle de aceite e parecer jurídico.
+	//aAdd( _aRad, {"Parecer Jurid." ,"X","1"} )  // Comentado por Paulo Schwind 13/05/2019
+	//aAdd( _aRad, {"Prot. no Jurid.","Y","2"} )  // Comentado por Paulo Schwind 13/05/2019
+
+	aAdd( _aRad, {"Agendamento  " ,"A","1"} )
+	aAdd( _aRad, {"Parecer      " ,"X","2"} )
+	aAdd( _aRad, {"Ação Judicial" ,"Y","3"} )
+
+	@ 020,215 RADIO _oRad VAR _nRad ITEMS _aRad[1][1],_aRad[2][1],_aRad[3][1] SIZE 070,009 PIXEL OF _oPanel ON CHANGE fTest(_oPanel)
+
+	//	if _nRad == 1
+	//	   @045,201 SAY "Agendamento" SIZE 040,010 OF _oPanel PIXEL
+	//	   @045,201 MsGET _oGet2 VAR _dAgend WHEN if( _nRad == 1,.T.,.F.) SIZE 050,010 OF _oPanel HASBUTTON PIXEL 
+	//    Elseif _nRad == 2
+	//	   @045,201 SAY "Dt. Proc." SIZE 040,010 OF _oPanel PIXEL
+	//	   @045,215 MsGET _oGet3 VAR _dProc WHEN if( _nRad == 2,.T.,.F.) SIZE 050,010 OF _oPanel HASBUTTON PIXEL 
+	//  Endif
+
+	@020,010   GET _oGet1 VAR _cHistor WHEN _lHb SIZE 185,065 MEMO PIXEL OF _oPanel ON CHANGE fTest(_oPanel)
+	@055,215 MsGET _oGet2 VAR _dDtInfo WHEN _lHb SIZE 050,010      OF _oPanel HASBUTTON PIXEL 
+
+	/*
+	//040,201 	
+	@045,201 SAY "Dt. Proc." SIZE 040,010 OF _oPanel PIXEL
+	@055,201 MsGET _oGet3 VAR _dProc WHEN .T. SIZE 050,010 OF _oPanel HASBUTTON PIXEL //050
+
+	//040,260	
+	@045,260 SAY "Agendamento" SIZE 040,010 OF _oPanel PIXEL
+	@055,260 MsGET _oGet2 VAR _dAgend WHEN _lHb SIZE 050,010 OF _oPanel HASBUTTON PIXEL  //050
+	*/
+
+	@071,230 BUTTON "Gravar" SIZE 030,013 PIXEL OF _oPanel ACTION ;
+	FWMsgRun(,{|| GrvHistor(_dAgend,_cHistor, Iif(_nRad != 0,.T.,.F.),;
+	Iif(_nRad == 2,.T.,.F.),_dProc),_dAgend:=STOD("//"),_cHistor:= ""},"Gravando Historico...")
+
+Return Nil
+
+Static Function fTest(_oPanel,_oGet1, _oGet2)
+
+   _lHb := .T.
+   _dDtInfo := dDataBase
+
+Return Nil
+
+//----------------------------------------------------
+/*/{Protheus.doc} PnlVsuHist
+Painel do radape do lado esquerdo.
+
+@author Allan da Silva Faria
+@since 13/04/2016
+@version 1.0
+@param _oPanel, Objecto, Painel aonde será ancorado 
+/*/
+//-----------------------------------------------------
+
+Static Function PnlVsuHist(_oPanel)
+
+	Local _oGet 
+
+	@010,005 GROUP TO 090,200 LABEL "Visualiza Histórico de Cobrança" OF _oPanel PIXEL
+	@020,010 GET _oVisHistor VAR _cVisHistor SIZE 185,065 MEMO OF _oPanel PIXEL
+
+	_oVisHistor:lReadOnly:=.T.
+
+Return Nil
+
+
+//-----------------------------------------------------
+/*/{Protheus.doc} VisCliente
+Visualiza Cadastro de Cliente.
+
+@author Allan da Silva Faria
+@since 13/04/2016
+@version 1.0
+/*/
+//-----------------------------------------------------
+
+Static Function VisCliente()
+
+	Private cCadastro := "Clientes"
+
+	//----------------------------------
+	//-- Visualiza cadastro de cliente
+	//----------------------------------
+	A030Visual("SA1",SA1->(RECNO()),2)
+
+Return Nil
+
+//-----------------------------------------------------
+/*/{Protheus.doc} PosTitRec
+Prepara e chama posição de títulos a receber.
+
+@author Allan da Silva Faria
+@since 12/04/2016
+@version 1.0
+/*/
+//-----------------------------------------------------
+
+Static Function PosTitRec()
+
+	Local _aAreaSE1 := SE1->(GetArea())
+	Local _oModel 	:= FWModelActive()
+	Local _aSaveLine:= FWSaveRows()
+	Local _oMdlSE1  := _oModel:GetModel("TITULO")
+	Local _cChave	:= ""
+
+	_cChave	:= _oMdlSE1:GetValue("E1_FILIAL")+_oMdlSE1:GetValue("E1_CLIENTE")+_oMdlSE1:GetValue("E1_LOJA")+_oMdlSE1:GetValue("E1_PREFIXO")
+	_cChave	+= _oMdlSE1:GetValue("E1_NUM")+_oMdlSE1:GetValue("E1_PARCELA")+_oMdlSE1:GetValue("E1_TIPO")
+
+	dbSelectArea("SE1")
+	SE1->(dbSetOrder(2))
+	SE1->(dbSeek(_cChave))
+
+	//------------------------------------------
+	//-- Consulta Posição de Titulos a Receber
+	//------------------------------------------
+	FC040CON()
+
+	FWRestRows(_aSaveLine)
+	RestArea(_aAreaSE1)
+
+Return Nil
+
+//-----------------------------------------------------
+/*/{Protheus.doc} IsUsoField
+Função chamado na montagem do model e valida se o
+campo passado por parâmetro está na relação de campo
+usado por alias.
+
+@author Allan da Silva Faria
+@since 13/04/2016
+@version 1.0
+@param _cField, Caracter, Nome do campo
+@return Logico, .t. campo valido, .F. não valido
+/*/
+//-----------------------------------------------------
+
+Static Function IsUsoField(_cField)
+	Local _lRet := ( AsCan(Fields(FWTabPref(AllTrim(_cField))),{|HH| HH == AllTrim(_cField) }) > 0 )
+Return(_lRet)
+
+//-----------------------------------------------------
+/*/{Protheus.doc} Fields
+Campos que serão usados pela rotina e definidos na 
+ordem que devem ficar 
+
+@author Allan da Silva Faria
+@since 13/04/2016
+@version 1.0
+@param _cAlias, Caracter, Alias que deve retornar os campo
+@return Array, Campos e ordem
+/*/
+//-----------------------------------------------------
+
+Static Function Fields(_cAlias)
+
+	Local _aRet := {}
+
+	If ( _cAlias == "SA1" )
+		aAdd(_aRet,"A1_COD" 	)
+		aAdd(_aRet,"A1_LOJA"	)
+		aAdd(_aRet,"A1_NOME"	)
+	ElseIf ( _cAlias == "SE1" )
+		aAdd(_aRet,"E1_FILIAL" 	)
+		aAdd(_aRet,"E1_PREFIXO" )
+		aAdd(_aRet,"E1_NUM" 	)
+		aAdd(_aRet,"E1_PARCELA" )
+		aAdd(_aRet,"E1_TIPO" 	)
+		aAdd(_aRet,"E1_NATUREZ" )
+		aAdd(_aRet,"E1_CLIENTE" )
+		aAdd(_aRet,"E1_LOJA" 	)
+		aAdd(_aRet,"E1_NOMCLI" 	)
+		aAdd(_aRet,"E1_EMISSAO" )
+		aAdd(_aRet,"E1_VENCTO"  )
+		aAdd(_aRet,"E1_VENCREA" )
+		aAdd(_aRet,"E1_BAIXA" 	)
+		aAdd(_aRet,"E1_VALOR" 	)
+		aAdd(_aRet,"E1_SALDO" 	)
+		aAdd(_aRet,"E1_HIST" 	)
+		aAdd(_aRet,"E1_VALJUR" 	)
+		aAdd(_aRet,"E1_PORCJUR" )
+		aAdd(_aRet,"E1_MOEDA" 	)
+		aAdd(_aRet,"E1_DESCFIN" )
+		aAdd(_aRet,"E1_DIADESC" )
+		aAdd(_aRet,"E1_TIPODES" )
+		aAdd(_aRet,"E1_ACRESC"  )
+		aAdd(_aRet,"E1_SDACRES" )
+		aAdd(_aRet,"E1_DECRESC" )
+		aAdd(_aRet,"E1_SDDECRE" )
+		aAdd(_aRet,"E1_XSPC"	)
+		aAdd(_aRet,"E1_XSPCDT"	)
+		aAdd(_aRet,"E1_XCOBJDT"	)
+		aAdd(_aRet,"E1_XCOBJ"	)	 						
+	ElseIf ( _cAlias == "ZF1" )
+		aAdd(_aRet,"ZF1_DATA"	)
+		aAdd(_aRet,"ZF1_HORA"	)
+		aAdd(_aRet,"ZF1_DTPROC" )
+		aAdd(_aRet,"ZF1_AGENDA" )
+		aAdd(_aRet,"ZF1_ORIGEM"	)
+//		aAdd(_aRet,"ZF1_ACAO"   )
+//      aAdd(_aRet,"ZF1_XINTJU"	)
+		aAdd(_aRet,"ZF1_CODUSR" )
+//		aAdd(_aRet,"ZF1_HISTOR" )
+//		aAdd(_aRet,"ZF1_XJREC" 	)
+//		aAdd(_aRet,"ZF1_XJPARE" )
+//		aAdd(_aRet,"ZF1_DTPROC" )
+	EndIf
+
+Return(_aRet)
+
+//-----------------------------------------------------
+/*/{Protheus.doc} OrderField
+Altera Ordem de apresentação dos campos na grid.
+
+@author Allan da Silva Faria
+@since 13/04/2016
+@version 1.0
+@param _cAlias	, Caracter	, Alias da Estrutura
+@param _oStruct	, Objecto	, Estrutura da Grid
+/*/
+//-----------------------------------------------------
+
+Static Function OrderField(_cAlias,_oStruct)
+
+	Local _aFields  := Fields(_cAlias)
+	Local _aFldAlias:= _oStruct:GetFields()
+	Local _nOrdem	:= 0
+	Local _nn := 0
+
+	For _nn:= 1 To Len(_aFields)
+		If AsCan(_aFldAlias,{|HH| AllTrim(HH[1]) == _aFields[_nn]}) > 0
+			_nOrdem++	
+			_oStruct:SetProperty(_aFields[_nn],MVC_VIEW_ORDEM,STRZERO(_nOrdem,2))
+		EndIf
+	Next _nn
+
+Return Nil
+
+//-----------------------------------------------------
+/*/{Protheus.doc} Legenda
+Legenda
+
+@author Allan da Silva Faria
+@since 13/04/2016
+@version 1.0
+/*/
+//-----------------------------------------------------
+
+Static Function Legenda()
+
+	Local _cCadastro := "Títulos a Receber"
+	Local _aLegenda	 := {}
+
+	aAdd(_aLegenda,{"BR_VERDE"		,"Título em Aberto"			})
+	aAdd(_aLegenda,{"BR_AZUL"		,"Baixado parcialmente" 	})
+	aAdd(_aLegenda,{"BR_VERMELHO"	,"Título Baixado"			})
+	aAdd(_aLegenda,{"BR_AMARELO"	,"Agendamento para Hoje"	})
+
+	BrwLegenda(_cCadastro,"Legenda",_aLegenda)
+
+Return Nil
+
+//-----------------------------------------------------
+/*/{Protheus.doc} GrvHistor
+Grava historico no model e na tabela ZF1
+
+@author Allan da Silva Faria
+@since 15/04/2016
+@version 1.0
+@param _dAgend	, Data		, Data de Agendamento
+@param _cHistor	, Caracter	, Historico digitado pelo usuário.
+/*/
+//-----------------------------------------------------
+
+Static Function GrvHistor(_dAgend,_cHistor, _lJud, _lRec,_dProc)
+
+	Local _oView	:= FWViewActiva()
+	Local _oModel	:= FWModelActive()
+	Local _oMdlSE1	:= _oModel:GetModel("TITULO")
+	Local _oMdlZF1	:= _oModel:GetModel("HISTOR")
+	Local _aDados	:= Array(12)
+	Local _nAux		:= _oMdlSE1:GetLine()
+
+	If _nRad = 0
+	   Aviso("Atenção!", "Favor selecionar a opção correspondente !",{"Ok"})
+	   Return Nil
+	Elseif DTOS(_dDtInfo) = Space(8) 
+	   Aviso("Atenção!", "Favor informar a Data !",{"Ok"})
+	   Return Nil
+	ElseIf _nRad == 1
+		_dAgend := _dDtInfo 
+	Elseif _nRad == 2 .or. _nRad == 3    
+		_dProc  := _dDtInfo
+	Endif
+
+	If (_oMdlSE1:GetValue("E1_SALDO") > 0)
+
+		If .not. Empty(_cHistor) 
+
+			_aDados[01] := _oMdlSE1:GetValue("E1_CLIENTE")
+			_aDados[02] := _oMdlSE1:GetValue("E1_LOJA")
+			_aDados[03] := _oMdlSE1:GetValue("E1_PREFIXO")
+			_aDados[04] := _oMdlSE1:GetValue("E1_NUM")
+			_aDados[05] := _oMdlSE1:GetValue("E1_PARCELA")
+			_aDados[06] := _oMdlSE1:GetValue("E1_TIPO")
+			_aDados[07] := _dAgend
+			_aDados[08] := _cHistor
+			_aDados[09] := "01"
+			_aDados[12] := _dProc
+			If _lJud
+				If _lRec
+					If !fValRc()			
+						Aviso("Atenção!", "Já existe registro de protesto no jurídico para este título.",{"Ok"})
+						Return Nil
+					Else
+						_aDados[10] := .T.
+						_aDados[11] := .F.
+					EndIf
+				Else
+					_aDados[10] := .F.
+					_aDados[11] := .T.
+					/*
+					If fValRc()			
+						Aviso("Atenção!", "Não é permitido registrar Parecer Jurídico sem efetuar o Protesto no Jurídico.",{"Ok"})
+						Return Nil
+					Else
+						_aDados[10] := .F.
+						_aDados[11] := .T.
+					EndIf
+					*/
+				EndIf
+			Else
+				_aDados[10] := .F.
+				_aDados[11] := .F.
+			EndIf 
+
+			//-------------------------
+			//-- Grava Historico 
+			//-------------------------
+			AddHistor(_aDados,,,_oMdlSE1:GetValue("E1_FILIAL"), _nRad)
+
+			_oModel:DeActivate()
+			_oModel:SetOperation(MODEL_OPERATION_UPDATE)
+			_oModel:Activate() 
+
+			_oMdlZF1:lInsertLine := .T.
+
+			_oMdlZF1:AddLine()
+			_oMdlZF1:ForceValue("ZF1_DATA"	,ZF1->ZF1_DATA	)
+			_oMdlZF1:ForceValue("ZF1_HORA"	,ZF1->ZF1_HORA	)
+			_oMdlZF1:ForceValue("ZF1_AGENDA",ZF1->ZF1_AGENDA)
+			_oMdlZF1:ForceValue("ZF1_ORIGEM",ZF1->ZF1_ORIGEM+STR(_nRad,1))
+			_oMdlZF1:ForceValue("ZF1_CODUSR",ZF1->ZF1_CODUSR)
+			_oMdlZF1:ForceValue("ZF1_HISTOR",ZF1->ZF1_HISTOR)
+			_oMdlZF1:ForceValue("ZF1_DTPROC",ZF1->ZF1_DTPROC)
+
+			_oModel:DeActivate()
+			_oModel:SetOperation(MODEL_OPERATION_VIEW)
+			_oModel:Activate()
+
+			_oMdlSE1:GoLine(_nAux)
+			//_oMdlZF1:GoLine(_oMdlZF1:Length())
+			_oMdlZF1:GoLine(1)
+
+			ChangeZF1()
+
+			_oView:Refresh("HISTOR")
+			
+		Elseif Empty(_cHistor)
+			Alert("Histórico não informado !")
+		Elseif Empty(DTOS(_dDtInfo)) .OR.  Empty(DTOS(_dAgend))      
+		   Alert("Data não informada !")
+		EndIf
+	Else
+		Alert("Não é permitido informar histórico de cobrança para título a receber quitado.")
+	EndIf
+
+Return Nil
+
+//-----------------------------------------------------
+/*/{Protheus.doc} fValRc
+Valida se já houve registro de recebimento jurídico.
+
+@author Walmir Junior
+@since 22/06/2017
+@version 1.0
+/*/
+//-----------------------------------------------------
+
+Static Function fValRc()
+
+	Local _lRet :=	.F.
+	Local _cTrab:= GetNextAlias()
+	Local _oModel	:= FWModelActive()
+	Local _oMdlSE1	:= _oModel:GetModel("TITULO")
+
+	If Select(_cTrab)>0
+		_cTrab->(dbCloseArea())
+	EndIf
+
+	BeginSQL Alias _cTrab
+
+		SELECT *
+		FROM %table:ZF1% 
+		WHERE %notDel%
+		AND ZF1_FILIAL 	= %exp:_oMdlSE1:GetValue("E1_FILIAL")%
+		AND ZF1_CLIENT 	= %exp:_oMdlSE1:GetValue("E1_CLIENTE")%
+		AND ZF1_LOJA 	= %exp:_oMdlSE1:GetValue("E1_LOJA")%
+		AND ZF1_PREF	= %exp:_oMdlSE1:GetValue("E1_PREFIXO")%
+		AND ZF1_NUM		= %exp:_oMdlSE1:GetValue("E1_NUM")%
+		AND ZF1_PARC	= %exp:_oMdlSE1:GetValue("E1_PARCELA")%
+		AND ZF1_TIPO	= %exp:_oMdlSE1:GetValue("E1_TIPO")%
+		AND ZF1_XJREC	= %exp:'T'%
+
+	EndSQL
+
+	dbSelectArea(_cTrab)
+	(_cTrab)->(dbGoTop())
+
+	_lRet := (_cTrab)->(EOF())
+
+	If Select(_cTrab)>0
+		(_cTrab)->(dbCloseArea())
+	EndIf
+
+Return _lRet
+
+//-----------------------------------------------------
+/*/{Protheus.doc} DelHistor
+Deleta historico.
+
+@author Allan da Silva Faria
+@since 18/04/2016
+@version 1.0
+@param _aDados	, Array		, Dados do movimetação que gerou o historico
+@param _cFunName, Caracter	, Nome da rotina que gerou o historico
+/*/
+//-----------------------------------------------------
+
+Static Function DelHistor(_aDados,_cFunName)
+
+	Local _aArea := ZF1->(GetArea()) 
+
+	DEFAULT _cFunName := FunName()
+
+	_cFunName := PADR(_cFunName,TamSX3("ZF1_ORIGEM")[1])	
+
+	dbSelectArea("ZF1")
+	ZF1->(dbSetOrder(2))
+	ZF1->(dbGoTop())      //-- FILIAL - CLIENTE - LOJA - PREFIXO - NUM - PARCELA - TIPO - DATA - ORIGEM - SEQ
+	If ZF1->(dbSeek(FWxFilial("ZF1")+_aDados[1]+_aDados[2]+_aDados[3]+_aDados[4]+_aDados[5]+_aDados[6]+DTOS(_aDados[7])+_cFunName+_aDados[8]))
+		RecLock("ZF1",.F.)
+		ZF1->(dbDelete())
+		ZF1->(MsUnlock())
+	EndIf
+
+	RestArea(_aArea)
+
+Return Nil
+
+//-----------------------------------------------------
+/*/{Protheus.doc} AddHistor
+Grava na tabela o Historico.
+
+@author Allan da Silva Faria
+@since 15/04/2016
+@version 1.0
+@param _aDados	, Array		, Dados do cliente, título e historico
+@param _cFunName, Caracter	, Nome da função que solicitou a gravação
+/*/
+//-----------------------------------------------------
+
+Static Function AddHistor(_aDados,_cFunMame,_dDataInc,_cFilial, _pnRad)
+
+	DEFAULT _cFunMame := AllTrim(FunName())	
+	DEFAULT _dDataInc := dDatabase
+	DEFAULT _cFilial  := FWxFilial("ZF1")
+
+	dbSelectArea("ZF1")
+	ZF1->(dbSetOrder(1))
+
+	If ! Empty(_aDados[08]) .or. ! Empty(_aDados[07]) .or.  ! Empty(_dDataInc) 
+		RecLock("ZF1",.T.)
+		Replace ZF1_FILIAL 	With _cFilial
+		Replace ZF1_CLIENT	With _aDados[01]
+		Replace ZF1_LOJA	With _aDados[02]
+		Replace ZF1_PREF	With _aDados[03]
+		Replace ZF1_NUM		With _aDados[04]
+		Replace ZF1_PARC	With _aDados[05]
+		Replace ZF1_TIPO	With _aDados[06]
+		Replace ZF1_DATA	With _dDataInc
+		Replace ZF1_AGENDA	With _aDados[07]
+		Replace ZF1_HISTOR 	With _aDados[08]
+		Replace ZF1_CODUSR	With RetCodUsr()
+		//Replace ZF1_ORIGEM  With _cFunMame+STR(_pnRad,1)
+		Replace ZF1_SEQ		With _aDados[09]
+		Replace ZF1_HORA	With Time()
+		
+        // A função AddHistor() é executada tambem pelo faturamento e a variável _nRad não é utilizada no MÓDULO
+        // Paulo Schwind - 23/05/2019
+		if ValType(_pnRad) <> 'U'
+		   Replace ZF1_ORIGEM  With _cFunMame+STR(_pnRad,1)
+		   Replace ZF1_ACAO	With STR(_pnRad,1)
+		Else
+	  	   Replace ZF1_ORIGEM  With _cFunMame
+		   Replace ZF1_ACAO	With '2'   
+		Endif   
+
+		If LEN(_aDados) >= 12
+			Replace ZF1_DTPROC	With _aDados[12]
+		EndIf
+
+		If LEN(_aDados) > 9
+			Replace	ZF1_XJREC	With _aDados[10]
+			Replace ZF1_XJPARE	With _aDados[11]
+		Else
+			Replace	ZF1_XJREC	With .F.
+			Replace ZF1_XJPARE	With .F.
+		EndIf
+		MsUnLock()
+	EndIf
+
+Return 
+
+//-----------------------------------------------------
+/*/{Protheus.doc} IsAgenda
+Verifica se título tem agendamento
+
+@author Allan da Silva Faria
+@since 15/04/2016
+@version 1.0
+/*/
+//-----------------------------------------------------
+
+Static Function IsAgenda()
+
+	Local _lRet := .F.
+	Local _cTrab:= GetNextAlias()
+
+	If Select(_cTrab)>0
+		_cTrab->(dbCloseArea())
+	EndIf
+
+	BeginSQL Alias _cTrab
+
+		SELECT *
+		FROM %table:ZF1% 
+		WHERE %notDel%
+		AND ZF1_FILIAL 	= %exp:SE1->E1_FILIAL%
+		AND ZF1_CLIENT 	= %exp:SE1->E1_CLIENTE%
+		AND ZF1_LOJA 	= %exp:SE1->E1_LOJA%
+		AND ZF1_PREF	= %exp:SE1->E1_PREFIXO%
+		AND ZF1_NUM		= %exp:SE1->E1_NUM%
+		AND ZF1_PARC	= %exp:SE1->E1_PARCELA%
+		AND ZF1_TIPO	= %exp:SE1->E1_TIPO%
+		AND ZF1_AGENDA	= %exp: DTOS(DDATABASE)%
+
+	EndSQL
+
+	dbSelectArea(_cTrab)
+	(_cTrab)->(dbGoTop())
+
+	_lRet := !((_cTrab)->(EOF()) .AND. (_cTrab)->(BOF()))
+
+	If Select(_cTrab)>0
+		(_cTrab)->(dbCloseArea())
+	EndIf
+
+Return(_lRet) 
+
+//-----------------------------------------------------
+/*/{Protheus.doc} ChangeZF1
+Executado na troca de linha da GRID Historico.
+
+@author Allan da Silva Faria
+@since 15/04/2016
+@version 1.0
+@param _oView	, Objecto , View
+@param _cViewID	, Caracter, ID da View ( Grid ).
+/*/
+//-----------------------------------------------------
+
+Static Function ChangeZF1(_oView,_cViewID)
+
+	Local _oModel := FWModelActive()
+	Local _oMldZF1:= _oModel:GetModel("HISTOR") 
+	Local _oMldSE1:= _oModel:GetModel("TITULO")
+
+	_cVisHistor := _oMldZF1:GetValue("ZF1_HISTOR")
+	_xcAcao     := _oMldZF1:GetValue("ZF1_ACAO")
+
+	_oVisHistor:Refresh()
+
+Return Nil
+
+
+//-----------------------------------------------------
+/*/{Protheus.doc} Origem
+Origem de histórico de cobrança.
+
+@author Allan da Silva Faria
+@since 26/04/2016
+@version 1.0
+@param cTipo, character, Tipo de retorno, A=Array,S=String
+@return Array, Array com as origens.
+/*/
+//-----------------------------------------------------
+
+Static Function Origem(cTipo) //, p_Acao)
+
+	Local _aRet 	:= {""}
+	Local _aOrigem 	:= {}
+
+	//-------------------------------------------
+	//-- Origens
+	//-------------------------------------------
+    aAdd(_aOrigem,"SF06A01X1=Hist. Cobrança / 1-Agendamento"     ) 
+    aAdd(_aOrigem,"SF06A01X2=Hist. Cobrança / 2-Parecer Jurídico")
+    aAdd(_aOrigem,"SF06A01X3=Hist. Cobrança / 3-Ação Judicial" )
+    aAdd(_aOrigem,"SF06A01X =Hist. Cobrança / Outras " )
+	aAdd(_aOrigem,"FINA280  =Fat. Receber"	    )
+	aAdd(_aOrigem,"FINA460  =Liquidação" 		)
+	aAdd(_aOrigem,"SFINA20A =Renegociação" 		)	//-- Baixado
+	aAdd(_aOrigem,"SFINA20B =Renegociação" 		)	//-- Incluido
+	aAdd(_aOrigem,"FINA070  =Baixa a Receber"	)
+	aAdd(_aOrigem,"FINA040S =Spc"				)
+	aAdd(_aOrigem,"FINA040J =Cobrança Judicial"	)
+	aAdd(_aOrigem,"DTFINR01 =Carta de Cobrança"	)
+	aAdd(_aOrigem,"FINA060T =Transf. Carteira"	)
+	aAdd(_aOrigem,"FINA060B =Emissão Borderô"	)
+	aAdd(_aOrigem,"SF06A07X =Transf. Carteira"  )
+
+	If cTipo == "A"
+		_aRet := aClone(_aOrigem)
+	ElseIf cTipo == "S"
+		aEval(_aOrigem,{|HH| _aRet[1]+=AllTrim(HH)+";"})
+	EndIf
+
+Return(_aRet)
+
+
+// Paulo Schwind - 16/05/2019
+// Função que mostra ação, através ZF1_ACAO ==> MVC_VIEW_COMBOBOX 
+Static Function AcaoOrig(cTipo)
+
+	Local _aRet 	:= {""}
+	Local _aAcao 	:= {}
+
+	//---------
+	//-- Acao
+	//---------
+	aAdd(_aAcao," =Outros       "    ) 
+	aAdd(_aAcao,"1=Agendamento"      ) 
+	aAdd(_aAcao,"2=Parecer Jurídico"	)
+	aAdd(_aAcao,"3=Ação Judicial" 	)
+
+	_aRet := aClone(_aAcao)
+
+Return(_aRet)

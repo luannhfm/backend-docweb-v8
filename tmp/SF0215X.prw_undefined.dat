@@ -1,0 +1,558 @@
+#Include 'Protheus.ch'
+#INCLUDE "APWIZARD.CH"
+#include "totvs.ch"
+#include 'fileio.ch'
+#Include 'COMMON.ch'
+#Include "Topconn.ch"
+
+//Definições do modulo 
+#DEFINE STRTITULO  "Anexo TR SC" //TITULO DO MODULO
+//Parametros que podem ser configurados no SX6
+#DEFINE ZBA_NOALLOW GETNEWPAR("ZBA_NOALLOW",".EXE.COM.BIN.MSI.DLL.REG.BAT.VBS") //LISTA DE TIPOS NÃO PERMITIDOS PARA FAZER UPLOAD (Se ZBA_ALLOWED for vazio)
+#DEFINE ZBA_ALLOWED GETNEWPAR("ZBA_ALLOWED",".PDF.pdf") //LISTA DE TIPOS PERMITIDOS PARA FAZER UPLOAD (Se informado, ZBA_NOALLOW será ignorado)
+#DEFINE MV_XLOCTR GETNEWPAR("MV_XLOCTR","\system\doc\com\tr") //Local a ser salvo Anexo TR
+#DEFINE MV_XTAMTR GETNEWPAR("MV_XTAMTR",2560000) //Define tamanho do Uploand do arquivo
+#DEFINE ZBA_TIMEEXC GETNEWPAR("ZBA_TIMEEXC",300) //5 Min - TEMPO EM SEGUNDOS PARA EXCLUIR O OBJETO LOGO APOS UPLOAD (3600 = 1 Hora) - Prioridade sobre regra de ZBA_REGRAEX
+
+/*/{Protheus.doc} SF02012X
+@author Newton Silva - J2A Consultoria
+@since 11/11/2016
+@version 1.0
+@description Rotina de Anexo e Analise do TR no processo da Solicitacao de Compras.
+Utilizados PE's:
+MT110LEG New* - LEGENDA TR (Em analise/Em correcao) 
+MT110ROT Exit - Rotina Anexo(U_SF0215X) / Analise(U_SF0216X)
+Todos Tem acesso a Rotina, mas apenas o usuario que inclui a SC poderar anexar a TR
+
+/*/            
+
+//+-------------------------------------------------------------+
+//|	O Anexo TR só é permitido ANEXAR, o usuario que inseriu 	|
+//| A cotação 
+//+-------------------------------------------------------------+
+
+User Function SF0215X(_pNSC)
+	Local oDlg, nX
+	Local aCol := {}
+	Local aRow := {}
+	Local aAmb := GetArea()
+	
+	Local _cCamin := ''
+	Private _lRet := .T.
+	Private _cObjCod   := CriaVar( "ZBA_CODIGO", .F. )
+	Private _cObjOri   := CriaVar( "ZBA_NOMORI", .F. )
+	Private cCadastro := "Analise TR"
+	//Variaveis privadas
+	Private cNumSC, cAliasZBA 
+	Private cLocal := ''
+	Private nTamTR := 0	
+	Private cCadastro := "Cadastro TR"
+	Private _cAqTR := ''
+	
+	//Valida Se documento possui Bloqueio para analise TR
+	//o C1_APROV deve ser anexado antes de ser liberado
+	If SC1->C1_XSTTR = 'R' //Reprovação
+		If SC1->C1_XSTTR != 'R' .and. SC1->C1_APROV != 'L' 
+			Alert('SC deve estar Reprovada para Anexo.')
+			_lRet := .F.
+			Return .F.
+		EndIf
+	ElseIf SC1->C1_APROV = 'B'//Bloqueio
+		If SC1->C1_APROV != 'B' 
+			Alert('SC deve estar bloqueada para Anexo.')
+			_lRet := .F.
+			Return .F.
+		EndIf
+	elseIf SC1->C1_XSTTR = 'N'
+		Alert('TR em Analise, não é possivel anexar nessa fase.')
+		_lRet := .F.
+		Return .F.
+	EndIf 
+	
+	//2 MB - TAMANHO MAXIMO DO ARQUIVO PARA UPLOAD
+	If ! Empty(MV_XTAMTR)
+		nTamTR := MV_XTAMTR
+	Else
+		nTamTR := 2560000 // Kb
+	EndIf
+	
+	//MV_XLOCTR - Define local no servidor onde o TR sera guardado
+	If ! Empty(MV_XLOCTR)
+		cLocal := MV_XLOCTR
+	Else
+		cLocal := "Favor verificar o parametro: MV_XLOCTR. Local Definido: '\SYSTEM\DOC\COM\TR\'"
+	EndIf
+	
+	DbSelectArea("ZBA")
+	dbSetOrder(1)
+	
+	//aRow := {{"","","","",CTOD("  /  /  "),"","",""}}
+	
+   	//Tela Dialogo
+	DEFINE MSDIALOG oDlg TITLE STRTITULO FROM 0,0 TO 400,800 PIXEL
+	//TWBrowse():New(nRow, nCol, nWidth, nHeigth, bFields, aHeader, aColSize, oDlg, cField, uValue1, uValue2, bChange, bDblClick, bRClick, oFont, oCursor, nClrFore, nClrBack, cMsg, lUpdate, cAliasZBA, lpixel, bWhen, lDesign, bValid)
+	oBrw:=TWBrowse():New(0,0,400,180,,,,oDlg,,,,,,,,,,,,,,.T.)
+	oBrw:SetArray(aRow)
+	oBrw:Align := CONTROL_ALIGN_TOP
+	//Num SC, Data, Hora,Cod User,Nome User,Codigo, Nome Ori., Local
+	Aadd(aCol, {"Num Sc",			"","",040,0,".F.","","C","",""})
+	Aadd(aCol, {"Data",				"","",060,0,".F.","","D","",""})
+	Aadd(aCol, {"Hora",				"","",060,0,".F.","","C","",""})
+	Aadd(aCol, {"Cod Usuario",		"","",060,0,".F.","","C","",""})
+	Aadd(aCol, {"Nome Usuario",		"","",080,0,".F.","","C","",""})
+	Aadd(aCol, {"Codigo", 			"","",060,0,".F.","","C","",""})
+	Aadd(aCol, {"Nome Ori.", 		"","",080,0,".F.","","C","",""})
+	Aadd(aCol, {"Local",			"","",080,0,".F.","","C","",""})
+
+	
+	//								1		2		3		4			5		6		7		8		9		10		11		12	13		14
+	//oBrw:AddColumn(TCColumn():New(cHead, bData, cPicture, bClrFore, bClrBack, cAlign, nWidth, lbitmap, ledit, cMsg, bValid, cErr, llite, cOrder))
+	//NUMSC, CODIGO, NOME, NOMORI, LOCAL, DATA, HORA, CODUSE, NOMUSE
+	oBrw:AddColumn(TCColumn():New(aCol[ 1,1],{|| aRow[oBrw:nAt, 1]},aCol[ 1,3],,,"LEFT", aCol[ 1,4],.F.,.F.,,,,.F.,))
+	oBrw:AddColumn(TCColumn():New(aCol[ 2,1],{|| aRow[oBrw:nAt, 2]},aCol[ 2,3],,,"LEFT", aCol[ 2,4],.F.,.F.,,,,.F.,))
+	oBrw:AddColumn(TCColumn():New(aCol[ 3,1],{|| aRow[oBrw:nAt, 3]},aCol[ 3,3],,,"LEFT", aCol[ 3,4],.F.,.F.,,,,.F.,))
+	oBrw:AddColumn(TCColumn():New(aCol[ 4,1],{|| aRow[oBrw:nAt, 4]},aCol[ 4,3],,,"LEFT", aCol[ 4,4],.F.,.F.,,,,.F.,))
+	oBrw:AddColumn(TCColumn():New(aCol[ 5,1],{|| aRow[oBrw:nAt, 5]},aCol[ 5,3],,,"LEFT", aCol[ 5,4],.F.,.F.,,,,.F.,))
+	oBrw:AddColumn(TCColumn():New(aCol[ 6,1],{|| aRow[oBrw:nAt, 6]},aCol[ 6,3],,,"LEFT", aCol[ 6,4],.F.,.F.,,,,.F.,))
+	oBrw:AddColumn(TCColumn():New(aCol[ 7,1],{|| aRow[oBrw:nAt, 7]},aCol[ 7,3],,,"LEFT", aCol[ 7,4],.F.,.F.,,,,.F.,))
+	oBrw:AddColumn(TCColumn():New(aCol[ 8,1],{|| aRow[oBrw:nAt, 8]},aCol[ 8,3],,,"LEFT", aCol[ 8,4],.F.,.F.,,,,.F.,))
+	
+   	//Botões   SaveDoc(oBrw) - Salva documento
+   	//FT_FUse("C:\Users\j2a.newtonsilva\Desktop\IMP\"+ aRow[oBrw:nAt,03])
+   	//@ 184,220 Button "Visualiza" 	Size 040,012 OF oDlg PIXEL ACTION {|| nRet := ShellExecute("open", aRow[oBrw:nAt,03], "", cLocal, 1),.t. } PIXEL //3-Mod,4-Ori
+	@ 184,265 Button "Anexar"	Size 040,012 OF oDlg PIXEL ACTION {|| U_VldAnaTR(_pNSC,SC1->C1_USER,@aRow,nTamTR), _lRet} PIXEL
+	@ 184,310 Button "Baixar Anexo" Size 040,012 OF oDlg PIXEL ACTION {|| _cCamin := cGetFile("", "Salvar Arquivo no Terminal", 0 , GetTempPath(), .F., GETF_LOCALFLOPPY+GETF_LOCALHARD+GETF_RETDIRECTORY, .F.),_cObjCod := aRow[oBrw:nAt,06],_cObjOri := aRow[oBrw:nAt,07],BaixZBA(_cCamin,_cObjCod,_cObjOri),oDlg:Refresh(), .t.} PIXEL
+	@ 184,355 Button "Sair" 	Size 040,012 OF oDlg PIXEL ACTION {|| oDlg:End()} PIXEL
+	
+	//carrega todos os arquivos processados anteriormente
+	ACTIVATE MSDIALOG oDlg ON INIT Processa({|| LoadRows(oBrw, @aRow,_pNSC,"","ALL"),oDlg:Refresh()}, "Obtendo dados", "Aguarde...", .T.) CENTERED
+	
+	RestArea(aAmb)
+	nX := Len(aRow)
+	aRow := {}
+Return _lRet
+
+/*/{Protheus.doc} VldAnaTR
+@author Newton Silva - J2A !Consultoria
+@since 25/11/2016
+@version 1.0
+@description Valida Usuario na Inclusao do Anexo TR, apenas criador da SC é permitido
+/*/
+User Function VldAnaTR(_pNSC,cUserC,aRow,nTamTR)
+	//Verifica se usuario que criou a SC é o mesmo que ira inserir o anexo TR
+	If cUserC != __cUserID //C1_USER(CODIGO)//C1_SOLICIT(UsrRetName(RetCodUsr()))
+		Alert('SC criada por outro usuario! Busque uma SC com seu usuario p/ Anexar.')
+		_lRet := .F.
+	Else
+		//Função principal
+		InsZba(_pNSC,@aRow,nTamTR)
+		_lRet := .T.
+	Endif
+	
+Return _lRet
+
+/*/{Protheus.doc} InsZba
+@author Newton Silva - J2A Consultoria
+@since 22/11/2016
+@version 1.0
+@description Salva informacoes na ZBA e Arquivo no Servidor
+Esta Funcao também é responsavel em Mudar o nome do Arquivo
+Para o Codigo do Sequencial da ZBA que nunca se repete. 
+- Definido junto ao Joao Eduardo
+/*/
+Static Function InsZba(_pNSC,aRow,nTamTR)
+	Local _pCodSC 	:= ''
+	Local lRet    	:= .T.
+	Local _nPonto 	:= 0
+	Local _nPonto2 	:= 0
+	Local _nPonto3 	:= 0
+	Local nOpcoes   := GETF_LOCALHARD+GETF_NETWORKDRIVE
+	Local _cArq2   	:= ''
+	Local _cExt   	:= ''
+	Local _cNomArq	:= ''
+	Local _cNomComp := ''
+	Local _cCodZba  := ''
+	Local _cArqOri	:= ''
+	Local _cArqMod 	:= ''
+	Local nW 		:= 0
+	Local cDtHora
+	Local cUser 	:= cUserName
+	Local _cfilEmp  := ''
+	Local aAreaSC1 
+	Local _aItem 	 := {}
+	Local _nW 		 := 0
+	Local lTrAnalise := .F.
+	
+	//SET DATE FORMAT TO "dd/mm/yyyy"
+	
+	_pCodSC := cGetFile("", "Salvar Arquivo no Server ", 0, GetTempPath(), .F., nOpcoes, .F.)
+	_cNomArq	:= _pCodSC //
+	
+	//cDtHora := Dtoc(Date()) + ' ' + Time() //Gravação Correta Data
+	if Empty(_cNomArq)
+		Alert('Nao selecionado nenhum arquivo!')
+		lRet := .f.
+		Return .f.
+	Endif
+	
+	//------------------------------------------------
+	//Trata Nome do Arquivo Original
+	//------------------------------------------------
+	_nPonto		:= RAT("\", _cNomArq)
+	_cArqOri   	:= SubStr(_cNomArq,_nPonto+1,Len(_cNomArq))
+	
+	//------------------------------------------------
+	//Trata Nome do Arquivo Codigo da ZBA
+	//------------------------------------------------
+	//Separa por \
+	_nPonto2 := RAT("\", _cNomArq)
+	//Arquivo + Ext
+	_cArq2 	 := SubStr(_cNomArq,_nPonto2+1,Len(_cNomArq))
+	//Separa por .
+	_nPonto3 := RAT(".", _cArq2)
+	//Apenas Ext
+	_cExt 	 :=  SubStr(_cArq2,_nPonto3+1,Len(_cArq2))
+	//Monta Codigo + Ext
+	//DbSelectArea('ZBA')
+	_cfilEmp := xFilial("ZBA")
+	_cCodZba := GetSXENum("ZBA","ZBA_CODIGO")
+	
+	_cCodZba := Substr(_cCodZba,9,18)
+	_cCodZba := _cfilEmp+ _cCodZba
+	
+	_cArqMod   := Alltrim(_cCodZba+'.'+_cExt)
+	
+	aDirectory := DIRECTORY(_cNomArq,"D")
+	
+	if ! Empty(aDirectory[1][2])//Arquivo Selecionadoj2a.
+		If aDirectory[1][2] > nTamTR //Tamanho Parametro
+			MsgStop("Tamanho do Arquivo maior que permitido!", STRTITULO)
+		Endif
+	else
+		Alert('Arquivo não pode ser vazio!')
+	Endif
+	
+	If ! Empty(ZBA_ALLOWED) .And. ! (_cExt)$(ZBA_ALLOWED)
+		MsgStop("Não permitido este tipo de arquivo. ", STRTITULO)
+	ElseIf (_cExt)$(ZBA_NOALLOW)
+		MsgStop("Este tipo de objeto não é permitido!", STRTITULO)
+	Else
+		If ! Empty(_cArqMod)
+			If File(cLocal+_cArqMod)
+				//MsgStop("Arquivo já existente neste local!"+_cArqMod, STRTITULO)
+				If FERASE(cLocal+_cArqMod) == -1 //Deleta Arquivo do Servidor
+					MsgStop('Arquivo já existente no Servidor! Não foi possivel a deleção. ['+   str(ferror(),4)+'] ')
+				Else
+					//MsgStop('Arquivo deletado com sucesso')
+				Endif
+			Endif
+		
+			//Da maquina para o servidor
+			//Local+Arquivo -> Destino
+			//_pCodSC = caminho completo mais nome do arquivo no servidor
+			
+			Processa({|| CpyT2S(_pCodSC,cLocal) }, "Transferindo objeto p Server", "Aguarde...", .t.)
+			
+			//Origem -> Destino
+			nStatus := freName(cLocal+_cArqOri,cLocal+_cArqMod)
+			If nStatus == -1
+				MsgStop('Falha na mudanca do nome do Arquivo '+ Str(ferror(),4))
+			Endif
+	
+			If File(cLocal+_cArqMod)
+		     	//MsgInfo("Arquivo transferido com sucesso!"+CRLF+_cArqMod, STRTITULO)
+		   	Else
+		   		MsgInfo("Erro ao transferir arquivo no Servidor, verifique se o local existe!"+CRLF+_cArqMod, STRTITULO)
+		   	Endif
+		   	
+		   	_cNomComp := USRFULLNAME(__cUSERID)
+		   	
+		   	//dbSelectarea('ZBA')
+		   	//NUMSC, CODIGO, NOME, NOMORI, LOCAL, DATA, HORA, CODUSE, NOMUSE
+		   	DbSelectArea("ZBA")
+		   	DbSetOrder(1)
+		   	If DbSeek(xFilial("ZBA") + _pNSC)
+		   		lTrAnalise := .T.
+		   	EndIf
+		   	
+		   	If RecLock("ZBA", .T.)
+				ZBA->ZBA_FILIAL  := xFilial( "ZBA" )
+				ZBA->ZBA_NUMSC   := _pNSC //SC1->C1_NUM
+				ZBA->ZBA_CODIGO  := _cCodZba
+				ZBA->ZBA_NOME	 := _cArqMod
+				ZBA->ZBA_NOMORI	 := _cArqOri
+				ZBA->ZBA_LOCAL 	 := cLocal
+				ZBA->ZBA_DATA	 := DATE()
+				ZBA->ZBA_HORA 	 := TIME()
+				ZBA->ZBA_CODUSE  := __cUSERID
+				ZBA->ZBA_NOMUSE  := Alltrim(_cNomComp)
+				ConfirmSX8()
+				ZBA->(MsUnLock())
+			Else
+				RollBackSX8()
+				Alert('Erro ao gravar registro ZBA!')
+			EndIf
+			
+			If lTrAnalise
+				SICOMA04(_pNSC)
+			EndIf
+			
+			//Carrega arquivo novo apenas
+			Processa({|| LoadRows(oBrw, @aRow, _pNSC,_cCodZba,"ESP")}, "Atualizando dados", "Aguarde...", .T.)
+			//Muda legenda quando Anexado TR
+			dbSelectarea("SC1")
+			SC1->(dbSetorder(1))
+			If SC1->(dbSeek(xFilial("SC1")+_pNSC)) 
+				IF SC1->C1_XSTTR == 'R' 
+					aAreaSC1	:= SC1->(GetArea())
+					//SC1->(dbGoTop()) //Posiciona no inicio da tabela
+					While !SC1->(EOF()) .and. xFilial('SC1') == SC1->C1_FILIAL .and. SC1->C1_NUM == _pNSC
+						Aadd(_aItem,{SC1->C1_ITEM})
+						SC1->(dbSkip())
+					Enddo
+					
+					RestArea(aAreaSC1)
+					For _nW:= 1 to Len(_aItem)
+						If RecLock("SC1", .F.)
+							SC1->C1_XSTTR := 'N' //TR em Analise
+							SC1->(MsUnLock())
+						Endif
+						SC1->(dbSkip())
+					Next _nW 
+					
+				Endif
+				//+---------------------------------------------+
+				//|	Registro anexo do documento TR				|
+				//+---------------------------------------------+
+				DbSelectArea("ZF6")
+				ZF6->(dbSetorder(1))//num+item+cod //ZF6_NUMSC, CODIGO,PROCES,DATA,HORA,USUARI
+				if RecLock("ZF6",.T.)
+					ZF6->ZF6_FILIAL := xFilial('ZF6')
+					ZF6->ZF6_NUMSC 	:= _pNSC
+					ZF6->ZF6_CODIGO := _cCodZba
+					ZF6->ZF6_PROCES := "TR Anexado"
+					ZF6->ZF6_DATA 	:= Date()
+					ZF6->ZF6_HORA 	:= Time()
+					ZF6->ZF6_USUARI := cUser
+					ZF6->ZF6_STTR 	:= 'N'
+					ZF6->ZF6_JUST	:= cLocal+_cArqMod
+					ZF6->(MsUnLock())
+				Endif
+				
+				//Anexado TR
+				U_SF0219X(_pNSC,"",cLocal+_cArqMod,cUser)
+				//Alert('Não encontrado: '+_pNSC+' Status atual: '+SC1->C1_XSTTR)
+			Endif
+		Endif
+	Endif
+Return lRet
+
+/*/{Protheus.doc} BaixZBA
+@author Newton Silva - J2A Consultoria
+@since 22/11/2016
+@version 1.0
+@description Baixa arquivo para local indicado no Terminal do usuario
+/*/
+Static Function BaixZBA(_pCamin,_pObjMod,_pObjOri)//NOME DO ARQUIVO E LOCAL A SER SALVO
+	Local lRet      := .t.
+	Local _cExt := ''
+	If Empty(_pCamin)
+		Alert('Nao selecionado nenhum Caminho!')
+		Return .f.
+	Endif
+	//_pObjMod - Não existe mais no Browser, necessario criar nomenclatura para busca do possivel sequencial e nome do arquivo.
+	_cExt := '.pdf'
+	//Transfere com nome original do arquivo
+	If File(cLocal+_pObjMod+_cExt)//Arquivo deve existir no servidor
+		If File(_pCamin+_pObjOri)
+			//MsgStop("Arquivo já existente neste local!", STRTITULO)
+			If FERASE(_pCamin+_pObjOri) == -1 //Deleta Arquivo no Terminal do Usuario
+				MsgStop('Arquivo com mesmo nome neste local ['+   str(ferror(),4)+'] ')
+			Else
+				//MsgStop('Arquivo deletado com sucesso')
+			Endif
+		Endif
+	
+		//------------------------------------------------
+		//Copia Arquivo do Server p/ Maquina _cCamin+_cArq
+		//possivel controlar a quantidade de vezes que o documento é impresso
+		//------------------------------------------------
+		Processa({|| CpyS2T(cLocal+_pObjMod+_cExt, _pCamin) }, "Transferindo objeto Server to Terminal", "Aguarde...", .T.)
+		
+		//No processo de copia ja realiza a mudança do nome do arquivo
+		nStatus := freName(_pCamin+_pObjMod+_cExt,_pCamin+_pObjOri)
+		If nStatus == -1
+			MsgStop('Já existe um arquivo com esse mesmo nome! '+ Str(ferror(),4))
+		Endif
+		
+	   	If File(_pCamin+_pObjOri)
+	     	//MsgInfo("Arquivo transferido com sucesso!"+CRLF+_pCamin+_pObjOri, STRTITULO)
+	   	Else
+	   		MsgInfo("Erro ao transferir o arquivo!"+CRLF+_pCamin+_pObjOri, STRTITULO)
+	   	Endif
+	Endif
+
+Return lRet 
+
+/*/{Protheus.doc} LoadRows
+@author Newton Silva - J2A Consultoria
+@since 18/11/2016
+@version 1.0
+@description Carregar Grid Inicial
+/*/
+Static Function LoadRows(oBrw, aRow, _pNSC, pArqCod, ptipo)
+
+	Private _cAliasZBAI  := GetNextAlias()
+	Procregua(0)
+	IncProc()
+	ProcessMessages()
+	_cAliasZBAI := CarQry(_pNSC,pArqCod,ptipo)
+
+	//aRow := {}
+	While !(_cAliasZBAI)->(Eof())
+		//Num SC, Data, Hora,Cod User,Nome User,Codigo, Nome Ori., Local
+		aAdd(aRow, {Trim((_cAliasZBAI)->ZBA_NUMSC),;
+					STOD((_cAliasZBAI)->ZBA_DATA),;
+					Trim((_cAliasZBAI)->ZBA_HORA),;
+					Trim((_cAliasZBAI)->ZBA_CODUSE),;
+					Trim((_cAliasZBAI)->ZBA_NOMUSE),;
+					Trim((_cAliasZBAI)->ZBA_CODIGO),;
+					Trim((_cAliasZBAI)->ZBA_NOMORI),;
+					Trim((_cAliasZBAI)->ZBA_LOCAL)})
+					
+		(_cAliasZBAI)->(DbSkip())
+	EndDo
+	
+	If ValType(oBrw) == "O"
+		If ! Empty(aRow)
+			oBrw:BHeaderClick := {|o,n| oX:=o, nX:=n, TWBOrder(oX,nX)}
+			oBrw:cToolTip:="Linhas: ("+AllTrim(Transform(Len(aRow),"@E 999,999,999"))+") Ordem: Padrão"
+		Endif
+		oBrw:SetArray(aRow)
+		oBrw:Refresh()
+	Endif
+	//oBrw:SetArray(aRow)
+	//oBrw:Refresh()
+	
+	(_cAliasZBAI)->(DbCloseArea())
+
+Return(Nil)
+  
+/*/{Protheus.doc} CarQry
+@author Newton Silva - J2A Consultoria
+@since 18/11/2016
+@version 1.0
+@description Monta a query de vinculo no ciclo da SC
+/*/
+Static Function CarQry(_pNSC,pArqCod,ptipo)
+	Local cQry := ''
+	Private _cAliasQryZBAI 	:= GetNextAlias()
+	
+	//Anexo TR tabela ZBA  
+	//Num SC, Data, Hora,Cod User,Nome User,Codigo, Nome Ori., Local
+	
+	If ptipo != "ALL"	//Traz Esp
+		cQry := " SELECT DISTINCT ZBA.ZBA_NUMSC, ZBA.ZBA_CODIGO, ZBA.ZBA_NOMORI, ZBA.ZBA_LOCAL, ZBA.ZBA_DATA, ZBA.ZBA_HORA, ZBA.ZBA_CODUSE, ZBA.ZBA_NOMUSE, SC1.C1_NUM " + CRLF
+		cQry += " FROM " + RetSqlName("ZBA") + " ZBA "+ CRLF
+		cQry += " LEFT JOIN " + RetSQLName("SC1")  + " SC1 "+ CRLF
+		cQry += " ON SC1.C1_FILIAL = ZBA.ZBA_FILIAL "+ CRLF
+		cQry += " AND SC1.C1_NUM = ZBA.ZBA_NUMSC " + CRLF
+		//cQry += " AND SC1.C1_ITEM = '0001' " + CRLF
+		cQry += " AND SC1.D_E_L_E_T_ = ' '" + CRLF
+		cQry += " WHERE ZBA.D_E_L_E_T_ = ' '" + CRLF	
+		cQry += " AND SC1.C1_FILIAL = '"+ xFilial("SC1")+"'" + CRLF
+		cQry += " AND SC1.C1_NUM = '"+ trim(_pNSC)+"' " + CRLF
+		cQry += " AND ZBA.ZBA_CODIGO = '"+ trim(pArqCod)+"' " + CRLF
+	else
+		cQry := " SELECT DISTINCT ZBA.ZBA_NUMSC, ZBA.ZBA_CODIGO, ZBA.ZBA_NOMORI, ZBA.ZBA_LOCAL, ZBA.ZBA_DATA, ZBA.ZBA_HORA, ZBA.ZBA_CODUSE, ZBA.ZBA_NOMUSE, SC1.C1_NUM " + CRLF
+		cQry += " FROM " + RetSqlName("ZBA") + " ZBA "+ CRLF
+		cQry += " LEFT JOIN " + RetSQLName("SC1")  + " SC1 "+ CRLF
+		cQry += " ON SC1.C1_FILIAL = ZBA.ZBA_FILIAL "+ CRLF
+		cQry += " AND SC1.C1_NUM = ZBA.ZBA_NUMSC " + CRLF
+		//cQry += " AND SC1.C1_ITEM = '0001' " + CRLF
+		cQry += " AND SC1.D_E_L_E_T_ = ' '" + CRLF
+		cQry += " WHERE ZBA.D_E_L_E_T_ = ' '" + CRLF	
+		cQry += " AND SC1.C1_FILIAL = '"+ xFilial("SC1")+"'" + CRLF
+		cQry += " AND SC1.C1_NUM = '"+ trim(_pNSC)+"' " + CRLF
+	EndIf
+	
+	//cQry := StrTran(cQry, "+", "||") 	//Converte p/ Oracle
+	
+	MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",cQry)//Salva cQry montada
+	DBUseArea(.T., "TOPCONN", TcGenQry(,,ChangeQuery(cQry)),_cAliasQryZBAI, .F.,.F.)
+    
+Return(_cAliasQryZBAI)
+
+/*/{Protheus.doc} TWBOrder
+@author Newton Silva - J2A Consultoria
+@since 01/12/2016
+@version 1.0
+@description Ordenar colunas
+/*/
+Static Function TWBOrder(o,n)
+	Local cX := iif(Empty(o:aheaders), o:aColumns[n]:cHeading, o:aheaders[n])
+	iif(Empty(o:Cargo), o:Cargo:={0,0,Seconds()-1}, Nil)
+	If Seconds() > o:Cargo[3]+1
+		If o:Cargo[2] == 0 .Or. o:Cargo[1] != n
+			ASORT(o:aArray,,,{|x,y| x[n] < y[n]})
+			o:Cargo := {n,1,Seconds()}
+		Else
+			ASORT(o:aArray,,,{|x,y| x[n] > y[n]})
+			o:Cargo := {n,0,Seconds()}
+		Endif
+		o:cToolTip:="Linhas: ("+AllTrim(Transform(Len(o:aArray),"@E 999,999,999"))+") Ordem: #"+AllTrim(Str(n))+" "+AllTrim(cX)+" "+iif(o:cargo[2]==0, "Desc.", "Asc.")
+		o:Refresh()
+		o:SetFocus()
+	Endif
+Return(Nil)
+
+/*/{Protheus.doc} StatusTR
+(long_description)
+@author j2a.luizjunior
+@since 27/11/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function StatusTR(pNumSc)
+
+	Local cFilEmp 	:= xFilial("ZF6")
+	Local cCodZF6 	:= GetSXENum("ZF6","ZF6_CODIGO")
+	Local cNumSc  	:= pNumSc
+	
+	If Empty(cNumSc)
+		cNumSc := SCR->CR_NUM
+	EndIf
+	
+	cCodZF6 := Substr(cCodZF6,9,18)
+	cCodZF6 := cFilEmp + cCodZF6
+	
+	If Type("nOpc") == "U"
+		nOpc := 2
+	EndIf
+	
+	If nOpc = 2
+		DbSelectArea("SC1")
+		DbSetOrder(1)
+		If SC1->( DbSeek(xFilial("SC1") + PADR(cNumSc, TAMSX3("C1_NUM")[1])) )
+			If SC1->C1_CODCOMP == '051'
+				DbSelectArea("ZF6")
+				ZF6->(dbSetorder(1))
+				If RecLock("ZF6",.T.)
+					ZF6->ZF6_FILIAL := xFilial('ZF6')
+					ZF6->ZF6_NUMSC 	:= cNumSc
+					ZF6->ZF6_CODIGO := cCodZF6
+					ZF6->ZF6_PROCES := "TR Analise"
+					ZF6->ZF6_DATA 	:= Date()
+					ZF6->ZF6_HORA 	:= Time()
+					ZF6->ZF6_USUARI := cUserName
+					ZF6->ZF6_STTR 	:= 'N'			
+					ZF6->(MsUnLock())
+				EndIf
+			EndIf
+		EndIf
+	EndIf	
+	
+Return

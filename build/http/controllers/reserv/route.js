@@ -705,9 +705,6 @@ async function getAllReserv(request, reply) {
   reply.send(result);
 }
 
-// src/http/controllers/reserv/get-by-id.ts
-var import_zod3 = require("zod");
-
 // src/use-cases/reserv/get-reserv-by-source.ts
 var import_date_fns2 = require("date-fns");
 var GetReservByPrwAndIdUseCase = class {
@@ -740,18 +737,14 @@ function makeGetReservByPrwAndIdUseCase() {
 
 // src/http/controllers/reserv/get-by-id.ts
 async function getReservByPrwAndId(request, reply) {
-  const paramsSchema = import_zod3.z.object({
-    id: import_zod3.z.string(),
-    prw: import_zod3.z.string()
-  });
-  const { id, prw } = paramsSchema.parse(request.params);
+  const { id, prw } = request.params;
   const getReservByPrwAndIdUseCase = makeGetReservByPrwAndIdUseCase();
   const results = await getReservByPrwAndIdUseCase.handler(prw, id);
   reply.send(results);
 }
 
 // src/http/controllers/reserv/delete.ts
-var import_zod4 = require("zod");
+var import_zod3 = require("zod");
 
 // src/repositories/typeorm/source.repository.ts
 var SourceRepository = class {
@@ -825,8 +818,8 @@ function makeDeleteReservUseCase() {
 
 // src/http/controllers/reserv/delete.ts
 async function deleteReserv(request, reply) {
-  const querySchema = import_zod4.z.object({
-    id: import_zod4.z.string()
+  const querySchema = import_zod3.z.object({
+    id: import_zod3.z.string()
   });
   const { id } = querySchema.parse(request.query);
   const deleteReservUseCase = makeDeleteReservUseCase();
@@ -840,7 +833,7 @@ async function deleteReserv(request, reply) {
 }
 
 // src/http/controllers/reserv/validUpload.ts
-var import_zod5 = require("zod");
+var import_zod4 = require("zod");
 
 // src/use-cases/reserv/valid-upload.ts
 var ValidUploadUseCase = class {
@@ -860,8 +853,8 @@ function makeValidUploadUseCase() {
 
 // src/http/controllers/reserv/validUpload.ts
 async function validUpload(request, reply) {
-  const querySchema = import_zod5.z.object({
-    dev: import_zod5.z.string()
+  const querySchema = import_zod4.z.object({
+    dev: import_zod4.z.string()
   });
   const { dev } = querySchema.parse(request.query);
   const validUploadUseCase = makeValidUploadUseCase();

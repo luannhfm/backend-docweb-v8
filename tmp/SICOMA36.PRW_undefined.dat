@@ -1,0 +1,135 @@
+#INCLUDE "rwmake.ch"
+#INCLUDE "protheus.ch"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SICOMA36  ºAutor  ³Microsiga           º Data ³  14/05/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Rotina de alteracao do tipo da SC                          º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function SICOMA36()
+Local nOpcX		:= 0
+Local aSimSC1   := {"C1_ITEM","C1_PRODUTO","C1_DESCRI","C1_QUANT","C1_VUNIT","C1_TPSC","C1_XCONTPR","C1_XCODCOM"}
+Local nOpcX     := 0
+Local bRptLine  := {|| xCOM36Atu() }
+Private aHeader := {}
+Private aCols   := {}
+Private oDlg
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Montagem da Tela de Consulta                                 ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+
+cSeek := SC1->(C1_FILIAL+C1_NUM)
+cWhile := "SC1->(C1_FILIAL+C1_NUM)"
+FillGetDados(4,"SC1",1,cSeek,{|| &cWhile },{|| Empty(SC1->C1_COTACAO) .and. Empty(SC1->C1_CODED) .and. Empty(SC1->C1_XCONTPR) .and.;
+								 Empty(SC1->C1_PEDIDO)},/*aNaoCpo*/,aSimSC1,,,,,aHeader,aCols)
+
+IF Empty(GDFieldGet("C1_ITEM",1))
+	Aviso("Atencao","Não existem itens disponíveis para alteração.",{"Sair"})
+	Return()
+ENDIF
+
+DEFINE MSDIALOG oDlg TITLE cCadastro From 0,0 TO 400,900 OF oMainWnd PIXEL
+oDlg:lMaximized := .F.
+
+oGet := MSGetDados():New(0,0,0,0,4,"AllwaysTrue","AllwaysTrue",,.T.,{"C1_TPSC","C1_XCODCOM"},,,9999)
+oGet:oBrowse:Align := CONTROL_ALIGN_ALLCLIENT
+
+aButtons := {}
+SetKey( VK_F7, bRptLine )
+Aadd(aButtons,{"BUDGET",{ || xCOM36Atu() },"Repetir","Repetir conteúdo para todas as linhas <F7>"})
+
+ACTIVATE MSDIALOG oDlg ON INIT (EnchoiceBar(oDlg,{|| nOpcX:= 1, oDlg:End()},{||oDlg:End()},,aButtons)) CENTERED
+
+SetKey( VK_F7, NIL )
+
+If nOpcX == 1 .and. Aviso("Atencao","Confirma atualização da Solicitação de Compra ?",{"Sim","Não"}) == 1
+	//Gravaçao dos Dados
+	xCOM36GRV()
+Endif
+
+Return()
+
+/*/
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ xSIPCOGRVº Autor ³ Microsiga          º Data ³  17/05/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDescricao ³ Gravacao dos Dados                                         º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+/*/
+
+Static Function xCOM36GRV()
+Local _cArea  := GetArea()
+Local _cNumSC := SC1->C1_NUM
+
+// Backup do TTS
+lSavTTsInUse := __TTSInUse
+
+// Ativa TTS
+__TTSInUse := .T.
+
+Begin Transaction
+
+SC1->(dbSetOrder(1))
+
+For i := 1 to Len(aCols)
+	IF SC1->(dbSeek(XFilial("SC1")+_cNumSC+GDFieldGet("C1_ITEM",i)))
+		RecLock("SC1",.f.)
+		SC1->C1_TPSC := GDFieldGet("C1_TPSC",i)
+		SC1->C1_NUMPR := '' //Incluido por Cadu em 18/07/2012
+		SC1->C1_CODCOMP := GDFieldGet("C1_XCODCOM",i)
+		SC1->C1_XCODCOM := GDFieldGet("C1_XCODCOM",i)
+		//Walmir Junior 17/10/2017 - Alimentar campo para armazenar a definição de comprador.
+		SC1->C1_XDTCOMP := Iif(Empty(SC1->C1_XDTCOMP), DtoC(dDatabase) +  " " + Time(), SC1->C1_XDTCOMP)
+		SC1->(msUnlock())
+	ENDIF
+Next
+
+End Transaction
+
+// Restaura TTS
+__TTSInUse := lSavTTsInUse
+
+RestArea(_cArea)
+Return()
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³xCOM36Atu  ºAutor  ³Microsiga          º Data ³  07/10/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Atualiza todos os itens                                    º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function xCOM36Atu()
+
+IF Aviso("Atencao","Replica informação para todos o itens ?",{"Sim","Não"}) == 1
+	_cTPSC := GDFieldGet("C1_TPSC",n)
+	aEval(aCols,{|x| x[GDFieldPos("C1_TPSC")] := _cTPSC })
+ENDIF
+
+Return()

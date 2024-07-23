@@ -1,0 +1,254 @@
+#Include 'Protheus.ch'
+#Include 'Topconn.ch'
+
+Static _Retorno
+/*
+----------------------------------------------------------------------------------------------------------------
+{Protheus.doc} <SS7319X>
+
+  Função para validar Regras de Apontamento (CRM)
+
+Cod		Descrição																Autor			 Data
+------- ----------------------------------------------------------------------- ---------------- ----------
+#001	Função [fVldHr319()] para validar horário apontado pelo					Jonas Nascimento 15/07/2015
+		consultor, não permitindo na mesma data que o Consultor aponte mais
+		de uma visita no mesmo intervalo de tempo. Invoda por PE [FT310TOK()].
+
+#002	Função [fVldAD7()] para vincular Apontamento (AD5) com Agenda (AD7)		Jonas Nascimento 20/07/2015
+  		sendo possível vincular uma agenda a um apontamento por vendedor.
+
+@author Jonas Nascimento 
+@since 15/07/2015
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+----------------------------------------------------------------------------------------------------------------
+*/                     
+User Function SS7319X(_cVal)
+Local _lRet		:= .F.
+If _cVal == "fVldHr319"	// #001
+	_lRet := fVldHr319(M->AD5_VEND,M->AD5_DATA,M->AD5_XRHINI,M->AD5_XRHFIM)
+EndIf
+If _cVal == "ConEsp319"	// #002
+	If !Empty(M->AD5_VEND)
+		_lRet := U_fVldAD7(2, M->AD5_VEND)
+	Else
+		Aviso(FunName()+"/"+ProcName(),"Informe o Vendedor para consultar Agenda",{"OK"},3)
+	EndIf
+EndIf
+Return _lRet
+
+
+
+
+//*********** #001 - VALIDAÇÃO HORÁRIO INICIAL/FINAL [INÍCIO] ***********\\
+// #001 - Valida Confirmação (Inclusão/Alteração) se HoraIni/Fim já foi utilizada
+/* 
+	Objetivo [fVldHr319()];
+		 - Garantir que Apontamentos por data não tenha conflito de horário, ou seja, 
+		   dois apontamentos no mesmo intervalo de tempo.					
+*/
+Static Function fVldHr319(_cCodVen,_dData,_cHrIni,_cHrFim)
+Local _lRet 	:= .T.
+Local _cSql		:= ''
+Local _aArea	:= GetArea()
+Local _cAlias	:= GetNextAlias() 
+_cSql := "SELECT "+CRLF
+_cSql += "   AD5_VEND "+CRLF
+_cSql += "FROM "+CRLF
+_cSql += "   "+RetSqlName(+"AD5")+" "+CRLF
+_cSql += "WHERE AD5_FILIAL = '"+ FWxFilial("AD5") +"' "+CRLF
+_cSql += "  AND D_E_L_E_T_ = '' "+CRLF
+_cSql += "  AND AD5_VEND = '"+ _cCodVen +"' "+CRLF
+_cSql += "  AND AD5_DATA = '"+ DtoS(_dData) +"' "+CRLF
+_cSql += "  AND ('"+_cHrIni+"' BETWEEN AD5_XRHINI AND AD5_XRHFIM OR '"+ _cHrFim +"' BETWEEN AD5_XRHINI AND AD5_XRHFIM) "+CRLF
+MemoWrite("c:\temp\"+FunName()+"_"+ProcName(),_cSql)
+dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)),_cAlias,.F.,.F.)
+If !(_cAlias)->(EOF())
+	Aviso(FunName()+"/"+ProcName(),"Hora Inicial ou Final já apontada em ["+dToC(_dData)+"] para o Vendedor ["+_cCodVen+"]!",{"OK"},3)
+	_lRet:= .F.
+EndIf
+(_cAlias)->(dbclosearea())
+RestArea(_aArea)
+Return _lRet
+//*********** #001 - VALIDAÇÃO HORÁRIO INICIAL/FINAL [FIM] ***********\\
+
+
+
+
+
+
+//*********** #002 - CONSULTA ESPECÍFICA [INÍCIO] ***********\\
+/* 
+	Objetivo [fVldAD7()];
+		 - Consulta Agendas não vinculadas a Apontamentos do mesmo Vendedor.
+		 - Opções;
+		 	1 - Usado na Validação do Usuário no campo AD5_VEND
+		 	2 - Consulta Específica [AD5AD7] no capo AD5_XAGEND
+		 	3 - Usado na Validação do Usuário do campo AD5_XAGEND
+
+Alterações realizadas:
+	#001 - 07/03/2016 Franklin B. Oliveira:
+	#002 - 24/05/2016 Jose Leite de Barros Neto:
+		
+*/
+User Function fVldAD7(_nOpc, _cCodVend, _cCodAge) //U_fVldAD7(1, M->AD5_VEND, M->AD5_XAGEND)
+Local _cQuery 		:= ""
+Private _cClient	:= AllTrim(AD1->AD1_CODCLI)
+Private _lRet 		:= .T.
+Private _aArea 		:= GetArea()
+Private _cAlias		:= GetNextAlias()
+_cQuery += "Select "+CRLF 
+_cQuery += "AOF.AOF_CODIGO, "+CRLF 
+_cQuery += "AOF.AOF_DTCAD, "+CRLF 
+_cQuery += "AOF.AOF_HRINIC,"+CRLF  
+_cQuery += "AOF.AOF_HRFIM, "+CRLF 
+_cQuery += "AOF.AOF_ENTIDA,"+CRLF 
+_cQuery += "AOF.AOF_CHAVE,"+CRLF 
+_cQuery += "AD1.AD1_PROSPE,"+CRLF 
+_cQuery += "AD1.AD1_LOJPRO,"+CRLF 
+_cQuery += "SUS.US_NOME,"+CRLF 
+_cQuery += "AD1.AD1_CODCLI,"+CRLF 
+_cQuery += "AD1.AD1_LOJCLI,"+CRLF 
+_cQuery += "SA1.A1_NOME "+CRLF 
+_cQuery += "From "+RetSQLName("AOF")+" AOF"+CRLF 
+_cQuery += "Inner Join "+RetSQLName("AD1")+" AD1 on AD1.D_E_L_E_T_ = ' ' And AD1.AD1_FILIAL = AOF.AOF_FILIAL  And Substr(AD1.AD1_NROPOR,1,6) = Substr(AOF.AOF_CHAVE,1,6) And AD1.AD1_VEND = '"+_cCodVend+"' "+CRLF               
+_cQuery += "Left Join "+RetSQLName("SA1")+" SA1 on SA1.D_E_L_E_T_ = ' ' And SA1.A1_FILIAL = '"+FwxFilial("SA1")+"' And SA1.A1_COD = AD1.AD1_CODCLI And SA1.A1_LOJA = AD1.AD1_LOJCLI "+CRLF 
+_cQuery += "Left Join "+RetSQLName("SUS")+" SUS on SUS.D_E_L_E_T_ = ' ' And SUS.US_FILIAL = '"+FwxFilial("SUS")+"' And SUS.US_COD = AD1.AD1_PROSPE And SUS.US_LOJA = AD1.AD1_LOJPRO "+CRLF 
+_cQuery += "Where AOF.D_E_L_E_T_ = ' '"+CRLF 
+_cQuery += "And AOF.AOF_FILIAL = '"+FwxFilial("AOF")+"' "+CRLF 
+_cQuery += "And NOT EXISTS	( 	Select '' "+CRLF 
+_cQuery += "					From "+RetSQLName("AD5")+" AD5 "+CRLF 
+_cQuery += "					Where AD5.D_E_L_E_T_ = ' ' "+CRLF 
+_cQuery += "					And AD5.AD5_FILIAL = AOF.AOF_FILIAL"+CRLF 
+_cQuery += "					And AD5.AD5_XAGEND = AOF.AOF_CODIGO"+CRLF 
+_cQuery += "				)"+CRLF  
+If !Empty(_cCodAge) .AND. cValToChar(_nOpc) $ "1;3"
+	_cQuery += "And AOF.AOF_CODIGO = '"+_cCodAge+"'"+CRLF  
+Endif 
+_cQuery += "Order by AOF.AOF_DTCAD, AOF.AOF_HRINIC "+CRLF  
+//+------------------------------------------------------------------+
+//| Grava o Resultado da Query para consulta                         |
+//+------------------------------------------------------------------+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select(_cAlias)>0
+    (_cAlias)->(DbCloseArea())
+Endif
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),_cAlias,.t.,.t.)
+(_cAlias)->(DbGotop())
+If _nOpc == 1	//Usado na validação do AD5_VEND
+	If (_cAlias)->(EOF())
+		M->AD5_XAGEND := ""
+	EndIf
+EndIf
+If _nOpc == 2	//Consulta Específica [AD5AD7] no capo AD5_XAGEND
+	If !(_cAlias)->(EOF())
+		_lRet := .F.
+		_lRet := fSeekAD7(_cCodVend)
+	Else
+		Aviso(FunName()+"/"+ProcName(),"Vendedor não possui agenda!",{"OK"},3)
+		_lRet := .F.
+	EndIf
+EndIf
+If _nOpc == 3	//Validação de Usuário do campo AD5_XAGEND 
+	If (_cAlias)->(EOF())
+		dbSelectArea("AD5")
+		AD5->(DbOrderNickName("AD5_AGENDA"))
+		If (AD5->(dbSeek(FWxFilial("AD5")+_cCodAge)))
+			Aviso(FunName()+"/"+ProcName(),"Agenda ["+_cCodAge+"] já utilizada no apontamento;";
+					+CRLF+"Vendedor: "+AD5->AD5_VEND;
+					+CRLF+"Data: "+dToC(AD5->AD5_DATA);
+					+CRLF+"Sequência: "+AD5->AD5_SEQUEN,;
+				{"OK"},3)
+			_lRet := .F.
+		Else				
+			Aviso(FunName()+"/"+ProcName(),"Cód. Agenda inválida!"+CRLF+"Informe Vendedor e Agenda.",{"OK"},3)
+			_lRet := .F.
+		EndIf
+		AD5->(dbCloseArea())
+	EndIf
+EndIf
+(_cAlias)->(dbCloseArea())
+RestArea(_aArea)
+Return _lRet
+
+
+
+
+/*  #002
+	Objetivo [fSeekAD7()];
+		 - Cria janela Listando as Agendas do Vendedor p/ usuário selecionar.
+		 - Opções;
+		 	- Botão OK = Confirma item selecionado na grid.
+		 	- Botão Cancelar = Encerra Consulta Específica.
+		 	- Duplo Clique = Idem botão OK.										
+*/
+Static Function fSeekAD7(_cCodVend)
+Local _btConfirm	:= Nil
+Local _btCancel		:= Nil
+Private _oBroAD7	:= Nil
+Private _aBroAD7 	:= {}
+//-- 
+Static _oDlg		:= Nil 
+DEFINE MSDIALOG _oDlg TITLE 'Agenda de Visitas' FROM 000, 000 TO 350, 615 COLORS 0, 16777215 PIXEL
+	fwBrowse1() //Cria a GRID e preenche c/ retorno da U_fVldAD7(2,M->AD5_VEND)
+	@ 158, 005 BUTTON _btConfirm PROMPT "OK"		 ACTION(AD7OK())     SIZE 037, 012 OF _oDlg PIXEL
+	@ 158, 050 BUTTON _btCancel PROMPT  "Cancelar"   ACTION(_oDlg:End()) SIZE 037, 012 OF _oDlg PIXEL
+ACTIVATE MSDIALOG _oDlg CENTERED
+Return _lRet
+
+
+/*  #002
+	Objetivo [AD7OK()];
+		 - Retorna AD7_XCOD em AD5_XAGEND se usuário clicar em OK ou duplo click.			*/
+Static Function AD7OK()
+_Retorno := _aBroAD7[_oBroAD7:nAt,1]
+_lRet := .T.
+_oDlg:End()
+Return
+
+
+
+/*  #002
+	Objetivo [fwBrowse1()];
+		 - Cria janela (Agenda de Vistas) e LISTBOX (GRID) populado c/ retorno da consulta [fVldAD7()].			
+*/
+Static Function fwBrowse1()
+/* Popula Array da GRID */
+Do While !(_cAlias)->(EOF())
+	/* #002 - Jose Leite - CSI - 24-05-16
+	Tratamento para Prospect (SENAI)
+	*/
+	If !Empty(_cClient)
+		AADD(_aBroAD7, {(_cAlias)->AOF_CODIGO,StoD((_cAlias)->AOF_DTCAD),(_cAlias)->AOF_HRINIC,(_cAlias)->AOF_HRFIM,Substr((_cAlias)->AOF_CHAVE,1,6),(_cAlias)->AD1_CODCLI,AllTrim((_cAlias)->A1_NOME)})
+	Else
+		AADD(_aBroAD7, {(_cAlias)->AOF_CODIGO,StoD((_cAlias)->AOF_DTCAD),(_cAlias)->AOF_HRINIC,(_cAlias)->AOF_HRFIM,Substr((_cAlias)->AOF_CHAVE,1,6),(_cAlias)->AD1_LOJPRO,AllTrim((_cAlias)->US_NOME)})
+	EndIf
+	(_cAlias)->(dbSkip())
+Enddo
+/* Cria a GRID */
+/* #002 - Jose Leite - CSI - 24-05-16
+	Tratamento para Prospect (SENAI)
+*/
+If .Not. Empty(_cClient)
+	@ 010, 004 LISTBOX _oBroAD7 Fields HEADER "Agenda", "Data", "Hr Ini", "Hr Fim", "Oportunidade", "Cliente", "Nome" SIZE 300, 142 OF _oDlg PIXEL ColSizes 30,30,20,20,40,30
+Else
+	@ 010, 004 LISTBOX _oBroAD7 Fields HEADER "Agenda", "Data", "Hr Ini", "Hr Fim", "Oportunidade", "Prospect", "Nome" SIZE 300, 142 OF _oDlg PIXEL ColSizes 30,30,20,20,40,30
+EndIf
+_oBroAD7:SetArray(_aBroAD7)
+_oBroAD7:bLine := {|| {_aBroAD7[_oBroAD7:nAt,1], _aBroAD7[_oBroAD7:nAt,2], _aBroAD7[_oBroAD7:nAt,3], _aBroAD7[_oBroAD7:nAt,4], _aBroAD7[_oBroAD7:nAt,5], _aBroAD7[_oBroAD7:nAt,6], _aBroAD7[_oBroAD7:nAt,7] }}
+_oBroAD7:bLDblClick := {|| AD7OK(), _oBroAD7:DrawSelect()} //Duplo clique
+Return
+
+
+
+
+/*  #002
+	Objetivo [fwBrowse1()];
+		 - Função de Retorno obrigatório no Cadastro da Consulta Especifica [AD5AD7], retorna o código da agenda via [AD7OK()].		
+*/
+User Function fRetAD7()
+Return _Retorno
+//*********** #002 - CONSULTA ESPECÍFICA [FIM] ***********\\

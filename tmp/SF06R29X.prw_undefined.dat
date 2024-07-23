@@ -1,0 +1,254 @@
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE 'topconn.ch'
+#INCLUDE 'RWMAKE.CH'
+
+	/*/{Protheus.doc} SIFINR99
+@description  Relatório Resultado Financeiro , liquidacao por operador.
+
+@author Jorge Elias Tavares
+@since 28/01/2022
+@version 12.1.27
+
+	/*/
+User Function SF06R29X()
+
+	Local oReport 	:= Nil
+	Local cPerg   	:= PadR('SF06R29X',10,Space(1))
+
+	Private aRet 	:= {}
+	Private _aFils  := {}
+
+	//Criando Pergunta
+	If !AjustaSX1(cPerg)
+		RETURN
+	EndIf
+
+	//Cria as definições do relatório
+	oReport := ReportDef(cPerg)
+
+	If Valtype( oReport ) == 'O'
+
+		// If !Empty( oReport:uParam )
+		// 	Pergunte( oReport:uParam, .F. )
+		// EndIf
+
+		oReport:PrintDialog()
+	Endif
+
+Return
+
+/*/{Protheus.doc} ReportDef
+@description 
+/*/
+Static Function ReportDef(cPerg)
+
+	Local oReport	:= Nil
+	Local oSection	:= Nil
+	Local cDescTit  := "Relatorio Resultado Financeiro"
+	Local cTitulo   := "Relatorio Resultado Financeiro. Periodo: " + dToC(MV_PAR01) + " a " + dToC(MV_PAR02)
+	Local oBreak	:= Nil
+
+	//Criação do componente de impressão
+	oReport:=TReport():New("SF06R29X",cTitulo,cPerg,{|oReport| ReportPrint(oReport)},cDescTit)
+	oReport:SetTotalInLine(.F.)
+	oReport:SetTitle(cTitulo)
+	oReport:SetLandscape(.F.)
+	oReport:SetLineHeight(40)
+	oReport:SetColSpace(1)
+	oReport:SetLeftMargin(0)
+	oReport:cFontBody := 'Courier New'
+	oReport:nFontBody := 6
+	oReport:lBold := .F.
+	oReport:lUnderLine := .F.
+	oReport:lHeaderVisible := .T.
+	oReport:lFooterVisible := .T.
+	oReport:lParamPage := .F.
+
+	//Criando a seção de dados
+	oSection:= TRSection():New(oReport,"oSection",{"TRB"})
+	oSection:AddTable("oSection")
+	oSection:SetHeaderPage(.T.)
+
+	//Criando Cell
+	TRCell():New(oSection,"ZAF_NOME"		,"TRB", "Nome"    			, PesqPict('ZAF',"ZAF_NOME"),TamSX3("ZAF_NOME")[1]+1 , .F.)
+	TRCell():New(oSection,"ZAL_VLRDEV"    	,"TRB", "Saldo Devedor" 	, PesqPict('ZAL',"ZAL_VLRDEV"),TamSX3("ZAL_VLRDEV")[1]+1	, .F.)
+	TRCell():New(oSection,"ZAL_VLRNEG"     	,"TRB", "Valor Renegociado" , PesqPict('ZAL',"ZAL_VLRNEG"),TamSX3("ZAL_VLRNEG")[1]+1, .F.)
+	TRCell():New(oSection,"ZAL_VLRJUR" 		,"TRB", "Juros" 			, PesqPict('ZAL',"ZAL_VLRJUR"),TamSX3("ZAL_VLRJUR")[1]+1, .F.)
+	TRCell():New(oSection,"ZAL_VLRMUL"     	,"TRB", "Multa" 			, PesqPict('ZAL',"ZAL_VLRMUL"),TamSX3("ZAL_VLRMUL")[1]+1, .F.)
+	TRCell():New(oSection,"ZAL_TOTAL" 	    ,"TRB", "Valor Líquido" 	, PesqPict('ZAL',"ZAL_VLRNEG"),TamSX3("ZAL_VLRNEG")[1]+1, .F.)
+
+	oBreak := TRBreak():New(oSection,oSection:Cell("ZAF_NOME"),,.F.)
+
+	TRFunction():New(oSection:Cell("ZAL_VLRNEG"),"TOTAL","SUM",oBreak,"Total: ",PesqPict('ZAL',"ZAL_VLRNEG"),,.F.,.F.)
+
+Return oReport
+
+/*/{Protheus.doc} ReportPrint
+@description Funcao para impressao do relatorio 
+/*/
+Static Function ReportPrint(oReport)
+
+	Local oSection    := oReport:Section(1)
+	Local nTotRec     := 0
+	Local TRB		  := GetNextAlias()
+	Local cFilia		:= ""
+	Local x				:= 0
+
+	oSection:Init()
+
+	If MV_PAR03 = "SIM"
+		cFilia := "("
+		For x := 1 to Len(aFils)
+			If aFils[x,1]
+				cFilia += aFils[x,2]
+			EndIf
+			If x == Len(aFils)
+				cFilia += ")"
+			else
+				cFilia += ","
+			EndIf
+		Next x
+	else
+		cFilia := ()
+	EndIf
+
+
+	BeginSql Alias TRB
+		SELECT ZAF_NOME, ZAL_VLRDEV, ZAL_VLRNEG, ZAL_VLRJUR, ZAL_VLRMUL
+		FROM %TABLE:ZAK% ZAK
+		INNER JOIN %TABLE:ZAF%  ZAF ON ZAK_CODOPE = ZAF_COD AND
+		ZAF.%notDel% 
+		INNER JOIN %table:ZAL% ZAL ON ZAL.ZAL_CODATE= ZAK_COD AND
+		ZAL.ZAL_STATUS= %exp:'F'% AND
+		ZAL.%notDel% 
+		WHERE ZAK_DATA BETWEEN %EXP:dToS(MV_PAR01)% AND %EXP:dToS(MV_PAR02)%
+		AND ZAK.%NOTDEL% 
+		//AND ZAK.ZAK_FILIAL IN %exp:cFilia%
+	EndSQL
+
+	Count to nTotRec
+	//Define o limite da régua de progressão do relatório.
+	oReport:SetMeter(nTotRec)
+
+	//Enquanto houver dados
+	(TRB)->(DbGoTop())
+	While (TRB)->(!Eof())
+
+		// Impressao da oSection
+		oReport:IncMeter()
+
+		If oReport:Cancel()
+			Exit
+		EndIf
+
+		oSection:Cell("ZAF_NOME"):SetValue((TRB)->ZAF_NOME)
+		oSection:Cell("ZAL_VLRDEV"):SetValue((TRB)->ZAL_VLRDEV)
+		oSection:Cell("ZAL_VLRNEG"):SetValue((TRB)->ZAL_VLRNEG)
+		oSection:Cell("ZAL_VLRJUR"):SetValue((TRB)->ZAL_VLRJUR)
+		oSection:Cell("ZAL_VLRMUL"):SetValue((TRB)->ZAL_VLRMUL)
+		oSection:Cell("ZAL_TOTAL" ):SetValue((TRB)->ZAL_VLRNEG + (TRB)->ZAL_VLRJUR + (TRB)->ZAL_VLRMUL)
+
+		oSection:PrintLine()
+
+		(TRB)->(DbSkip())
+
+	End
+
+	(TRB)->(DbCloseArea())
+
+	oSection:Finish()
+
+Return
+
+/*/{Protheus.doc} AjustaSx1
+@description Criando as Perguntas
+/*/
+Static Function AjustaSx1(p_cPerg)
+
+	Local aPergs    := {}
+	Local aCombo   := {"NÃO","SIM"}
+	Local lRet          := .T.
+
+	aAdd(aPergs,{1,"Data De  ",dDataBase,"","","","",70,.T.})
+	aAdd(aPergs,{1,"Data Ate ",dDataBase,"","","","",70,.T.})
+	aAdd(aPergs,{2,"Seleciona Filiais  ","SIM",aCombo,50,"",.T.})
+
+	If !ParamBox(aPergs ,"Parametros",aRet)
+		MsgAlert("Processo Cancelado ","ATENÇÃO")
+		lRet := .F.
+	else
+		lRet := Sel_Fil(IIF(aRet[3] == "SIM", .T. , .F.))
+	EndIf
+
+Return(lRet)
+
+/*/{Protheus.doc} Sel_Fil
+	@description Seleciona as filiais
+	@type  Static Function
+	@author user
+	@since 28/01/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+/*/
+Static Function Sel_Fil( lSelFil )
+	Local aAreaSM0 :=SM0->(GetArea())
+	Local aSM0     := FWLoadSM0(.T.,,.T.)
+
+	// Variaveis utilizadas na selecao
+	Local oChkQual,lQual,oQual,cVarQ
+	// Carrega bitmaps
+	Local oOk      := LoadBitmap( GetResources(), "LBOK")
+	Local oNo      := LoadBitmap( GetResources(), "LBNO")
+	Default lSelFil := .F.
+	If !lSelFil
+		Return .T.
+	EndIf
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Carrega filiais da empresa corrente                          ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	aEval(aSM0,{ |x| Aadd(_aFils, {.F., x[SM0_CODFIL],x[SM0_NOMRED],x[SM0_CGC]} ) } )
+
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Monta tela para selecao de filiais                           ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	DEFINE MSDIALOG oDlg TITLE OemToAnsi( "Filiais") STYLE DS_MODALFRAME From 145,0 To 445,628 OF oMainWnd PIXEL
+	oDlg:lEscClose := .F.
+
+	@ 05,15 TO 125,300 LABEL OemToAnsi("Selecione as Filiais") OF oDlg  PIXEL
+
+	@ 15,20 CHECKBOX oChkQual VAR lQual PROMPT OemToAnsi("Inverter Selecao") SIZE 70, 10 OF;
+		oDlg PIXEL ON CLICK (AEval(_aFils, {|z| z[1] := If(z[1]==.T.,.F.,.T.)}), oQual:Refresh(.F.))
+
+	@ 30,20 LISTBOX oQual VAR cVarQ Fields HEADER "", OemToAnsi("Filial"), OemToAnsi("Descricao"), OemToAnsi("CGC")  SIZE 273,090 ON DBLCLICK ;
+		(_aFils:=Troca(oQual:nAt,_aFils),oQual:Refresh()) NOSCROLL OF oDlg PIXEL
+
+	oQual:SetArray(_aFils)
+	oQual:bLine := { || { If(_aFils[oQual:nAt,1],oOk,oNo),_aFils[oQual:nAt,2],_aFils[oQual:nAt,3],_aFils[oQual:nAt,4] } }
+
+	DEFINE SBUTTON FROM 134,240 TYPE 1 ACTION oDlg:End() ENABLE OF oDlg
+	DEFINE SBUTTON FROM 134,270 TYPE 2 ACTION (_aFils := {},oDlg:End()) ENABLE OF oDlg
+	ACTIVATE MSDIALOG oDlg CENTERED
+
+	RestArea(aAreaSM0)
+
+Return .T.
+
+/*/{Protheus.doc} Troca
+	(Inverte selecao de filiais)
+	@type  Function
+	@author user
+	@since 28/01/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+/*/
+Static Function Troca(nIt,aArray)
+	aArray[nIt,1] := !aArray[nIt,1]
+Return aArray

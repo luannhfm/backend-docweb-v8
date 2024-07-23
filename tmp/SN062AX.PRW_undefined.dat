@@ -1,0 +1,483 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "APWIZARD.CH"
+#INCLUDE "TBICONN.CH"
+#INCLUDE "TOPCONN.CH"   
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"    
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<SN062AX>                                                   |
+|Conjuntos de Rotinas que permitem LER Arquivos de Retorno relativos aos   |
+|LIBERAÇAO de Cartões                                                      |     
+|                                                                          |
+| Criar o Parametro [MV_XRETLIB - Repositorio dos Layout's para Arquivos   |
+| de Retorno de Solicitacao de Liberacao de Cartoes Pre Pago ]             |
+|                                                                          |
+|@Author<Edir Barreto>                                                     |
+|@since<23/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<Nil>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function SN062AX() 
+Local _cAlias  	:= "ZP1"
+Local _cTitle  	:= "Ler Arquivos de Retorno"
+Local _oBrowse 	:= FWMBrowse():New()
+Private aRotina 	:= MenuDef() 
+_oBrowse:SetAlias(_cAlias)
+_oBrowse:SetFilterDefault("ZP1_FILIAL == '"+FwxFilial("ZP1")+"' .and. ZP1_XTIPO == '1' .and. ZP1_XSTATU = 'A'") 
+_oBrowse:SetDescription(_cTitle)
+_oBrowse:Activate()   
+Return NIL
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<MenuDef>                                                   |
+|Definicao do MenuDef                                                      |
+|@Author<Edir Barreto>                                                     |
+|@since<23/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@return                                                                   |
+|<   _aRotina (a) - Vetor com as opcoes de Menu                            |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function MenuDef()
+Local _aRotina := {}
+ADD OPTION _aRotina TITLE "Pesquisar"  			ACTION "PESQBRW"       	OPERATION 1 ACCESS 0
+ADD OPTION _aRotina TITLE "Ler Arq Ret Lib"   	ACTION "U_fLArqRet()"	OPERATION 2 ACCESS 0
+Return _aRotina
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fLArqRet>                                                  |
+|Rotina de Leitura do Arquivo de Retorno de Liberação de Cartões.          |
+|@Author<Edir Barreto>                                                     |
+|@since<23/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@return                                                                   |
+
+|<   _aRotina (a) - Vetor com as opcoes de Menu                            |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fLArqRet()
+Local _cArqRet 		:= ""
+Local _cArLayout	:= ZP1->ZP1_XLIBRT
+Local _cPathRoot	:= GetNewPar("MV_XRETLIB","\Pronatec\Layouts\PreCad\Retorno\")
+Local _aArqLyt 		:= {} 
+Local _aFilds		:= {}
+Local _nH_Arq		:= 0
+Local _cFileLog		:= ""
+Local _nCtaREG		:= 0 
+Local _nPosH		:= 0
+Local _nPosD		:= 0
+Local _nPosT		:= 0
+Local _bBlock		:= "" 
+Local _cTpReg   	:= "" 
+Local _lHeader		:= .f.
+Local _lDetalhe		:= .f.
+Local _lTrailler	:= .f. 
+Local _lE_Header	:= .f.
+Local _lE_Traill	:= .f.
+Local _lE_Detalh	:= .f.
+Local _cString 		:= ""    
+Local _lRetOK  		:= .t. 
+Local _lCtrNoS 		:= .t.   
+Local _cString		:= ""
+Local _nTamTx		:= 0
+Local _nCtaA 		:= 0
+Private _cNomArqR	:= 	""
+Private _aCabecalh 	:= {}
+Private _aDetalhe 	:= {}
+Private _aTrailler	:= {}
+Private _aColsCab	:= {}
+Private _aColsDet	:= {}
+Private _aColsTra	:= {}
+//-- Identifica o Codigo do Convenio que sera processado.
+Private _cConven	:= ZP1->ZP1_XCONV     
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Validacoes antes da chamada da rotina de geracao do arquivo de Retorno |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If Alltrim(_cArLayout) == ""
+	Aviso(FunName()+"/"+ProcName(),"Não foi informado neste Convênio o nome do Arquivo de Configuração do Arquivo Retorno de Libieração de Cartões Pré Pago!",{"OK"})
+	_lRetOK := .f.	
+Endif
+If _lRetOK
+	_cArqRet := cGetFile('Arquivo |*.*','Lêr Arquivo',1,'C:\TEMP',.F.,GETF_LOCALHARD)
+	If _cArqRet == ""
+		Aviso(FunName()+"/"+ProcName(),"Nome do Arquivo de Retorno não Foi Informado!",{"OK"})
+		_lRetOK := .f.
+	Endif  
+	//-- *********************************************************************
+	//--    Captura o NONE do Arquivo de RETORNO DE LIBERAÇÃO DE CARTAO
+	//-- *********************************************************************
+	_cString	:= Alltrim(_cArqRet)
+	_nTamTx	:= Len(_cString)
+	_nCtaA 	:= 0
+	For _nCtaA := _nTamTx to 1 step -1
+		If Substr(_cString,_nCtaA,1) == "\"
+			Exit
+		Endif
+	Next _nCtaA
+	_cNomArqR	:= 	Substr(_cString,_nCtaA+1,_nTamTx)
+Endif  
+If _lRetOK
+	If !File(_cPathRoot+Alltrim(_cArLayout))
+		Aviso(FunName()+"/"+ProcName(),"Arquivo de Layout: "+_cPathRoot+Alltrim(_cArLayout)+". não foi encontrado!",{"OK"})
+		_lRetOK := .f.
+	EndIf
+EndIf     
+If _lRetOK
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Carrega o Layout do Arquivo de Retorno                                |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_aArqLyt := u_fCrArqIn(_cPathRoot+Alltrim(_cArLayout))
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Identifica os Arrays de Header, Detalhe e Trailler                    |
+	//| OBS: Caso venha a existir tipo de arquivos com mais de uma linha por  |
+	//|      tipo; Tratar caso a caso. Deve-se adicionar ao array do tipo e   |
+	//|      tratar na seguencia.                                             |
+	//|      - Inicialmente estamos considerando um de cada tipo.             |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ  
+	_nCtaA	:= 0
+	For _nCtaA := 1 To Len(_aArqLyt) 
+		_cLinTP := Substr(_aArqLyt[_nCtaA,1],2,1)
+		Do Case
+			Case _cLinTP == "H"		//-- Header
+				_aCabecalh 	:= _aArqLyt[_nCtaA,4] 
+				_aCabecalh 	:= u_fAjustSt(_aCabecalh)
+				_lHeader	:= .t.
+			Case _cLinTP == "D"		//-- Detalhe
+				_aDetalhe 		:= _aArqLyt[_nCtaA,4]
+				_aDetalhe 		:= u_fAjustSt(_aDetalhe)
+				_lDetalhe		:= .t.
+			Case _cLinTP == "T" 		//-- Trailler
+				_aTrailler		:= _aArqLyt[_nCtaA,4]   
+				_aTrailler		:= u_fAjustSt(_aTrailler)
+				_lTrailler		:= .t.
+		Endcase
+	Next _nCtaA    
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Abre o arquivo de RETORNO com acesso exclusivo                        |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_nH_Arq	:= fOpen(_cArqRet,68) 
+	If _nH_Arq = -1
+		Aviso(FunName()+"/"+ProcName(),"Não foi Possivel Abrir o Arquivo de Retorno!",{"OK"})
+		_lRetOK := .f.
+	EndIf         
+Endif 	 
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Trata caso a caso os Layout's da Retorno                              |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ  
+If _lRetOK .and. Len(_aDetalhe) >= 1
+	//-- Seleciona tabela de Alunos 	
+	dbSelectArea("ZP0")
+	ZP0->(dbSetOrder(1))			//-- CPF 
+	//-- Seleciona Tabela de Convenios (Posiciona convencio corrente) 
+	dbSelectArea("ZP3")
+	ZP3->(dbSetOrder(2))		//-- Convenio + Situacao 
+ 	ZP3->(dbSeek(FwxFilial("ZP3")+_cConven+"L"))
+	//-- Seleciona o Arquivo TXT       
+	FT_FUse(_cArqRet)
+	//-- Manda o Ponteiro para topo 
+	FT_FGOTOP()
+	//-- Conta o Numero de Linhas 	
+	_nTotLIN := FT_FLASTREC()
+	//-- Inicializa o Termometro 	
+	ProcRegua(_nTotLIN)
+	//-- Loop de Leitura  
+	Do While !FT_FEof()
+        //-- Captura a linha a ser lida 
+		_cTexto := Upper(AllTrim(FT_FReadln()))
+		//-- Implementa Termometro
+		_nCtaREG++
+		IncProc("Total de Registros:"+Alltrim(Transform(_nTotLIN,"@E 999,999,999"))+"|  Lidos:"+Alltrim(Transform(_nCtaREG,"@E 999,999,999")))   
+		//-- Regras para definir se a linha e de Cabecalho, Detalhe ou Rodape	
+		_lE_Header := Iif(_lHeader,Iif(_nCtaREG==1,.t.,.f.),.f.)
+		_lE_Traill := Iif(_lTrailler,Iif(_nCtaREG==_nTotLIN,.t.,.f.),.f.)
+		_lE_Detalh := Iif(_lDetalhe,Iif((!_lE_Header .and. !_lE_Traill),.t.,.f.),.f.)
+		do Case
+			Case _lRetOK .and. _lE_Header
+			  	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//| ***** LER CABECALHO "Header"                                          |
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			 	//--     
+				_aFilds	:= {} 
+				_nCtaA 	:= 0    
+				For _nCtaA := 1 To Len(_aCabecalh)    
+					aadd(_aFilds, Substr(_cTexto,_aCabecalh[_nCtaA,2,4],_aCabecalh[_nCtaA,2,6]))  
+				Next _nCtaA
+				aadd(_aColsCab,_aFilds)  
+				//-- *********************************************************************
+                //--    Considera a ultima linha, caso Header tenha mais de uma linha 
+				//-- *********************************************************************
+				_nPosH	:= Len(_aColsCab)
+				_nPc 	:= aScan(_aCabecalh, {|x| Upper(x[2,2]) == "ZP1_XCONTR" })
+				//-- *********************************************************************
+				//--    Valida o Contrato/Convenio 
+				//-- *********************************************************************
+                If _nPc > 0
+					If Val(_aColsCab[_nPosH,_nPc]) != Val(ZP1->ZP1_XCONTR)
+						Aviso(FunName()+"/"+ProcName(),"O Arquivo de retorno não pertence á este Contrato/Convênio!",{"OK"})
+						_lRetOK 	:= .f.
+						_lCtrNoS 	:= .f.
+						Exit
+					Endif  
+				Else
+					Aviso(FunName()+"/"+ProcName(),"O Identificardor do Codigo do Contrato [Contrato] não foi encontrato no [Header] do Arquivo de Retorno de Pagamento! Não é possivel processar o retorno!",{"OK"})
+					_lRetOK 	:= .f.
+					_lCtrNoS 	:= .f.
+					Exit
+				Endif 
+			Case _lRetOK .and. _lE_Detalh
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//| ***** LER DETALHE "Detalhe"                                           |
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			 	//--     
+				_aFilds	:= {} 
+				_nCtaA 	:= 0 
+				For _nCtaA := 1 To Len(_aDetalhe)    
+					aadd(_aFilds, Substr(_cTexto,_aDetalhe[_nCtaA,2,4],_aDetalhe[_nCtaA,2,6]))   
+				Next _nCtaA
+				aadd(_aColsDet,_aFilds)   
+				//-- *********************************************************************
+                //--    Considera a ultima linha, para Tratamento Linha a linha lida
+				//-- *********************************************************************
+				_nPosD	:= Len(_aColsDet)   
+			Case _lRetOK .and. _lE_Traill
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//| ***** LER RODAPE "Trailler"                                           |
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			 	//-- 
+				_aFilds	:= {} 
+				_nCtaA 	:= 0 
+				For _nCtaA := 1 To Len(_aTrailler)    
+					aadd(_aFilds, Substr(_cTexto,_aTrailler[_nCtaA,2,4],_aTrailler[_nCtaA,2,6])) 
+				Next _nCtaA
+				aadd(_aColsTra,_aFilds)    
+				//-- *********************************************************************
+                //--    Considera a ultima linha, caso Traller tenha mais de uma linha 
+				//-- *********************************************************************
+				_nPosT	:= Len(_aColsTra)  
+		Endcase
+		//-- Segue para Proxima Linha 
+		FT_FSkip()
+	EndDo
+	If _lRetOK
+		//-- *********************************************************************
+		//--    Fecha o Arquivo de Retorno que esta sendo lido
+		//-- *********************************************************************
+		fClose(_nH_Arq)   
+		//-- Chamada a Funcao de Gravacao 
+		fPreRet()
+	Else
+ 		If _lCtrNoS
+			Aviso(FunName()+"/"+ProcName(),"Não existem registros aptos para retorno!",{"OK"})
+		Endif 
+	Endif 
+Endif 
+Return _lRetOK
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fPreRet>                                                   |
+|Rotina que processa as informacoes do retorno da remessa                  |
+|																				     |
+|@Author<Edir Barreto>                                                   |
+|@since<23/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@Receive                                                                  |
+|<   _cFilial (c) - Codigo da Filial                                       |
+|    _cConven (c) - Codigo do Convenio (Protheus)                          |
+|   _cPeriodo (c) - Codigo do Periodo                                      |
+|       _cSeg (c) - Codigo da Seguencia (Calendario)                       |
+|    _cSessao (c) - Codigo da Sessao                                       |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _lRetOK (l) - (.t.) Se a Geracao do Arquivo foi OK                    |
+|                  (.f.) Por qualquer motivo não gerou arquivo de remesa   |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fPreRet()
+Local _aArea		:= GetArea()
+Local _lFez 		:= .f.
+//--
+Local _PId 			:= aScan(_aCabecalh	,{|x| Upper(AllTrim(x[2,2])) == "IDREMESSA" 	})
+Local _PRe 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "NRREMESSA" 	})
+Local _PSq 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "SEQUENCIA" 	})
+Local _POc 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "OCORRENCIA" 	})
+Local _PCr 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "CHVREMESSA"	})
+Local _PCn 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "NRCARTAO"		})
+Local _PRf 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "NRREFERENC"	})
+Local _PDt 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "DATAPGTO"		})
+Local _PSt 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "STATUS"		})
+//--
+Local _cChvRemes	:= ""  
+Local _cRemessa		:= ""
+Local _cSequenc		:= ""
+Local _cOcorrenc	:= ""  
+Local _cNrCartao	:= ""
+Local _lTemErro 	:= .f.
+//--
+Local _nRegs		:= Len(_aColsDet)  
+Local _nRegOK		:= 0
+Local _nRegNOTOK	:= 0  
+Local _cPathRoot	:= GetNewPar("MV_XLOGPRO","\Pronatec\Logs\")   
+Local _cFileLog	:= CriaTrab(Nil,.F.)
+//-- 
+Local _nHdl_log	:= fCreate(_cPathRoot + cFilAnt + "_" + FunName()+"_"+ProcName() + _cFileLog+"_LOG.txt")  
+Local _cTextLOG	:= ""
+//--
+ProcRegua(_nRegs)  
+If Aviso(FunName()+"/"+ProcName(),"Tem certeza que deseja efetivar o processamento do Retorno de Liberação?", {"Sim","Não"}) == 1
+	//-- *********************************************************************
+	//-- Implementa controle de Transacao.
+	//-- *********************************************************************
+	Begin Transaction           
+		//-- *********************************************************************
+		//--    Monta cabecalho do Lod de Leitura do Arquivod e Pre Cadastro
+		//-- *********************************************************************
+		_cTextLOG := "#RELATORIO DE LOG - LEITURA DO ARQUIVO DE RETORNO DA REMESSA DE LIBERAÇÃO CARTAO - "+DTOC(date())+" as "+time()+CHR(13)+CHR(10) 
+		_cTextLOG += "       Convenio: "+_cConven+CHR(13)+CHR(10) 
+		_cTextLOG += " Qtde de Regist: "+Alltrim(Transform(_nRegs,"@E 999,999,999"))+CHR(13)+CHR(10)  
+		fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+
+		//-- *********************************************************************
+		//--    Imprime o Cabecalho do Relatorio de LOG 
+		//-- *********************************************************************
+		_cTextLOG :=	PadR("Tp SIGE" 		,TamSx3("ZP1_XSIGE")[1])+";"+;
+						PadR("Evento" 		,TamSx3("ZP3_XEVENT")[1])+";"+;
+						PadR("Matricula"	,TamSx3("ZP3_XMATRI")[1])+";"+;
+						PadR("Codigo" 		,TamSx3("ZP0_XCOD")[1])+";"+;
+						PadR("Nome"			,TamSx3("ZP3_XNOME")[1])+";"+;
+						PadR("CPF" 			,TamSx3("ZP3_XCPF")[1])+";"+;
+						PadR("Dt Nasc." 	,TamSx3("ZP0_XDTNAS")[1])+";"+;
+						PadR("Tip Pgto" 	,TamSx3("ZP7_XTIPO")[1])+";"+;	
+						PadR("Per/Ses" 		,40)+";"+;	
+						PadR("Ocorr,"		,40)+CHR(13)+CHR(10)      
+		fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+		//-- 
+		dbSelectArea("ZP3")
+		ZP3->(dbSetOrder(7))		//-- Numero do Cartao 
+		_nCtaA := 0            
+		For _nCtaA := 1 To Len(_aColsDet)
+			IncProc("Total de Registros:"+Alltrim(Transform(_nRegs,"@E 999,999,999"))+"|  Lidos:"+Alltrim(Transform(_nCtaA,"@E 999,999,999")))   
+
+			//-- ***********************************************************************
+			//--   Identifica e Monta a Chave de Identificacao no RETORNO.
+			//--   Pois, o retorno de liberação pode ser referente a qualquer 
+			//--   MATRICULA de qualquer SESSAO, CALENDARIO ou PERIODO.
+			//--   
+			//--   Considera para a Chave como sendo:               
+			//--   [ZP3_XIDREM - Codigo da Remesa]+[ZP3_XSEQUE - Seguencia da Remessa]
+			//-- ***********************************************************************
+			_cChvRemes	:= _cConven+Strzero(Val(_aColsCab[1,_PId]),8)+sTRZERO(VaL(_aColsDet[_nCtaA,_PSq]),5)
+			//--   Identifica a REMESSA
+			_cRemessa	:= Strzero(Val(_aColsCab[1,_PId]),8) 
+			_cNrCartao	:= PadR(Alltrim((_aColsDet[_nCtaA,_PCn])),TamSX3("ZP3_XIDCON")[1])
+			//--  Localiza o Cartão Pelo "Numero do Cartão" 
+			If (ZP3->(dbSeek(_cNrCartao)))  
+				//-- Posiciona na Tabela de Alunos 			
+				dbSelectArea("ZP0")
+				ZP0->(DbSetOrder(1))
+				ZP0->(dbSeek(FwxFilial("ZP0")+ZP3->ZP3_XCPF))
+				//-- *********************************************************************
+				//--   Identifica se houve erro e qual a mensagem 
+				//-- *********************************************************************
+	     		_cOcorrenc := _aColsDet[_nCtaA,_POc]
+				If Upper(Alltrim(_cOcorrenc)) != "OPERACAO REALIZADA COM SUCESSO" //-- OPERACAO REALIZADA COM SUCESSO
+					_lTemErro := .t. 
+					_cMsgErro := Alltrim(_cOcorrenc)			//-- Ocorrencia  
+				Endif      
+				//-- *********************************************************************
+				//--   GRAVA O RETORNO
+				//-- *********************************************************************
+				ZP7->(RecLock("ZP3",.f.))
+				//-- *********************************************************************
+				//--   Identifica a mensagem de erro se o registro tiver sido rejeitado.
+				//-- *********************************************************************
+				If _lTemErro
+					Replace ZP3->ZP3_XSTATU With "R"			//-- Status (Situacao) -- Rejeitado
+					Replace ZP3->ZP3_XOCORR With _cMsgErro		//-- Ocorrencia 
+					Replace ZP3->ZP3_XDTRET With dDataBase
+					//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+					//| Se nao for valido, grava no LOG                                    ³
+					//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+					_cTextLOG := 	ZP1->ZP1_XSIGE+";"+;
+									ZP3->ZP3_XEVENT+";"+;
+									ZP3->ZP3_XMATRI+";"+;
+									ZP0->ZP0_XCOD+";"+;
+									ZP0->ZP0_XNOME+";"+;
+									ZP0->ZP0_XCPF+";"+;
+									DTOC(ZP0->ZP0_XDTNAS)+";"+;
+									ZP1->ZP1_XTIPO+";"+; 
+									ZP3->ZP3_XSESSA+";"+; 
+									_cMsgErro+" "+CHR(13)+CHR(10)    
+					fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG) 
+					_lTemErro := .f. 
+					_nRegNOTOK++
+				Else
+					Replace ZP3->ZP3_XSTATU With "C"		  	//-- Status (Situacao): Conveniado    
+					Replace ZP3->ZP3_XDTRET With dDataBase
+					_nRegOK++
+				Endif    
+				ZP3->(MsUnLock())
+				ZP3->(dbCommit()) 
+				_lFez := .T.
+			Endif
+		Next _nCtaA         
+		If _lFez
+			//-- ****************************************************************
+			//--    MODIFICA O STATUS DA REMESSA: T=Retorno OK
+			//-- ****************************************************************
+			dbSelectArea("ZPA")
+			ZPA->(dbSetOrder(3))			//-- Convenio+Codigo+Tp Remessa
+			If ZPA->(DbSeek(FwxFilial("ZPA")+_cConven+_cRemessa+"RL"))
+				//--
+				ZPA->(RecLock("ZPA",.f.))
+				Replace ZPA->ZPA_XSTATU With "T" 	//-- Status da RETORNO OK 
+				ZPA->(MsUnLock())
+				ZPA->(dbCommit())
+			EndIf
+		Endif     		
+	End Transaction
+	_cTextLOG := "Resumo da Leitura do Retorno: "+CHR(13)+CHR(10) 
+	_cTextLOG += " Total de Registro: "+Alltrim(Transform(_nRegs		,"@E 999,999,999"))+CHR(13)+CHR(10) 
+	_cTextLOG += "     Total Aceitos: "+Alltrim(Transform(_nRegOK		,"@E 999,999,999"))+CHR(13)+CHR(10) 
+	_cTextLOG += "  Total Rejeitados: "+Alltrim(Transform(_nRegNOTOK	,"@E 999,999,999"))+CHR(13)+CHR(10)  
+	fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+Endif      	
+//-- ****************************************************************
+//--    Fecha o Arquivo de Log
+//-- ****************************************************************
+fClose(_nHdl_Log) 
+If Aviso(FunName()+"/"+ProcName(),"Leitura encerrada. Deseja imprimir o arquivo de Log ["+_cFileLog+"_LOG.txt] neste momento?", {"Sim","Não"}) == 1
+	u_SN069BX(_cPathRoot + cFilAnt + "_" + FunName()+"_"+ProcName() + _cFileLog+"_LOG.txt")
+Endif    
+RestArea(_aArea)
+Return Nil
+

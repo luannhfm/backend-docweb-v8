@@ -1,0 +1,568 @@
+#INCLUDE 'Protheus.ch'
+#INCLUDE "APWIZARD.CH"
+
+#DEFINE DEF_SVIGE "05" //Vigente
+#DEFINE DEF_SPARA "06" //Paralisado
+#DEFINE DEF_SREVS "09" //Revisao
+#DEFINE DEF_SREVD "10" //Revisado
+
+/*/{Protheus.doc} SS6902F
+	//Wizard para aditivo de contratos de venda do SESI.
+	Premissas para execução da rotina:
+		-O contrato deve ser da entidade SESI;
+		-O contrato deve possuir vinculo com uma oportunidade de venda;
+		-O contrato não pode ter controle de acesso;
+		-O contrato deve possuir medição eventual;
+		-O contrato deve ser de venda;
+		-O contrato deve ser flexível;
+	Caso o contrato não atenda uma destas premissas, o mesmo deve ser revisado/aditivado 
+	pela rotina padrão.
+
+@author franklin.oliveira
+@since 19/04/2016
+@version 1.00
+
+@type function
+/*/
+User Function SS6903F()
+
+Local aArea		:= GetArea()
+Local aSitAdt	:= {"Vigência", "Execução", "Demais Cláusulas Contratuais", "Vigência e Execução", "Vigência, Execução e Demais Cláusulas Contratuais"}
+
+Local cJust 	:= ""
+Local cDescrVig	:= ""
+
+Local lRet		:= .T.
+Local lMedEvent	:= Posicione("CN1", 1, xFilial("CN1") + CN9->CN9_TPCTO, "CN1_MEDEVE") == "1"
+Local lCtoVenda	:= Posicione("CN1", 1, xFilial("CN1") + CN9->CN9_TPCTO, "CN1_ESPCTR") == "2"
+Local lCtoFlex	:= Posicione("CN1", 1, xFilial("CN1") + CN9->CN9_TPCTO, "CN1_CTRFIX") == "2"
+Local lVldCtr	:= CN9->CN9_VLDCTR == "1"	//Verifica validação de contrato
+
+Private aUnVig  	:= {"Dias", "Meses", "Anos", "Indeterminada"}
+
+Private cContra		:= CN9->CN9_NUMERO
+Private cRevisa		:= CN9->CN9_REVISA
+Private cCodTR		:= SuperGetMV("MV_XCODTAD", .F., "")
+
+Private dIniExec
+Private dFimExec
+Private dIniVige
+Private dFContra
+
+Private lAltDtEx	:= .F.
+Private lAltDtTm	:= .F.
+Private lAltClau	:= .F.
+Private lRevisad  	:= .F. //Verifica se esta incluindo ou alterando uma revisao
+
+Private nAdtOpc		:= 0
+Private nOpcProc	:= 0 //Tipo de alteração: 1-Prosseguir, 2-Reiniciar, 3-Excluir
+Private nVgAdit		:= 0
+
+Private oUnVig
+
+	If SubStr(CN9->CN9_FILIAL, 1, 4) == '02MT'
+		If Empty(CN9->CN9_XOPORT) .Or. Empty(CN9->CN9_XREVOP) .Or. lVldCtr .Or. !lMedEvent .Or. !lCtoVenda .Or. !lCtoFlex
+			Aviso(FunName() + "/" + ProcName(), "O Contrato selecionado deve ser aditivado pela opção 'Revisar'", {"OK"})
+			lRet := .F.
+		EndIf
+	EndIf
+	
+	If lRet
+		//Painel de Apresentação
+		DEFINE WIZARD oWizard TITLE "Asistente - Aditivo Contrato de Venda";
+		HEADER "Aditivo Contrato de Venda";
+		TEXT "Assistente responsável pela configuração dos aditivos de contratos de venda" + CRLF + CRLF + "Clique em avançar e inicie o processo.";
+		NEXT {|| .T. };
+		FINISH {|| .T. }
+		
+		//Painel de seleção do tipo de aditivo
+		CREATE PANEL oWizard;
+		HEADER "Tipos de Aditivo";
+		MESSAGE "Selecione o tipo de aditivo";
+		PANEL NEXT {|| fVldP2() };
+		FINISH {|| .T. }
+		
+		@ 030,010 Say "Contrato" of oWizard:oMPanel[2] PIXEL
+		@ 027,045 MsGet cContra Picture PesqPict("CN9","CN9_NUMERO") Size 55,5 When .F. of oWizard:oMPanel[2] PIXEL
+
+		@ 030,105 Say "Revisão Atual" of oWizard:oMPanel[2] PIXEL
+		@ 027,145 MsGet cRevisa Picture PesqPict("CN9","CN9_REVISA") Size 20,5 When .F. of oWizard:oMPanel[2] PIXEL
+
+		@ 065,045 RADIO oGrRad01 VAR nAdtOpc PROMPT "Vigência", "Execução", "Demais Cláusulas Contratuais", "Vigência e Execução", "Vigência, Execução e Demais Cláusulas Contratuais" SIZE 70, 10 OF oWizard:oMPanel[2] PIXEL
+				
+		//Painel de justificativa - finalização
+		CREATE PANEL oWizard;
+		HEADER "Finalização";
+		MESSAGE "Informe a justificativa da revisão";
+		PANEL NEXT {|| .T. };
+		BACK {|| .T. };
+		FINISH{|| fGerAdt(cJust) }
+		
+		@ 015,010 Say "Contrato" of oWizard:oMPanel[3] PIXEL
+		@ 012,045 MsGet cContra Picture PesqPict("CN9","CN9_NUMERO") Size 55,5 When .F. of oWizard:oMPanel[3] PIXEL
+
+		@ 015,105 Say "Revisão Atual" of oWizard:oMPanel[3] PIXEL
+		@ 012,145 MsGet Posicione("CN9", 1,xFilial("CN9") + cContra + cRevisa, "CN9_REVATU") Picture PesqPict("CN9","CN9_REVISA") Size 20,5 When .F. of oWizard:oMPanel[3] PIXEL
+		
+		@ 030,012 Say "Justificativa" of oWizard:oMPanel[3] PIXEL
+		oMemo := tMultiget():New(030,050,{|u|if(Pcount()>0,cJust:=u,cJust)},oWizard:oMPanel[3],200,50,,,,,,.T.)
+		
+		@ 090,012 Say RetTitle("CN9_XDTINI") of oWizard:oMPanel[3] PIXEL//"Dt. In. Exec"
+		@ 087,050 MsGet dIniExec Picture PesqPict("CN9","CN9_XDTINI") Valid fVldInExec() Size 55,5 When lAltDtEx of oWizard:oMPanel[3] PIXEL
+		
+		@ 090,112 Say RetTitle("CN9_XDTFIM") of oWizard:oMPanel[3] PIXEL//"Dt. Fim Exec"
+		@ 087,155 MsGet dFimExec Picture PesqPict("CN9","CN9_XDTFIM") Valid fVldFimExec() Size 55,5 When lAltDtEx of oWizard:oMPanel[3] PIXEL
+		
+		@ 105,012 Say RetTitle("CN9_VIGE") Of oWizard:oMPanel[3] PIXEL//"Vigencia"
+		@ 102,050 MsGet nVgAdit Picture PesqPict("CN9","CN9_VIGE") Valid fdDtFim() Size 55,5 When lAltDtTm of oWizard:oMPanel[3] PIXEL
+		
+		@ 105,112 Say RetTitle("CN9_UNVIGE") Of oWizard:oMPanel[3] PIXEL//"Unid. Vigencia"
+		@ 102,155 ComboBox oUnVig VAR cDescrVig ITEMS aUnVig Valid fAtuDtFim() Size 55,5 When lAltDtTm of oWizard:oMPanel[3] PIXEL
+		
+		@ 120,012 Say RetTitle("CN9_VIGE") Of oWizard:oMPanel[3] PIXEL//"Dt Termino"
+		@ 117,050 MsGet dFContra Picture PesqPict("CN9","CN9_DTFIM") Valid fVldDtFim() Size 55,5 When .F. of oWizard:oMPanel[3] PIXEL
+	
+		ACTIVATE WIZARD oWizard CENTERED
+	EndIf
+	
+	RestArea(aArea)
+	
+Return (Nil)
+
+/*/{Protheus.doc} fVldP2
+	Função para validação do painel de seleção do tipo de aditivo.
+
+@author franklin.oliveira
+@since 19/04/2016
+@version 1.00
+@type function
+
+@Return lRet, lógico, se .T. avança para próximo passo
+/*/
+Static Function fVldP2()
+
+Local aArea		:= GetArea()
+
+Local cQuery	:= ""
+Local cAliasCND	:= ""
+Local cUnVig 
+
+Local lRet 		:= .T.
+
+	If nAdtOpc == 0
+		lRet := .F.
+		Help('', 1, FunName() + "/" + ProcName(), , "Para continuar é necessário selecionar uma opção", 1, 0)
+	EndIf
+	
+	//Verifica vigência do contrato
+	If lRet
+		If dDataBase < CN9->CN9_DTINIC
+			Help('', 1, FunName() + "/" + ProcName(), , "O contrato não se encontra dentro do período de vigência", 1, 0)
+			lRet := .F.
+		EndIf
+	EndIf
+	
+	//Verifica se existe medição em aberto para o contrato
+	If lRet
+		cAliasCND := GetNextAlias()
+		
+		cQuery := "SELECT COUNT(*) AS QTD"
+		cQuery += "		FROM " + RetSQLName("CND") + " CND "
+		cQuery += "	WHERE CND.CND_FILIAL	= '" + xFilial("CND") + "'"
+		cQuery += " 	AND CND.CND_CONTRA 	= '" + cContra + "'"
+		cQuery += "		AND CND.CND_DTFIM	= ''"
+		cQuery += "		AND CND.D_E_L_E_T_	= ' '"
+		
+		cQuery := ChangeQuery(cQuery)
+		dbUseArea(.T., "TOPCONN", TcGenQry(,,cQuery), cAliasCND, .F., .T.)
+		
+		If (cAliasCND)->QTD > 0
+			Help('', 1, FunName() + "/" + ProcName(), , "O contrato possui medição em aberto. Encerre a medição antes de gerar o aditivo.", 1, 0)
+			lRet := .F.
+		EndIf
+	EndIf
+	
+	//Verifica se o contrato possui revisão não aprovada
+	If lRet
+		If ((AllTrim(CN9->CN9_SITUAC) == DEF_SVIGE .Or. AllTrim(CN9->CN9_SITUAC) == DEF_SPARA) .And. !Empty(CN9->CN9_REVATU)) .Or. AllTrim(CN9->CN9_SITUAC) == DEF_SREVS
+			Help('', 1, FunName() + "/" + ProcName(), , "O contrato possui aditivo não aprovado. Aprove ou Exclua o aditivo antes de gerar um novo.", 1, 0)
+			lRet := .F.
+		EndIf
+	EndIf
+	
+	//Verifica o tipo de revisão - parâmetro MV_XCODTAD
+	If Empty(cCodTR)
+		Help('', 1, FunName() + "/" + ProcName(), , "É necessário preencher o parâmetro 'MV_XCODTAD'.", 1, 0)
+		lRet := .F.
+	Else
+		DbSelectArea("CN0")
+		DbSetOrder(1)
+		If CN0->( DbSeek(xFilial("CN0") + cCodTR) )
+			//Tipo da revisão deve ser 1=Aditivo
+			If CN0_TIPO != "1"
+				Help('', 1, FunName() + "/" + ProcName(), , "Tipo de revisão inválido. Verifique o parâmetro 'MV_XCODTAD'.", 1, 0)
+				lRet := .F.
+			EndIf
+			
+			//Modo da revisão deve ser 3=Ambos
+			If lRet .And. CN0_MODO != "3"
+				Help('', 1, FunName() + "/" + ProcName(), , "Modo de revisão inválido. Verifique o parâmetro 'MV_XCODTAD'.", 1, 0)
+				lRet := .F.
+			EndIf
+			
+			//Especie da revisão deve ser 3=Prazo
+			If lRet .And. CN0_ESPEC != "3"
+				Help('', 1, FunName() + "/" + ProcName(), , "Especie de revisão inválido. Verifique o parâmetro 'MV_XCODTAD'.", 1, 0)
+				lRet := .F.
+			EndIf
+		Else
+			Help('', 1, FunName() + "/" + ProcName(), , "Tipo de revisão não encontrado. Verifique o parâmetro 'MV_XCODTAD'.", 1, 0)
+			lRet := .F.
+		EndIf 
+	EndIf
+	
+	//Segue para painel final
+	If lRet
+		oWizard:NPanel := 2
+
+		//Carrega datas
+		dIniExec := CN9->CN9_XDTINI
+		dFimExec := CN9->CN9_XDTFIM
+		dIniVige := CN9->CN9_DTINIC
+		dFContra := CN9->CN9_DTFIM
+		
+		lAltDtEx := nAdtOpc != 1 .And. nAdtOpc != 3
+		lAltDtTm := nAdtOpc != 2 .And. nAdtOpc != 3
+		lAltClau := nAdtOpc == 3 .Or. nAdtOpc == 5
+		
+		//Carrega Unidade de vigência do contrato
+		cUnVig := Posicione("CN9", 1, xFilial("CN9") + cContra + cRevisa, "CN9_UNVIGE")
+		
+		//Carerga vigência do contrato
+		nVgAdit := CN9->CN9_VIGE
+
+		//Seleciona a vigência atual do contrato no combo do ultimo painel (Justificativas)
+		If cUnVig == "1"
+			oUnVig:nat := 1
+		ElseIf cUnVig == "2"
+			oUnVig:nat := 2
+		ElseIf cUnVig == "3"
+			oUnVig:nat := 3
+		Else
+			oUnVig:nat := 4
+		EndIf
+	EndIf
+	
+	RestArea(aArea)
+
+Return (lRet)
+
+Static Function fVldP3()
+
+Local lRet := .T.
+
+Return (lRet)
+
+/*/{Protheus.doc} fGerAdt
+	//Função para validar dados informados para o aditivo.
+	Se as informações estiverem válidas, um novo aditivo 
+	para o contrato é gerado.
+	
+@author franklin.oliveira
+@since 19/04/2016
+@version undefined
+@param cJust, characters, justificativa do aditivo
+@type function
+
+@Return lRet, lógico, se .T. finaliza wizard gerando revisão
+/*/
+Static Function fGerAdt(cJust)
+
+Local aContra	:= {}       
+
+Local cNRevisa	:= Soma1(If(Empty(cRevisa), StrZero(0, TamSX3("CN9_REVISA")[1]), cRevisa))
+Local cUnVig   	:= ""
+
+Local nX                               
+Local nTContra
+
+Local lRet    	:= .T.
+
+Local dFimOld	:= dFContra
+
+	//Valida justificativa
+	If Empty(cJust)
+		Help("CNTA140", 1, "CNTA140_16")
+		lRet := .F.
+	EndIf
+	
+	If	Type("oUnVig")=="O"
+		If oUnVig:nat == 1
+			cUnVig := "1"
+		ElseIf oUnVig:nat == 2
+			cUnVig := "2"
+		ElseIf oUnVig:nat == 3
+			cUnVig := "3"
+		Else
+			cUnVig := "4"
+		EndIf
+	EndIf
+	
+	If lRet
+		Begin Transaction
+			DbSelectArea("CN9")
+			DbSetOrder(1)     
+			DbSeek(xFilial("CN9") + cContra + cRevisa)
+			
+			//Total de campos do arquivo CN9
+			nTContra := FCount()
+						
+			//Transmite campos para o array
+			aContra := Array(nTContra)
+			
+			For nX := 1 To nTContra
+				aContra[nX] := FieldGet(nX)
+			Next nX
+			
+			//Atualiza origem
+			RecLock("CN9", .F.)
+				CN9->CN9_REVATU := cNRevisa
+			MsUnlock()
+			
+			//Gera registro de Revisão
+			RecLock("CN9", .T.)
+				For nX := 1 To nTContra
+					FieldPut(nX, aContra[nX])
+				Next nX
+				
+				//Copia campos especificos
+				CN9->CN9_REVISA := cNrevisa
+				CN9->CN9_SITUAC := DEF_SREVS
+				CN9->CN9_TIPREV := cCodTR   
+				CN9->CN9_DTREV  := dDataBase
+				CN9->CN9_REVATU := ""
+				CN9->CN9_VIGE   := nVgAdit
+				CN9->CN9_UNVIGE := cUnVig
+				CN9->CN9_XADVEN := Str(nAdtOpc, 1)
+			MsUnlock()
+			
+			//Atualiza Justificativa
+			MSMM(,,, cJust, 1,,, "CN9", "CN9_CODJUS")
+			
+			//Atualiza Clausula
+			If lAltClau
+				MSMM(,,,cJust,1,,,"CN9","CN9_CODCLA")
+			EndIf
+			
+			//Gera copia das medições
+			CN140RevMed(cContra, cRevisa, cNRevisa)
+			
+			//Atualiza cabeçalho do contrato
+			RecLock("CN9",.F.)
+				//Período de execução
+				If lAltDtEx
+					CN9->CN9_XDTINI := dIniExec 
+					CN9->CN9_XDTFIM := dFimExec  
+				EndIf
+				
+				//Período de vigência
+				If lAltDtTm
+					CN9->CN9_VIGE   := nVgAdit
+					CN9->CN9_UNVIGE := cUnVig
+					CN9->CN9_DTFIM  := dFContra
+				EndIf
+			MsUnlock()
+		End Transaction
+	EndIf
+
+Return (lRet)
+
+/*/{Protheus.doc} fdDtFim
+	//Função para calcular e validar nova data final do contrato
+
+@author franklin.oliveira
+@since 19/04/2016
+@version undefined
+@param cUnVig, characters, unidade de vigência do contrato
+@type function
+
+@return lRet, lógigo, se .T. a data final está valida
+/*/
+Static Function fdDtFim(cUnVig)
+
+local aArea := GetArea()
+
+Local dDtPrv 
+
+Local lRet 	:= .T.
+
+DEFAULT cUnVig := ""
+
+	If nVgAdit >= 0              
+		DbSelectArea("CN9")
+		DbSetOrder(1)	
+		DbSeek( xFilial("CN9") + cContra + cRevisa)
+		
+		If Empty(cUnVig) 
+			If oUnVig:nat == 1
+				cUnVig := "1"
+			ElseIf oUnVig:nat == 2
+				cUnVig := "2"
+			ElseIf oUnVig:nat == 3
+				cUnVig := "3"
+			Else
+				cUnVig := "4"
+			EndIf	
+		EndIf
+		
+		dDtPrv := CN100DtFim(cUnVig, CN9->CN9_DTINIC, nVgAdit)
+		
+		If dDtPrv >= dFimExec
+			dFContra := dDtPrv
+		Else
+			Help('', 1, FunName() + "/" + ProcName(), , "A data de término do contrato não pode ser menor do que " + DTOC(dFimExec);
+				+ " que corresponde a data final da execução.", 1, 0)
+			lRet := .F.
+		EndIf
+	Else
+		lRet := .F.
+	EndIf
+
+	RestArea(aArea)
+	
+Return (lRet)
+
+/*/{Protheus.doc} fAtuDtFim
+	//Função para atualizar e validar nova data final do contrato.
+	Utilizada para validar o campo "Unidade de Vigência"
+
+@author franklin.oliveira
+@since 19/04/2016
+@version undefined
+@type function
+
+@return lRet, lógigo, se .T. a data final está valida 
+/*/
+Static Function fAtuDtFim()
+
+Local cUnVig
+
+	If oUnVig:nat == 1
+		cUnVig := "1"
+	ElseIf oUnVig:nat == 2
+		cUnVig := "2"
+	ElseIf oUnVig:nat == 3
+		cUnVig := "3"
+	Else
+		cUnVig := "4"
+	EndIf
+
+Return fdDtFim(cUnVig)
+
+/*/{Protheus.doc} fVldDtFim
+	Função para validar data final do contrato calculada.
+	Utilizada no campo informativo da data final do contrato.
+
+@author franklin.oliveira
+@since 19/04/2016
+@version undefined
+@type function
+
+@return lRet, lógico, valida data final do contrato 
+/*/
+Static Function fVldDtFim()
+
+local aArea := GetArea()
+
+Local lRet 	:= .T.
+
+Local dFim
+Local dIni
+
+	If dbSeek(xFilial("CN9") + cContra + cRevisa)
+		dFim := CN9->CN9_DTFIM
+		dIni := CN9->CN9_DTINIC
+	EndIf
+	
+	//valida data de inicio do contrato e data atual
+	lRet := (dFContra > dIni) .And. (dFContra > dDataBase)
+	
+	//valida data de execução
+	lRet := lRet .And. (dFContra > dIniExec) .And. (dFContra > dFimExec)
+	
+	//Exibe mensagem
+	If !lRet
+		Help('', 1, FunName() + "/" + ProcName(), , "Data de término inválida", 1, 0)
+	EndIf
+	
+	RestArea(aArea)
+
+Return (lRet)
+
+/*/{Protheus.doc} fVldInExec
+	//Função para validar a data inicial de execução informada.
+
+@author franklin.oliveira
+@since 19/04/2016
+@version undefined
+@type function
+
+@return lRet, lógico, se .T. a data inicial de execução é valida.
+/*/
+Static Function fVldInExec()
+
+Local cMsg	:= ""
+Local lRet	:= .T.
+
+	//Data final da execução
+	If (dIniExec > dFimExec)	
+		lRet 	:= .F. 
+		cMsg	:= "Data inico da execução maior que a data final da execução."
+	//Data inicio da vigência
+	ElseIf (dIniExec < dIniVige)
+		lRet 	:= .F.
+		cMsg	:= "Data inico da execução maior que a data inicio da vigencia."
+	EndIf
+	
+	//Exibe mensagem
+	If !lRet
+		Help('', 1, FunName() + "/" + ProcName(), , "Data de inicio da execução inválida: " + cMsg, 1, 0)
+	EndIf
+
+Return (lRet)
+
+/*/{Protheus.doc} fVldFimExec
+	//Função para validar a data final de execução informada.
+
+@author franklin.oliveira
+@since 19/04/2016
+@version undefined
+@type function
+
+@return lRet, lógico, se .T. a data final de execução é valida.
+/*/
+Static Function fVldFimExec()
+
+Local cMsg	:= ""
+Local lRet	:= .T.
+
+	//Data final do contrato
+	If (dFimExec > dFContra) 
+		lRet 	:= .F. 
+		cMsg	:= "Data fim da execução maior que a data final do contrato."
+	//Data inicio vigência
+	ElseIf (dFimExec < dIniVige)
+		lRet 	:= .F.
+		cMsg	:= "Data fim da execução menor que a data de inicio da vigência."
+	//Data de início da execução
+	ElseIf (dFimExec < dIniExec) 
+		lRet 	:= .F.
+		cMsg	:= "Data fim da execução maior que a data de inicio da execução."
+	EndIf
+	
+	//Exibe mensagem
+	If !lRet
+		Help('', 1, FunName() + "/" + ProcName(), , "Data de término da execução inválida: " + cMsg, 1, 0)
+	EndIf
+
+Return (lRet)

@@ -1,0 +1,91 @@
+#INCLUDE "PROTHEUS.CH"
+
+/*/
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÚÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄ¿±±
+±±³Fun‡…o	 ³ A100DEL	³ Autor ³ FSW      		        ³ Data ³ 23/08/12 ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Descri‡…o ³ Impedir deletar nota caso Titulo sofra Transferencia		  ³±±
+±±³            Verificar também avaliação do fornecedor                   ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Sintaxe	 ³            												  ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±         
+±±³ Uso		 ³ SIGAFIN													  ³±±          
+±±ÀÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ±±   
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+/*/
+
+
+User Function A100DEL()
+
+Local aArea		:= GetArea()
+Local lRet 		:= .T.
+Local lPrjCni	:= FindFunction("ValidaCNI") .And. ValidaCNI()
+Local cAliasNw	:= "SE2_TMP"
+Local cQuery		:= ""
+Local cArqTRB	:= GetNextAlias()
+
+If lPrjCni
+	//Verifica se existem AF  
+	/*DbSelectArea("DBI")
+	DbSetOrder(2)
+	If DBI->( DbSeek( xFilial("DBI") + SF1->F1_FORNECE + SF1->F1_LOJA + SF1->F1_DOC + SF1->F1_SERIE  ) )
+		Aviso("Aval. Fornecedores"," Exclusão não permitida. Existe registro de avaliação de fornecedor para a nota fiscal. ",{"Ok"})
+		lRet := .F.     	    
+	End If*/
+
+	dbSelectArea('SF1')
+              
+	cQuery := "Select E2_NUM  FROM " + RetSqlName("SE2")  + " WHERE E2_NUM = '" + SF1->F1_DUPL + "' AND E2_PREFIXO = '" + SF1->F1_PREFIXO + "' AND E2_NUMSOL <> ' ' "
+	cQuery :=  cQuery + " AND E2_FILIAL = '" + SF1->F1_FILIAL + "' AND D_E_L_E_T_ <> '*' "
+
+	dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasNw,.F.,.T.)                  
+
+	if (cAliasNw)->( !eof() )
+		Alert("O Título gerado por esta Nota Fiscal se encontra em processo de Transferência! Nota não poderá ser excluida! ")         
+		lRet := .F.
+	End              
+	(cAliasNw)->( dbCloseArea() )	
+
+EndIf
+
+/* Realiza a Exclusao do Rateio do Mutuo e Rateio Contabil do Mutuo */
+BeginSQL Alias cArqTRB
+	select E2_FILIAL, E2_PREFIXO, E2_NUM, E2_PARCELA, E2_TIPO, E2_FORNECE, E2_LOJA, E2_FILORIG, E2_XMUTUO
+	from %Table:SE2% SE2
+	where SE2.%NotDel% and E2_FILIAL = %Exp:SF1->F1_FILIAL% 
+	  and E2_PREFIXO = %Exp:SF1->F1_PREFIXO% and E2_NUM = %Exp:SF1->F1_DUPL% and E2_TIPO = %Exp:SF1->F1_ESPECIE%
+	  and E2_FORNECE = %Exp:SF1->F1_FORNECE% and E2_LOJA = %Exp:SF1->F1_LOJA%
+EndSQL
+
+dbSelectArea(cArqTRB)
+If Select(cArqTRB) > 0 .and. !Empty((cArqTRB)->E2_XMUTUO)
+
+	SZX->(dbSetOrder(1))
+	SZX->(dbSeek(xFilial("SZX") + (cArqTRB)->E2_XMUTUO))
+	While SZX->(!EOF()) .and. SZX->ZX_FILIAL == xFilial("SZX") .and. SZX->ZX_RATEIO == (cArqTRB)->E2_XMUTUO
+		RecLock("SZX",.F.)
+			SZX->(dbDelete())
+		SZX->(MsUnlock())
+		SZX->(dbSkip())
+	Enddo
+	
+	SZY->(dbSetOrder(1))
+	SZY->(dbSeek(XFilial("SZY") + (cArqTRB)->E2_XMUTUO))
+	While SZY->(!EOF()) .and. SZY->ZY_FILIAL == xFilial("SZY") .and. SZY->ZY_RATEIO == (cArqTRB)->E2_XMUTUO
+		RecLock("SZY",.F.)
+			SZY->(dbDelete())
+		SZY->(MsUnlock())
+		SZY->(dbSkip())
+	Enddo	
+EndIf	
+
+(cArqTRB)->(dbCloseArea())
+FErase(cArqTRB+GetDBExtension())
+FErase(cArqTRB+OrdBagExt())
+/* Fim da Exclusao do Rateio do Mutuo */
+
+RestArea(aArea)
+Return lRet

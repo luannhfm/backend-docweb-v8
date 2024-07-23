@@ -1,0 +1,651 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "APWIZARD.CH"
+#INCLUDE "TBICONN.CH"
+#INCLUDE "TOPCONN.CH"
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<SN062HX>                                                   |
+|Rotina de confirmação dos PAGAMENTOS Manuais                              |
+|@Author<Antonio Dantas>                                                   |
+|@since<15/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<Nil>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function SN062HX()  
+Local _aIndexZP6	:= {} 
+Private _nRecZP6	:= 0
+Private _lUserLib	:= .f.
+Private _cTitulo 	:= "Confirmação dos Pagamentos MANUAIS"
+Private aRotina 	:={	{"Pesquisar" 	,"AxPesqui"    	,0,1}	,;
+						{"Visualizar"	,"u_fSN062HX"	,0,2}	,;
+				   		{"Confirma"   	,"u_fSN062HX"	,0,3}	 }
+//-- Seleciona a Tabela de Matriculas 
+dbSelectArea("ZP7")
+ZP7->(dbSetOrder(1))
+//-- Aplica o Filtros para Trazer somente as Sessoes do Periodo Herdado na chamada da Funcao 
+ZP6->(DbSetFilter({|| ZP6->ZP6_XPERIO == ZP4->ZP4_XCOD },"ZP6->ZP6_XPERIO == ZP4->ZP4_XCOD "))
+//-- Seleciona a Tabela Sessoes
+dbSelectArea("ZP6")
+ZP6->(dbSetOrder(1))
+//-- APresenta a Tabela de Sessoes 
+mBrowse(,,,,"ZP6")
+//-- Remove os Filtros da ZP6 - Sessoes 
+EndFilBrw("ZP6",_aIndexZP6)
+Return
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fSN062HX>                                                  |
+|Apresenta e controla a interface "Tela" para operador das rotinas de      |
+|Confirmacao dos PAGAMENTOS MANUAIS                                        |
+|@Author<Antonio Dantas>                                                   |
+|@since<15/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<Nil>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fSN062HX(_cAlias,_nRec,_nOpc)
+//-- **********************************************************************
+//--    Variavies de controle do MsNewGetDados 
+//-- **********************************************************************
+Local _nOpcA		:= GD_INSERT + GD_DELETE + GD_UPDATE	//-- Define o modo de edicao da MsNewGetDados (Soma dos Modos) 
+Local _cIniCposA	:= ""									//-- Nome dos campos do tipo caracter que utilizarao incremento automatico.
+Local _cLinOkA		:= "AllwaysTrue"						//-- Funcao de usuario na saida da edicao da linha
+Local _cTudoOkA		:= "AllwaysTrue"						//-- Funcao de usuario para validado de toda a grid
+Local _cFieldOkA	:= "AllwaysTrue"						//-- Funcao de usuario para validacao do campo e foco de edicao 
+Local _cDelOkA		:= "AllwaysTrue"						//-- Funcao de usuario para validavao do DEL
+Local _nFreezeA		:= 000									//-- Campos estaticos na GetDados.
+Local _nMaxA		:= 999									//-- Numero Maximo de Elementos na Grid
+Local _cSupDelA		:= NIL                             		//-- Funcao executada quando pressionada as teclas <Ctrl>+<Delete>
+Private _aAlterA	:= {"ZP7_XMARK","ZP7_XTIPO"}			//-- Array dos campos que podem ser editados MsNewGetDados
+Private _aHeaderA	:= {}									//-- Array com os Elementos da Grid
+Private _aColsA		:= {}									//-- Array (Descricao) Cabecalho dos campos da Grid  
+Private _oOpcoes	:={	"Pesquisar" 			,;
+						"Visualizar"			,;
+						"Confirma Pagamento" 	}				//-- Array (Descricao) das Opcoes de Operacao 
+//--
+//-- **********************************************************************
+//--    Variaveis de controle da Operacao
+//-- **********************************************************************
+
+Private _nVlrTotal	:= 0.00
+Private _nQtdeMat	:= 0
+
+Private _nTotA_PG	:= 0.00
+Private _nQtde_PG	:= 0
+
+//-- **********************************************************************
+//--    Variavies de controle do MsNewGetDados dos Itens da Carga
+//-- **********************************************************************
+Private _aTELA 		:= {}
+Private _aGETS 		:= {}
+Private _nUsado 	:= 0
+Private _bCpo 		:= {|nField| Field(nField)}
+//--
+Private _aSize 		:= MsAdvSize()
+Private _aInfo 		:= {_aSize[1],_aSize[2],_aSize[3],_aSize[4],3,3}
+Private _aObjects 	:= {{100,035,.T.,.T.},{100,075,.T.,.T.},{100,015,.T.,.T.}}
+Private _APosObj 	:= MsObjSize(_aInfo,_aObjects,.T.)
+Private _APosGet 	:= MsObjGetPos((_aSize[3]-_aSize[1]),315,{{004,024,240,270}})
+//-- **********************************************************************
+//--    Declaração de Variaveis Private dos Objetos
+//-- **********************************************************************
+SetPrvt("_oBrwMatr","_oDlgMatr","_oQtdeMat","_oVlrTot","_oTot_APG","_oQtdePG")
+SetPrvt("_oBtnTpPg","_oBtnMAll","_oBtnDAll","_oBtnFIL","_oBtnSalv")
+//-- *******************************************************************
+//--    Seleciona a Tabela de Cargas e Garante o Posicionamento no 
+//--    Registro selecionado
+//-- *******************************************************************
+dbSelectArea("ZP6")
+ZP6->(dbSetOrder(1))
+ZP6->(dbGoTo(_nRec))   
+_nRecZP6	:= ZP6->(Recno())   
+If _nOpc == 3 .and. !(ZP6->ZP6_XSTATU $ "D#R#F")
+	Aviso(FunName()+"/"+ProcName(),"Confirmação de Pagamento só para Sessoes com Remessa Efetuada!", {"OK"})
+	Return .t.	
+Endif
+//-- *******************************************************************
+//--    Cria e Inicializa as Variaves PRIVATES que seram Utilizadas 
+//--    pela Funcao [EnChoice]
+//-- *******************************************************************
+_nCtaA := 0
+For _nCtaA := 1 To ZP6->(FCount())
+	//-- *******************************************************************
+	//--    Inicializa Variaveis c/Conteudo encontrado no Registro Atual 
+	//-- *******************************************************************
+	M->&(Eval(_bCpo,_nCtaA)) := ZP6->(FieldGet( _nCtaA))
+Next _nCtaA
+//-- *******************************************************************
+//--    Funcao que Cria a aHeader que sera utilizada pela MsNewGetDados
+//-- *******************************************************************
+fCriaHeard()   
+//-- *******************************************************************
+//--    Funcao que Cria a aCols que sera utilizada pela MsNewGetDados
+//-- *******************************************************************
+FWMsgRun(, {|| fCriaCols(_nOpc) }, "Carga das Matriculas", "Matriculas do Periodo: "+Alltrim(ZP6->ZP6_XPERIO)+", Calendário: "+Alltrim(ZP6->ZP6_XSEG)+" e Sessão:"+Alltrim(ZP6->ZP6_XCOD))
+//-- *******************************************************************
+//--    Monta a Interfase (Tela) que sera apresentada ao usuario 
+//-- *******************************************************************
+DEFINE MSDIALOG _oDlgMatr TITLE _cTitulo+" - "+_oOpcoes[_nOpc] FROM _aSize[7],_aSize[1] TO _aSize[6],_aSize[5] OF oMainWnd PIXEL
+EnChoice("ZP6",_nRec,_nOpc,,,,,_APosObj[1],,3)
+//-- **********************************************************************
+//--    Grid das Matriculas a Serem liberadas 
+//-- **********************************************************************
+_oBrwMatr	:= MsNewGetDados():New(_APosObj[2,1],_APosObj[2,2],_APosObj[2,3],_APosObj[2,4],_nOpcA,_cLinOkA,_cTudoOkA,_cIniCposA,_aAlterA,_nFreezeA,_nMaxA,_cFieldOkA,_cSupDelA,_cDelOkA,_oDlgMatr,_aHeaderA,_aColsA)
+_oBrwMatr:oBrowse:SetFocus()
+//-- **********************************************************************
+//--   Informacoes de Rodape: Valor toral e Quantidade de Matriculas 
+//-- **********************************************************************
+@ _APosObj[3,1],_APosGet[1,1] SAY "Valor Total (R$): " SIZE 70,7 OF _oDlgMatr PIXEL
+@ _APosObj[3,1],_APosGet[1,2] SAY _oVlrTot VAR _nVlrTotal PICTURE _aHeaderA[aScan(_aHeaderA, {|x| Trim (x[2]) == "ZP7_XVALOR" }),3] 	SIZE 70,7 OF _oDlgMatr PIXEL
+//--
+@ _APosObj[3,1]+08,_APosGet[1,1] SAY "Tot A Pagar(R$): " SIZE 70,7 OF _oDlgMatr PIXEL
+@ _APosObj[3,1]+08,_APosGet[1,2] SAY _oTot_APG VAR _nTotA_PG PICTURE _aHeaderA[aScan(_aHeaderA, {|x| Trim (x[2]) == "ZP7_XVALOR" }),3] 	SIZE 70,7 OF _oDlgMatr PIXEL
+//--
+@ _APosObj[3,1],_APosGet[1,3] SAY "Qtde Matriculas: " SIZE 70,7 OF _oDlgMatr PIXEL
+@ _APosObj[3,1],_APosGet[1,4] SAY _oQtdeMat VAR _nQtdeMat PICTURE "E@ 999,999,999"	SIZE 70,7 OF _oDlgMatr PIXEL
+//--
+@ _APosObj[3,1]+08,_APosGet[1,3] SAY "  Qtde A Pagar: " SIZE 70,7 OF _oDlgMatr PIXEL
+@ _APosObj[3,1]+08,_APosGet[1,4] SAY _oQtdePG VAR _nQtde_PG PICTURE "E@ 999,999,999"	SIZE 70,7 OF _oDlgMatr PIXEL
+//-- **********************************************************************
+//--    Objeto de controle do falso Marca/Desmarca
+//-- **********************************************************************
+_oBrwMatr:oBrowse:bLDblClick 	:= {|| u_fMac62H(_nOpc) }   
+//-- 2 Linha 
+_oBtnMAll	:= TButton():New( _APosObj[3,1]+20,_APosGet[1,4]-106,"<<Marca Todos>>"	,_oDlgMatr	,{|| u_fMakA62H("LBOK") }		,050,008,,,,.T.,,"",,,,.F. )
+_oBtnDAll 	:= TButton():New( _APosObj[3,1]+20,_APosGet[1,4]-53,"<<Desmarca Todos>>"	,_oDlgMatr	,{|| u_fMakA62H("LBNO") }		,050,008,,,,.T.,,"",,,,.F. )
+_oBtnFIL	:= TButton():New( _APosObj[3,1]+20,_APosGet[1,4]	,"<<Filtrar>>"			,_oDlgMatr	,{|| u_fFil62HX(_nOpc) }		,050,008,,,,.T.,,"",,,,.F. )
+//-- 3 Linha 
+_oBtnSalv   := TButton():New( _APosObj[3,1]+30,_APosGet[1,4]-106,"Confirmar"			,_oDlgMatr	,{|| Processa({|| u_fGrvPgt(_nOpc,_nRec) } ,"Processando Pagamentos..."),_oDlgMatr:End() }		,050,008,,,,.T.,,"",,,,.F. )
+_oBtnESC	:= TButton():New( _APosObj[3,1]+30,_APosGet[1,4]-53,"Sair"				,_oDlgMatr	,{|| _oDlgMatr:End() }			,050,008,,,,.T.,,"",,,,.F. )
+//-- **********************************************************************
+//--    Botoeira da Interface
+//-- **********************************************************************
+If _nOpc != 3
+	_oBtnMAll:Disable()
+	_oBtnDAll:Disable()
+	_oBtnSalv:Disable()
+Endif 
+_oDlgMatr:Activate(,,,.T.)
+Return
+ 
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCriaHeard>                                                |
+|Funcao de contrucao do aHearder que sera utilizado pelo MsNewGetDados.    |
+|ATENCAO: Considera criada PRIVATE pela funcao que chamnaou o array        |
+|         [_aHeaderA]                                                      |
+|@Author<Antonio Dantas>                                                   |
+|@since<15/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<Nil>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fCriaHeard()    
+Aadd(_aHeaderA	,{"  " 				,"ZP7_XMARK"	,"@BMP"        	  				,02							,0							,""	,"","C",""	,""	,,,,,	} )  
+Aadd(_aHeaderA 	,{"Filial"			,"ZP7_FILIAL"	,TRIM(X3PICTURE("ZP7_FILIAL"))	,TamSX3("ZP7_FILIAL")[1]	,TamSX3("ZP7_FILIAL")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Data Pgto"		,"ZP7_XDTPG"	,TRIM(X3PICTURE("ZP7_XDTPG"))	,TamSX3("ZP7_XDTPG")[1]	,TamSX3("ZP7_FILIAL")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Matricula"		,"ZP7_XMATRI"	,TRIM(X3PICTURE("ZP7_XMATRI"))	,TamSX3("ZP7_XMATRI")[1]	,TamSX3("ZP7_XMATRI")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Nome"			,"ZP7_XNOME"	,TRIM(X3PICTURE("ZP7_XNOME"))	,TamSX3("ZP7_XNOME")[1]		,TamSX3("ZP7_XNOME")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"CPF"				,"ZP7_XCPF"		,TRIM(X3PICTURE("ZP7_XCPF"))	,TamSX3("ZP7_XCPF")[1]		,TamSX3("ZP7_XCPF")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Evento"			,"ZP7_XEVENT"	,TRIM(X3PICTURE("ZP7_XEVENT"))	,TamSX3("ZP7_XEVENT")[1]	,TamSX3("ZP7_XEVENT")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Descr Curso"		,"ZP7_XDESCS"	,TRIM(X3PICTURE("ZP7_XDESCS"))	,TamSX3("ZP7_XDESCS")[1]	,TamSX3("ZP7_XDESCS")[2]	,"" ,"","C",""  ,""})
+&&-- Aadd(_aHeaderA 	,{"Descricao"		,"ZP7_XDESEV"	,TRIM(X3PICTURE("ZP7_XDESEV"))	,TamSX3("ZP7_XDESEV")[1]	,TamSX3("ZP7_XDESEV")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Inicio" 			,"ZP7_XEVINI"	,TRIM(X3PICTURE("ZP7_XEVINI"))	,TamSX3("ZP7_XEVINI")[1]	,TamSX3("ZP7_XEVINI")[2]	,"" ,"","D",""  ,""})
+Aadd(_aHeaderA 	,{"Termino"			,"ZP7_XEVFIM"	,TRIM(X3PICTURE("ZP7_XEVFIM"))	,TamSX3("ZP7_XEVFIM")[1]	,TamSX3("ZP7_XEVFIM")[2]	,"" ,"","D",""  ,""})
+Aadd(_aHeaderA 	,{"Turno"			,"ZP7_XTURNO"	,TRIM(X3PICTURE("ZP7_XTURNO"))	,TamSX3("ZP7_XTURNO")[1]	,TamSX3("ZP7_XTURNO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Modalidade"		,"ZP7_XMODAL"	,TRIM(X3PICTURE("ZP7_XMODAL"))	,TamSX3("ZP7_XMODAL")[1]	,TamSX3("ZP7_XMODAL")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Descr Modali"	,"ZP7_XDESMO"	,TRIM(X3PICTURE("ZP7_XDESMO"))	,TamSX3("ZP7_XDESMO")[1]	,TamSX3("ZP7_XDESMO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Unid Ref"		,"ZP7_XUNREF"	,TRIM(X3PICTURE("ZP7_XUNREF"))	,TamSX3("ZP7_XUNREF")[1]	,TamSX3("ZP7_XUNREF")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Quantidade"		,"ZP7_XQTDE"	,TRIM(X3PICTURE("ZP7_XQTDE"))	,TamSX3("ZP7_XQTDE")[1]		,TamSX3("ZP7_XQTDE")[2]		,"" ,"","N",""  ,""})
+Aadd(_aHeaderA 	,{"Vlr Benefic"		,"ZP7_XVALOR"	,TRIM(X3PICTURE("ZP7_XVALOR"))	,TamSX3("ZP7_XVALOR")[1]	,TamSX3("ZP7_XVALOR")[2]	,"" ,"","N",""  ,""})
+Aadd(_aHeaderA 	,{"Situacao"		,"ZP7_XSTATU"	,TRIM(X3PICTURE("ZP7_XSTATU"))	,TamSX3("ZP7_XSTATU")[1]	,TamSX3("ZP7_XSTATU")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Area Tecnolo"	,"ZP7_XATECN"	,TRIM(X3PICTURE("ZP7_XATECN"))	,TamSX3("ZP7_XATECN")[1]	,TamSX3("ZP7_XATECN")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Descr A Tecn"	,"ZP7_XDESAT"	,TRIM(X3PICTURE("ZP7_XDESAT"))	,TamSX3("ZP7_XDESAT")[1]	,TamSX3("ZP7_XDESAT")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Periodo"			,"ZP7_XPERIO"	,TRIM(X3PICTURE("ZP7_XPERIO"))	,TamSX3("ZP7_XPERIO")[1]	,TamSX3("ZP7_XPERIO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Seg Calendar"	,"ZP7_XSEG"		,TRIM(X3PICTURE("ZP7_XSEG"))	,TamSX3("ZP7_XSEG")[1]		,TamSX3("ZP7_XSEG")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Sessao"			,"ZP7_XSESSA"	,TRIM(X3PICTURE("ZP7_XSESSA"))	,TamSX3("ZP7_XSESSA")[1]	,TamSX3("ZP7_XSESSA")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Data Geracao"	,"ZP7_XDATAG"	,TRIM(X3PICTURE("ZP7_XDATAG"))	,TamSX3("ZP7_XDATAG")[1]	,TamSX3("ZP7_XDATAG")[2]	,"" ,"","C",""  ,""})
+&&-- Aadd(_aHeaderA 	,{"Curso"			,"ZP7_XCURSO"	,TRIM(X3PICTURE("ZP7_XCURSO"))	,TamSX3("ZP7_XCURSO")[1]	,TamSX3("ZP7_XCURSO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Cod Aluno"		,"ZP7_XALUNO"	,TRIM(X3PICTURE("ZP7_XALUNO"))	,TamSX3("ZP7_XALUNO")[1]	,TamSX3("ZP7_XALUNO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Tp Convenio"		,"ZP7_XTIPO"	,TRIM(X3PICTURE("ZP7_XTIPO"))	,TamSX3("ZP7_XTIPO")[1]		,TamSX3("ZP7_XTIPO")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Convenio"		,"ZP7_XCONVE"	,TRIM(X3PICTURE("ZP7_XCONVE"))	,TamSX3("ZP7_XCONVE")[1]	,TamSX3("ZP7_XCONVE")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Desc Conv"		,"ZP7_XDESCO"	,TRIM(X3PICTURE("ZP7_XDESCO"))	,TamSX3("ZP7_XDESCO")[1]	,TamSX3("ZP7_XDESCO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Referencia"		,"ZP7_XUNREF"	,TRIM(X3PICTURE("ZP7_XUNREF"))	,TamSX3("ZP7_XUNREF")[1]	,TamSX3("ZP7_XUNREF")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Sit. Matricu"	,"ZP7_XSITMA"	,TRIM(X3PICTURE("ZP7_XSITMA"))	,TamSX3("ZP7_XSITMA")[1]	,TamSX3("ZP7_XSITMA")[2]	,"" ,"","C",""  ,""})
+Return .t.    	
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCriaCols>                                                 |
+|Funcao de contrucao do aCols que sera utilizado pelo MsNewGetDados.       |
+|ATENCAO: Considera criado PRIVATE pela funcao que chamnaou o array        |
+|         [_aColsA]                                                        |
+|@Author<Antonio Dantas>                                                   |
+|@since<15/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<     _nOpc (n) - Opcao de operacao                                       |
+|>                                                                         |
+|@return                                                                   |
+|< _aNewCols (a) - Espelho da acols                                        |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fCriaCols(_nOpc)
+Local _nCOLS		:= 0  
+Local _cMarca 		:= ""
+Local _aNewCols		:= {} 
+Local _lFound		:= .f.  
+Local _cTpConv 		:= ""
+Local _nPMOD  		:= aScan(_aHeaderA ,{|x| AllTrim(x[2])=="ZP7_XDESMO"})
+Local _nPEVE  		:= aScan(_aHeaderA ,{|x| AllTrim(x[2])=="ZP7_XDESCS"})
+Local _nPTDI  		:= aScan(_aHeaderA ,{|x| AllTrim(x[2])=="ZP7_XEVINI"})
+//-- ****************************************************************
+//--    Garante que aCols estara vazia, zera os totalizadores 
+//-- ****************************************************************
+_aColsA		:= {}
+_nVlrTotal	:= 0.00
+_nQtdeMat 	:= 0
+_nTotA_PG	:= 0.00
+_nQtde_PG	:= 0
+//-- Localiza as Matriculas 
+dbSelectArea("ZP7")
+ZP7->(dbSetOrder(1)) 		//-- Cod Periodo+Seg Calendar+Cod Sessao  
+ZP7->(dbgotop())
+ZP7->(dbSeek(ZP6->ZP6_FILIAL+ZP6->ZP6_XPERIO+ZP6->ZP6_XSEG+ZP6->ZP6_XCOD))
+Do While ZP7->(!Eof()) .and. ZP7->ZP7_FILIAL == ZP6->ZP6_FILIAL .and. ZP7->ZP7_XPERIO == ZP6->ZP6_XPERIO .and.;
+	ZP7->ZP7_XSEG == ZP6->ZP6_XSEG .and. ZP7->ZP7_XSESSA == ZP6->ZP6_XCOD
+	//-- ***********************************************************************
+	//--    Na Baixa so aceita MATRICULAS com O=Pagamento Agendado
+	//-- ***********************************************************************
+	If _nOpc == 3
+		If ZP7->ZP7_XSTATU != "O"
+			ZP7->(dbskip())     	      
+			Loop
+	     Endif 
+	Endif 	
+	_cTpConv := Posicione("ZP1",1,FwxFilial("ZP1")+ZP7->ZP7_XCONVE,"ZP1_XTIPO")
+	If _cTpConv != "2"
+		ZP7->(dbskip())     	      
+		Loop
+	Endif 
+	_nCOLS++
+	//-- Calcula a Quantidade e o valor total a Pagar das Matriculas
+	_nQtdeMat 	:= _nCOLS
+	_nVlrTotal	+= ZP7->ZP7_XVALOR
+	_cMarca 	:= Iif(ZP7->ZP7_XSTATU == "P","LBOK","LBNO")
+	//-- Totaliza os Marcados para Pagamento
+	If ZP7->ZP7_XSTATU == "P"
+		_nTotA_PG	+= ZP7->ZP7_XVALOR
+		_nQtde_PG++
+	Endif 		
+	//-- Preenche aCols 
+	aAdd(_aColsA, { _cMarca				,; 
+					ZP7->ZP7_FILIAL		,;  
+					ZP7->ZP7_XDTPG		,;
+					ZP7->ZP7_XMATRI		,;
+					ZP7->ZP7_XNOME		,;
+					ZP7->ZP7_XCPF		,;
+					ZP7->ZP7_XEVENT		,;
+					ZP7->ZP7_XDESCS		,;
+					ZP7->ZP7_XEVINI		,;
+					ZP7->ZP7_XEVFIM		,;
+					ZP7->ZP7_XTURNO		,;
+					ZP7->ZP7_XMODAL		,;
+					ZP7->ZP7_XDESMO		,;
+					ZP7->ZP7_XUNREF		,;
+					ZP7->ZP7_XQTDE		,;
+					ZP7->ZP7_XVALOR		,;
+					ZP7->ZP7_XSTATU		,;
+					ZP7->ZP7_XATECN		,;
+					ZP7->ZP7_XDESAT		,;
+					ZP7->ZP7_XPERIO		,;
+					ZP7->ZP7_XSEG		,;
+					ZP7->ZP7_XSESSA		,;
+					ZP7->ZP7_XDATAG		,;
+					ZP7->ZP7_XALUNO		,;
+					ZP7->ZP7_XTIPO		,;
+					ZP7->ZP7_XCONVE		,;
+					ZP7->ZP7_XDESCO		,;
+					ZP7->ZP7_XUNREF		,;
+					ZP7->ZP7_XSITMA		,;
+					.f.					} )					
+	dbSelectArea("ZP7")
+	ZP7->(dbSkip())    
+	_lFound := .T.
+Enddo
+If !_lFound
+	_aColsA := {{"LBNO","","","","","","",CTOD('  /  /  '),CTOD('  /  /  '),"","","",0.00,0.00,"","","","","","","","","","","","","","","",.f.}}
+Endif
+_aNewCols	:= aClone(_aColsA)
+//-- Ordena Por Descicao de MODALIDADE + Descricao do EVENTO + DATA DE INICIO 
+_aNewCols	:= aSort(_aNewCols,,, { |x,y| y[_nPMOD]+y[_nPEVE]+DTOS(y[_nPTDI])>x[_nPMOD]+x[_nPEVE]+DTOS(x[_nPTDI]) } )
+Return _aNewCols 
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fMac62H>                                                    |
+|Funcao de contrucao de MARCA/DESMARCA do campo de selecao implementado no |
+|MsNewGetDados.                                                            |
+|@Author<Antonio Dantas>                                                   |
+|@since<15/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|<   _nOpc (n) - Numero da Opcao Selecionada no Menu pelo operado          |
+|>                                                                         |
+|@return                                                                   |
+|<  _lReturn  (L) - (.t.) Acao concluida, (.f.) Acao nao concluida         |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/  
+User Function fMac62H(_nOpc)  
+Local _aNewCols		:= aClone(_oBrwMatr:aCols)
+Local _aNewHead		:= aClone(_oBrwMatr:aHeader)
+Local _nPosM 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XMARK"})   
+Local _nPosV 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XVALOR"})
+Local _cMarca 		:= Iif(_nPosM>0,Iif(_oBrwMatr:aCOLS[_oBrwMatr:nAt,_nPosM]=="LBOK","LBNO","LBOK") ,"")
+Local _lReturn 		:= .t.
+If _nOpc == 3
+	_oBrwMatr:EditCell()
+	_oBrwMatr:aCOLS[_oBrwMatr:nAt,_nPosM]	:= _cMarca
+	_aColsA[_oBrwMatr:nAt,_nPosM] 			:= _cMarca
+	//-- Refaz os Totais 
+	If _cMarca !="LBNO"
+		_nTotA_PG += _aColsA[_oBrwMatr:nAt,_nPosV] 
+		_nQtde_PG++
+	Else
+		_nTotA_PG -= _aColsA[_oBrwMatr:nAt,_nPosV] 
+		_nQtde_PG--
+	Endif 		
+	ObjectMethod(_oTot_APG	,"Refresh()")		//-- Total LIberado
+	ObjectMethod(_oQtdePG	,"Refresh()")		//-- Qtde Liberado 
+	_oBrwMatr:Refresh()
+Endif    
+Return _lReturn
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fMakA62H>                                                   |
+|Funcao que Marca/Desmarca todos os itens da Grid                          |
+|MsNewGetDados.                                                            |
+|@Author<Antonio Dantas>                                                   |
+|@since<15/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<	_cMarca (c) - Elemento de Marca/Desmarca ["LBOK"/"LBNO"]               |
+|>                                                                         |
+|@return                                                                   |
+|<.t.>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/  
+User Function fMakA62H(_cMarca)
+Local _aNewCols		:= aClone(_oBrwMatr:aCols)
+Local _aNewHead		:= aClone(_oBrwMatr:aHeader)
+Local _nPosM 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XMARK"})
+Local _nPosV 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XVALOR"})
+Local _nCtaA 		:= 0
+_nTotA_PG	:= 0.00
+_nQtde_PG	:= 0
+_nCtaA 		:= 0
+For _nCtaA := 1 to Len(_aNewCols)
+	_aNewCols[_nCtaA,_nPosM]	:= _cMarca     
+	//-- Refaz os totais
+	If Alltrim(_aNewCols[_nCtaA,_nPosM]) !="LBNO"
+		_nTotA_PG += _aNewCols[_nCtaA,_nPosV] 
+		_nQtde_PG++
+	Endif 		
+Next _nCtaA   
+_oBrwMatr:aCOLS := _aNewCols
+ObjectMethod(_oTot_APG	,"Refresh()")		//-- Total A Pagar 
+ObjectMethod(_oQtdePG	,"Refresh()")		//-- Qtde A Pagar
+_oBrwMatr:Refresh()  
+Return .t. 
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGrvPgt>                                                   |
+|Efetiva o PAGAMENTO manual das MATRICULAS                                 |
+|@Author<Antonio Dantas>                                                   |
+|@since<15/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<      _nOpc (n) - Numero da Opcao Selecionada no Menu pelo operado       |  
+
+|    _nRecZP6 (n) - Recno do Registro correspondente em ZP6 - Sessao       |
+|>                                                                         |
+|@return                                                                   |
+|<  _lReturn  (L) - (.t.) Acao concluida, (.f.) Acao nao concluida         |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fGrvPgt(_nOpc,_nRecZP6) 
+Local _aArea		:= GetArea() 
+Local _lReturn 		:= .T.
+Local _aNewCols		:= aClone(_oBrwMatr:aCols)
+Local _aNewHead		:= aClone(_oBrwMatr:aHeader)   
+Local _nRegs 		:= Len(_aNewCols)    
+Local _nCtaREG		:= 0
+Local _nCtaA 		:= 0      
+Local _cChave 		:= "" 
+Local _cMarca		:= ""    
+Local _lTemPgto 	:= .f.
+Local _nPosX 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XMARK"})     
+Local _nPosF 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_FILIAL"})
+Local _nPosP 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XPERIO"})
+Local _nPosS 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XSEG"})
+Local _nPosE 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XSESSA"})
+Local _nPosM 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XMATRI"})
+Local _nPDg 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XDATAG"})
+Local _nPosT 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XTIPO"})
+Local _nPosC 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XCONVE"})
+Local _nPosD 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP7_XDESCO"})     
+//-- 
+Local _cPeriodo		:= ""
+Local _cSeg			:= ""
+Local _cSessao		:= ""
+Local _cMensagem 	:= ""
+//-- **********************************************************************
+//--    Esta verificação esta sendo realizada na entrada, redundancia
+//--    aqui por seguranca 
+//-- **********************************************************************
+dbSelectArea("ZP6")
+ZP6->(dbSetOrder(1))
+ZP6->(dbGoTo(_nRecZP6))   
+If _nOpc == 3 .and. !(ZP6->ZP6_XSTATU $ "D#R#F")
+	Aviso(FunName()+"/"+ProcName(),"Confirmação de Pagamento só para Sessoes com Remessa Efetuada!", {"OK"})
+	_lReturn := .F.
+Endif                      
+//-- 
+_cMensagem := "ATENÇÃO: Ao confirma o pagamento você estará finalizando os pagamentos da Sessão."
+_cMensagem += " Os Pagamentos não confirmados aqui, ficaram como DEVOLVIDOS, e poderam "
+_cMensagem += " ser transferidos para a proxima sessão."+ CRLF
+_cMensagem += " Tem certeza mesmo que deseja Confirma o Pagamento?"
+If Aviso(FunName()+"/"+ProcName(),_cMensagem, {"Sim","Não"}) == 2
+	_lReturn := .F.
+Endif   
+//-- Idenfica Periodo+Calendario+Sessao
+_cPeriodo		:= ZP6->ZP6_XPERIO
+_cSeg			:= ZP6->ZP6_XSEG
+_cSessao		:= ZP6->ZP6_XCOD
+//-- 
+If _lReturn
+	Begin Transaction
+		dbSelectArea("ZP7")
+		ZP7->(dbSetOrder(1))
+		_nCtaA := 0
+		//+--------------------------------------------------------------------+
+		//| Loop na aCols das Matriculas para Gravar as informacoes relativos  |
+		//| aos PAGAMENTOS MANUAIS realizados                                  |
+		//+--------------------------------------------------------------------+
+		ProcRegua(_nRegs)
+		For _nCtaA := 1 to Len(_aNewCols)  
+			_nCtaREG++
+			//-- Implementa Termometro
+			IncProc("Total de Registros:"+Alltrim(Transform(_nRegs,"@E 999,999,999"))+"|  Lidos:"+Alltrim(Transform(_nCtaREG,"@E 999,999,999")))   
+			//-- Chave: ZP7_FILIAL              +ZP7_XPERIO              +ZP7_XSEG                +ZP7_XSESSA               +ZP7_XMATRI              +ZP7_XDATAG
+			_cChave := _aNewCols[_nCtaA,_nPosF]+_aNewCols[_nCtaA,_nPosP]+_aNewCols[_nCtaA,_nPosS]+_aNewCols[_nCtaA,_nPosE]+_aNewCols[_nCtaA,_nPosM]+dtos(_aNewCols[_nCtaA,_nPDg])
+			_cMarca	:= _aNewCols[_nCtaA,_nPosX]
+			dbSelectArea("ZP7")
+			ZP7->(dbSetOrder(1))			//-- Cod Periodo+Seg Calendar+Cod Sessao 
+			//+--------------------------------------------------------------------+	
+			//| Identifica o Convenio e a Remessa gerada no Pagamento              |
+			//+--------------------------------------------------------------------+	
+			_cConven	:= ZP7_XCONVE
+			_cCodRemes	:= ZP7->ZP7_XREMES
+	  		If ZP7->(dbseek(_cChave))
+				RecLock("ZP7",.f.)
+				//-- **********************************************************************
+				//--    Efetiva o PAGAMENTO da Matricula Selecionada pelo Operador
+				//-- **********************************************************************
+				If Alltrim(_cMarca) == "LBOK"
+					Replace ZP7->ZP7_XSTATU With "P"
+					Replace ZP7->ZP7_XDTPG  With dDataBase  
+				Else
+					Replace ZP7->ZP7_XSTATU With "D"
+					Replace ZP7->ZP7_XDTPG  With dDataBase  
+					Replace ZP7->ZP7_XOCORR With "Pagamento Manual recusado em "+DTOC(dDataBase)
+				Endif	
+				Replace ZP7->ZP7_XMARK  With Iif(_cMarca=="LBOK","Xr","")
+				_lTemPgto := .T.
+				ZP7->(MsUnLock())
+				ZP7->(dbCommit())
+			Endif 		
+		Next _nCtaA   
+	End Transaction
+	//-- ****************************************************************
+	//--    Acoes da Liberacao 
+	//-- ****************************************************************
+	If _lTemPgto	
+		//-- ****************************************************************
+		//--    MODIFICA O STATUS DA REMESSA: R=Remessa Efetivada
+		//--    Localiza a Remessa [Periodo+Calendario+Sessao+Convenio]
+		//-- ****************************************************************
+		dbSelectArea("ZPA")
+		ZPA->(dbSetOrder(3))			//-- Codigo da Remessa 
+		ZPA->(DbSeek(FwxFilial("ZPA")+_cConven+_cCodRemes+"PG"))
+		//--
+		ZPA->(RecLock("ZPA",.f.))
+		Replace ZPA->ZPA_XSTATU With "E" 			//-- Status da ENCERRADA
+		ZPA->(MsUnLock())
+		ZPA->(dbCommit())
+		//-- ****************************************************************
+		//--    Modifica o Status da Sessão para Remessa Enviada 
+		//-- ****************************************************************
+		u_fCkRtZP6(_cPeriodo,_cSeg,_cSessao,_cConven,_cCodRemes)
+	Endif 		
+Endif 
+RestArea(_aArea)
+Return _lReturn
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fFil62HX>                                                   |
+|Apresenta interface ao operador para formar e aplicar filtros na tabela   |
+|matriculas, refaz a acols a partir da nova selecao.                       |
+|@Author<Antonio Dantas>                                                   |
+|@since<15/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<   _nOpc (n) - Numero da Opcao Selecionada no Menu pelo operado          |
+|>                                                                         |
+|@return                                                                   |
+|<  _lReturn  (L) - (.t.) Acao concluida, (.f.) Acao nao concluida         |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fFil62HX(_nOpc)    
+Local _aArea		:= GetArea() 
+Local _cMensag 		:= ""
+Local _lReturn 		:= .T.
+Local _aNewCols		:= {}
+Private cFiltroRet 	:= ""
+Private aIndexZP7 	:= {}  
+Private bFiltraBrw	:= {}  
+//-- ****************************************************************
+//--    Mensagem (Alerta) para uso do Filtro.
+//-- ****************************************************************
+_cMensag := "ATENÇÃO! "+Chr(13)+Chr(10)
+_cMensag += " "+Chr(13)+Chr(10)
+_cMensag += "Ao Aplicar FILTRO, você perde todas as marcações e ações realizadas "
+_cMensag += "até este momento. É importante salvar seu trabalho até agora, antes "
+_cMensag += "de realizar filtro."+Chr(13)+Chr(10)
+_cMensag += "Você deseja continuar assim mesmo? "
+If	Aviso(FunName()+"/"+ProcName(),_cMensag, {"Continua","Retorna"}) == 2
+	Return .t.
+Endif 
+//-- ****************************************************************
+//--    Apresenta ao operador interfase padrao para filtro
+//-- ****************************************************************
+cFiltroRet	:= BuildExpr("ZP7",,@cFiltroRet)
+//-- ****************************************************************
+//--    Monta bloco de codigo com o filtro do operador
+//-- ****************************************************************
+bFiltraBrw 	:= {|| FilBrowse("ZP7",@aIndexZP7,@cFiltroRet) }
+//-- ****************************************************************
+//--    Seleciona a tabela que sera afetada pelo filtro
+//-- ****************************************************************
+dbSelectArea("ZP7")
+ZP7->(dbSetOrder(1))
+ZP7->(dbGoTop())
+Eval(bFiltraBrw)
+//-- ****************************************************************
+//--    Cria nova aCols com o reflexo dos Filtros aplicadso 	
+//-- ****************************************************************
+FWMsgRun(, {|| _aNewCols := fCriaCols(_nOpc) }, "Filtro das Matriculas", "Aguarde...")
+_oBrwMatr:aCols	:= _aNewCols
+_oBrwMatr:Refresh()
+//-- ****************************************************************
+//--    Deleta o filtro aplicado
+//-- ****************************************************************
+EndFilBrw("ZP7",aIndexZP7)
+RestArea(_aArea)
+Return _lReturn

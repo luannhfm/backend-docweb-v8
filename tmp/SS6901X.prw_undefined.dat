@@ -1,0 +1,978 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "DBTREE.CH"
+
+//Situacoes de contrato
+#DEFINE DEF_SCANC "01" //Cancelado
+#DEFINE DEF_SELAB "02" //Em Elaboracao
+#DEFINE DEF_SEMIT "03" //Emitido
+#DEFINE DEF_SAPRO "04" //Em Aprovacao
+#DEFINE DEF_SVIGE "05" //Vigente
+#DEFINE DEF_SPARA "06" //Paralisado
+#DEFINE DEF_SSPAR "07" //Sol Fina.
+#DEFINE DEF_SFINA "08" //Finalizado
+#DEFINE DEF_SREVS "09" //Revisao
+#DEFINE DEF_SREVD "10" //Revisado
+
+
+//Tipos de Revisao
+#DEFINE DEF_ADITI "1" //Aditivo
+#DEFINE DEF_REAJU "2" //Reajuste
+#DEFINE DEF_REALI "3" //Realinhamento
+#DEFINE DEF_READQ "4" //Readequacao
+#DEFINE DEF_PARAL "5" //Paralisacao
+#DEFINE DEF_REINI "6" //Reinicio
+#DEFINE DEF_CLAUS "7" //Alteracao de Clausula
+
+#DEFINE DEF_TRANS "001" //Transacao de controle total do contrato
+#DEFINE DEF_TRASIT "018"//Transacao de controle de situacoes
+#DEFINE DEF_TRAVIS "037"//Transacao de visualizacao do contrato
+#DEFINE DEF_TRABCO "038"//Transacao de controle sobre o banco de conhecimento
+#DEFINE DEF_TRAEDT "039"//Transacao de controle sobre a edicao do contrato   
+#DEFINE DEF_TRARET "040"//Transacao de controle sobre a baixa da retencao
+
+#DEFINE FLD_BAIXA "BAIXA"//Campo de baixa da retencao
+#DEFINE FLD_SALDO "SALDO"//Campo de saldo da retencao
+#DEFINE FLD_PLANI "PLANI"//Campo de planilha da retencao
+
+User Function SS6901X(cAlias,nReg,nOpc)	//CN100SituN
+//Function CN100Situac(cAlias,nReg,nOpc)
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÚÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄ¿±±
+±±³Fun‡ao    ³CN100Situac³ Autor ³ Marcelo Custodio      ³ Data ³20.01.2006³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Descri‡ao ³ Controle de situacoes do contrato                           ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Sintaxe   ³ CN100Situac(cExp01,cExp02,nExp03)                           ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Parametros³ cExp01 - Alias do arquivo                                   ³±±
+±±³          ³ cExp02 - Registro atual                                     ³±±
+±±³          ³ nExp03 - Opcao atual                                        ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³ Uso      ³ CNTA100                                                     ³±±
+±±ÀÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+//	Local cCadastro := OemToAnsi(STR0035) //"Controle de Situacoes"
+	Local cCadastro := "Controle de Situacoes"
+	Local cSitAtu
+	Local cSitOrg
+	Local cContra
+	Local cRevisa
+	Local cDocPend	:= ""   //Documentos pendentes
+	Local cGrpApr	:= ""	//Grupo aprovador - tera tratativa quando contrato possuir alcada
+
+	Local aSituac   := RetSx3Box( Posicione("SX3", 2, "CN9_SITUAC", "X3CBox()" ),,, TamSX3("CN9_SITUAC")[1] )
+	Local aSitTx    := {}
+
+	Local oSituCb
+	Local oDlg
+	Local oGet01,oGet02,oGet03
+
+	Local nOpcA
+
+	Local lSituAll := (GetNewPar( "MV_CNSITAL", "S" ) == "S")
+	Local lDocsOk	:= .T.  //Documentos ok/pronto
+	Local lCtrApr	:= .F.	//Controle de alcada
+	
+//criar select para retornar recno
+	
+	nReg := CN9->(Recno()) //CN9->CN9_NUMERO 
+	nOpc := 3
+
+
+	If CN240VldUsr(CN9->CN9_NUMERO,DEF_TRASIT,.T.)
+
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³Verificar se o contrato e do tipo que contem        ³
+		//³controle de documentos                              ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄDeoÄÄÄÄÙ
+		DbSelectArea("CN1") //Tipo de Contrato
+		DbSetOrder(1) //CN1_FILIAL+CN1_CODIGO
+		If DbSeek(xFilial("CN1")+CN9->CN9_TPCTO) 
+			
+			If !Empty(CN1->( FieldPos( "CN1_CTRAPR" ))) .AND. !Empty(CN1->( FieldPos( "CN1_GRPSIT" )))
+				If CN1->CN1_CTRAPR == '1' .AND. !Empty(CN1->CN1_GRPSIT) //Controla alcada na mudanca de situacao do contrato
+					lCtrApr := .T.
+					cGrpApr := CN1->CN1_GRPSIT
+				EndIf
+			EndIf
+
+			If !Empty(CN1->( FieldPos( "CN1_CTRDOC" )))
+				If CN1->CN1_CTRDOC == '1'  //Controla documentos
+		
+					//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+					//³Verificar tipos de documentos realacionados³
+					//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+					DbSelectArea("CNJ") //Doc x Situacao
+					DbSetOrder(2) //CNJ_FILIAL+CNJ_TPCTO
+					If DbSeek(xFilial("CNJ")+CN1->CN1_CODIGO)
+						
+						While !CNJ->(Eof()) .AND. CNJ->CNJ_FILIAL+CNJ->CNJ_TPCTO == xFilial("CNJ")+CN1->CN1_CODIGO .AND. CNJ->CNJ_SITUAC == CN9->CN9_SITUAC
+		
+							DbSelectArea("CNK")// Documentos entregues
+							DbSetOrder(3) //CNK_FILIAL+CNK_CONTRA+CNK_TPDOC
+							
+							If CNK->(MsSeek(xFilial("CNK")+CN9->CN9_NUMERO+CNJ->CNJ_TPDOC))
+								
+								//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+								//³Tratativa para o mesmo documento fornecido mais de uma vez ³
+								//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+								Do While CNK->(!Eof()) .AND. AllTrim(CNK->(CNK_FILIAL+CNK_CONTRA+CNK_TPDOC)) == AllTrim(xFilial("CNK")+CN9->CN9_NUMERO+CNJ->CNJ_TPDOC)
+									
+									//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+									//³Verificar validade do documento encontrado³
+									//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+									If CNK_DTVALI < dDataBase
+										cDocPend += CNJ->CNJ_TPDOC + " - " + AllTrim(CNJ->CNJ_DESCTD) + " (" + "STR0173" + ") (Seq. " + CNK->CNK_CODIGO + ")" + Chr(13)+Chr(10)	//VENCIDO
+										lDocsOk  := .F.
+									EndIf
+									CNK->(DbSkip())
+								EndDo						   	
+								
+							Else
+								cDocPend += CNJ->CNJ_TPDOC + " - " + AllTrim(CNJ->CNJ_DESCTD) + Chr(13)+Chr(10)
+								lDocsOk  := .F.
+							EndIf
+							
+							CNJ->(DbSkip())
+							
+						EndDo
+											
+						//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+						//³Mostrar documentos pendentes³
+						//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+						If !lDocsOk
+							Help(" ",1,"Documentos",,"Documento tipo " + Chr(13)+Chr(10) + cDocPend + " pendente(s) ou vencido(s)",1,0)
+						EndIf	 
+					Else
+						Help(" ",1,"Documentos",,"Documentos nao relacionados para o tipo de contrato " + CN1->CN1_CODIGO + ".",1,0)
+						lDocsOk := .F. // Nao tem documento relacionado
+					EndIf    
+				EndIf
+			EndIf
+		EndIf
+					
+		If lDocsOk
+		
+			dbSelectArea("SX3")
+			dbSetOrder(2)
+		
+			//Situacao atual
+			cSitOrg := CN9->CN9_SITUAC
+			cSitAtu := AllTrim( aSituac[Ascan( aSituac, { |aBox| substr(aBox[1],1,At("=",aBox[1])-1) = AllTrim(cSitOrg)} )][3] )
+		
+			dbSelectArea("CN9")
+			dbGoto(nReg)
+		
+			cContra := CN9->CN9_NUMERO
+			cRevisa := CN9->CN9_REVISA
+			
+			If CtrRevisa( CN9->CN9_FILIAL, CN9->CN9_NUMERO, CN9->CN9_REVISA )
+		
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//³ Disponibliza as situacoes de acordo    ³
+				//³ com a atual                            ³
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+				Do Case
+					//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+					//³ De: Elaboracao                         ³
+					//³ Para: Emitido, Aprovacao, Vigente      ³
+					//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+					Case AllTrim(CN9->CN9_SITUAC) == DEF_SELAB
+						aAdd(aSitTx, aSituac[aScan(aSituac,{|x| AllTrim(x[2]) == DEF_SEMIT})][1])
+						aAdd(aSitTx, aSituac[aScan(aSituac,{|x| AllTrim(x[2]) == DEF_SAPRO})][1])
+						aAdd(aSitTx, aSituac[aScan(aSituac,{|x| AllTrim(x[2]) == DEF_SVIGE})][1])
+					//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+					//³ De: Emitido                                        ³
+					//³ Para: Elaboracao, Aprovacao, Vigente, Cancelado    ³
+					//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+					Case AllTrim(CN9->CN9_SITUAC) == DEF_SEMIT
+						aAdd(aSitTx, aSituac[aScan(aSituac,{|x| AllTrim(x[2]) == DEF_SELAB})][1])
+						aAdd(aSitTx, aSituac[aScan(aSituac,{|x| AllTrim(x[2]) == DEF_SAPRO})][1])
+						aAdd(aSitTx, aSituac[aScan(aSituac,{|x| AllTrim(x[2]) == DEF_SVIGE})][1])
+						aAdd(aSitTx, aSituac[aScan(aSituac,{|x| AllTrim(x[2]) == DEF_SCANC})][1])
+					//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+					//³ De: Aprovacao                          ³
+					//³ Para: Elaboracao, Vigente, Cancelado   ³
+					//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+					Case AllTrim(CN9->CN9_SITUAC) == DEF_SAPRO
+						aAdd(aSitTx, aSituac[aScan(aSituac,{|x| AllTrim(x[2]) == DEF_SELAB})][1])
+						aAdd(aSitTx, aSituac[aScan(aSituac,{|x| AllTrim(x[2]) == DEF_SVIGE})][1])
+						aAdd(aSitTx, aSituac[aScan(aSituac,{|x| AllTrim(x[2]) == DEF_SCANC})][1])
+					//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+					//³ De: Vigente                            ³
+					//³ Para: Sol. Finalizacao, Cancelado      ³
+					//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+					Case AllTrim(CN9->CN9_SITUAC) == DEF_SVIGE
+						//-- Parametro que define se finaliza direto do vigente ou se passa por solicitacao de finalizacao
+						If SuperGetMV("MV_CNVGFIN",.F.,.F.)
+							aAdd(aSitTx, aSituac[aScan(aSituac,{|x| AllTrim(x[2]) == DEF_SFINA})][1])
+						Else
+							aAdd(aSitTx, aSituac[aScan(aSituac,{|x| AllTrim(x[2]) == DEF_SSPAR})][1])
+						EndIf
+						aAdd(aSitTx, aSituac[aScan(aSituac,{|x| AllTrim(x[2]) == DEF_SCANC})][1])
+					//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+					//³ De: Sol Finalizacao                    ³
+					//³ Para: Finalizado, Cancelado            ³
+					//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+					Case AllTrim(CN9->CN9_SITUAC) == DEF_SSPAR
+						aAdd(aSitTx, aSituac[aScan(aSituac,{|x| AllTrim(x[2]) == DEF_SFINA})][1])
+						aAdd(aSitTx, aSituac[aScan(aSituac,{|x| AllTrim(x[2]) == DEF_SCANC})][1])
+				EndCase
+
+				DEFINE MSDIALOG oDlg TITLE cCadastro From 165,115 TO 290,430 PIXEL
+		
+				@ 7,10 Say /*STR0036*/"Contrato" Of oDlg PIXEL//"Contrato"
+				@ 5,50 MsGet oGet01 Var cContra Picture PesqPict("CN9","CN9_NUMERO") When .F. PIXEL  Size 50,5 Of oDlg
+		
+				@ 7,102 Say /*STR0037*/"Revisão" Of oDlg PIXEL//"Revisão"
+				@ 5,125 MsGet oGet02 Var cRevisa Picture PesqPict("CN9","CN9_REVISA") When .F. PIXEL  Size 10,5 Of oDlg
+		
+				@ 22,10 Say /*STR0038*/"Situacao Atual" Of oDlg PIXEL//"Situacao Atual"
+				@ 20,50 MsGet oGet03 Var cSitAtu When .F. Of oDlg PIXEL
+		
+				@ 37,10 Say /*STR0039*/"Nova Situacao" Of oDlg PIXEL//"Nova Situacao"
+				@ 35,50 MsComboBox oSituCb ITEMS aSitTx When (len(aSitTx) > 0) SIZE 60,5 OF oDlg PIXEL
+														
+//				DEFINE SBUTTON FROM 50, 93 TYPE 1 When (len(aSitTx) > 0) ACTION (if(!Empty(oSituCb),(nopca:=1,oDlg:End()),Aviso("CNTA100",OemtoAnsi("STR0040"),{"Ok"}))) ENABLE OF oDlg
+				DEFINE SBUTTON FROM 50, 93 TYPE 1 When (len(aSitTx) > 0) ACTION (if(!Empty(oSituCb),(nopca:=1,oDlg:End()),Aviso("CNTA100","Confirma a mudança de situação do contrato?",{"Ok"}))) ENABLE OF oDlg
+				DEFINE SBUTTON FROM 50, 123 TYPE 2 ACTION (nOpca:=2,oDlg:End()) ENABLE OF oDlg
+		
+				ACTIVATE MSDIALOG oDlg CENTERED
+			
+//				If nOpca == 1 .And. Aviso("CNTA100",OemtoAnsi("STR0041"),{"STR0052","STR0053"}) == 1 .And. CN100Doc(nReg,{oSituCb},.T.)//"Confirma a mudanca de situacao do contrato?"
+				If nOpca == 1 .And. Aviso("CNTA100",OemtoAnsi("Confirma a mudança de situação do contrato?"),{"Sim","Não"}) == 1 .And. U_CN100Doc(nReg,{oSituCb},.T.)//"Confirma a mudanca de situacao do contrato?"
+		
+					//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+					//³ Rotina de alteracao da situacao do contrato³
+					//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+					If CN100SitCh(CN9->CN9_NUMERO,CN9->CN9_REVISA,oSituCb,cGrpApr)
+			
+						//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+						//³ Chama ponto de entrada para tratamento de inclusao  ³
+						//³ de novas rotinas apos alterar a situacao do contrato³
+						//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ 
+						If ExistBlock("CN100SIT")
+							ExecBlock("CN100SIT",.f.,.f.,{cSitOrg,oSituCb})
+						EndIf 
+				   
+						If (lSituAll .Or. oSituCb == DEF_SPARA .Or. oSituCb == DEF_SSPAR .Or. oSituCb == DEF_SFINA) .And. Empty(CN9->CN9_CLIENT)
+							CN220Aval(cAlias,nReg,nOpc,,.F.,oSituCb)
+						EndIf
+					EndIf
+				EndIf
+			Else
+//				MsgAlert( OemToAnsi(STR0038)+": "+OemToAnsi(STR0037)+CRLF+OemToAnsi(STR0175), OemToAnsi(STR0088) ) //"Atenção!" 
+				MsgAlert( OemToAnsi("STR0038")+": "+OemToAnsi("STR0037")+CRLF+OemToAnsi("STR0175"), OemToAnsi("STR0088") ) //"Atenção!" 
+			EndIf
+		EndIf //If lDocsOk
+	EndIf 
+
+Return 
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÚÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄ¿±±
+±±³Fun‡ao    ³CtrRevisa  ³ Autor ³Igor Franzoi           ³ Data ³11.07.2012³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Descri‡ao ³ Valida se o contrato tem revisão em aberto				   ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Sintaxe   ³ CtrRevisa												   ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³ Uso      ³ CNTA100                                                     ³±±
+±±ÀÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function CtrRevisa( cFilCN9, cNumCN9, cRevCN9 )
+	Local lRet := .T.
+	Local cKeyPes := cFilCN9+cNumCN9
+	Local nOrdCN9 := RetOrdem( "CN9", "CN9_FILIAL+CN9_NUMERO+CN9_REVISA" )
+	Local aArea := GetArea()
+	//If Empty(cRevCN9)
+	
+	dbSelectArea("CN9")
+	CN9->(dbSetOrder(nOrdCN9))
+	
+	CN9->(dbSeek(cKeyPes))
+	
+	While CN9->(!Eof() .and. CN9_FILIAL+CN9_NUMERO == cKeyPes)
+		If !Empty(CN9->CN9_REVISA) .and. CN9->CN9_SITUAC == '09'
+			lRet := .F.
+			Exit
+		EndIf
+		CN9->(dbSkip())
+	EndDo
+	
+	//EndIf
+
+	RestArea(aArea)
+Return lRet
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÚÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄ¿±±
+±±³Fun‡ao    ³CN100Doc  ³ Autor ³ Marcelo Custodio      ³ Data ³26.12.2005³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Descri‡ao ³ Rotina de validacao dos documentos, executada na alteracao ³±±
+±±³          ³ de situacao do contrato                                    ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Sintaxe   ³ CNTA100Doc(nExp01,cExp02)                                  ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Parametros³ nExp01 - Contrato selecionado                              ³±±
+±±³          ³ aExp02 - Situacoes para qual o contrato sera alterado      ³±±
+±±³          ³ lExp03 - Valida situacoes inferiores                       ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³         ATUALIZACOES SOFRIDAS DESDE A CONSTRU€AO INICIAL.             ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Programador ³ Data   ³ BOPS ³  Motivo da Alteracao                     ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Franklin    ³20/04/16³      ³Adicionado parâmetro na chamada da função ³±±
+±±³            ³        ³      ³para indicar a obrigatoriedade de vincular³±±
+±±³            ³        ³      ³ao menos um documento					  ³±±
+±±ÀÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß*/
+//Function CN100Doc(nReg,aSituac,lAll)
+//Static Function CN100Doc(nReg,aSituac,lAll)
+User Function CN100Doc(nReg, aSituac, lAll, lDocObr)
+	Local oDlDoc
+	Local oTree                //Objeto dbtree
+
+	Local lFirst               //Identifica varredura dos tipos de documento
+	Local lBsCnh    := (GetNewPar( "MV_CNDOCBC", "S" ) == "S")//Verifica se a validacao leva em consideracao o banco de conhec.
+	Local lBcoAc    := CN240VldUsr(CN9->CN9_NUMERO,DEF_TRABCO,.F.)
+	Local lLiber:= .T.
+	Local lContinua := .T.
+	Local lCN100DCS := Existblock("CN100DCS")    
+
+	Local nTotTree  		   //Total de docs para cada tipo de documento
+	Local nTotDVld    		   //Total de docs validos para cada tipo de documento
+	Local nx                                              
+	Local nPos
+	Local nTotBc:=0
+
+	Local cDescLib  := ""      //Situacao de todos os documentos
+	Local cDescTpc  := ""      //Tipo do Contrato
+//	Local cCadastro := STR0078 //"Check-List de Documentos"
+	Local cCadastro := "Check-List de Documentos"
+	Local cCod        		   //Codigo do tipo de documento
+	Local cRsrc       		   //Resource usado
+	Local cDescSt := ""
+	Local cQuery  := ""
+	Local cAlias  := GetNextAlias()
+	Local cCargo
+	Local cSituac := ""
+
+	Local aCtrs   := Array(11) //Array com os controles de tela
+	Local aSits   := RetSx3Box( Posicione("SX3", 2, "CN9_SITUAC", "X3CBox()" ),,, 1 )
+	Local aIfDoc  := {}		   //Array com as informacoes de exibicao
+	Local aDocs   := {}
+
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Controles visuais                           ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	Local aArea     := GetArea()
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Fixa dimensao da dialog                     ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	Local aSize     := MsAdvSize( .F. )//{0,0,300,200,690,422,17}//MsAdvSize( .F. )
+	Local aObjects  := {}
+	Local aObjects2 := {}
+	Local aPosObj1  := {}
+	Local aPosObj2  := {}
+	Local oPanel,oGroup1
+	Local lInc
+	
+	Default lDocObr := .F.
+
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Monta estrutura das situacoes para pesquisa ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	If len(aSituac) > 1
+		For nx:=1 to len(aSituac)
+			cSituac+="'"+aSituac[nx]+"',"
+			cDescSt+= AllTrim( aSits[Ascan( aSits, { |aBox| substr(aBox[1],1,At("=",aBox[1])-1) = AllTrim(aSituac[nx])} )][3] )+", "
+		Next
+		cSituac := SubStr(cSituac,1,len(cSituac)-1)
+	Else
+		cDescSt:= AllTrim( aSits[Ascan( aSits, { |aBox| substr(aBox[1],1,At("=",aBox[1])-1) = AllTrim(aSituac[1])} )][3] )	
+	EndIf
+
+	dbSelectArea("AC9")
+
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Estrutura do aIfDoc                                   ³
+	//³ aIfDoc[1] - Codigo do tipo de documento               ³
+	//³ aIfDoc[2] - Descricao do tipo de documento            ³
+	//³ aIfDoc[3] - Codigo do Documento                       ³
+	//³ aIfDoc[4] - Descricao do Documento                    ³
+	//³ aIfDoc[5] - Data de emissao do documento              ³
+	//³ aIfDoc[6] - Data de validacao do documento            ³
+	//³ aIfDoc[7] - Obs do documento                          ³
+	//³ aIfDoc[8] - Total de documentos do tipo de documento  ³
+	//³ aIfDoc[9] - Total de documentos validos do tipo de doc³
+	//³ aIfDoc[10]- Total de registros no banco de conhecim.  ³
+	//³ aIfDoc[11]- Situacao do documento                     ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	aIfDoc := {"","","","",CTOD("  /  /  "),CTOD("  /  /  "),"",0,0,0,""}
+
+	dbSelectArea("CN9")
+	dbGoTo(nReg)
+
+	cDescTpc := Posicione("CN1",1,xFilial("CN1")+CN9->CN9_TPCTO,"CN1_DESCRI")
+
+	dbSelectArea("CNJ")
+	dbSelectArea("CN5")
+	dbSelectArea("CNK")
+
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Retorna documentos requisitados pela nova situacao ³
+	//³ junto com os documentos ja cadastrados             ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	cQuery := "SELECT CN5.CN5_CODIGO, CN5.CN5_DESCRI, CNK.CNK_CODIGO, CNK.CNK_DESCRI, "
+	cQuery += "       CNK.CNK_DTEMIS, CNK.CNK_DTVALI, CNK.CNK_OBS, CNJ.CNJ_SITUAC "
+	cQuery += " FROM "+ RetSQLName("CNJ") +" CNJ , "+ RetSQLName("CN5") +" CN5, "+ RetSQLName("CNK") +" CNK "
+	cQuery += " WHERE CNJ.CNJ_FILIAL = '"+xFilial("CNJ")+"'"
+	cQuery += "   AND CN5.CN5_FILIAL = '"+xFilial("CN5")+"'"
+	cQuery += "   AND CNK.CNK_FILIAL = '"+xFilial("CNK")+"'"
+	cQuery += "   AND CNJ.CNJ_TPCTO in ('','"+ CN9->CN9_TPCTO +"')"
+	cQuery += "   AND "
+	If len(aSituac) > 1
+	cQuery += "CNJ.CNJ_SITUAC IN ("+cSituac+") AND "
+	Else
+		cQuery += "CNJ.CNJ_SITUAC = '"+ aSituac[1] +"' AND "
+	EndIf
+	cQuery += "      CNJ.CNJ_TPDOC  = CN5.CN5_CODIGO "
+	cQuery += "  AND CNK.CNK_CONTRA = '"+ CN9->CN9_NUMERO +"'"
+	cQuery += "  AND CNK.CNK_XREVIS = '"+ CN9->CN9_REVISA +"'"
+	cQuery += "  AND CNK.CNK_TPDOC = CN5.CN5_CODIGO"
+	cQuery += "  AND CNJ.D_E_L_E_T_ <> '*'"
+	cQuery += "  AND CN5.D_E_L_E_T_ <> '*'"
+	cQuery += "  AND CNK.D_E_L_E_T_ <> '*' "
+	cQuery += "UNION "
+	cQuery += "SELECT CN5.CN5_CODIGO,CN5.CN5_DESCRI,'"+Space(TamSx3("CNK_CODIGO")[1])+"' CNK_CODIGO,'"+Space(TamSx3("CNK_DESCRI")[1])+"' CNK_DESCRI, "
+	cQuery += "       '        ' CNK_DTEMIS,'        ' CNK_DTVALI,'"+Space(TamSx3("CNK_OBS")[1])+"' CNK_OBS,CNJ_SITUAC "
+	cQuery += "  FROM "+ RetSQLName("CNJ") +" CNJ , "+ RetSQLName("CN5") +" CN5 "
+	cQuery += " WHERE CNJ.CNJ_FILIAL = '"+xFilial("CNJ")+"'"
+	cQuery += "   AND CN5.CN5_FILIAL = '"+xFilial("CN5")+"'"
+	cQuery += "   AND CNJ.CNJ_TPCTO in ('','"+CN9->CN9_TPCTO +"') AND "
+	If len(aSituac) > 1
+		cQuery += "CNJ.CNJ_SITUAC IN ("+cSituac+") AND "
+	Else
+		If aSituac[1] == DEF_SCANC
+			cQuery += "CNJ.CNJ_SITUAC = '"+ aSituac[1] +"' AND "	
+		Else
+			cQuery += "CNJ.CNJ_SITUAC <= '"+ aSituac[1] +"' AND "
+			cQuery += "CNJ.CNJ_SITUAC <> '"+ DEF_SCANC +"' AND "
+		EndIf
+	EndIf
+	cQuery += " CNJ.CNJ_TPDOC = CN5.CN5_CODIGO AND "
+	cQuery += " NOT EXISTS (SELECT CNK.CNK_CODIGO "
+	cQuery += "              FROM "+ RetSQLName("CNK") +" CNK "
+	cQuery += "				WHERE CNK.CNK_FILIAL = '"+xFilial("CNK")+"'"
+	cQuery += "               AND CNK.CNK_CONTRA = '"+CN9->CN9_NUMERO+"'"
+	cQuery += "               AND CNK.CNK_XREVIS = '"+CN9->CN9_REVISA+"'"
+	cQuery += "			      AND CNK.CNK_TPDOC  = CNJ.CNJ_TPDOC "
+	cQuery += "				  AND CNK.D_E_L_E_T_ = '') "
+	cQuery += " AND CNJ.D_E_L_E_T_ <> '*'"
+	cQuery += " AND CN5.D_E_L_E_T_ <> '*' "
+	cQuery += "ORDER BY 1,5"
+		
+	cQuery := ChangeQuery(cQuery)	
+	dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAlias,.F.,.T.)
+
+	TCSetField(cAlias,"CNK_DTEMIS","D",08,0)
+	TCSetField(cAlias,"CNK_DTVALI","D",08,0)
+
+	lContinua := !((cAlias)->(Eof()))
+	
+	/*------------------------------------------------------------------/
+	|Adicionado validação para obrigar a vinculação de documento,		|
+	|quando esta informação vier passada por parâmetro					|
+	/------------------------------------------------------------------*/
+	If !lContinua .And. lDocObr
+		Help('', 1, FunName() + "/" + ProcName(), , "É necessário vincular a revisão a um documento. Verifique a Amarração Tip Doc x Tip Contra x Situação", 1, 0)
+	EndIf
+
+	If lContinua
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Armazena documentos no array aDocs                     ³
+		//³ Estrutura do aDocs                                     ³
+		//³ aDocs[x,1] - Codigo do tipo de documento               ³
+		//³ aDocs[x,2] - Descricao do tipo de documento            ³
+		//³ aDocs[x,3] - Codigo do Documento                       ³
+		//³ aDocs[x,4] - Descricao do Documento                    ³
+		//³ aDocs[x,5] - Data de emissao do documento              ³
+		//³ aDocs[x,6] - Data de validacao do documento            ³
+		//³ aDocs[x,7] - Obs do documento                          ³
+		//³ aDocs[x,8] - Total de documentos validos do tipo de doc³
+		//³ aDocs[x,9] - Total de documentos do tipo de documento  ³
+		//³ aDocs[x,10]- Total de registros no banco de conhecim.  ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		While !(cAlias)->(Eof())
+			lInc := .T.
+			nTotBc:=0
+			If lBsCnh .And. !Empty((cAlias)->CNK_CODIGO)
+				cQuery := "SELECT COUNT(AC9.AC9_ENTIDA) AS BS_CONHE "
+				cQuery += "  FROM "+ RetSQLName("AC9") +" AC9 "
+				cQuery += "WHERE AC9.AC9_FILIAL = '"+xFilial("AC9")+"'"
+				cQuery += "  AND AC9.AC9_ENTIDA = 'CNK'"
+				cQuery += "  AND AC9.AC9_CODENT = '"+(cAlias)->CNK_CODIGO+"' "
+				cQuery += "  AND AC9.D_E_L_E_T_ = ''"
+				
+				cQuery := ChangeQuery(cQuery)	
+				dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),"TRBAC9",.F.,.T.)
+				
+				nTotBc := TRBAC9->BS_CONHE
+				
+				TRBAC9->(dbCloseArea())
+			EndIf
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Verifica documentos de situacoes anteriores que    ³
+			//³ ja tenham sido validados e nao devem ser           ³
+			//³ listados                                           ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If len(aSituac) == 1 .And. aSituac[1] > (cAlias)->CNJ_SITUAC
+				If lAll
+					lInc := !((cAlias)->CNK_DTEMIS <= dDataBase .AND. (cAlias)->CNK_DTVALI >= dDataBase)
+					if lBsCnh
+						lInc := (nTotBc == 0)
+					EndIf
+				Else
+					lInc := .F.
+				EndIf
+			EndIf
+			
+			If lInc
+				aAdd(aDocs,{(cAlias)->CN5_CODIGO,(cAlias)->CN5_DESCRI,(cAlias)->CNK_CODIGO,(cAlias)->CNK_DESCRI,(cAlias)->CNK_DTEMIS,(cAlias)->CNK_DTVALI,(cAlias)->CNK_OBS,0,0,nTotBc})
+			EndIf
+			(cAlias)->(dbSkip())
+		EndDo
+		
+		(cAlias)->(dbCloseArea()) 
+
+		dbSelectArea("CN9")
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Calcula posicao dos objetos na tela                ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		aObjects := {}
+		AAdd( aObjects, { 230, 030, .T., .F., .T. } )//Painel superior
+		AAdd( aObjects, { 120, 144, .T., .T., .F. } )//dbTree
+		AAdd( aObjects, { 120, 20, .T., .F., .F. } )//Botoes
+		
+		aInfo    := { aSize[ 1 ], aSize[ 2 ], aSize[ 3 ], aSize[ 4 ], 3, 3 }
+		aPosObj1 := MsObjSize( aInfo, aObjects, .T., .F. )
+		
+		AAdd( aObjects2, { 120, 144, .T., .T., .F. } )//Group: Tipo de Documento
+		AAdd( aObjects2, { 170, 144, .F., .T., .F. } )//Group: Informacoes do documento
+		
+		aInfo    := { aPosObj1[2,2],aPosObj1[2,1], aPosObj1[2,4], aPosObj1[2,3], 3, 3 }
+		aPosObj2 := MsObjSize( aInfo, aObjects2, .F., .T. )
+		
+		DEFINE MSDIALOG oDlDoc TITLE cCadastro From aSize[7],0 TO aSize[6],aSize[5] PIXEL
+		
+		@ aPosObj1[1,1], aPosObj1[1,2] MSPANEL oPanel PROMPT "" SIZE aPosObj1[1,3],aPosObj1[1,4] OF oDlDoc
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Situacao do contrato                               ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		@ 001,000 Say RetTitle("CN9_SITUAC") Of oPanel PIXEL
+		@ 000,024 MsGet oGetSit Var cDescSt When .F. PIXEL  Size 50,5 Of oPanel
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Tipo do contrato                                   ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		@ 001,082 Say RetTitle("CN9_TPCTO") Of oPanel PIXEL
+		@ 000,122 MsGet oGetTCto Var cDescTpc When .F. PIXEL  Size 100,5 Of oPanel
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Situacao geral dos documentos                      ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+//		@ 013,000 Say STR0063 Of oPanel PIXEL//"Situação Geral"
+		@ 013,000 Say "Situação Geral" Of oPanel PIXEL//"Situação Geral"
+		@ 012,47 MsGet oGetSLib Var cDescLib When .F. PIXEL  Size 100,5 Of oPanel
+							
+//		@ aPosObj1[2,1],aPosObj1[2,2] Say STR0064 Of oDlDoc PIXEL//"Documentos Requisitados"
+		@ aPosObj1[2,1],aPosObj1[2,2] Say "Documentos Requisitados" Of oDlDoc PIXEL//"Documentos Requisitados"
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ DBtree - Estrutura                                 ³
+		//³ ÀÄNivel 1 - Tipos de Documentos                    ³
+		//³ ÀÄÄÄNivel 2 - Documentos cadastrados               ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		DEFINE DBTREE oTree ON CHANGE {CN100AlDoc(@oTree,aDocs,aIfDoc,lBsCnh),aEval(aCtrs,{|x| If (x!=Nil,x:Refresh(),)})} FROM aPosObj2[1,1]+006,aPosObj2[1,2] TO aPosObj2[1,3],aPosObj2[1,4] OF oDlDoc CARGO
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Menu de visualizacao do documento                  ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		MENU oMenuTree POPUP
+//			MENUITEM OemToAnsi(STR0003) Action CN100VisDoc(oTree,aDocs,.F.)//"Visualizar"
+			MENUITEM "Visualizar" Action CN100VisDoc(oTree,aDocs,.F.)//"Visualizar"
+//			MENUITEM OemToAnsi(STR0080) Action (CN100IncDoc(oTree,aDocs,CN9->CN9_NUMERO,lBsCnh),If(aScan(aDocs,{|x| x[8] == 0})==0,(lLiber:=.T.,cDescLib:=STR0066,oGetSLib:Refresh()),))//If((oTree:GetCargo() $ "A"),CN100IncDoc(oTree,aDocs,.F.,CN9->CN9_NUMERO),Aviso("CNTA100",OemtoAnsi(STR0081),{"OK"}))//"Incluir Documento"
+			MENUITEM "Incluir Documento" Action (CN100IncDoc(oTree,aDocs,CN9->CN9_NUMERO,lBsCnh),If(aScan(aDocs,{|x| x[8] == 0})==0,(lLiber:=.T.,cDescLib:="STR0066",oGetSLib:Refresh()),))//If((oTree:GetCargo() $ "A"),CN100IncDoc(oTree,aDocs,.F.,CN9->CN9_NUMERO),Aviso("CNTA100",OemtoAnsi(STR0081),{"OK"}))//"Incluir Documento"
+If lBcoAc//Quando o usuario possui acesso ao banco de conhecimento
+//	MENUITEM OemToAnsi(STR0056) ACTION CN100VisDoc(oTree,aDocs,.T.)//"Banco de Conhecimento"
+	MENUITEM "Banco de Conhecimento" ACTION CN100VisDoc(oTree,aDocs,.T.)//"Banco de Conhecimento"
+EndIf
+		ENDMENU
+		
+		oTree:bRClicked   := { |oObject,nx,ny| oMenuTree:Activate( nX-80, nY-200, oObject ) }
+		
+		lFirst := .T.     
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Arvore principal                                   ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		DBADDTREE oTree PROMPT cDescTpc OPEN OPENED CARGO "V0000"
+		
+		for nx:=1 to len(aDocs)
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Primeiro registro do tipo de documento             ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If lFirst
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//³ Verifica se o tipo de documento possui algum       ³
+				//³ documento valido                                   ³
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+				If aScan(aDocs,{|x| x[1] = aDocs[nX,1] .And. x[5] <= dDataBase .And. x[6] >= dDataBase .And. If(lBsCnh,x[10]>0,.T.)}) > 0
+					cRsrc := "LBTIK"
+				Else
+					cRsrc := "LBNO"
+				EndIf
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//³ Monta arvore do tipo de documento com a identificacao³
+				//³ "A" no cargo                                         ³
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+				cCargo := "A"+alltrim(str(nX))
+				DBADDTREE oTree PROMPT aDocs[nX,1]+"-"+aDocs[nX,2] RESOURCE cRsrc CARGO cCargo
+				lFirst := .F.
+				cCod :=  aDocs[nX,1]
+				nTotTree:=0
+				nTotDVld:=0
+			EndIf
+		
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Gera item do documento                             ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ	
+			If !Empty(aDocs[nx,5])
+				If(aDocs[nx,5] <= dDataBase .And. aDocs[nx,6] >= dDataBase .And. If(lBsCnh,aDocs[nx,10]>0,.T.))
+					nTotDVlD++
+					cRsrc := "LBTIK"
+				Else
+					cRsrc := "LBNO"
+				EndIf
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//³ Identifica cargo com a posicao do array aDocs      ³
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ	
+				cCargo := alltrim(str(nX))
+				DBADDITEM oTree PROMPT aDocs[nx,3]+"-"+aDocs[nx,4] RESOURCE cRsrc CARGO cCargo
+				nTotTree++
+			EndIf
+		
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Verifica se e o ultimo elemento do grupo           ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ		
+			If nx == len(aDocs) .Or. aDocs[nX+1,1] != cCod
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//³ Atualiza campos totalizadores do grupo             ³
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ		
+				aDocs := aEval(aDocs,{|x| If(x[1] == aDocs[nX,1],(x[8]:=nTotDVlD,x[9]:=nTotTree),)})
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//³ Gera item quando o grupo nao possuir documentos    ³
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+				If nTotTree==0
+					cCargo := "V"+alltrim(str(nX))
+//					DBADDITEM oTree PROMPT STR0065 CARGO cCargo//"Documento não fornecido"
+					DBADDITEM oTree PROMPT "Documento não fornecido" CARGO cCargo//"Documento não fornecido"
+				EndIf
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//³ Verifica se o tipo de documento foi liberado       ³
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+				If lLiber
+					lLiber := (nTotTree > 0 .And. nTotDVlD>0)
+				EndIf
+				nTotTree:=0
+				DBENDTREE oTree
+				lFirst := .T.
+			EndIf
+		Next
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Gera elemento quando nao houver estrutura          ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		If len(aDocs) == 0
+//			DBADDITEM oTree PROMPT STR0079 CARGO "V0000"//"Vazio"
+			DBADDITEM oTree PROMPT "Vazio" CARGO "V0000"//"Vazio"
+		EndIf
+		
+		DBENDTREE oTree
+		
+//		cDescLib := If(lLiber,STR0066,STR0067)//"Docs Liberados"##"Docs Pendentes"
+		cDescLib := If(lLiber,"Docs Liberados","Docs Pendentes")//"Docs Liberados"##"Docs Pendentes"
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Componentes visuais de identificacao do documento  ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+//		@ aPosObj2[2,1],aPosObj2[2,2] GROUP oGroup1 To aPosObj2[2,3],aPosObj2[2,4] Label OemToAnsi(STR0068) Of oDlDoc PIXEL//"Tipo do Documento" 
+		@ aPosObj2[2,1],aPosObj2[2,2] GROUP oGroup1 To aPosObj2[2,3],aPosObj2[2,4] Label OemToAnsi("Tipo do Documento") Of oDlDoc PIXEL//"Tipo do Documento" 
+		
+		@ aPosObj2[2,1]+008,aPosObj2[2,2]+005 Say oCdTDoc Var RetTitle("CN5_CODIGO") Size 50,8 Of oGroup1 PIXEL
+		@ aPosObj2[2,1]+008,aPosObj2[2,2]+060 MsGet aCtrs[1] Var aIfDoc[1] Picture PesqPict("CN5","CN5_CODIGO") When .F. Size 60,5 Of oGroup1 PIXEL
+		@ aPosObj2[2,1]+019,aPosObj2[2,2]+005 Say oNmTDoc Var RetTitle("CN5_DESCRI") Size 50,8 Of oGroup1 PIXEL
+		@ aPosObj2[2,1]+019,aPosObj2[2,2]+060 MsGet aCtrs[2] Var aIfDoc[2] Picture PesqPict("CN5","CN5_DESCRI") When .F. Size 60,5 Of oGroup1 PIXEL
+//		@ aPosObj2[2,1]+032,aPosObj2[2,2]+005 Say aCtrs[9] Var OemToAnsi(STR0069)+AllTrim(str(aIfDoc[9])) Size 100,8 Of oGroup1 PIXEL//"Total de Documentos: "
+		@ aPosObj2[2,1]+032,aPosObj2[2,2]+005 Say aCtrs[9] Var OemToAnsi("Total de Documentos: ")+AllTrim(str(aIfDoc[9])) Size 100,8 Of oGroup1 PIXEL//"Total de Documentos: "
+//		@ aPosObj2[2,1]+032,aPosObj2[2,2]+075 Say aCtrs[10] Var OemToAnsi(STR0070)+AllTrim(str(aIfDoc[8])) Size __DlgWidth(oDlDoc)-42,8 Of oGroup1 PIXEL//"Documentos Válidos: "
+		@ aPosObj2[2,1]+032,aPosObj2[2,2]+075 Say aCtrs[10] Var OemToAnsi("Documentos Válidos: ")+AllTrim(str(aIfDoc[8])) Size __DlgWidth(oDlDoc)-42,8 Of oGroup1 PIXEL//"Documentos Válidos: "
+		
+//		@ aPosObj2[2,1]+047,aPosObj2[2,2]+005 Say OemToAnsi(STR0071) Size 100,8 Of oGroup1 PIXEL//"Detalhes do Documento"
+		@ aPosObj2[2,1]+047,aPosObj2[2,2]+005 Say "Detalhes do Documento" Size 100,8 Of oGroup1 PIXEL//"Detalhes do Documento"
+		@ aPosObj2[2,1]+057,aPosObj2[2,2]+005 Say oCdDoc Var RetTitle("CNK_CODIGO") Size 50,8 Of oGroup1 PIXEL
+		@ aPosObj2[2,1]+057,aPosObj2[2,2]+060 MsGet aCtrs[4] Var aIfDoc[3] Picture PesqPict("CNK","CNK_CODIGO") When .F. Size 60,5 Of oGroup1 PIXEL
+		@ aPosObj2[2,1]+068,aPosObj2[2,2]+005 Say oNmDoc Var RetTitle("CNK_DESCRI") Size 50,8 Of oGroup1 PIXEL
+		@ aPosObj2[2,1]+068,aPosObj2[2,2]+060 MsGet aCtrs[3] Var aIfDoc[4] Picture PesqPict("CNK","CNK_DESCRI") When .F. Size 60,5 Of oGroup1 PIXEL
+		@ aPosObj2[2,1]+079,aPosObj2[2,2]+005 Say oDeDoc Var RetTitle("CNK_DTEMIS") Size 50,8 Of oGroup1 PIXEL
+		@ aPosObj2[2,1]+079,aPosObj2[2,2]+060 MsGet aCtrs[5] Var aIfDoc[5] Picture PesqPict("CNK","CNK_DTEMIS") When .F. Size 60,5 Of oGroup1 PIXEL
+		@ aPosObj2[2,1]+090,aPosObj2[2,2]+005 Say oDvDoc Var RetTitle("CNK_DTVALI") Size 50,8 Of oGroup1 PIXEL
+		@ aPosObj2[2,1]+090,aPosObj2[2,2]+060 MsGet aCtrs[6] Var aIfDoc[6] Picture PesqPict("CNK","CNK_DTVALI") When .F. Size 60,5 Of oGroup1 PIXEL
+		@ aPosObj2[2,1]+101,aPosObj2[2,2]+005 Say oObDoc Var RetTitle("CNK_OBS") Size 50,8 Of oGroup1 PIXEL
+		@ aPosObj2[2,1]+101,aPosObj2[2,2]+060 MsGet aCtrs[7] Var aIfDoc[7] Picture PesqPict("CNK","CNK_OBS") When .F. Size 100,5 Of oGroup1 PIXEL
+//		@ aPosObj2[2,1]+112,aPosObj2[2,2]+005 Say oStDoc Var OemToAnsi(STR0072) Size 50,8 Of oGroup1 PIXEL//"Status"
+		@ aPosObj2[2,1]+112,aPosObj2[2,2]+005 Say oStDoc Var "Status" Size 50,8 Of oGroup1 PIXEL//"Status"
+		@ aPosObj2[2,1]+112,aPosObj2[2,2]+060 MsGet aCtrs[8] Var aIfDoc[11] When .F. Size 100,5 Of oGroup1 PIXEL
+//		@ aPosObj2[2,1]+125,aPosObj2[2,2]+005 Say aCtrs[11] Var OemToAnsi(STR0073)+AllTrim(str(aIfDoc[10]))+OemToAnsi(STR0074) Size __DlgWidth(oDlDoc)-42,8 Of oGroup1 PIXEL//"Base de Conhecimento: "##" registro(s)"
+		@ aPosObj2[2,1]+125,aPosObj2[2,2]+005 Say aCtrs[11] Var OemToAnsi("Base de Conhecimento: ")+AllTrim(str(aIfDoc[10]))+OemToAnsi(" registro(s)") Size __DlgWidth(oDlDoc)-42,8 Of oGroup1 PIXEL//"Base de Conhecimento: "##" registro(s)"
+		
+		DEFINE SBUTTON FROM aPosObj1[3,1], aPosObj1[3,4]-55 TYPE 1 ACTION (If(lCN100DCS, (lLiber:=ExecBlock("CN100DCS",.F.,.F.,{oDlDoc,aDocs,lLiber}), oDlDoc:End()),If((nPos:=aScan(aDocs,{|x| x[8]==0})==0),(oDlDoc:End()),(Help(" ",1,"CNTA100DOC"),oDlDoc:End())))) ENABLE OF oDlDoc
+		DEFINE SBUTTON FROM aPosObj1[3,1], aPosObj1[3,4]-25 TYPE 2 ACTION (lLiber:=.F.,oDlDoc:End()) ENABLE OF oDlDoc
+				  
+		ACTIVATE MSDIALOG oDlDoc CENTERED
+
+	Else
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Libera validacao quando nao houver documentos relacionados ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		//Será liberado apenas se, por parâmetro, não for obrigatório vincular documento.
+		lLiber := If(lDocObr, .F., .T.)
+		(cAlias)->(dbCloseArea()) 
+	EndIf
+
+	RestArea(aArea)
+Return lLiber
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÚÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄ¿±±
+±±³Fun‡ao    ³CN100VisDoc³ Autor ³ Marcelo Custodio      ³ Data ³26.12.2005³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Descri‡ao ³ Visualiza o documento ou o banco de conhecimento do item    ³±±
+±±³          ³ selecionado na tree                                         ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Sintaxe   ³ CN100VisDoc(oExp01,aExp02,lExp03)                           ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Parametros³ oExp01 - Objeto dbTree                                      ³±±
+±±³          ³ aExp02 - Array com as informacoes dos documentos            ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³         ATUALIZACOES SOFRIDAS DESDE A CONSTRU€AO INICIAL.              ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Programador ³ Data   ³ BOPS ³  Motivo da Alteracao                      ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³            ³        ³      ³                                           ³±±
+±±ÀÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß*/
+//Function CN100VisDoc(oTree,aDocs,lVisBC)
+Static Function CN100VisDoc(oTree,aDocs,lVisBC)
+	Local nPos := 0
+	Local cCargo := oTree:GetCargo()
+	Local aArea := GetArea()
+
+	If "A" $ cCargo .OR. "V" $ cCargo
+		nPos := val(SubStr(cCargo,2,len(cCargo)))
+	Else
+		nPos := val(cCargo)
+	EndIf
+
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Verifica se existe documento para o grupo          ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	If nPos > 0 .And. !Empty(aDocs[nPos,3])
+		dbSelectArea("CNK")
+		dbSetOrder(1)
+		If dbSeek(xFilial("CNK")+aDocs[npos,3])
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Chama banco de conhecimento ou visualizacao do doc ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If !lVisBC
+				//CN170Manut("CNK",CNK->(RECNO()),2)
+				//U_SS6902X(CNK->CNK_FILIAL,"CNK" , CNK->CNK_CODIGO, CN9->CN9_NUMERO)		//U_SS6902X('02MT0012','CN9','000000000000001')
+				U_SS6902X(CNK->CNK_FILIAL,"CNK" , CNK->CNK_CODIGO, CN9->CN9_NUMERO, 2)		//U_SS6902X('  ','CN9','000000000000001')
+			Else
+				//CN170Conh()
+				U_SS6902X(CNK->CNK_FILIAL,"CNK" , CNK->CNK_CODIGO, CN9->CN9_NUMERO, 1)		//U_SS6902X('  ','CN9','000000000000001')
+			EndIf
+		EndIf
+	EndIf
+
+	RestArea(aArea)
+Return
+
+/*/{Protheus.doc} CN100AlDoc
+Atualiza valores de exibicao do elemento selecionado
+@type  Function
+@author Marcelo Custodio
+@since 26.12.2005
+@param oExp01, object, DbTree
+@param aExp02, Array, Array com as informacoes dos documentos
+@param aExp03, Array, Array com os valores exibidos na dialog
+@param aExp04, logical, Aalida documento com base no banco de conhecimento
+/*/
+Static Function CN100AlDoc(oTree,aDocs,aIfDoc,lBsCnh)
+Local nPos := 0
+Local cCargo := oTree:GetCargo()
+Default lBsCnh := (SuperGetMv( "MV_CNDOCBC", .F., "S") == "S")
+
+aIfDoc := {}//Limpa array de exibicao
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Verifica posicao no array aDocs                    ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If "A" $ cCargo .Or. "V" $ cCargo
+	nPos := val(SubStr(cCargo,2,len(cCargo)))
+Else
+	nPos := val(cCargo)
+EndIf
+If nPos == 0
+	aIfDoc := {"","","","",CTOD("  /  /  "),CTOD("  /  /  "),"",0,0,0,""}
+Else
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Gera copia do item do aDocs para o aIfDoc          ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	aIfDoc:=aClone(aDocs[nPos])
+
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Verifica situacao do documento quando o mesmo existir³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	If !Empty(aDocs[nPos,3])
+		If aDocs[nPos,5] <= dDataBase .And. aDocs[nPos,6] >= dDataBase
+			If !lBsCnh
+				aAdd(aIfDoc,"Válido")
+			elseIf aDocs[nPos,10]==0
+				aAdd(aIfDoc,"Não possui banco de conhecimento")
+			else
+				aAdd(aIfDoc,"Válido")
+			EndIf
+		Else
+			aAdd(aIfDoc,"Vencido")
+		EndIf
+	Else
+		aAdd(aIfDoc,"")
+	EndIf
+EndIf
+Return Nil
+
+/*/{Protheus.doc} Marcelo Custodio
+Visualiza o documento ou o banco de conhecimento do item selecionado na tree
+@type  Function
+@author user
+@since 21/06/2022
+@version version
+@param oExp01, object, Objeto dbTree 
+@param aExp02, array, Array com as informacoes dos documentos
+@param cExp03, character, Codigo do contrato
+@param lExp04, logic, Valida banco de conhecimento
+/*/
+Static Function CN100IncDoc(oTree,aDocs,cContra,lBcVld)
+Local nPos   := 0
+Local cCargo := oTree:GetCargo()
+Local aArea  := GetArea()
+Local nPosN  := 0
+Local cCod   := ""
+Local lValid :=.F.
+Local cRsrc
+Local lContinua := .F.
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Verifica se o item selecionado representa um grupo ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If "A" $ cCargo
+	nPos := val(SubStr(cCargo,2,len(cCargo)))	
+	lContinua := CN170Manut("CNK",,3,,cContra,aDocs[nPos,1],@cCod)//Chama rotina de inclusao antiga(CNTA170)
+	If lContinua		
+		//³ Seleciona registro incluso
+		dbSelectArea("CNK")
+		dbSetOrder(1)
+		dbSeek(xFilial("CNK")+cCod)
+
+		npos := aScan(aDocs,{|x| x[1] == CNK->CNK_TPDOC})
+
+		If nPos > 0 .And. CNK->CNK_CONTRA == cContra
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Verifica se o item se encontra vazio               ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If Empty(aDocs[nPos,3])
+				nPosN := nPos
+				cCargo := "V"+AllTrim(str(nPos))
+			EndIf
+
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Verifica se valida banco de conhecimento           ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If lBcVld
+				lValid := .F.//Nao valida documento, quando houver controle do banco de conhec.
+			Else
+				lValid := (CNK->CNK_DTEMIS <= dDataBase .And. CNK->CNK_DTVALI >= dDataBase)//Valida datas do documento
+			EndIf
+
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Incrementa contadores dos documentos               ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			aEval(aDocs,{|x| If(x[1] == aDocs[nPos,1],(If(lValid,x[8]++,),x[9]++),)})
+
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Seleciona resource de acordo com a validacao       ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			cRsrc := If(lValid,"LBTIK","LBNO")
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Adiciona documento no array                        ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			aAdd(aDocs,{aDocs[nPos,1],aDocs[nPos,2],CNK->CNK_CODIGO,CNK->CNK_DESCRI,CNK->CNK_DTEMIS,CNK->CNK_DTVALI,CNK->CNK_OBS,aDocs[nPos,8],aDocs[nPos,9],aDocs[nPos,10]})
+
+			oTree:BeginUpdate()
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Verifica se o grupo ja possui docs                 ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If oTree:TreeSeek("V"+AllTrim(str(nPos)))
+				oTree:DelItem()
+			EndIf
+			oTree:TreeSeek("A"+AllTrim(str(nPos)))
+
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Altera resource da arvore qd o doc estiver valido  ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If lValid
+				oTree:ChangeBmp("LBTIK","LBTIK")
+			EndIf
+
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Adiciona item na dbtree                            ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			oTree:AddItem(CNK->CNK_CODIGO+"-"+CNK->CNK_DESCRI,AllTrim(Str(Len(aDocs))),cRsrc,cRsrc,,,2)
+			oTree:EndUpdate()
+			oTree:Refresh()
+		EndIf
+	EndIf
+Else
+	Aviso("CNTA100",OemtoAnsi("Selecione o grupo de documentos"),{"OK"})
+EndIf
+
+RestArea(aArea)
+Return NIL

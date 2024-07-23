@@ -1,0 +1,321 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"                                                             
+#INCLUDE "COLORS.CH"                                
+#INCLUDE "APWIZARD.CH"
+#INCLUDE "TBICONN.CH"
+#INCLUDE "TOPCONN.CH"    
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<SN0623X>                                                   |
+|Relatorio de Solicitacao ao DR; Grava na ZP4 - Periodos o Valor da Solic. |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<05/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<Nil>                                                          |
+|@return<Nil>                                                              |
++--------------------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function SN0623X()
+Local _aArea		:= GetArea()    
+Local _lReturn		:= .t.
+Local _oReport		:= Nil
+Local _cNrSolDR		:= CriaTrab(Nil,.F.)
+Local _aDeParaUN	:=	{	{"1","01"		,"Senai Cuiaba"				} ,;  				//---- Para compatibilizar em base local, REMEVER...
+							{"1","03MT0002"	,"Senai Cuiaba"				} ,;
+							{"2","03MT0012"	,"Escola da Construção"		} ,;
+							{"3","03MT0004"	,"Varzea Grande"			} ,;
+							{"4","03MT0003"	,"Rondopolis"				} ,;
+							{"5","03MT0005"	,"Barra do Garças"			} ,;
+							{"6","03MT0010"	,"Juína"					} ,;
+						 	{"7","03MT0008"	,"Cáceres"					} ,;
+							{"8","03MT0007"	,"Sinop"   					} ,;
+							{"A","03MT0011"	,"SENAI COLIDER"			} ,;
+							{"B","03MT0001"	,"SENAI DEPART RE"			} }
+Private _lPrintOK	:= .F.  
+Private _aMatric	:= {}   
+Private _nTotRec 	:= 0
+Private _nHrsTotal	:= 0
+Private _nVlrTotal	:= 0.00  
+Private _cUnOper	:= ""      
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Identifica o Codigo correspondete da Unidade Operacional no SIGE   ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_nPos := aScan(_aDeParaUN,{|x| x[2]==cFilAnt})
+If _nPos > 0
+	_cUnOper := _aDeParaUN[_nPos,1]
+	If ZP4->ZP4_XSTATU == "C" 		//-- S=S/calendario Definido;C=Calendario Definido;E=Encerrado
+		If Alltrim(ZP4->ZP4_XPREVI) == ""   
+			_oReport	:= ReportDef()
+			_oReport:PrintDialog()  
+		Else
+			Aviso(FunName()+"/"+ProcName(),"Já existe a Solicitação ao DR ["+Alltrim(ZP4->ZP4_XPREVI)+"] emitida para este Periódo!",{"OK"})
+		Endif 
+	Else
+		Aviso(FunName()+"/"+ProcName(),"Previsão só pode ser EMITIDO para Periódos com Calendario Definido!",{"OK"})
+	Endif	
+	If _lPrintOK
+		If Aviso(FunName()+"/"+ProcName(),"Confirma a emissão da Solicitação ao DR ["+Alltrim(_cNrSolDR)+"] ?",{"Sim","Não"}) =1 
+			ZP4->(RecLock("ZP4",.f.))
+			Replace ZP4->ZP4_XPREVI With _cNrSolDR
+			Replace ZP4->ZP4_XNRPRE With _nTotRec
+			Replace ZP4->ZP4_XVLRTO With _nVlrTotal
+			ZP4->(MsUnlock())            
+			ZP4->(dbCommit())
+		Endif 
+	Endif 
+Else                                                 	
+	Aviso(FunName()+"/"+ProcName(),"Unidade Operacional não Idenficada no De Para de Filiais, Favor Verificar com Administrador do Sistema!",{"OK"})
+	_lReturn := .F.
+Endif	
+RestArea(_aArea)
+Return _lReturn
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<ReportDef>                                                 |
+|Rotina Padrao de Definicao do Relatorio                                   |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<05/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<Nil>                                                          |
+|@return<Nil>                                                              |
++--------------------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function ReportDef()
+Local _oReport		:= Nil 
+Local _oAlunos		:= Nil   
+Local _oTotalDR		:= Nil 
+Local _cTitulo		:= "Solicitação de Credito ao DR" 
+Local _cPerg		:= FunName()   
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Carrega as perguntas relativas aos parametros de Impressao          ³
+//³   Mv_par01 = Analitico/Sintetico ?: 1-Analitico; 2-Sintetico        ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+xParPerg(_cPerg)
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³  Monta tela de paramentos para usuario, se cancelar sair                        ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If !Pergunte(_cPerg,.t.)  
+	_lCancel := .T. 
+   Return 
+Endif 
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Efetua Consula das Matriculas no Sige e gera tabela temporaria.                 ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+Processa( {|| u_fViewDR(ZP4->ZP4_XDTINI,ZP4->ZP4_XDTFIM) },"Verificar Matriculas no Sige!")     
+_oReport := TReport():New(_cPerg,_cTitulo ,_cPerg,{|_oReport| ReportPrint(_oReport)},_cTitulo)
+If Mv_par01 == 1
+	_oAlunos:=TRSection():New(_oReport,"Alunos")
+	TRCell():New(_oAlunos,"ZP7_XMATRI"		,""	,"Matricula"		,PesqPict("ZP7","ZP7_XMATRI")		,TamSX3("ZP7_XMATRI")[1]	,.F.)
+	TRCell():New(_oAlunos,"ZP0_XCPF"		,""	,"CPF"				,PesqPict("ZP0","ZP0_XCPF")			,TamSX3("ZP0_XCPF")[1]		,.F.)
+	TRCell():New(_oAlunos,"ZP0_XNOME"		,""	,"Nome"				,PesqPict("ZP0","ZP0_XNOME")		,TamSX3("ZP0_XNOME")[1]		,.F.)
+	TRCell():New(_oAlunos,"ZP7_XEVENT"		,""	,"Evento"			,PesqPict("ZP7","ZP7_XEVENT")		,TamSX3("ZP7_XEVENT")[1]	,.F.)
+	TRCell():New(_oAlunos,"ZP7_XDESMO"		,""	,"Modalidade"		,PesqPict("ZP7","ZP7_XDESMO")		,60							,.F.)
+	TRCell():New(_oAlunos,"ZP7_XTURNO"		,""	,"Turno"			,PesqPict("ZP7","ZP7_XTURNO")		,TamSX3("ZP7_XTURNO")[1]	,.F.)
+	TRCell():New(_oAlunos,"ZP7_XQTDE"		,""	,"Horas"			,PesqPict("ZP7","ZP7_XQTDE")		,TamSX3("ZP7_XQTDE")[1]		,.F.)
+	TRCell():New(_oAlunos,"ZP7_XVALOR"		,""	,"Valor"			,PesqPict("ZP7","ZP7_XVALOR")		,TamSX3("ZP7_XVALOR")[1]	,.F.)
+Endif 
+_oTotalDR:=TRSection():New(_oReport,"Total da Solicitação")
+TRCell():New(_oTotalDR,"ZP7_XMATRI"		,""	,""									,PesqPict("ZP7","ZP7_XMATRI")		,TamSX3("ZP7_XMATRI")[1]	,.F.)
+TRCell():New(_oTotalDR,"ZP0_XCPF"		,""	,""									,PesqPict("ZP0","ZP0_XCPF")			,TamSX3("ZP0_XCPF")[1]		,.F.)
+TRCell():New(_oTotalDR,"ZP0_XNOME"		,""	,""									,PesqPict("ZP0","ZP0_XNOME")		,TamSX3("ZP0_XNOME")[1]		,.F.)
+TRCell():New(_oTotalDR,"ZP7_XEVENT"		,""	,""									,PesqPict("ZP7","ZP7_XEVENT")		,TamSX3("ZP7_XEVENT")[1]	,.F.)
+TRCell():New(_oTotalDR,"ZP7_XDESMO"		,""	,"Valor Total da Solicitação ..."	,PesqPict("ZP7","ZP7_XDESMO")		,60							,.F.)
+TRCell():New(_oTotalDR,"ZP7_XTURNO"		,""	,""									,PesqPict("ZP7","ZP7_XTURNO")		,TamSX3("ZP7_XTURNO")[1]	,.F.)
+TRCell():New(_oTotalDR,"ZP7_XQTDE"		,""	,""									,PesqPict("ZP7","ZP7_XQTDE")		,TamSX3("ZP7_XQTDE")[1]		,.F.)
+TRCell():New(_oTotalDR,"ZP7_XVALOR"		,""	,""									,PesqPict("ZP7","ZP7_XVALOR")		,TamSX3("ZP7_XVALOR")[1]	,.F.)
+Return _oReport
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<ReportPrint>                                               |
+|Rotina Padrao de Impressao do Relatorio                                   |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<05/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<Nil>                                                          |
+|@return<Nil>                                                              |
++--------------------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function ReportPrint(_oReport)
+Local _oAlunos		:= Nil
+Local _oTotalDR		:= Nil  
+If Mv_par01 == 1
+	_oAlunos		:= _oReport:Section(1)
+	_oTotalDR		:= _oReport:Section(2)
+	_oAlunos:Init()
+	_oTotalDR:Init()
+Else
+	_oTotalDR		:= _oReport:Section(1)
+	_oTotalDR:Init()
+Endif 
+_nTotRec 	:= Len(_aMatric)  
+_nHrsTotal	:= 0
+_nVlrTotal	:= 0.00   
+If _nTotRec > 0 
+	For _nCtaA := 1 to	_nTotRec
+		If Mv_par01 == 1
+			_oAlunos:Cell( "ZP7_XMATRI"		):SetBlock({|| _aMatric[_nCtaA,01]	})	//-- Matricula
+			_oAlunos:Cell( "ZP0_XCPF"		):SetBlock({|| _aMatric[_nCtaA,02]	})	//-- CPF
+			_oAlunos:Cell( "ZP0_XNOME"		):SetBlock({|| _aMatric[_nCtaA,03]	})	//-- Nome
+			_oAlunos:Cell( "ZP7_XEVENT"		):SetBlock({|| _aMatric[_nCtaA,04]	})	//-- Evento
+			_oAlunos:Cell( "ZP7_XDESMO"		):SetBlock({|| _aMatric[_nCtaA,05]	})	//-- Modalidade
+			_oAlunos:Cell( "ZP7_XTURNO"		):SetBlock({|| _aMatric[_nCtaA,06]	})	//-- Turno
+			_oAlunos:Cell( "ZP7_XQTDE"		):SetBlock({|| _aMatric[_nCtaA,07]	})	//-- Horas
+			_oAlunos:Cell( "ZP7_XVALOR"		):SetBlock({|| _aMatric[_nCtaA,08]	})	//-- Valor
+			_oAlunos:PrintLine()
+		Endif    
+		_nHrsTotal	+= 	_aMatric[_nCtaA,07]
+		_nVlrTotal	+= 	_aMatric[_nCtaA,08]
+	Next _nCtaA
+	If Mv_par01 == 1
+		_oReport:SkipLine()
+	Endif
+	_oTotalDR:Cell( "ZP7_XMATRI"	):SetBlock({|| ""	})				//-- Matricula
+	_oTotalDR:Cell( "ZP0_XCPF"		):SetBlock({|| ""	})				//-- CPF
+	_oTotalDR:Cell( "ZP0_XNOME"		):SetBlock({|| ""	})				//-- Nome
+	_oTotalDR:Cell( "ZP7_XEVENT"	):SetBlock({|| ""	})				//-- Evento
+	_oTotalDR:Cell( "ZP7_XDESMO"	):SetBlock({|| ""	})				//-- Modalidade
+	_oTotalDR:Cell( "ZP7_XTURNO"	):SetBlock({|| ""	})				//-- Turno
+	_oTotalDR:Cell( "ZP7_XQTDE"		):SetBlock({|| _nHrsTotal	})		//-- Horas
+	_oTotalDR:Cell( "ZP7_XVALOR"	):SetBlock({|| _nVlrTotal	})		//-- Valor    
+	_oTotalDR:PrintLine()
+	_lPrintOK	:= .T.
+Endif 
+If Mv_par01 == 1
+	_oAlunos:Finish()
+	_oTotalDR:Finish()
+Else
+	_oTotalDR:Finish()
+Endif 
+Return
+  
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<ViewMatr>                                                  |
+|Rotina de integracao SIGE x PROTHEUS, importa informacoes das Matriculas  |
+|do SIGE para Geracao do Relatorio de Solicitação ao DR.                   |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<06/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@Receive                                                                  |
+|    _dDataINI (d) - Data inicial do Periodo a Consultar                   |
+|    _dDataFim (d) - Data Final do Periodo a Consultar                     |
+|>                                                                         |
+|@return                                                                   |
+|<   _lReturn  (L) - (.T.) - A consulta encontrou dados                    |
+|                    (.F.) - A consulta NAO encontrou dados.               |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fViewDR(_dDataINI,_dDataFim)
+Local _lReturn		:= .t. 
+Local _nPos 		:= 0   
+Local _nCtaREG		:= 0   
+Private _nRegs		:= 0
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Executa consulta SQL na base SIGE para importar informcoes.        ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If u_GetMatric(_cUnOper,_dDataINI,_dDataFim)
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Loop na Tabela de Matriculas para Gravar as informacoes nas        ³
+	//| respectivas tabelas do Prothes                                     ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	//-- Numero de registros a processar [] foi inicializado na funcao [GetMatric()]
+	ProcRegua(_nRegs)
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Reposiciona o ponteiro para inicio do arquivo temporario.        ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	TRBMAT->(dbGoTop()) 
+	Do While TRBMAT->(!eof())    
+		_nCtaREG++
+		//-- Implementa Termometro
+		IncProc("Total de Registros:"+Alltrim(Transform(_nRegs,"@E 999,999,999"))+"|  Lidos:"+Alltrim(Transform(_nCtaREG,"@E 999,999,999")))   
+		_cModal		:= TRBMAT->ZP7_XMODAL+" - "+Substr(TRBMAT->ZP7_XDESMO,1,30) 	
+		_nVlrPgto 	:= ZP4->ZP4_XVLRHR * TRBMAT->ZP7_XQTDE				
+		aAdd(_aMatric,{	TRBMAT->ZP7_XMATRI	,;		//-- Matricula
+						TRBMAT->ZP0_XCPF	,;		//-- CPF
+						TRBMAT->ZP0_XNOME	,;		//-- Nome
+						TRBMAT->ZP7_XEVENT	,;		//-- Evento
+						_cModal				,; 		//-- Modalidade
+						TRBMAT->ZP7_XTURNO	,;		//-- Turno
+						TRBMAT->ZP7_XQTDE	,;		//-- Horas
+						_nVlrPgto			} ) 	//-- Valor
+
+		TRBMAT->(dbskip())  
+	Enddo
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Indica que terminou todas as importacoes de forma OK, deve ser inicializada      ³
+	//³ PRIVATE na funcao que chamou.                                                    ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_lViewOK := .T.
+Endif    
+If Select("TRBMAT")>0
+	TRBMAT->(DbCloseArea())
+Endif  
+Return _lReturn 
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<xParPerg>                                                  |
+|Monta Grupo de Pergunta para filtro das SC's-Solicitacoes que seram       |
+|apresentadas para geracao das ODC's-Ordens de compra.                     |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<05/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<Nil>                                                          |
+|@return<Nil>                                                              |
++--------------------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function xParPerg(_cPerg)	
+Local _aPerg := {}
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//   //-- MAPEAMENTOS DOS CAMPOS DE SX1
+//   aAdd (_aPerg,{"X1_PERGUNT","X1_PERPA","X1_PERENG","MV_CHL","C",5,0,0,"X1_GSC","X1_VALID",;
+//								"X1_VAR01",("X1_DEF01" e "X1_PYNE"),"X1_DEFSPA1","X1_DEFENG1","X1_CNT01",;
+//								"X1_VAR02","X1_DEF02","X1_DEFSPA2","X1_DEFENG2","X1_CNT02",;
+//								"X1_VAR03","X1_DEF03","X1_DEFSPA3","X1_DEFENG3","X1_CNT03",;
+//								"X1_VAR04","X1_DEF04","X1_DEFSPA4","X1_DEFENG4","X1_CNT04",;
+//								"X1_VAR05","X1_DEF05","X1_DEFSPA5","X1_DEFENG5","X1_CNT05",;
+//								"X1_F3","X1_GRPSXG","","X1_HELP","X1_PICTURE",{"Descricao para Tela PTG"},{"Descricao para Tela EPA"},{"Descricao para Tela USA"}})
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+
+//-- Mv_par14 = Analitico/Sintetico ?: 1-Analitico; 2-Sintetico
+aAdd(_aPerg, {"Analítico/Sintético ?","Analítico/Sintético ?","Analítico/Sintético ?","mv_cha","N",1,0,0,"C","",;
+					"Mv_par01","Analítico","Analítico","Analítico","",;
+					"","Sintético","Sintético","Sintético","",;
+					"","","","","",;                  
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Analítico/Sintético ?"},{"Analítico/Sintético ?"},{"Analítico/Sintético ?"}}) 
+u_SFAJUSX1(_cPerg,_aPerg) 
+Return 

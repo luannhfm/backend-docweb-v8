@@ -1,0 +1,318 @@
+// #########################################################################################
+// Projeto: PESQUISA DE SATISFAÇÃO
+// Modulo : CRM
+// Fonte  : SF7356B
+// ---------+-------------------+-----------------------------------------------------------
+// Date     | Author            | Description
+// ---------+-------------------+-----------------------------------------------------------
+// 22/02/16 | Breno Nogueira    |
+// ---------+-------------------+-----------------------------------------------------------
+
+#include "rwmake.ch"
+#include "colors.ch"
+#include "font.ch"
+#include "protheus.ch"
+#include "topconn.ch"
+#include "msgraphi.ch"
+#include "totvs.ch"
+
+/*/{Protheus.doc} SF7356X
+Geracao do relatorio grafico das respostas da pesquisa de satisfacao
+@author    Breno Nogueira
+@version   1.00
+@since     22/02/2016
+/*/
+User Function SF7356X()
+
+	Private cPerg		:= "SF7356X"
+	Private oArial8N   := TFont():New("Arial",,8,,.T.,,,,,.F.,.F.)
+	Private oArial9N   := TFont():New("Arial",,9,,.T.,,,,,.F.,.F.)
+	Private oArial10N  := TFont():New("Arial",,9,,.T.,,,,,.F.,.F.)
+	Private oArial11N  := TFont():New("Arial",,11,,.T.,,,,,.F.,.F.)
+	Private oArial12N  := TFont():New("Arial",,12,,.T.,,,,,.F.,.F.)
+	Private oArial13N  := TFont():New("Arial",,13,,.T.,,,,,.F.,.F.)
+	Private oArial14N  := TFont():New("Arial",,14,,.T.,,,,,.F.,.F.)
+
+	Private cQryZJX	:= ""
+	Private oPrinter	:= TmsPrinter():New()
+	Private dDataIni	:= Date()
+	Private dDataFim	:= Date()
+	Private oChartLocal
+	Private oChart		:= FwChartFactory():New()
+
+	AjustaSX1()
+
+	if !Pergunte(cPerg,.t.)
+		return
+	endif
+	
+	//+------------------------------------------------------------------+
+	//| Validação das datas de inicio e fim do relatório                 |
+	//+------------------------------------------------------------------+
+	if dtoc(mv_par01) = "  /  /    " .or. dtoc(mv_par02) = "  /  /    "
+		ApMsgInfo("As datas de início ou fim não podem ser em branco...","..:: Data Inválida ::..")
+	else
+		if mv_par01 > mv_par02
+			ApMsgInfo("A data inicial não pode ser maior que a data final...","..:: Data Inválida ::..")
+			Return
+		else
+			oPrinter:Setup()
+			//--SetPortrait = Retrato | SetLandScape = Paisagem
+			oPrinter:SetPortrait()
+			oPrinter:StartPage()
+			PrintPage()
+		endif
+	endif
+Return
+
+//------------------------------------------------------------------------------------------
+/*/{Protheus.doc} PRINTPAGE
+Funcao para chamada do gerenciador do relatorio e montagem dos dados
+@author    Breno Nogueira
+@version   1.00
+@since     22/02/2016
+/*/
+//------------------------------------------------------------------------------------------
+Static Function PrintPage()
+
+	Local aDados		:= {}
+	Local nz			:= 0
+	Local aGraph		:= {}
+	Private cTipoReg	:= ""
+	Private nVlPeso	:= 0 // Guarda o peso da resposta
+	Private nQtReg		:= 0 // Acumulador de Registros
+	Private nClMed		:= 0 // Média das Respostas (nVlPeso/nQtReg)
+	Private nCol		:= 0149
+	Private nLin		:= 0402
+	//--Média de peso para comparação da pesquisa | Será criado o parametro MV_XRPESQ -> VALOR REF. PARA O GRÁFICO
+	Private nRegua		:= 8
+	//--
+	Private cModalidade:= ""
+	Private cCurso		:= ""
+	Private cProduto	:= ""
+	Private cTemp		:= GetTempPath()
+	Private cSystem	:= Upper(GetSrvProfString("STARTPATH",""))
+	Private bImag001	:= cSystem+"lgrl01.bmp" //-- Busca o logo da empresa logada.
+	Private LinhaCabec := {}
+	Private LinhaDados := {}
+	Private nSerie
+	Private cString	:= {}
+	Private qSugComp	:= ""
+
+	//--Query para buscar dados da pesquisa
+	cQryZJX := " SELECT DISTINCT ZJX.ZJX_FILIAL, ZJX.ZJX_IDPESQ, ZJR.ZJR_DESC, ZJX.ZJX_IDTOPI, ZJS.ZJS_DESC, "
+	cQryZJX += " ZJX.ZJX_IDQUES, ZJT.ZJT_DESC, ZJX.ZJX_IDRESP, ZJU.ZJU_DESC, ZJX.ZJX_IDOPOR, ZJX.ZJX_REVOPO, "
+	cQryZJX += " ZJX.ZJX_IDPROP, ZJX.ZJX_REVPRO, ZJX.ZJX_IDCLIE, ZJX.ZJX_LJCLIE, "
+	cQryZJX += " ZJX.ZJX_PESO " //, ZJX.ZJX_SUGEST, ZJX.ZJX_COMPLE "
+	cQryZJX += " FROM "+RetSqlName("ZJX")+" ZJX, "+RetSqlName("ZJR")+" ZJR, "+RetSqlName("ZJS")+" ZJS, "
+	cQryZJX += " "+RetSqlName("ZJT")+" ZJT, "+RetSqlName("ZJU")+" ZJU "
+	cQryZJX += " WHERE ZJX.ZJX_RSPMAI = 'S' "
+	cQryZJX += " AND ZJX.ZJX_IDPESQ = ZJR.ZJR_COD  "
+	cQryZJX += " AND ZJX.ZJX_IDTOPI = ZJS.ZJS_ITEM "
+	cQryZJX += " AND ZJX.ZJX_IDPESQ = ZJS.ZJS_COD  "
+	cQryZJX += " AND ZJX.ZJX_IDQUES = ZJT.ZJT_ITEM "
+	cQryZJX += " AND ZJT.ZJT_ITEMGR = ZJS.ZJS_ITEM "
+	cQryZJX += " AND ZJT.ZJT_COD    = ZJR.ZJR_COD  "
+	cQryZJX += " AND ZJX.ZJX_IDRESP = ZJU.ZJU_ITEM "
+	cQryZJX += " AND ZJU.ZJU_ITEMQS = ZJT.ZJT_ITEM "
+	cQryZJX += " AND ZJU.ZJU_ITEMGR = ZJS.ZJS_ITEM "
+	cQryZJX += " AND ZJX.ZJX_DATRES BETWEEN '"+Dtos(mv_par01)+"' AND '"+Dtos(mv_par02)+"' "
+	if !Empty(mv_par03) //-- Oportunidade Inicial
+		cQryZJX += " AND ZJX.ZJX_IDOPOR >= '"+mv_par03+"' "
+		cQryZJX += " AND ZJX.ZJX_REVOPO >= '"+mv_par04+"' "
+	endif
+	if !Empty(mv_par05) //-- Oportunida Final
+		cQryZJX += " AND ZJX.ZJX_IDOPOR <= '"+mv_par05+"' "
+		cQryZJX += " AND ZJX.ZJX_REVOPO <= '"+mv_par06+"' "
+	endif
+	if !Empty(mv_par07) //-- Cliente
+		cQryZJX += " AND ZJX.ZJX_IDCLIE = '"+mv_par07+"' "
+		cQryZJX += " AND ZJX.ZJX_LJCLIE = '"+mv_par08+"' "
+	endif
+	cQryZJX += " AND ZJU.D_E_L_E_T_ <> '*' "
+	cQryZJX += " AND ZJT.D_E_L_E_T_ <> '*' "
+	cQryZJX += " AND ZJS.D_E_L_E_T_ <> '*' "
+	cQryZJX += " AND ZJR.D_E_L_E_T_ <> '*' "
+	cQryZJX += " AND ZJX.ZJX_PESO > 0 "
+	cQryZJX += " GROUP BY ZJX.ZJX_FILIAL, ZJX.ZJX_IDPESQ, ZJR.ZJR_DESC, ZJX.ZJX_IDTOPI, ZJS.ZJS_DESC, "
+	cQryZJX += " ZJX.ZJX_IDQUES, ZJT.ZJT_DESC, ZJX.ZJX_IDRESP, ZJU.ZJU_DESC, ZJX.ZJX_IDOPOR, ZJX.ZJX_REVOPO, "
+	cQryZJX += " ZJX.ZJX_IDPROP, ZJX.ZJX_REVPRO, ZJX.ZJX_IDCLIE, ZJX.ZJX_LJCLIE, ZJX.ZJX_PESO " //, ZJX.ZJX_SUGEST, ZJX.ZJX_COMPLE "
+	cQryZJX += " ORDER BY ZJS.ZJS_DESC "
+
+	//-- Referencias das perguntas para a query
+	/*/
+	"Data Resposta De  ,'MV_PAR01'
+	"Data Resposta Ate ,'MV_PAR02'
+	"Da Oportunidade   ,'MV_PAR03'
+	"Rev. Oportunidade ,'MV_PAR04'
+	"Ate Oportunidade  ,'MV_PAR05'
+	"Rev. Oportunidade ,'MV_PAR06'
+	"Cliente           ,'MV_PAR07'
+	"Loja Cliente      ,'MV_PAR08'
+	"Curso (N. Implem.),'MV_PAR09'
+	"Modalidade        ,'MV_PAR10'
+	/*/
+	
+	//-- Verifica se area está em uso, se estiver libera para o prôximo item
+	If Select("QRYZJX") <> 0
+		DbSelectArea("QRYZJX")
+		DbCloseArea("QRYZJX")
+	EndIf
+
+	TcQuery cQryZJX New Alias "QRYZJX"
+
+	DbSelectArea("QRYZJX")
+
+	oPrinter:SayBitMap(0044,0046,bImag001,0439,0111)
+	oPrinter:Box(0044,0046,0155,0485)
+	oPrinter:Box(0044,0485,0155,1547)
+	oPrinter:Box(0044,1547,0155,2249)
+	oPrinter:Box(0100,1547,0155,1780)
+	oPrinter:Say(0044,0784,"Avaliação de Satisfação",oArial10N,,0)
+	oPrinter:Box(0100,1780,0155,2013)
+	oPrinter:Say(0080,0886,"Empresa",oArial10N,,0)
+	oPrinter:Say(0046,1663,RTrim(Posicione("SM0",1,cEmpAnt+cFilAnt,"M0_FILIAL")),oArial9N,,0)
+	oPrinter:Say(0095,1558,"Folha",oArial10N,,0)
+	oPrinter:Box(0100,2012,0155,2249)
+	oPrinter:Say(0095,1787,"Revisão",oArial10N,,0)
+	oPrinter:Say(0095,2020,"Data",oArial10N,,0)
+	oPrinter:Say(0117,1663,"01",oArial10N,,0)
+	oPrinter:Say(0117,1900,QRYZJX->ZJX_REVOPO,oArial10N,,0)
+	oPrinter:Say(0117,2097,DtoC(Date()),oArial10N,,0)
+	oPrinter:Box(0155,0046,0346,2249)
+	oPrinter:Say(0177,0058,"Unidade Operacional :",oArial10N,,0)
+	oPrinter:Say(0175,0413,RTrim(cFilAnt)+" - "+ RTrim(Posicione("SM0",1,cEmpAnt+cFilAnt,"M0_FILIAL")),oArial10N,,0) //+" - "+ RTrim(Posicione("SM0",1,cEmpAnt+cFilAnt,"M0_NOME"))
+	oPrinter:Say(0175,1253,"Modalidade :",oArial10N,,0)
+	cProduto	:= Posicione("ADJ",1,FwxFilial("ADJ")+Alltrim(QRYZJX->ZJX_IDOPOR)+Alltrim(QRYZJX->ZJX_REVOPO),"ADJ_PROD")
+	cModalidade	:= Posicione("SB1",1,FwxFilial("SB1")+cProduto,"B1_XMODALI")
+	oPrinter:Say(0175,1550,Posicione("ZCI",1,FwxFilial("ZCI")+cModalidade,"ZCI_DESCRI"),oArial10N,,0)
+	oPrinter:Say(0220,0058,"Curso :",oArial10N,,0)
+	cCurso		:= Posicione("SB1",1,FwxFilial("SB1")+cProduto,"B1_DESC") // O CURSO E CONSIDERADO UM PRODUTO NO PROTHEUS
+	oPrinter:Say(0220,0413,cCurso,oArial10N,,0)
+	if !Empty(mv_par07)
+		oPrinter:Say(0308,0058,"Empresa :",oArial10N,,0)
+		oPrinter:Say(0308,0413,Posicione("SA1",1,FwxFilial("SA1")+QRYZJX->ZJX_IDCLIE,"A1_NOME"),oArial10N,,0)
+		oPrinter:Say(0308,1253,"Contato :",oArial10N,,0)
+		oPrinter:Say(0308,1550,Posicione("SA1",1,FwxFilial("SA1")+QRYZJX->ZJX_IDCLIE,"A1_CONTATO"),oArial10N,,0)
+	endif
+	oPrinter:Say(0262,0058,"Local do Curso :",oArial10N,,0)
+	oPrinter:Say(0262,0413,RTrim(Posicione("SM0",1,cEmpAnt+cFilAnt,"M0_NOMECOM")),oArial9N,,0)
+	oPrinter:Say(0264,1253,"Período do Curso :",oArial10N,,0)
+	dDataIni	:= Posicione("AD1",1,FwxFilial("AD1")+Alltrim(QRYZJX->ZJX_IDOPOR)+Alltrim(QRYZJX->ZJX_REVOPO),"AD1_DTINI")
+	dDataFim	:= Posicione("AD1",1,FwxFilial("AD1")+Alltrim(QRYZJX->ZJX_IDOPOR)+Alltrim(QRYZJX->ZJX_REVOPO),"AD1_DTFIM")
+	oPrinter:Say(0264,1550,DtoC(dDataIni) + " / " + DtoC(dDataFim),oArial10N,,0)
+	oPrinter:Box(0346,0046,0395,0485)
+	oPrinter:Say(0348,0186,"Tópicos",oArial13N,,0)
+	oPrinter:Box(0346,0485,0395,1547)
+	oPrinter:Say(0348,0872,"Itens",oArial13N,,0)
+	oPrinter:Box(0346,1547,0395,2249)
+	oPrinter:Say(0348,1829,"Médias",oArial13N,,0)
+
+	If QRYZJX->(Eof())
+		ApMsgInfo("Não foram encontrados dados para impressão do relatório","..:: Sem Registros ::..")
+	Else
+		While QRYZJX->(!Eof())
+			if cTipoReg <> QRYZJX->ZJS_DESC .and. nQtReg > 0 // SE FOR OUTRO TOPICO FINALIZO O GRUPO
+				oPrinter:Say(nLin,1180,"Média do Tópico"+" ("+AllTrim(cTipoReg)+" )",oArial11N,,120)
+				nClMed := nVlPeso/nQtReg
+				oPrinter:Say(nLin,1852,Transform(nClMed,"@E 99.99"),oArial11N,,120)
+				oPrinter:Say(nLin,1935,"Refer.: "+Alltrim(Str(nRegua)),oArial11N,,120)
+				if nClMed < 8
+					oPrinter:Say(nLin,2100,"(<Abaixo)",oArial11N,,120)
+				else
+					oPrinter:Say(nLin,2100,"(>=Normal)",oArial11N,,120)
+				endif
+				oPrinter:Line(nLin+0040,0050,nLin+0040,2249,)
+				nQtReg  := 0 // Zero o totalizador para o proximo grupo
+				nVlPeso := 0 // Zera o totalizador do peso para o proximo grupo
+				nClMed  := 0 // Zera o totalizador da media para o proximo grupo
+				nLin += 0060 // Pula linhas para separar o grupo
+			endif
+			if nQtReg = 0
+				oPrinter:Say(nLin,0080,QRYZJX->ZJS_DESC,oArial11N,,0) // Imprime o tópico somente na primeira passagem
+				oPrinter:Say(nLin,0505,Alltrim(QRYZJX->ZJX_IDQUES) +"-"+ Alltrim(QRYZJX->ZJT_DESC),oArial9N,,0)
+				oPrinter:Say(nLin,1852,Transform(QRYZJX->ZJX_PESO,"@E 99.99"),oArial9N,,0)
+				oPrinter:Line(nLin+0040,0505,nLin+0040,2249,)
+				nQtReg++ 						// ACUMULA REGISTROS
+				nVlPeso  += QRYZJX->ZJX_PESO	// ACUMULA PESO DAS RESPOSTAS
+				cTipoReg := QRYZJX->ZJS_DESC	// GUARDO NOME DO TOPICO
+				nLin += 0050
+			else
+				oPrinter:Say(nLin,0505,Alltrim(QRYZJX->ZJX_IDQUES) +"-"+ Alltrim(QRYZJX->ZJT_DESC),oArial9N,,0)
+				oPrinter:Say(nLin,1852,Transform(QRYZJX->ZJX_PESO,"@E 99.99"),oArial9N,,0)
+				oPrinter:Line(nLin+0040,0505,nLin+0040,2249,)
+				nQtReg++ 						// ACUMULA REGISTROS
+				nVlPeso  += QRYZJX->ZJX_PESO	// ACUMULA PESO DAS RESPOSTAS
+				cTipoReg := QRYZJX->ZJS_DESC	// GUARDO NOME DO TOPICO
+				nLin += 0050
+			endif
+			QRYZJX->(DbSkip())
+		EndDo
+		oPrinter:Say(nLin,1180,"Média do Tópico"+" ("+AllTrim(cTipoReg)+" )",oArial11N,,120)
+		nClMed := nVlPeso/nQtReg
+		oPrinter:Say(nLin,1852,Transform(nClMed,"@E 99.99"),oArial11N,,120)
+		oPrinter:Say(nLin,1935,"Refer.: "+Alltrim(Str(nRegua)),oArial11N,,120)
+		if nClMed < 8
+			oPrinter:Say(nLin,2100,"(<Abaixo)",oArial11N,,120)
+		else
+			oPrinter:Say(nLin,2100,"(>=Normal)",oArial11N,,120)
+		endif
+		oPrinter:Line(nLin+0040,0050,nLin+0040,2249,)
+
+		//-- Query para buscar as informações quando existirem dos campos
+		//-- Sugestão(ZJX_SUGEST) e Complemento(ZJX_COMPLE).
+		
+		//-- Sugestão
+
+		QRYZJX->(dbgoTop())
+		While QRYZJX->(!Eof())
+			_Registro := QRYZJX->(recno())
+			dbSelectArea("ZJX")
+			ZJX->(dbSetOrder(1))
+			dbGoTo(_Registro)
+			if ! Empty(ZJX->ZJX_SUGEST)
+				nLin += 0200
+				nRegua	:= 8
+				oPrinter:Say(nLin,0080,"SUGESTÕES : ",oArial11N,,0)
+				oPrinter:Line(nLin+0050,0050,nLin+0050,2249,)
+				oPrinter:Say(nLin+0100,0100,ZJX->ZJX_SUGEST,oArial11N,,0)
+				oPrinter:Line(nLin+0050,0050,nLin+0050,2249,)
+			endif
+
+			if ! Empty(ZJX->ZJX_COMPLE)
+				nLin += 0300
+				nRegua	:= 8
+				oPrinter:Say(nLin,0080,"COMPLEMENTO : ",oArial11N,,0)
+				oPrinter:Line(nLin+0050,0050,nLin+0050,2249,)
+				oPrinter:Say(nLin+0100,0100,ZJX->ZJX_COMPLE,oArial11N,,0)
+				oPrinter:Line(nLin+0050,0050,nLin+0050,2249,)
+			endif
+			QRYZJX->(dbskip())
+		EndDo
+	Endif
+oPrinter:Preview()
+
+Return
+
+//------------------------------------------------------------------------------------------
+/*/{Protheus.doc} AjustaSx1
+Função para apresentação da perguntas para a filtragem dos dados.
+@author    Breno Nogueira
+@version   1.00
+@since     22/02/2016
+/*/
+//------------------------------------------------------------------------------------------
+Static Function AjustaSx1()
+	Local aArea := GetArea()
+
+	u_SFPUTSX1(cPerg,"01","Data Resposta De  ","","","mv_ch1","D",08,0,0,"G","",'','','','MV_PAR01','','','','','','','','','','','','','','','','',{"Data Inicio Respostas"},{"Data Inicio Respostas"},{"Data Inicio Respostas"})
+	u_SFPUTSX1(cPerg,"02","Data Resposta Ate ","","","mv_ch2","D",08,0,0,"G","",'','','','MV_PAR02','','','','','','','','','','','','','','','','',{"Data Final Respostas"},{"Data Final Respostas"},{"Data Final Respostas"})
+	u_SFPUTSX1(cPerg,"03","Da Oportunidade   ","","","mv_ch3","C",08,0,0,"G","",'AD1','','','MV_PAR03','','','','','','','','','','','','','','','','',{"Informe Oportunidade Inicial"},{"Informe Oportunidade Inicial"},{"Informe Oportunidade Inicial"})
+	u_SFPUTSX1(cPerg,"04","Rev. Oportunidade ","","","mv_ch4","C",08,0,0,"G","",'','','','MV_PAR04','','','','','','','','','','','','','','','','',{"Informe Revisao da Oportunidade inicial"},{"Informe Revisao da Oportunidade inicial"},{"Informe Revisao da Oportunidade inicial"})
+	u_SFPUTSX1(cPerg,"05","Ate Oportunidade  ","","","mv_ch5","C",08,0,0,"G","",'AD1','','','MV_PAR05','','','','','','','','','','','','','','','','',{"Informe Oportunidade Final"},{"Informe Oportunidade Final"},{"Informe Oportunidade Final"})
+	u_SFPUTSX1(cPerg,"06","Rev. Oportunidade ","","","mv_ch6","C",08,0,0,"G","",'','','','MV_PAR06','','','','','','','','','','','','','','','','',{"Informe Revisao da Oportunidade final"},{"Informe Revisao da Oportunidade final"},{"Informe Revisao da Oportunidade final"})
+	u_SFPUTSX1(cPerg,"07","Cliente           ","","","mv_ch7","C",08,0,0,"G","",'SA1','','','MV_PAR07','','','','','','','','','','','','','','','','',{"Imprime somente o cliente"},{"Imprime somente o cliente"},{"Imprime somente o cliente"})
+	u_SFPUTSX1(cPerg,"08","Loja Cliente      ","","","mv_ch8","C",08,0,0,"G","",'','','','MV_PAR08','','','','','','','','','','','','','','','','',{"Imprime somente o cliente"},{"Imprime somente o cliente"},{"Imprime somente o cliente"})
+	u_SFPUTSX1(cPerg,"09","Curso (N. Implem.)","","","mv_ch9","C",08,0,0,"G","",'','','','MV_PAR09','','','','','','','','','','','','','','','','',{"Imprime somente o curso"},{"Imprime somente o curso"},{"Imprime somente o curso"})
+	u_SFPUTSX1(cPerg,"10","Modalidade        ","","","mv_cha","C",08,0,0,"G","",'ZCI','','','MV_PAR10','','','','','','','','','','','','','','','','',{"Imprime somente a modalidade"},{"Imprime somente a modalidade"},{"Imprime somente a modalidade"})
+Return

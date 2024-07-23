@@ -1,0 +1,414 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} SF06A24X
+Funcao a ser chamada do PE FA750BRW Funcoes contas a pagar
+Programar titulos de despesas, gerando novas parcelas para
+o titulo posicionado de acordo com os parametros definidos pelo o usuario
+@author j2a.caiolima
+@since 01/09/2017
+/*/
+User Function SF06A24X()
+Local _aPergs := {}
+Local _nRec := SE2->(Recno())
+Local _cTitle := "Programar titulos despesas"
+Local _bOk := {|| fValid() }
+
+local 	xparam		:= GetMV("MV_CTBAMAR")
+
+Private _aRet := {}
+
+//Alteração de parametro 
+PutMV("MV_CTBAMAR", 0)
+
+Aadd(_aPergs, {1, "Quantidade de parcelas?", 0, "@E 999" , ".T.",,".T.",5, .T. } )
+Aadd(_aPergs, {1, "Dia de emissão?"        , 0, "@E 99", ".T.",,".T.",5, .T. } )
+Aadd(_aPergs, {1, "Dia de vencimento?"     , 0, "@E 99", ".T.",,".T.",5, .T. } )
+
+If ParamBox(_aPergs, _cTitle, _aRet, _bOk, , , , , , , .F., .F.)
+	fTelaParc( _aRet, _nRec )
+EndIf
+
+PutMV("MV_CTBAMAR", xparam)
+Return
+
+/*/{Protheus.doc} fValid
+valida os parametros digitados pelo usuario
+valida se o dia de emissao não é menor que o dia de vencimento.
+@author j2a.caiolima
+@since 04/09/2017
+@version 1.0
+@return Logico, true se os parametros estiverem ok e falso se for invalido
+/*/
+Static Function fValid()
+	Local _lRet := .T.
+	Local _nDiaEmi := _aRet[2]
+	Local _nDiaVen := _aRet[3]
+	Local _cMsg := ""
+	
+	If _nDiaEmi < 1
+		_cMsg += "-> O dia de emissão deve ser maior que 0." + CRLF
+		_lRet := .F.
+	EndIf
+	
+	If _nDiaEmi > 31
+		_cMsg += "-> O dia de emissão NÃO deve ser maior que 31." + CRLF
+		_lRet := .F.
+	EndIf
+	
+	If _nDiaVen < 1
+		_cMsg += "-> O dia de vencimento deve ser maior que 0." + CRLF
+		_lRet := .F.
+	EndIf
+	
+	If _nDiaVen > 31
+		_cMsg += "-> O dia de vencimento NÃO deve ser maior que 31." + CRLF
+		_lRet := .F.
+	EndIf
+	
+	If _nDiaEmi >= _nDiaVen
+		_cMsg += "-> O dia de vencimento precisa ser maior que o dia de emissao" + CRLF
+		_lRet := .F.
+	EndIf
+	
+	If !_lRet
+		Aviso("Atenão", _cMsg , {"ok"},3 )
+	EndIf
+Return(_lRet)
+
+
+/*/{Protheus.doc} fTelaParc
+Funcao que apresenta a tela com a parcelas a serem geradas para o titulo
+@author j2a.caiolima
+@since 01/09/2017
+/*/
+Static Function fTelaParc(_aDados, _nSE2Rec)
+	Local _aCoor := MsAdvSize(.t.)
+	Local _a1 := {}, _a2 := {}, _aObj := {}
+	Local _lOk := .F.
+	
+	_aCoor[5] := 800
+	_aCoor[6] := 500
+	
+	_aCoor[3] := _aCoor[5] / 2
+	_aCoor[4] := _aCoor[6] / 2
+	
+	_a1 := {_aCoor[1],_aCoor[2],_aCoor[3],_aCoor[4],3,3}
+	_a2 := {{100, 100, .T., .T., .F.}}
+	_aObj := MsObjSize(_a1, _a2, .T., .F.)
+	
+	Private tela
+	Private _oParcelas
+	Private _nNParc := _aDados[1]
+	Private _nDiaEm := _aDados[2]
+	Private _nDiaVe := _aDados[3]
+
+		Define MsDialog tela TITLE "Programar titulos de despesas" FROM 0,0 To _aCoor[6], _aCoor[5] Pixel
+		
+		fGerGetD(_nNParc, _nDiaVe, _nDiaEm, _nSE2Rec, _aObj)
+		
+		Activate MsDialog tela CENTERED ON INIT (EnchoiceBar(tela, {|| _lOk := .T., tela:End() },;
+						{|| tela:End() }, ,,,,,,.F., ,  ))
+		
+		If _lOk
+			
+
+			Processa({|lFim| fGeraParc(_oParcelas:aCols, _nSE2Rec, @lFim)},"Processando", "Incluindo os titulos...", .T.)
+			//FwMsgRun(, {|oSay| fGeraParc(_oParcelas:aCols, _nSE2Rec, oSay)}, "Processando", "Incluindo os titulos..." )
+
+		EndIf
+Return
+
+/*/{Protheus.doc} fGeraParc
+Funcao para gera as parcelas na SE2
+@author j2a.caiolima
+@since 04/09/2017
+/*/
+Static Function fGeraParc( _aCols, _nSE2Rec, lFim)
+	
+	Local 	aVetSE2 	:= {} //vetor utilizado na rotina automatica
+	Local 	_nx			:= 0
+	Private lMsErroAuto := .F. //variavel privada para identicação de erro da rotina automatica
+	Private cRotProtitu := "N" //Indentificador da rotina
+
+	dbSelectArea("SE2")
+	SE2->(dbSetOrder(1))
+	SE2->(dbGoTop())
+	SE2->(dbGoTo(_nSE2Rec))
+	If _nSE2Rec == SE2->(Recno())
+		Begin Transaction
+			ProcRegua(Len(_aCols))
+			For _nx := 1 To Len(_aCols)
+					//oSay:cCaption := "Gerando parcela " + _aCols[_nx,02]
+					IncProc("Gerando parcela " + _aCols[_nx,02])
+					ProcessMessage()
+					If lFim
+						MsgAlert("Processamento cancelado, parcelas não serão geradas.")
+						DisarmTransaction()
+						Exit
+					EndIf
+						Aadd(aVetSE2,{"E2_FILIAL"   	,SE2->E2_FILIAL  ,Nil})
+						Aadd(aVetSE2,{"E2_PREFIXO"  	,SE2->E2_PREFIXO ,Nil})
+						Aadd(aVetSE2,{"E2_NUM"     		,SE2->E2_NUM     ,Nil})
+						Aadd(aVetSE2,{"E2_PARCELA"  	,_aCols[_nx,02]  ,Nil})
+						Aadd(aVetSE2,{"E2_TIPO"     	,SE2->E2_TIPO    ,Nil})
+						Aadd(aVetSE2,{"E2_NATUREZ"		,SE2->E2_NATUREZ ,Nil})
+						Aadd(aVetSE2,{"E2_FORNECE"  	,SE2->E2_FORNECE ,Nil})
+						Aadd(aVetSE2,{"E2_LOJA"     	,SE2->E2_LOJA    ,Nil})
+						Aadd(aVetSE2,{"E2_EMISSAO"  	,_aCols[_nx,03]  ,Nil})
+						Aadd(aVetSE2,{"E2_EMIS1"  		,_aCols[_nx,03]  ,Nil})
+						Aadd(aVetSE2,{"E2_VENCTO"   	,_aCols[_nx,04]  ,Nil})
+						Aadd(aVetSE2,{"E2_VALOR"    	,_aCols[_nx,05]  ,Nil})
+						Aadd(aVetSE2,{"E2_HIST"    		,SE2->E2_HIST    ,Nil})
+						Aadd(aVetSE2,{"E2_RATEIO"		,SE2->E2_RATEIO	 ,Nil})
+						Aadd(aVetSE2,{"E2_CCD"    		,SE2->E2_CCD     ,Nil})
+						Aadd(aVetSE2,{"E2_ITEMD"    	,SE2->E2_ITEMD   ,Nil})
+						Aadd(aVetSE2,{"E2_CONTAD"   	,SE2->E2_CONTAD  ,Nil})
+						//Incluido por J2A--> Gustavo Krebs 2022/06/24
+						//Verifica rotina 
+						cRotProtitu := "S" 
+						//executa a rotina automatica para inclusao de titulo a pagar
+						MsExecAuto( { |x,y,z| FINA050(x,y,z)}, aVetSE2,, 3)
+					//Tratamento de resposta
+					If lMsErroAuto
+						MsgAlert('Houve um erro na inclusão dos titulos')
+						MostraErro()
+						lRet := .F.
+						DisarmTransaction()
+						Exit
+					else
+					aVetSE2:={}
+					Endif
+			Next
+		End Transaction
+	EndIf
+Return
+
+/*/{Protheus.doc} fGerGetD
+Funcao para criar a MsNewGetDados
+@author j2a.caiolima
+@since 01/09/2017
+/*/
+Static Function fGerGetD(_nNParc, _nDiaVe, _nDiaEm, _nSE2Rec, _aObj)
+	Local _aHeader := {}
+	Local _aCols := {}
+	Local _aAltField := {"VENCIMENTO","VALOR"}
+	Local _aLastTit := fGetLastTit(_nSE2Rec)
+	Local _cLastParc := _aLastTit[1]
+	Local _dLastEmis := _aLastTit[2]
+	Local _dLastVenc := _aLastTit[3]
+	Local _nGD := GD_UPDATE
+	Local _nx
+	
+	// data base menos um mes
+	Local _dataBase := fSomaMes(dDataBase, -1, _nDiaVe)
+
+	// tratativa para não gerar titulos com emissao anterior a database
+	If _dLastVenc < _dataBase
+		_dLastVenc := _dataBase
+	EndIf
+	
+	// nao vai levar em consideracao a ultima emissao e sim apenas o ultimo vencimento
+	_dLastEmis := _dLastVenc
+	// tratativa para não gerar titulos com emissao anterior a database
+	if fSomaMes(_dLastEmis, 1, _nDiaEm ) < dDataBase
+		_dLastEmis := fSomaMes(_dLastEmis, 1, _nDiaEm )
+		_dLastVenc  := fSomaMes(_dLastVenc, 1, _nDiaVe)
+	EndIf
+	
+	Aadd(_aHeader, {"Titulo"     , "NUMERO"     , "", 09, 0, "", "", "C"} )
+	Aadd(_aHeader, {"Parcela"    , "PARCELA"    , "", 03, 0, "", "", "C"} )
+	Aadd(_aHeader, {"Emissao"    , "EMISSAO"    , "", 10, 0, "", "", "C"} )
+	Aadd(_aHeader, {"Vencimento" , "VENCIMENTO" , "", 10, 0, "", "", "C"} )
+	Aadd(_aHeader, {"Valor"      , "VALOR"      , "@E 999,999,999.99", 14, 2, "", "", "C"} )
+	
+	dbSelectArea("SE2")
+	SE2->(dbSetOrder(1))
+	SE2->(dbGoTop())
+	SE2->(dbGoTo(_nSE2Rec))
+	
+	If _nSE2Rec == SE2->(Recno())
+		For _nx := 1 To _nNParc
+			_cLastParc := Soma1(_cLastParc)
+			_dLastEmis := fSomaMes(_dLastEmis, 1, _nDiaEm )
+			_dLastVenc  := fSomaMes(_dLastVenc, 1, _nDiaVe)
+			// Alterado por J2a -> Gustavo Krebs -->  imposto IRRF de ve ser somado junto com o valor do titulo 
+			nE2valor := SE2->E2_VALOR + E2_IRRF
+			//Aadd(_aCols, { SE2->E2_NUM, _cLastParc, _dLastEmis, _dLastVenc, SE2->E2_VALOR, .F. } )
+			Aadd(_aCols, { SE2->E2_NUM, _cLastParc, _dLastEmis, _dLastVenc, nE2valor, .F. } )
+		Next
+	EndIf
+	
+	_oParcelas := MsNewGetDados():New(_aObj[1,1],_aObj[1,2],_aObj[1,3],_aObj[1,4], _nGD, "AllwaysTrue",;
+		"AllwaysTrue", "", _aAltField,, 999, "AllwaysTrue", "", "AllwaysTrue", tela, _aHeader, _aCols )
+Return
+
+/*/{Protheus.doc} fSomaDt
+Funcao para somar meses a uma data
+@author j2a.caiolima
+@since 01/09/2017
+@version 1.0
+@return Data, com o mes somado
+/*/
+Static Function fSomaMes(_dData, _nQtd, _nDia)
+	Local _dRet
+	Local _nMeses := (Year(_dData) * 12) + Month(_dData)
+	Local _nYear  := 0
+	Local _nMes   := 0
+	
+	_nMeses += _nQtd
+	
+	_nYear := NoRound((_nMeses / 12), 0)
+	
+	_nMes := Mod(_nMeses , 12)
+	If _nMes = 0
+		_nMes := 12
+		_nYear--
+	EndIf
+	
+	_nCont := 0
+	While Empty(_dRet := SToD( StrZero(_nYear, 4) + StrZero(_nMes, 2) + StrZero(_nDia - _nCont, 2) ))
+		_nCont++
+		If (_nDia - _nCont) < 1
+			Exit
+		EndIf
+	EndDo
+Return(_dRet)
+
+/*/{Protheus.doc} fGetLastTit
+Funcao para buscar a ultima parcela de acordo com o recno do titulo passado no parametro
+@author j2a.caiolima
+@since 01/09/2017
+@param _nSE2Rec, Numerico, recno do titulo a ser levado como base da chave
+@return Array, Array com duas posicoes, pos 1 parcela, pos 2 emissao
+/*/
+Static Function fGetLastTit(_nSE2Rec)
+	Local _cSql := ""
+	Local _aRet := {}
+	Local _cParc := ""
+	Local _dEmis := ""
+	Local _dVenc := ""
+	Local _cALias := GetNextAlias()
+	
+	dbSelectArea("SE2")
+	SE2->(dbSetOrder(1))
+	SE2->(dbGoTop())
+	SE2->(dbGoTo(_nSE2Rec))
+	
+	If _nSE2Rec == SE2->(Recno())
+		
+		_cSql += " SELECT MAX(E2_PARCELA) PARCELA, MAX(E2_EMISSAO) EMISSAO, MAX(E2_VENCTO) VENCTO " + CRLF
+		_cSql += " FROM "+RetSQLName("SE2")+" SE2 " + CRLF
+		_cSql += " WHERE SE2.D_E_L_E_T_<>'*' " + CRLF
+		_cSql += " AND E2_FILIAL  = '"+ SE2->E2_FILIAL  +"' " + CRLF
+		_cSql += " AND E2_PREFIXO = '"+ SE2->E2_PREFIXO +"' " + CRLF
+		_cSql += " AND E2_NUM     = '"+ SE2->E2_NUM     +"' " + CRLF
+		_cSql += " AND E2_TIPO    = '"+ SE2->E2_TIPO    +"' " + CRLF
+		_cSql += " AND E2_FORNECE = '"+ SE2->E2_FORNECE +"' " + CRLF
+		_cSql += " AND E2_LOJA    = '"+ SE2->E2_LOJA    +"' " + CRLF
+		
+		MemoWrite("D:\LOGSQL\"+FunName()+"_"+ProcName()+".txt" , _cSql)
+		If Select(_cALias) > 0
+			(_cALias)->(dbClosearea())
+		Endif
+		
+		DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSql)), _cALias, .F., .F.)
+		TcSetField(_cALias, "EMISSAO", "D")
+		TcSetField(_cALias, "VENCTO" , "D")
+		
+		If !(_cALias)->(Eof())
+			_cParc := (_cALias)->PARCELA
+			_dEmis := (_cALias)->EMISSAO
+			_dVenc := (_cALias)->VENCTO
+		EndIf
+		
+		(_cALias)->(dbClosearea())
+	EndIf
+	
+	Aadd(_aRet, _cParc )
+	Aadd(_aRet, _dEmis )
+	Aadd(_aRet, _dVenc )
+Return(_aRet)
+
+
+
+
+return 
+
+
+
+
+/*/{Protheus.doc} ArrF050
+Função Para Retornar os registros salvo na CV4
+@type function
+@version 12.1.33 
+@author J2A Consultoria --> Gustavo Krebs 
+@since 29/06/2022
+@return variant, return_Array Com as informações para popular a CTJ 
+/*/
+User Function ArrF050()
+Local aVetCTJ := {}
+Local aArrRat := {}
+
+	if SE2->E2_RATEIO == "S"
+		dbSelectArea('CV4') 
+		CV4->(dbSetOrder(1))
+		CV4->(DbSeek(SE2->E2_ARQRAT))
+
+
+		While CV4->(!Eof()) .And. alltrim(CV4->CV4_FILIAL) == SubStr(SE2->E2_ARQRAT,1,04) .And. CV4->CV4_SEQUEN == alltrim(SubStr(SE2->E2_ARQRAT,17,30))									
+			Aadd(aVetCTJ,{"CTJ_DEBITO"  ,CV4->CV4_DEBITO	,Nil})
+			Aadd(aVetCTJ,{"CTJ_CREDITO"	,CV4->CV4_CREDIT	,Nil})
+			Aadd(aVetCTJ,{"CTJ_PERCEN"	,CV4->CV4_PERCEN	,Nil})
+			Aadd(aVetCTJ,{"CTJ_VALOR"	,CV4->CV4_VALOR		,Nil})
+			Aadd(aVetCTJ,{"CTJ_HIST"	,CV4->CV4_HIST		,Nil})
+			Aadd(aVetCTJ,{"CTJ_CCD"		,CV4->CV4_CCD		,Nil})
+			Aadd(aVetCTJ,{"CTJ_CCC"		,CV4->CV4_CCC		,Nil})
+			Aadd(aVetCTJ,{"CTJ_ITEMD"	,CV4->CV4_ITEMD		,Nil})
+			Aadd(aVetCTJ,{"CTJ_ITEMC"	,CV4->CV4_ITEMC  	,Nil})
+			Aadd(aVetCTJ,{"CTJ_CLVLDB"	,CV4->CV4_CLVLDB	,Nil})
+			Aadd(aVetCTJ,{"CTJ_CLVLCR"	,CV4->CV4_CLVLCR	,Nil})
+			Aadd(aVetCTJ,{"CTJ_EC05DB"	,CV4->CV4_EC05DB	,Nil})
+			Aadd(aVetCTJ,{"CTJ_EC05CR"	,CV4->CV4_EC05CR	,Nil})
+			Aadd(aVetCTJ,{"CTJ_EC06DB"	,CV4->CV4_EC06DB	,Nil})
+			Aadd(aVetCTJ,{"CTJ_EC06CR"	,CV4->CV4_EC06CR	,Nil})
+			Aadd(aVetCTJ,{"CTJ_EC07DB"	,CV4->CV4_EC07DB	,Nil})
+			Aadd(aVetCTJ,{"CTJ_EC07CR"	,CV4->CV4_EC07CR	,Nil})
+			Aadd(aVetCTJ,{"CTJ_EC08DB"	,CV4->CV4_EC08DB	,Nil})
+			Aadd(aVetCTJ,{"CTJ_EC08CR"	,CV4->CV4_EC08CR	,Nil})
+			Aadd(aVetCTJ,{"CTJ_EC09DB"	,CV4->CV4_EC09DB	,Nil})
+			Aadd(aVetCTJ,{"CTJ_EC09CR"	,CV4->CV4_EC09CR	,Nil})
+			Aadd(aVetCTJ,{"CTJ_SEQUEN"  ,CV4->CV4_ITSEQ		,Nil})
+			
+
+			Aadd(aArrRat, aVetCTJ )
+			aVetCTJ :={}
+			dbSkip()
+
+		EndDo
+
+	Endif 
+
+	CV4->(DbCloseArea())
+				
+Return aArrRat
+
+
+/*/{Protheus.doc} lRotTitu
+Retorna se entrou na rotina de programação de titulo 
+@type function
+@version  12.1.33
+@author Gustavo Krebs 
+@since 01/07/2022
+@return variant, return_cRet Sim ou Não 
+/*/
+User function cRotTitu()
+local cRet
+
+If cRotProtitu == "S"
+	cRet := "S"
+Else 
+	cRet := "N"
+Endif 
+
+
+Return cRet 

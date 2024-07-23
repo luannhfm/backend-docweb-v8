@@ -1,0 +1,301 @@
+#include 'Protheus.ch'
+
+/*/{Protheus.doc} SF06A02A
+@description Rotina responsável por estornar os processos de renegociação ou baixa com cartão.
+@type User Function
+@author Alan Teles de Oliveira
+@since 26/03/2019
+@version 12.1.17
+/*/
+User Function SF06A02A()
+
+    Local nI        := 0
+    Local nY        := 0
+    Local aTitulos  := {}
+    Local aTitCan   := {}
+    Local aTitInc   := {}
+    Local aTitBxa   := {}
+    Local lEsBxCon  := .F.
+    Local lRet      := .T.
+
+    If .not. Empty(SE1->E1_XNLIQ)
+        
+        aTitulos := fValTit()
+        lEsBxCon := GetNewPar('SF_ESBXCON', .F.)
+
+        If Len(aTitulos) = 2 .and. Len(aTitulos[1]) > 0 .and. Len(aTitulos[2]) > 0
+
+            For nI := 1 to Len(aTitulos) 
+
+                For nY := 1 to Len(aTitulos[nI])
+
+                    aAdd(aTitCan, {'E1_PREFIXO',    aTitulos[nI, nY, 1],    nil})
+                    aAdd(aTitCan, {'E1_NUM',        aTitulos[nI, nY, 2],    nil})
+                    aAdd(aTitCan, {'E1_PARCELA',    aTitulos[nI, nY, 3],    nil})
+                    aAdd(aTitCan, {'E1_TIPO',       aTitulos[nI, nY, 4],    nil})
+                    aAdd(aTitCan, {'E1_CLIENTE',    aTitulos[nI, nY, 5],    nil})
+                    aAdd(aTitCan, {'E1_LOJA',       aTitulos[nI, nY, 6],    nil})
+                    aAdd(aTitCan, {'E1_XNLIQ',      SE1->E1_XNLIQ,          nil})                    
+
+                    If nI = 2
+
+                        aAdd(aTitBxa, {aTitCan, aTitulos[nI, nY, 7]})
+
+                    Else
+
+                        aAdd(aTitInc, aTitCan)
+
+                    EndIf
+
+                    aTitCan := {}
+
+                Next
+
+            Next
+            
+            lRet := u_SFFNBX1A(aTitInc, 5, aTitBxa, 6, 'SF06A02A')
+
+        Else
+
+            lRet := .F.
+            
+        EndIf
+
+        If lRet
+            
+            For nI := 1 to Len(aTitBxa)
+
+                dbSelectArea('SE1')
+                SE1->(dbGoTop())
+                SE1->(dbSetOrder(1)) //E1_FILIAL+E1_PREFIXO+E1_NUM+E1_PARCELA+E1_TIPO
+                If SE1->(dbSeek(xFilial('SE1') + aTitBxa[nI, 1, 1, 2] + aTitBxa[nI, 1, 2, 2] + aTitBxa[nI, 1, 3, 2] + aTitBxa[nI, 1, 4, 2]))
+                    
+                    RecLock('SE1', .F.)
+                    SE1->E1_XNLIQ := ' '
+                    SE1->(MsUnLock())
+
+                EndIf
+                
+            Next
+
+            If lEsBxCon
+                dbSelectArea('SX6')
+                SX6->(dbGoTop())
+                SX6->(dbSetOrder(1))
+                If SX6->(dbSeek(xFilial('SX6') + 'SF_ESBXCON'))
+                    RecLock('SX6', .F.)
+                    SX6->X6_CONTEUD := .F.
+                    SX6->X6_CONTSPA := .F.
+                    SX6->X6_CONTENG := .F.
+                    SX6->(MsUnLock())
+                EndIf
+            EndIf
+
+            MsgInfo('Estorno realizados com sucesso.')
+
+        EndIf
+
+    Else
+
+        MsgInfo('Esse titulo não foi gerado/baixado pela rotina de liquidação.', 'Atenção - SF06A02A')    
+
+    EndIf
+
+Return 
+
+
+/*/{Protheus.doc} fValTit
+@description Identifico se os títulos podem ser estornados e relaciono quais serão.
+@type  Static Function
+@author Alan Teles de Oliveira
+@since 26/03/2019
+@version 12.1.17
+@return aRet, array, dois arrays contendo os títulos que foram gerados e os títulos baixados.
+/*/
+Static Function fValTit()
+
+    Local cAlTMP    := GetNextAlias()
+    Local lEsBxCon  := GetNewPar('SF_ESBXCON', .F.)
+    Local nSeq      := 0
+    Local aBxa      := {}
+    Local aInc      := {}
+    Local aRet      := {}
+
+    If Select(cAlTMP) > 0
+        (cAlTMP)->(dbCloseArea())
+    EndIf
+
+    BeginSQL Alias cAlTMP
+
+        SELECT 
+            SE1.E1_PREFIXO,
+            SE1.E1_NUM,
+            SE1.E1_PARCELA,
+            SE1.E1_TIPO,
+            SE1.E1_CLIENTE,
+            SE1.E1_LOJA,
+            Z05.Z05_TIPO,
+            SE1.E1_SALDO,
+            SE1.E1_VALOR,
+            Z05.Z05_ORIG,
+            Z05.Z05_VLBXA
+
+        FROM %Table:Z05% Z05
+
+        INNER JOIN %Table:SE1% SE1 ON	
+            SE1.E1_FILIAL 	= Z05.Z05_FILIAL    AND
+            SE1.E1_NUM 		= Z05.Z05_TITULO    AND
+            SE1.E1_PREFIXO 	= Z05.Z05_PREFIX    AND
+            SE1.E1_PARCELA 	= Z05.Z05_PARCEL    AND
+            SE1.E1_CLIENTE 	= Z05.Z05_CLIENT    AND
+            SE1.E1_LOJA		= Z05.Z05_LOJA      AND
+            SE1.%NotDel%
+
+        WHERE
+            Z05.Z05_FILIAL  =   %Exp:xFilial('SE1')%    AND
+            Z05.Z05_CODIGO  =   %Exp:SE1->E1_XNLIQ%     AND
+            Z05.Z05_TIPO    IN  ('I', 'B')              AND
+            Z05.%NotDel%
+
+    EndSQL
+
+    dbSelectArea(cAlTMP)
+    (cAlTMP)->(dbGoTop())
+
+    If (cAlTMP)->(Eof())
+        MsgInfo('Problemas na consulta dos titulos acione o CSI.', 'Atenção - SF06A02A')
+    EndIf
+
+    While .not. (cAlTMP)->(Eof())
+
+        If (cAlTMP)->Z05_TIPO = 'I' .and. (cAlTMP)->E1_SALDO < (cAlTMP)->E1_VALOR
+
+            aBxa := {}
+            aInc := {}
+            
+            MsgInfo('O titulo ' + (cAlTMP)->E1_NUM + ' prefixo  ' + (cAlTMP)->E1_PREFIXO + ' e parcela  ' + (cAlTMP)->E1_PARCELA + ' encontra-se baixado para realizar essa exclusão deve primeiro estornar essa baixa.', 'Atenção - SF06A02A')
+
+            Exit
+
+        EndIf
+
+        If (cAlTMP)->Z05_TIPO = 'B'
+
+            nSeq := fConsSE5((cAlTMP)->E1_PREFIXO, (cAlTMP)->E1_NUM, (cAlTMP)->E1_PARCELA, (cAlTMP)->E1_CLIENTE, (cAlTMP)->E1_LOJA, (cAlTMP)->Z05_ORIG, (cAlTMP)->Z05_VLBXA)
+
+            If nSeq = 0 .or. (nSeq < 0 .and. .not. lEsBxCon)
+                
+                If nSeq = 0
+                    MsgInfo('Não foi possível localizar a baixa do titulo em questão acione o departamento CSI.', 'Ateção - SF06A02A')
+                Else 
+                    MsgInfo('Titulos consiliados pela contabilidade não pode ser cancelados por gentileza acione o Dep. CCON.', 'Ateção - SF06A02A')
+                EndIf
+
+                aBxa := {}
+                aInc := {}
+
+                Exit
+            
+            EndIf
+
+            aAdd(aBxa, {(cAlTMP)->E1_PREFIXO, (cAlTMP)->E1_NUM, (cAlTMP)->E1_PARCELA, (cAlTMP)->E1_TIPO, (cAlTMP)->E1_CLIENTE, (cAlTMP)->E1_LOJA, nSeq})
+
+        Else
+
+            aAdd(aInc, {(cAlTMP)->E1_PREFIXO, (cAlTMP)->E1_NUM, (cAlTMP)->E1_PARCELA, (cAlTMP)->E1_TIPO, (cAlTMP)->E1_CLIENTE, (cAlTMP)->E1_LOJA})
+
+        EndIf        
+
+        (cAlTMP)->(dbSkip())
+
+    End
+
+    If Select(cAlTMP) > 0
+        (cAlTMP)->(dbCloseArea())        
+    EndIf
+
+    aRet := {aInc, aBxa}
+
+Return aRet
+
+
+/*/{Protheus.doc} fConsSE5
+@description Identifico qual sequencia de baixa será estornada.
+@type  Static Function
+@author Alan Teles de Oliveira
+@since 26/03/2019
+@version 12.1.17
+@param p_cPrefixo,  characters, prefixo do título baixado
+@param p_cTitulo,   characters, numero do título baixado
+@param p_cParcela,  characters, parcela do título baixado
+@param p_cCliente,  characters, cliente do título
+@param p_cLoja,     characters, loja do cliente
+@param p_cOrigem,   characters, rotina responsavel pela baixa
+@param p_nVlrBaixa, numeric, valor baixado
+@return nRet, numeric, sequencia da baixa que será estornada
+/*/
+Static Function fConsSE5(p_cPrefixo, p_cTitulo, p_cParcela, p_cCliente, p_cLoja, p_cOrigem, p_nVlrBaixa)
+
+    Local cAlTMP    := GetNextAlias()
+    Local nRet      := 0
+    Local lLA       := .F.
+
+    If Select(cAlTMP) > 0 
+        (cAlTMP)->(dbCloseArea())
+    EndIf
+
+    BeginSQL Alias cAlTMP
+
+        SELECT 
+            ROWNUM AS SEQ, 
+            SE5.E5_ORIGEM, 
+            SE5.E5_VALOR,
+            SE5.E5_LA
+
+        FROM %Table:SE5% SE5
+
+        WHERE
+            SE5.E5_FILIAL   = %Exp:xFilial('SE5')%  AND
+            SE5.E5_PREFIXO  = %Exp:p_cPrefixo%      AND
+            SE5.E5_NUMERO   = %Exp:p_cTitulo%       AND
+            SE5.E5_PARCELA  = %Exp:p_cParcela%      AND
+            SE5.E5_CLIENTE  = %Exp:p_cCliente%      AND
+            SE5.E5_LOJA     = %Exp:p_cLoja%         AND
+            SE5.E5_TIPODOC  = 'BA'                  AND
+            SE5.%NotDel%
+
+        ORDER BY 
+            1 DESC
+
+    EndSQL
+
+    dbSelectArea(cAlTMP)
+    (cAlTMP)->(dbGoTop())
+
+    While .not. (cAlTMP)->(Eof())
+        
+        If (cAlTMP)->E5_ORIGEM = p_cOrigem .and. (cAlTMP)->E5_VALOR =  p_nVlrBaixa .and. (cAlTMP)->E5_LA != 'S'
+            
+            nRet := (cAlTMP)->SEQ
+
+            Exit
+        
+        ElseIf (cAlTMP)->E5_ORIGEM = p_cOrigem .and. (cAlTMP)->E5_VALOR =  p_nVlrBaixa .and. (cAlTMP)->E5_LA == 'S'
+
+            lLA := .T.
+
+        EndIf
+
+        (cAlTMP)->(dbSkip())
+
+    End
+
+    If Select(cAlTMP) > 0 
+        (cAlTMP)->(dbCloseArea())
+    EndIf
+
+    If nRet = 0 .and. lLA
+        nRet := -1
+    EndIf
+
+Return nRet

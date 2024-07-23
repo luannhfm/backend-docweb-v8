@@ -1,0 +1,764 @@
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TBICONN.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "TBICODE.CH"
+#INCLUDE "AP5MAIL.CH"   
+#INCLUDE "TOTVS.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "PARMTYPE.CH"
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"
+/*
+	--------------------------------------------------------------------------------
+	{Protheus.doc} <SS6999X>
+	 CONJUNTO DE ROTINAS E FUNÇÕES DE VALIDAÇÕES UTILIZADAS PELO MODULO DO GCT
+	 PARA ATENDER AS ADEQUAÇÕES DE USO - ESPECIFICOS DA [ FIEMT ]
+	
+	@author<Antonio Dantas>
+	@since<09/03/2015>
+	@version<1.00>
+	@receive<Nil>
+	@return<Nil>
+	@example<Nil>
+	@see<Nil>
+	--------------------------------------------------------------------------------
+*/
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldPdMD>
+   Valida o produto informado na Medição do Contrato CNTA120.PRW, para 
+   Contratos da Integração CRM x GCT. 
+   
+   Resolve integração do CRM com Gestão de Contratos; Na inclussão da medição
+   para Contratos com Vinculo com Propostas Comercial, verifica se o produto
+   informado, existe da Proposta. Só permite incluir produtos previsto na
+   Proposta.
+
+	Função foi desenvolvida para ser chamada pela [Validação de Usuário] do
+	campo [CNE_PRODUT], da seguinten forma:
+	[u_fVldPdMD(M->CNE_PRODUT)] 
+
+@author<Antonio Dantas>
+@since<01/07/2015>
+@version<1.00>
+@receive
+<   _cProduto (c) - Codigo do Produtos
+>
+@return
+<    _lReturn (l) - (.t.) - Produto Valido; (.f.) - Produto Invalido.
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fVldPdMD(_cProduto)
+Local _aArea		:= GetArea()
+Local _cQuery 		:= ""
+Local _cMensagem	:= ""
+Local _aProposta	:= {}
+Local _lReturn	 	:= .t.
+Local _lFound 		:= .f.
+//--
+Local _cContrat		:= M->CND_CONTRA
+Local _cRevCTR		:= M->CND_REVISA
+//--
+dbSelectArea("CN9")
+CN9->(dbSetOrder(1))		//-- Nr. Contrato + Revisao
+_lFound := (CN9->(dbSeek(FwxFilial("CN9")+_cContrat+_cRevCTR)))
+//-- 
+If !Empty(Alltrim(CN9->CN9_XOPORT))
+	If _lFound
+		_lReturn	:= .f.
+		_aProposta 	:= u_fGetProC(CN9->CN9_XOPORT,CN9->CN9_XREVOP,"B")
+		//+------------------------------------------------------------------+
+		//| SO PERMITE INCLUIR PRODUTOS QUE EXISTAM NA PROPOSTA VINCULADA.   | 
+		//| Executa a consulta nos Itens da Proposta Aprovada, verifica se o |
+		//| Produto que foi informado EXISTE da Proposta.                    |
+		//+------------------------------------------------------------------+
+		_cQuery := ""
+		_cQuery += "Select "+CRLF
+		_cQuery += "ADZ.ADZ_FILIAL, ADZ.ADZ_PROPOS, ADZ.ADZ_REVISA, ADZ.ADZ_PRODUT "+CRLF
+		_cQuery += "From "+RetSqlName('ADY')+" ADY "+CRLF
+		_cQuery += "Inner Join "+RetSqlName('ADZ')+" ADZ on ADZ.ADZ_FILIAL = ADY.ADY_FILIAL "+CRLF
+		_cQuery += "                      And ADZ.ADZ_PROPOS = ADY.ADY_PROPOS "+CRLF
+		_cQuery += "                      And ADZ.ADZ_REVISA = ADY.ADY_PREVIS "+CRLF
+		_cQuery += "                      And ADZ.ADZ_PRODUT = '"+_cProduto+"' "+CRLF
+		//+------------------------------------------------------------------+
+		//| #COMPARTILHAMENTO DE CONTRATO.                                   |
+		//| Antonio Dantas                                        10/08/2015 |
+		//| Implementa filtro por FILIAL EXECUTORA, só permite que seja      |
+		//| Selecionado Produtos que seja da filial excutora.                |
+		//+------------------------------------------------------------------+
+		_cQuery += "                      And ADZ.ADZ_XUNEXE = '"+Iif((Type("_cFilATU") != "U"),_cFilATU,cFilAnt)+"' "+CRLF
+		//-- Fim
+		_cQuery += "Where ADY.D_E_L_E_T_ = ' ' "+CRLF
+		_cQuery += "And ADY.ADY_FILIAL = '"+cFilAnt+"' "+CRLF
+		_cQuery += "And ADY.ADY_XCONTR = '"+_cContrat+"' "+CRLF
+		_cQuery += "And ADY.ADY_XREVCT = '"+_cRevCTR+"' "+CRLF
+		//+------------------------------------------------------------------+
+		//| Grava o Resultado da Query para consulta                         |
+		//+------------------------------------------------------------------+
+		MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+		If Select("TMPADZ")>0
+			TMPADZ->(DbCloseArea())
+		Endif
+		DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPADZ",.t.,.t.)
+		TMPADZ->(DbGotop())
+		If TMPADZ->(!Eof()) .And. TMPADZ->(!Bof())
+			_lReturn := .t.
+		Endif 
+		If Select("TMPADZ")>0
+			TMPADZ->(DbCloseArea())
+		Endif
+	Endif 
+	//+------------------------------------------------------------------+
+	//| Se o produto não estiver na proposta informa ao operador.        |
+	//+------------------------------------------------------------------+
+	If !_lReturn
+		_cMensagem := "O Produto informado ["+Alltrim(_cProduto)+"] é invalido. "
+		_cMensagem += "Não esta presente na [Oportunidade: "+CN9->CN9_XOPORT+Iif(!Empty(Alltrim(CN9->CN9_XREVOP)),"/"+CN9->CN9_XREVOP,"")+"] e "  
+		_cMensagem += "[Proposta: "+_aProposta[1]+Iif(!Empty(Alltrim(_aProposta[2])),"/"+_aProposta[2],"")+"] Comercial vinculada a este contrato!"
+		_cMensagem += " "+CRLF 
+		_cMensagem += " "+CRLF 
+		_cMensagem += "OU AINDA; Este produto não foi incluido para esta Únidade Executora!" 
+		Aviso(FunName()+"/"+ProcName(),_cMensagem,{"OK"},3)
+	Endif 
+Endif 
+RestArea(_aArea)
+Return _lReturn 
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldPdMD>
+   Funcao que sera utilizada nos gatilho dos campos [CNE_PRODUT] e [CNE_QUANT]
+   na medicao do CONTRATO DE VENDA para capturar da PROPOSTA DE VENDA VENCEDORA
+   (CRM) o VALOR UNITARIO e o PERCENTUAL DE DESCONTO e IMPUTAR a informacao 
+   nos campos da medicao [CNE_VLUNIT] e [CNE_PDESC]. 
+   ===========================
+    campo: CNE_PRODUT
+	Seq. : 005
+    Regra: u_fPutVCNE("CNE_VLUNIT" ,GdFieldGet("CNE_PRODUT",N))                                                                                               
+    Domin: CNE_VLUNIT
+
+   --------------------------
+    campo: CNE_PRODUT
+	Seq. : 006
+    Regra: u_fPutVCNE("CNE_PDESC" ,GdFieldGet("CNE_PRODUT",N))                                                                                               
+    Domin: CNE_PDESC
+
+   ===========================
+    campo: CNE_QUANT 
+	Seq. : 005
+    Regra: u_fPutVCNE("CNE_VLUNIT" ,GdFieldGet("CNE_PRODUT",N))                                                                                               
+    Domin: CNE_VLUNIT
+
+   --------------------------
+    campo: CNE_QUANT 
+	Seq. : 006
+    Regra: u_fPutVCNE("CNE_PDESC" ,GdFieldGet("CNE_PRODUT",N))                                                                                               
+    Domin: CNE_PDESC
+
+   ===========================
+@author<Antonio Dantas>
+@since<08/09/2015>
+@version<1.00>
+@receive
+<   _cProduto (c) - Codigo do Produtos
+>
+@return
+<    _xValor (U) - Valor Retirado do PROPOSTA DE VENDA conforme o campo
+                   Informado como Parametro.
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fPutVCNE(_CtrDomin,_cProduto)                                                
+Local _xValor		:= Nil
+Local _aArea		:= GetArea()
+Local _cQuery 		:= ""
+Local _lReturn	 	:= .f.
+Local _cContrat		:= M->CND_CONTRA
+Local _cRevCTR		:= M->CND_REVISA
+Local _aProposta	:= {}
+Local _cMensagem	:= ""
+//--
+dbSelectArea("CN9")
+CN9->(dbSetOrder(1))		//-- Nr. Contrato + Revisao
+If (CN9->(dbSeek(FwxFilial("CN9")+_cContrat+_cRevCTR)))
+	If !Empty(Alltrim(CN9->CN9_XOPORT))
+		_aProposta := u_fGetProC(CN9->CN9_XOPORT,CN9->CN9_XREVOP,"B")
+		//+------------------------------------------------------------------+
+		//| SO PERMITE INCLUIR PRODUTOS QUE EXISTAM NA PROPOSTA VINCULADA.   | 
+		//| Executa a consulta nos Itens da Proposta Aprovada, verifica se o |
+		//| Produto que foi informado EXISTE da Proposta.                    |
+		//+------------------------------------------------------------------+
+		_cQuery := ""
+		_cQuery += "Select "+CRLF
+		_cQuery += "ADZ.ADZ_FILIAL, ADZ.ADZ_PROPOS, ADZ.ADZ_REVISA, ADZ.ADZ_PRODUT, ADZ.ADZ_PRCVEN, ADZ.ADZ_DESCON, ADZ.ADZ_VALDES"+CRLF
+		_cQuery += "From "+RetSqlName('ADY')+" ADY "+CRLF
+		_cQuery += "Inner Join "+RetSqlName('ADZ')+" ADZ on ADZ.ADZ_FILIAL = ADY.ADY_FILIAL "+CRLF
+		_cQuery += "                      And ADZ.ADZ_PROPOS = ADY.ADY_PROPOS "+CRLF
+		_cQuery += "                      And ADZ.ADZ_REVISA = ADY.ADY_PREVIS "+CRLF
+		_cQuery += "                      And ADZ.ADZ_PRODUT = '"+_cProduto+"' "+CRLF
+		//+------------------------------------------------------------------+
+		//| #COMPARTILHAMENTO DE CONTRATO.                                   |
+		//| Antonio Dantas                                        10/08/2015 |
+		//| Implementa filtro por FILIAL EXECUTORA, só permite que seja      |
+		//| Selecionado Produtos que seja da filial excutora.                |
+		//+------------------------------------------------------------------+
+		_cQuery += "                      And ADZ.ADZ_XUNEXE = '"+Iif((Type("_cFilATU") != "U"),_cFilATU,cFilAnt)+"' "+CRLF
+		//-- Fim
+		_cQuery += "Where ADY.D_E_L_E_T_ = ' ' "+CRLF
+		_cQuery += "And ADY.ADY_FILIAL = '"+cFilAnt+"' "+CRLF
+		_cQuery += "And ADY.ADY_XCONTR = '"+_cContrat+"' "+CRLF
+		_cQuery += "And ADY.ADY_XREVCT = '"+_cRevCTR+"' "+CRLF
+		//+------------------------------------------------------------------+
+		//| Grava o Resultado da Query para consulta                         |
+		//+------------------------------------------------------------------+
+		MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+		If Select("TMPADZ")>0
+			TMPADZ->(DbCloseArea())
+		Endif
+		DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPADZ",.t.,.t.)
+		TMPADZ->(DbGotop())
+		If TMPADZ->(!Eof()) .And. TMPADZ->(!Bof())
+			do Case
+				Case _CtrDomin == "CNE_VLUNIT"
+					_xValor	:= TMPADZ->ADZ_PRCVEN
+				Case _CtrDomin == "CNE_PDESC"
+					_xValor	:= TMPADZ->ADZ_DESCON
+			EndCase
+		Endif
+		If Select("TMPADZ")>0
+			TMPADZ->(DbCloseArea())
+		Endif
+	Else 
+		//+------------------------------------------------------------------+
+		//| Para Manter o valor de referencia do campo caso não seja uma     |
+		//| medicao de contrato do CRM.                                      |
+		//+------------------------------------------------------------------+
+		do Case
+			Case _CtrDomin == "CNE_VLUNIT"
+				_xValor	:= GdFieldGet("CNE_VLUNIT",N)
+			Case _CtrDomin == "CNE_PDESC"
+				_xValor	:= GdFieldGet("CNE_PDESC",N)
+		EndCase
+	Endif			//-- !Empty(Alltrim(CN9->CN9_XOPORT)) 
+Endif 
+RestArea(_aArea)
+Return _xValor 
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldOPort>
+ Funcao de validação do CODIGO/REVISÃO da Oportunidade no vinculo ao CONTRATO 
+ DE VENDA; Será utilizada na validação da inclusão do contrato, chamado a
+ partir do ponto de entrada: [ CN100GRM() ]
+  
+@author<Antonio Dantas>
+@since<07/05/2015>
+@version<1.00>
+@receive
+<
+         _nOper (n) - Opcao (Modo de Operacao)
+     _cPortunid (c) - Codigo da Oportunidade 
+      _cRevisao (c) - Codigo da Revisão
+>
+@return
+<
+       _lReturn (l) - (.t.) - Codigo Valido; (.f.) - Codigo Invalido
+
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fVldOPort(_nOper,_cPortunid,_cRevisao)
+Local _lReturn 		:= .t. 
+Local _aArea		:= GetArea()
+Local _cContrat 	:= ""
+Local _cTipoPRO		:= ""
+Local _cMensagem 	:= ""
+Local _cCtrTpMed	:= ""
+Local _cTipoCTR		:= ""
+Local _cCtrTpFix	:= ""
+Local _aMedEvent	:= {}
+Local _aOportun		:= {}
+Local _aCtraFIX		:= {} 
+Local _lTemDifEx	:= .f.
+//-- 
+//-- Incluir ou Alterar 
+If _nOper == 3 .Or. _nOper == 4  
+	If ExistCpo("AD1",_cPortunid+_cRevisao) 
+		//+------------------------------------------------------------------+
+		//| Não permite vincular: Se a Oportunidade/Proposta já tiver sido   |
+		//| vinculado a um contrato já ATIVO: Foi gravado o codigo do        |
+		//| contrato na Oportunidade/Proposta.                               | 
+		//+------------------------------------------------------------------+
+	   _cContrat := Posicione("AD1",1,FwxFilial("AD1")+_cPortunid+_cRevisao,"AD1_XCONTR")
+		If (_nOper == 3 .AND. CN9->CN9_REVISA == M->CN9_REVISA) .Or. ( _nOper == 4 .And. _cContrat != M->CN9_NUMERO )
+			If !Empty(_cContrat)
+				Aviso(FunName()+"/"+ProcName(),"Oportunidade Invalida. Já foi vinculada ao CONTRATO ["+_cContrat+"]!",{"OK"})
+				_lReturn 	:= .f.		
+			Endif 
+		Endif 
+		//+------------------------------------------------------------------+
+		//| Não permite vincular: Se a Oportunidade/Proposta já tiver sido   |
+		//| vinculado a um CONTRATO. Neste caso se o contrato for excLuido   |
+		//| a Oportunidade/Proposta podera ser vinculada a outro contrato.   | 
+		//+------------------------------------------------------------------+
+		If _lReturn
+			dbSelectArea("CN9")
+			CN9->(dbOrderNickName("OPORTUNID"))		//-- Oportunidade+Revisao Opor
+			If (CN9->(dbSeek(FwxFilial("CN9")+_cPortunid+_cRevisao)))
+				If (_nOper == 3 .AND. CN9->CN9_REVISA == M->CN9_REVISA) .Or. ( _nOper == 4 .And. CN9->CN9_NUMERO != M->CN9_NUMERO )
+					_cMensagem := "Oportunidade vinculada ao CONTRATO ["+CN9->CN9_NUMERO+Iif(!Empty(Alltrim(CN9->CN9_REVISA)),"-"+CN9->CN9_REVISA,"")+"]."
+					Aviso(FunName()+"/"+ProcName(),_cMensagem,{"OK"})
+					_lReturn 	:= .f.		
+				Endif 
+			Endif 
+		Endif 
+		//+------------------------------------------------------------------+
+		//| Antonio Dantas                                      30/06/2015   |
+		//| #COMPARTILHAMENTO DE CONTRATO                                    |
+		//| Valida contratos com itens "Produtos" com unidades EXECUTORA     |
+		//| diferente; Nestes casos OBRIGATORIAMENTE o contrato devera ser   |
+		//| de MEDICAO EVENTUAL, para permitir que cada unidade realize      |
+		//| a medicao do item que deve EXECUTAR.                             |  
+		//+------------------------------------------------------------------+
+		_lTemDifEx 	:= fVerDifE(_cPortunid,_cRevisao)			//-- Descrita neste mesmo fonte, logo abaixo.
+		_cTipoCTR 	:= Iif(INCLUI,M->CN9_TPCTO,CN9->CN9_TPCTO)
+		//-- 
+		If _lTemDifEx
+			dbSelectArea("CN1")
+			CN1->(dbSetOrder(1))
+			If (CN1->(dbseek(FwxFilial("CN1")+_cTipoCTR)))
+				If 	CN1->CN1_MEDEVE	!= "1" .And.  CN1->CN1_CTRFIX	!= "2"
+					_cMensagem := "A Oportunidade/Proposta que você esta tentando vincular ao contrato " 
+					_cMensagem += "tem Iten(s) [Produto(s)] com UNIDADES EXECUTORA DIFERENTE e devera "
+				  	_cMensagem += "gerar um CONTRATO COMPARTILHADO. OBRIGATORIAMENTE o tipo do contrato "
+				  	_cMensagem += "deve ser de MEDIÇÃO EVENTUAL verifique o campo [Med Eventual] deve ser "
+				  	_cMensagem += "igual a [SIM]. Como também os produtos serão informados no momento da "
+				  	_cMensagem += "medição (flexível) então [Ctr. Fixo] deve estar igual [NÃO]."
+					Aviso(FunName()+"/"+ProcName(),_cMensagem,{"OK"},3)
+					_lReturn 	:= .f.		
+				Endif 
+			Endif 
+		Endif 
+	Else
+		_lReturn 	:= .f.
+	Endif
+Endif 
+If _nOper == 5
+	//+------------------------------------------------------------------+
+	//|  Localiza a Oportunidade                                         |  
+	//+------------------------------------------------------------------+
+	Begin TransAction 
+		dbSelectArea("AD1")
+		AD1->(dbSetOrder(1))
+		If AD1->(dbSeek(FwxFilial("AD1")+_cPortunid+_cRevisao))
+			//+------------------------------------------------------------------+
+			//| As propostas da Oportunidade                                     |  
+			//+------------------------------------------------------------------+
+			dbSelectArea("ADY")
+			ADY->(dbSetOrder(2))
+			ADY->(dbSeek(FwxFilial("ADY")+_cPortunid+_cRevisao))
+			//+------------------------------------------------------------------+
+			//| Indepedente de como foram marcadas as propotas na finalização da |
+			//| Oportunidade LIMPA TODAS AS PROPOSTAS                            |
+			//+------------------------------------------------------------------+
+			Do While ADY->(!Eof()) .And. ADY->ADY_FILIAL == FwxFilial("ADY") .And. ADY->ADY_OPORTU == _cPortunid .And. ADY->ADY_REVISA == _cRevisao
+				ADY->(RecLock("ADY",.f.))
+				Replace ADY->ADY_XCONTR With "" 
+				Replace ADY->ADY_XREVCT With "" 
+				Replace ADY->ADY_STATUS With Iif(ADY->ADY_STATUS == "B","E",ADY->ADY_STATUS)	//-- Modifica o STATUS de B=FECHADA para E=APROVADA   
+				ADY->(MsUnLock())
+				ADY->(dbCommit()) 
+				//-- Proximo 
+				ADY->(dbskip()) 
+			Enddo 
+			AD1->(RecLock("AD1",.f.))
+			Replace AD1->AD1_XCONTR With "" 
+			Replace AD1->AD1_XREVCT With "" 
+			AD1->(MsUnLock())
+			AD1->(dbCommit()) 
+		Endif 
+		_lReturn := .t. 
+	End TransAction 
+Endif  
+RestArea(_aArea)
+Return _lReturn    
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVerDifE>
+ Funcao chamada por [fVldOPort()]: Devolve se a OPORTUNIDADE/PROPOSTA tem 
+ MULTIPLAS FILIAIS EXECUTORAS do serviços VENDIDOS. Ira permitir defini se o 
+ CONTRATO DE VENDA deve ser do tipo COMPARTILHADO ENTRE FILIAIS. Neste caso o 
+ CONTRATO deve ser do "Tipo" MEDICAO EVENTUAL. 
+  
+@author<Antonio Dantas>
+@since<27/08/2015>
+@version<1.00>
+@receive
+<   _cPortunid (c) - Codigo da Oportunidade de Venda (CRM)
+     _cRevisao (c) - Rervisao da Oportunidade (CRM)
+>
+@return
+<   _lTemDifEx (L) - (.f.) - Nao tem Multiplas filiais executoras
+                     (.t.) - TEM multiplas FILIAIS EXECUTORAS
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function fVerDifE(_cPortunid,_cRevisao)
+Local _lTemDifEx	:= .f.
+Local _aArea		:= GetArea()
+Local _cQuery 		:= ""
+//-- 
+_cQuery := ""
+_cQuery += "Select ADY.ADY_PROPOS, ADY.ADY_PREVIS, "+CRLF
+_cQuery += "ADZ.ADZ_PRODUT, ADZ.ADZ_DESCRI, ADZ.ADZ_XUNEXE "+CRLF
+_cQuery += "From "+RetSqlName("ADY")+" ADY "+CRLF
+_cQuery += "Inner Join "+RetSqlName("ADZ")+" ADZ on ADZ.ADZ_FILIAL = ADY.ADY_FILIAL "+CRLF 
+_cQuery += "						And ADZ.ADZ_PROPOS = ADY.ADY_PROPOS "+CRLF 
+_cQuery += "                      	And ADZ.ADZ_REVISA = ADY.ADY_PREVIS "+CRLF
+_cQuery += "                      	And ADZ.D_E_L_E_T_ = ' ' "+CRLF
+_cQuery += "where ADY.D_E_L_E_T_ = ' ' "+CRLF
+_cQuery += "And ADY.ADY_FILIAL = '"+cFilAnt+"' "+CRLF
+_cQuery += "And ADY.ADY_OPORTU = '"+_cPortunid+"' "+CRLF 
+_cQuery += "And ADY.ADY_REVISA = '"+_cRevisao+"' "+CRLF 
+_cQuery += "Order by ADY.ADY_PROPOS, ADY.ADY_PREVIS, ADZ.ADZ_XUNEXE "+CRLF
+//+------------------------------------------------------------------+
+//| Grava o Resultado da Query para consulta                         |
+//+------------------------------------------------------------------+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TMPADZ")>0
+	TMPADZ->(DbCloseArea())
+Endif
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPADZ",.t.,.t.)
+TMPADZ->(DbGotop())
+Do While TMPADZ->(!Eof())  
+	If TMPADZ->ADZ_XUNEXE != cFilAnt
+		_lTemDifEx := .t.
+		Exit  	
+	Endif 
+	TMPADZ->(dbskip())
+Enddo 
+If Select("TMPADZ")>0
+	TMPADZ->(DbCloseArea())
+Endif
+RestArea(_aArea)
+Return _lTemDifEx 
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fGerPA9>
+   Verifica se trata-se de contrato de vinculo OPORTUNIDADE DE VENDA/PROPOSTA
+   DE VENDA e se tem MULTIPLAS FILIAIS DE EXECUCAO, caso positivo gera 
+   informacoes de COMPARTILHAMENTO DE CONTRATO nas tabelas 
+   [PA9 - Compartilhamento de Contratos] e [PA1 - Filiais compartilhadas].
+   Chamada pelo PONTO DE ENTRADA [CN100SIT.PRW] no momento da troca da situação
+   para [VINGENTE].  
+
+@author<Antonio Dantas>
+@since<31/08/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fGerPA9()
+Local _lTemDifEx 	:= .f. 
+Local _aArea		:= GetArea()
+Local _cQuery 		:= ""
+Local _lFirstT		:= .t. 
+Local _nCtaA  		:= 0
+Local _cNomeFil		:= ""
+//+------------------------------------------------------------------+
+//| Verifica se esta partindo da opcao CONTRATO e se o COMTRATO tem  |
+//| vinculo com OPORTUNIDADE/PROPOSTA (CRM)                          |
+//+------------------------------------------------------------------+
+If !Empty(Alltrim(CN9->CN9_XOPORT))
+	//+------------------------------------------------------------------+
+	//| Verifica se a PROPOSTA tem Multiplas Filial EXECUTORA.           |
+	//+------------------------------------------------------------------+
+	_lTemDifEx 	:= fVerDifE(CN9->CN9_XOPORT,CN9->CN9_XREVOP)
+	If _lTemDifEx
+		//-- 
+		_cQuery := ""
+		_cQuery += "Select ADY.ADY_PROPOS, ADY.ADY_PREVIS, "+CRLF
+		_cQuery += "ADZ.ADZ_PRODUT, ADZ.ADZ_DESCRI, ADZ.ADZ_XUNEXE "+CRLF
+		_cQuery += "From "+RetSqlName("ADY")+" ADY "+CRLF
+		_cQuery += "Inner Join "+RetSqlName("ADZ")+" ADZ on ADZ.ADZ_PROPOS = ADY.ADY_PROPOS "+CRLF 
+		_cQuery += "                      And ADZ.ADZ_REVISA = ADY.ADY_PREVIS "+CRLF
+		_cQuery += "where ADY.D_E_L_E_T_ = ' ' "+CRLF
+		_cQuery += "And ADY.ADY_FILIAL = '"+cFilAnt+"' "+CRLF
+		_cQuery += "And ADY.ADY_OPORTU = '"+CN9->CN9_XOPORT+"' "+CRLF 
+		_cQuery += "And ADY.ADY_REVISA = '"+CN9->CN9_XREVOP+"' "+CRLF 
+		_cQuery += "Order by ADY.ADY_PROPOS, ADY.ADY_PREVIS, ADZ.ADZ_XUNEXE "+CRLF
+		//+------------------------------------------------------------------+
+		//| Grava o Resultado da Query para consulta                         |
+		//+------------------------------------------------------------------+
+		MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+		If Select("TMPADZ")>0
+			TMPADZ->(DbCloseArea())
+		Endif
+		DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPADZ",.t.,.t.)
+		TMPADZ->(DbGotop())
+		_lFirstT 	:= .t. 
+		_nCtaA		:= 0 
+		Do While TMPADZ->(!Eof()) 
+			//+------------------------------------------------------------------+
+			//| Implementa um Contador para os Itens do Compartilhamento.        |
+			//+------------------------------------------------------------------+
+			_nCtaA++ 
+			//+------------------------------------------------------------------+
+			//| Cria o Compartilhamento do Contrato                              |
+			//+------------------------------------------------------------------+
+			If _lFirstT 
+		 		PA9->(RecLock("PA9",.t.))
+				Replace PA9->PA9_FILIAL	With FwxFilial("PA9")				//-- Filial do Sistema        
+				Replace PA9->PA9_FILCN9	With cFilAnt						//-- Filial de Origem         
+				Replace PA9->PA9_NUMERO	With CN9->CN9_NUMERO				//-- Numero do Contrato       
+				Replace PA9->PA9_REVISA	With CN9->CN9_REVISA				//-- Numero da Revisao        
+		 		PA9->(MsUnLock())
+		 		PA9->(dbCommit()) 
+				_lFirstT := .f. 
+			Endif 
+			//-- 
+		 	_cNomeFil	:= Posicione("SM0",1,cEmpAnt+TMPADZ->ADZ_XUNEXE,"M0_FILIAL")
+			//+------------------------------------------------------------------+
+			//| Cria "indica" as FILIAIS que deveram compartilhar o CONTRATO     |
+			//+------------------------------------------------------------------+
+		 	PB1->(RecLock("PB1",.t.))
+			Replace PB1->PB1_FILIAL	With FwxFilial("PA1")					//-- Filial do Sistema
+			Replace PB1->PB1_ITEM 	With Strzero(_nCtaA,3)					//-- Item do compartilhamento
+			Replace PB1->PB1_FILEMP	With TMPADZ->ADZ_XUNEXE					//-- Filial para compartilhame
+			Replace PB1->PB1_EMP 	With Substr(TMPADZ->ADZ_XUNEXE,1,2)		//-- Empresa
+			Replace PB1->PB1_UNID 	With Substr(TMPADZ->ADZ_XUNEXE,3,2)		//-- Unidade
+			Replace PB1->PB1_FIL 	With Substr(TMPADZ->ADZ_XUNEXE,5,4)		//-- Filial
+			Replace PB1->PB1_FILNOM	With _cNomeFil							//-- Descricao da Filial
+			Replace PB1->PB1_NUMERO	With CN9->CN9_NUMERO					//-- Numero do Contrato
+			Replace PB1->PB1_REVISA	With CN9->CN9_REVISA					//-- Numero da revisao
+			Replace PB1->PB1_FILCN9	With cFilAnt 							//-- Filial de Origem
+	 		PB1->(MsUnLock())
+	 		PB1->(dbCommit()) 
+			//-- 
+			TMPADZ->(dbskip())
+		Enddo 
+		If Select("TMPADZ")>0
+			TMPADZ->(DbCloseArea())
+		Endif
+	Endif 
+Endif 	
+RestArea(_aArea)
+Return Nil 
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fDelPA9>
+   Verifica se trata-se de EXCLUSAO de contrato COMPARTILHADO; Exclui os 
+   registros de compartilhamento do contrato na Tabela PA9 e PB1. Chamado 
+   no Ponto de Entrada [CN100GRC.PRW] 
+
+   ** A T E N C A O : 
+   A execucao e chamada desta rotina e mero PRECIOSISMO, pois, por principios; 
+   O compartilhamento do contrato provindos do CRM serao gerados 
+   AUTOMATICAMENTE na acao de modificacao da SITUACAO DO CONTRATO PARA 
+   [VINGENTE]. A partir dai so existem dois caminhos para o contrato ou a
+   "EXECUCAO" e ou o "CANCELAMENTO", nestes dois casos o PROCESSO DE VENDA 
+   e VINCULO AO CONTRATO DE VENDA estao ENCERRADOS, e o seu COMPARTILHAMENTO 
+   nao tera mais sentido.  
+
+@author<Antonio Dantas>
+@since<01/09/2015>
+@version<1.00>
+@receive
+<   
+     _nOpc (n) - 2=Visualizar, 3=Incluir, 4=Alterar, 5=Excluir
+>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fDelPA9(_nOpc)
+Local _lTemDifEx 	:= .f. 
+Local _aArea		:= GetArea()
+Local _lTudoOK 		:= .f. 
+//+------------------------------------------------------------------+
+//| Verifica se esta partindo da opcao CONTRATO e se o COMTRATO tem  |
+//| vinculo com OPORTUNIDADE/PROPOSTA (CRM)                          |
+//+------------------------------------------------------------------+
+If _nOpc == 5 .And. !Empty(Alltrim(CN9->CN9_XOPORT))
+		_lTudoOK := .f. 
+		dbSelectArea("PA9")
+		PA9->(dbSetOrder(1))		//-- Filial Orig+Nr Contrato+Nr Revisao
+		If (PA9->(dbSeek(FwxFilial("PA9")+cFilAnt+CN9->CN9_NUMERO+CN9->CN9_REVISA)))
+			dbSelecArea("PB1")
+			PB1->(dbSetOrder(2))			//-- Filial Contrato+Nr contrato+Nr Revisao 
+			If (PB1->(dbSeek(FwxFilial("PB1")+cFilAnt+CN9->CN9_NUMERO+CN9->CN9_REVISA)))
+				Do While PB1->(!Eof()) .And. PB1->PB1_FILIAL == FwxFilial("PB1") .And. PB1->PB1_FILCN9 == cFilAnt .And.;
+				         PB1->PB1_NUMERO == CN9->CN9_NUMERO .And. PB1->PB1_REVISA == CN9->CN9_REVISA
+				 	PB1->(RecLock("PB1",.f.))
+			 		PB1->(dbDelete())
+			 		PB1->(MsUnLock())
+			 		PB1->(dbCommit()) 
+					PB1->(dbskip())
+					_lTudoOK := .t.
+				Enddo
+			Endif
+			If _lTudoOK
+			 	PA9->(RecLock("PA9",.f.))
+		 		PA9->(dbDelete())
+		 		PA9->(MsUnLock())
+		 		PA9->(dbCommit()) 
+			Endif 
+		Endif 
+Endif 	
+RestArea(_aArea)
+Return Nil 
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fPVldCNE>
+   Função para ser utilizada na clausula WHEN dos campos, conforme segue
+   abaixo, para verificar; Se tratar-se de contratos com vinculo CRM estes
+   campos não serão editaveis e serão herdados por gatilho da proposta 
+   vencedora:
+		CNE->CNE_VLUNIT - Valor Unitario do produto
+		 CNE->CNE_VLTOT - Valor total do produto  
+		 CNE->CNE_PDESC - % de Desconto concedido 
+
+@author<Antonio Dantas>
+@since<26/08/2015>
+@version<1.00>
+@receive<>
+@return
+<    _lReturn (l) - (.t.) - Permite Edição do Campo; 
+                    (.f.) - Não permite edição do campo
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fPVldCNE()
+Local _lReturn 		:= .t.
+Local _aArea		:= GetArea()
+Local _cContrat		:= M->CND_CONTRA
+Local _cRevCTR		:= M->CND_REVISA
+dbSelectArea("CN9")
+CN9->(dbSetorder(1))
+If (CN9->(dbSeek(FwxFilial("CN9")+_cContrat+_cRevCTR)))
+	If !Empty(Alltrim(CN9->CN9_XOPORT))
+		_lReturn := .f.
+	Endif 
+Endif 
+RestArea(_aArea)
+Return _lReturn 
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldCCtr>
+  Funcao utilizada para validar CONTRATOS provindos da relacao CRM x GCT 
+  (CONTRATOS VINCULADOS A PROPOSTA DE VENDA APROVADOS NO CRM). Nao Permitir 
+  que estes contratos possam ser manipulados na rotina de COMPARTILHAMENTO. 
+  Uma vez que para estes casos quando o a PROPOSTA APROVADA TIVER multiplas 
+  UNIDADE EXECUTORAS o COMPARTILHAMENTO do CONTRATO ser gerado AUTOMATICAMENTE
+  quando da modificacao do STATUS do CONTRATO PARA [VINGENTE].
+
+  Esta funcao e chamada na validacao do campo [PA9_NUMERO - Codigo do Contrato]
+  da seguinte forma:
+     [ExistCpo("CN9",M->PA9_NUMERO,1) .And. u_fVldCCtr(M->PA9_NUMERO)]
+
+  Tambem na validacao da rotina de manutecao do cadastro de compartilhamento:
+  [SIESTA08.PRW]	
+
+@author<Antonio Dantas>
+@since<01/09/2015>
+@version<1.00>
+@receive
+<   _cContra (c) - Codigo do Contrato
+   _cRevisao (c) - Revisao do Contrato 
+>
+@return
+<    _lReturn (l) - (.t.) - Permite Edição; 
+                    (.f.) - Não permite edição
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fVldCCtr(_cContra,_cRevisao)
+Local _lReturn 		:= .t. 
+Local _aArea		:= GetArea()
+Local _cMensage		:= ""
+DEFAULT _cRevisao	:= Space(TamSX3("CN9_REVISA")[1])
+DbSelectArea("CN9")
+dbSetOrder(1)
+If (CN9->( dbSeek(FwxFilial("CN9")+_cContra+_cRevisao)))
+	If !Empty(Alltrim(CN9->CN9_XOPORT))
+		_cMensage	:= "Compartilhamento de Contratos oriundos do relacionamento CRM x GCT não podem ser editados! "
+		_cMensage	+= "Para contratos de Venda provindos do CRM o compartilhamento e gerado automaticamente."
+		Aviso(FunName()+"/"+ProcName(),_cMensage,{"OK"})
+		_lReturn 		:= .F. 
+	Endif 
+Endif 
+RestArea(_aArea)
+Return _lReturn 
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <MrkCN9>
+ Funcao para conrole de selecao das Opcoes de SITUACAO DO CONTRATO    
+
+@author<Jose Leite de Barros Neto>
+@since<04/04/2016>
+@version<1.00>
+@receive
+<  l1Elem (L) - Se houve selecao de algum elemento   
+>
+@return
+< _lReturn (L) - Sempre (.t.)    
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function MrkCN9(l1Elem)
+Local _MvPar			:= &(Alltrim(ReadVar()))			//-- Carrega Nome da Variavel do Get em Questao
+Local _MvParDef		:= "0102030405060708091011"
+Local _cTitulo		:= "STATUS do Contrato."			//-- Alltrim(Left(X5Descri(),20))
+Local _lReturn		:= .T. 
+Local _nTamTip		:= 2						  			//-- Tamanhao da Chave 
+Private aSit			:= {"01=Cancelado","02=Em Elaboração","03=Emitido","04=Em Aprovação","05=Vigente","06=Paralisado","07=Sol. Finalização","08=Finalizado","09=Revisão","10=Revisado","11=Aguardando Finalização"}
+Private MvNewPar	:= ""
+Private mvRet 		:= Alltrim(ReadVar())				//-- Iguala Nome da Variavel ao Nome variavel de Retorno
+Static nVezAdt 		:= 0  
+//+------------------------------------------------------------------+
+//|  Inicializa as Variaveis                                         | 
+//+------------------------------------------------------------------+
+IF F_Opcoes(@_MvPar,_cTitulo,aSit,_MvParDef,,,.f.,_nTamTip,999)  	//-- Chama funcao f_Opcoes
+	MvNewPar	:= ""
+	_nCtaA 		:= 0
+	For _nCtaA := 1 to len(_MvPar) step _nTamTip
+		mvNewPar += substr(_MvPar,_nCtaA,_nTamTip)+";"
+	Next _nCtaA
+	mvNewPar	:= strtran(mvNewPar,replicate("*",_nTamTip)+";","")
+	&MvRet 		:= mvNewPar
+EndIF
+Return _lReturn

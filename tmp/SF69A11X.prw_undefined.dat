@@ -1,0 +1,91 @@
+#Include "TOTVS.ch"
+#INCLUDE "TOPCONN.CH"
+
+/*/
+{Protheus.doc} User Function SF69A11X
+Baixa dos títulos do Contrato no momento do distrato.
+@type  Function
+@author Daniel Castro - TOTVS
+@since 04/11/2020
+@version version
+/*/
+
+
+User Function SF69A11X()
+
+	Local aArea		:= GetArea()
+	Local cTpCtr	:= GetMv("MV_XCTRSE1")
+	Local aBaixa    := {}
+	Local nTot      := 0
+	Private lMsErroAuto:= .F.
+
+	If CN9->CN9_TPCTO $ Alltrim(cTpCtr) .And. SubString(xFilial("CN9"),1,4) == "03MT"
+
+		dbSelectArea("CNF")
+		CNF->(dbSetOrder(2))
+		CNF->(dbSeek(xFilial("CNF") + CN9->CN9_NUMERO + CN9->CN9_REVISA))
+
+		BeginSql Alias "TMPSE1"
+
+				SELECT R_E_C_N_O_ AS RECNO
+				FROM %table:SE1% SE1
+				WHERE SE1.E1_FILIAL= %xfilial:SE1%
+				AND SE1.E1_MDCONTR = %exp:CNF->CNF_CONTRA%
+				AND SE1.E1_MDCRON = %exp:CNF->CNF_NUMERO%
+				AND SE1.E1_TIPO = %exp:'BOL'%
+				AND SE1.%notDel% 
+
+		EndSql
+
+		dbSelectArea("TMPSE1")
+		TMPSE1->(dbGotop())
+		Count to nTot
+		TMPSE1->(dbGotop())
+
+		ProcRegua(nTot)
+
+		If !Empty(TMPSE1->RECNO)
+
+			While TMPSE1->(!EOF())
+				SE1->(dbGoto(TMPSE1->RECNO))
+
+				IncProc("Cancelando título " + Alltrim(SE1->E1_PREFIXO) + "/" + Alltrim(SE1->E1_NUM) + "/" + Alltrim(SE1->E1_PARCELA))
+
+				If Empty(SE1->E1_BAIXA) .And. SE1->E1_VENCREA >= dDataBase
+
+					aBaixa := {{"E1_PREFIXO"    ,SE1->E1_PREFIXO ,Nil },;
+						{"E1_NUM"               ,SE1->E1_NUM ,Nil },;
+						{"E1_TIPO"              ,SE1->E1_TIPO ,Nil },;
+						{"E1_CLIENTE"           ,SE1->E1_CLIENTE ,Nil },;
+						{"E1_LOJA"              ,SE1->E1_LOJA ,Nil },;
+						{"E1_NATUREZ"           ,SE1->E1_NATUREZ ,Nil },;
+						{"E1_PARCELA"           ,SE1->E1_PARCELA ,Nil },;
+						{"AUTMOTBX"             ,"CAN" ,Nil },;
+						{"CBANCO"               ,"001" ,Nil },;
+						{"CAGENCIA"             ,"4205 " ,Nil },;
+						{"CCONTA"               ,"2001      " ,Nil },;
+						{"AUTDTBAIXA"           ,dDataBase ,Nil },;
+						{"AUTDTCREDITO"         ,dDatabase ,Nil },;
+						{"AUTHIST"              ,"Baixa por distrato do contrato - " + Alltrim(CN9->CN9_NUMERO) +"/"+ Alltrim(CN9->CN9_REVISA) ,Nil },;
+						{"AUTVALREC"            ,SE1->E1_VALOR	,Nil    }}
+
+					MSExecAuto({|x,y,b,a| Fina070(x,y,b,a)},aBaixa,3)
+
+					If lMsErroAuto
+						MostraErro()
+					Else
+						aBaixa := {}
+					Endif
+
+				EndIf
+
+				TMPSE1->(dbSkip())
+			EndDo
+		EndIf
+
+
+		TMPSE1->(dbCloseArea())
+		RestArea(aArea)
+	EndIf
+
+Return

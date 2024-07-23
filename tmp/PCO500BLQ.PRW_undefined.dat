@@ -1,0 +1,178 @@
+#include "protheus.ch"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³PC500BLQ  ºAutor  ³Daniel Tavares      º Data ³  29/02/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³Funcao para Cancelar a Solicitação de Contingencia.         º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ CNI                                                        º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function PC500BLQ()
+Local _cNumCt   := ALJ->ALJ_CDCNTG
+Local _aResult  := {}
+Local _aAreaAtu := GetArea()
+Local _aAreaALI := ALI->(GetArea())
+
+dbSelectArea("ALI")
+_cFilter := dbFilter()
+SET FILTER TO
+
+IF ALI->(dbSeek(XFilial("ALI")+_cNumCt)) .and. ALI->(FieldPos("ALI_XNUMSC")) > 0
+	_cNumSc := ALI->ALI_XNUMSC
+ELSE
+	_cNumSc := ""
+ENDIF
+
+// Verifica se é lançamento de SC
+IF ALI->ALI_PROCESS <> "000051"
+	// Restaura Filtro
+	SET FILTER TO &_cFilter
+	Return()
+ENDIF
+
+_cMot := MotReprov() // Chama tela para cadastrar o Motivo do Cancelamento.
+
+_cMail := UsrRetMail(ALI->ALI_SOLIC)
+_cBody := "Prezado "+ALI->ALI_NOMSOL+Chr(13)+Chr(10)+Chr(13)+Chr(10)
+_cBody += "Sua contigência Nr. "+ALI->ALI_CDCNTG+" foi reprovada."+Chr(13)+Chr(10)+Chr(13)+Chr(10)
+_cBody += "Data da Reprovação : "+Dtoc(dDataBase)+"  -  Hora :"+Time()+Chr(13)+Chr(10)+Chr(13)+Chr(10)
+_cBody += "Motivo:"+Chr(13)+Chr(10)
+_cBody += _cMot
+ACSendMail( ,,,,_cMail,"Contig. "+ALI->ALI_CDCNTG+" (REPROVADA)",_cBody)
+
+// Estorno das contingencias
+dbSelectArea("ALJ")
+dbSetOrder(1)
+dbSeek( xFilial("ALJ") + _cNumCt )
+
+While ALJ->(!Eof()) .and. ALJ->ALJ_FILIAL == XFilial("ALJ") .and. ALJ->ALJ_CDCNTG == _cNumCt
+	
+	_cChaveSC1 := Right(Alltrim(ALJ->ALJ_CHAVE),TamSX3("C1_NUM")[1]+TamSX3("C1_ITEM")[1])
+	
+	SZW->(dbSetOrder(1))
+	IF SZW->(MsSeek(xFilial("SZW")+_cChaveSC1))
+		
+		_cFilBkp := cFilAnt
+		While SZW->(!Eof()) .and. SZW->(ZW_FILIAL+ZW_NUMSC+ZW_ITEMSC) == XFilial("SZW")+_cChaveSC1
+			// Altera empresa
+			cFilAnt := SZW->ZW_CODEMP
+			
+			_NPERCEMP := SZW->ZW_PERC
+			
+			PcoIniLan("000356")
+			PcoDetLan("000356","01","PCOA530",.T.) // Deleta Empenho caso exista
+			PcoDetLan("000356","02","PCOA530",.T.) // Deleta Empenho caso exista
+			PcoFinLan("000356")
+			
+			// Restaura filial
+			cFilAnt := _cFilBkp
+			
+			SZW->(dbSkip())
+		Enddo
+	ELSE
+		
+		PcoIniLan("000356")
+		PcoDetLan("000356","01","PCOA530",.T.) // Deleta Empenho caso exista
+		PcoDetLan("000356","02","PCOA530",.T.) // Deleta Empenho caso exista
+		PcoFinLan("000356")
+		
+	ENDIF
+	
+	_NPERCEMP := 0
+	ALJ->(dbSkip())
+Enddo
+
+// Libera SC
+SC1->(dbSetOrder(1))
+SC1->(dbSeek(XFilial("SC1")+_cNumSc))
+
+While SC1->(!Eof()) .and. SC1->C1_FILIAL == XFilial("SC1") .and. SC1->C1_NUM == _cNumSc
+	
+	RecLock("SC1",.F.)
+	SC1->C1_APROV   := "F" //Reprov. Falta de Orçamento
+	SC1->C1_XMOTIVO := _cMot
+	SC1->(MsUnlock())
+	
+	SZW->(dbSetOrder(1))
+	IF SZW->(MsSeek(xFilial("SZW")+SC1->(C1_NUM+C1_ITEM)))
+		
+		_cFilBkp := cFilAnt
+		While SZW->(!Eof()) .and. SZW->(ZW_FILIAL+ZW_NUMSC+ZW_ITEMSC) == XFilial("SZW")+SC1->(C1_NUM+C1_ITEM)
+			// Altera empresa
+			cFilAnt := SZW->ZW_CODEMP
+			
+			_NPERCEMP := SZW->ZW_PERC
+			
+			// Exclui os saldos SC caso exista
+			PcoIniLan('000051')
+			PcoDetLan('000051','02','MATA110',.T.)
+			PcoFinLan('000051')
+			
+			// Restaura filial
+			cFilAnt := _cFilBkp
+			
+			SZW->(dbSkip())
+		Enddo
+	ELSE
+		// Exclui os saldos SC caso exista
+		PcoIniLan('000051')
+		PcoDetLan('000051','02','MATA110',.T.)
+		PcoFinLan('000051')
+	ENDIF
+	
+	_NPERCEMP := 0
+	SC1->(dbSkip())
+Enddo
+
+// Restaura Filtro
+SET FILTER TO &_cFilter
+
+RestArea(_aAreaAtu)
+RestArea(_aAreaALI)
+Return()
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³MotReprov  ºAutor  ³Daniel Tavares      º Data ³  29/02/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³Funcao para Gerar o Motivo do cancelamento do Pedido de     º±±
+±±º          ³Contingencia  .                                             º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ CNI                                                        º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function MotReprov()
+Local oOK
+Local oGet
+Local cGet := Space(60)
+Local oMot
+Local cRet
+Static oDlg
+
+DEFINE MSDIALOG oDlg TITLE "Motivo da Reprovação" FROM 000, 000  TO 150, 400 COLORS 0, 16777215 PIXEL
+
+@006,010 SAY oMot PROMPT "Motivo da Reprovação:" SIZE 060, 007 OF oDlg COLORS 0, 16777215 PIXEL
+@015,010 MSGET oGet VAR cGet SIZE 174, 030 OF oDlg PICTURE "@!" COLORS 0, 16777215 PIXEL
+@050,152 BUTTON oOK PROMPT "OK" SIZE 031, 019 OF oDlg PIXEL ACTION oDlg:End()
+
+ACTIVATE MSDIALOG oDlg CENTERED
+
+If !Empty(cGet)
+	cRet := cGet
+Else
+	cRet:= " "
+EndIf
+
+Return(cRet)

@@ -1,0 +1,647 @@
+#INCLUDE "PROTHEUS.CH"
+//-------------------------------------------------------------------
+/*/ {Protheus.doc} CNIA100
+Gera Contrato ou Registro de preco
+
+@author Microsiga
+@since 06/15/2011
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+User Function CNIA100(nOpc,cContr, aDadosCot, aDadosCompl)
+Local aArea		:= GetArea()
+Local cQuery		:= ''
+Local nItem		:= 0
+Local nVlTtCNA		:= 0
+Local nVlTtCN9		:= 0
+Local aParam		:= {}
+Local nX			:= 0
+Local nY			:= 0
+Local nZ			:= 0
+Local cFornec		:= ""
+Local cTpCto		:= GETMV("FS_GCTCOT")
+Local aContrGer 	:= {}
+Local cMensagem 	:= ""
+Local cContrato 	:= ""
+Local aCTBEnt		:= If(FindFunction("CTBEntArr"),CTBEntArr(),{})
+Local cFilAtual	:= "", cFilSC8 := ""
+Private aRet		:= {}
+
+//Abertura das Tabelas de Contrato
+ChkFile("CN9")
+ChkFile("CNA")
+ChkFile("CNB")
+ChkFile("CNN")
+
+//Exibe Tela de Parametros
+If !GeraGCTParam(@aRet)
+	Return .F.
+End If
+
+//Separa Ganhadores por Contrato
+aDadosContr := SeparaGanhador(aDadosCot, aDadosCompl)
+
+Begin Transaction
+
+//Contratos a serem gerados (1 por fornecedor vencedor e filial de Origem)
+For nX := 1 to Len(aDadosContr)
+
+	nItem := 1
+
+	//Limpas a variaveis para iniciar o processo
+	cContrato := ""
+	cPlanilha := ""
+
+	//Itens Contrato
+	For nY := 1 to Len(aDadosContr[nX])
+
+		//Se o item for o vencedor
+		If !Empty( aDadosContr[nX][nY][1] )
+
+			DbSelectArea("SC8")
+			SC8->( DbSetOrder(1) )
+
+			//Busca cotacao
+			If SC8->( DbSeek( xFilial("SC8")+cContr+aDadosContr[nX][nY][2]+aDadosContr[nX][nY][3]+;
+				aDadosContr[nX][nY][13] ) ) //C8_FILIAL+C8_NUM+C8_FORNECE+C8_LOJA+C8_ITEM+C8_NUMPRO
+
+				//============================================================
+				//Gera contrato na filial de origem
+				//============================================================
+              //Este processo é disparado pelo usuario uma vez para cada linha da SC8!
+              //Enfim, nao há co,mo executá-lo uma única vez para todos os registros da SC8
+				cFilAtual := cFilAnt
+				cFilAnt   := SC8->C8_FILENT
+
+				If Empty(cContrato) .and. Empty(cPlanilha)
+					cContrato := GetSXENum("CN9","CN9_NUMERO")
+					While CN9->(dbSeek(xFilial("CN9")+cContrato))
+						CN9->(ConfirmSX8())
+						cContrato := GetSXENum("CN9","CN9_NUMERO")
+					EndDo
+
+					//Reserva o numero da planilha
+					cPlanilha := GetSxENum("CNA","CNA_NUMERO")
+					cPlanilha := StrZero( 1, Len(cPlanilha))
+				Endif
+
+				cFilAnt   := cFilAtual
+
+				//será utilizada ao final do procedimento
+				cFilSC8 := SC8->C8_FILENT
+				//==============================================================
+
+				cNumOld := SC8->C8_NUM
+				cFornec := SC8->C8_FORNECE
+				cLoja   := SC8->C8_LOJA
+				cDtIni  := SC8->C8_EMISSAO
+				cCondPg := SC8->C8_COND
+
+				SC1->(dbSetOrder(1))
+				SC1->(dbSeek(xFilial("SC1")+SC8->C8_NUMSC+SC8->C8_ITEMSC))
+				//atualiza o Flag da SC para "integração com o GCT"
+				If Empty(SC1->C1_FLAGGCT)
+					RecLock("SC1",.F.)
+					SC1->C1_FLAGGCT := "1"
+					MsUnlock("SC1")
+				Endif
+
+				RecLock("SC8",.F.)
+				SC8->C8_XGCT := cContrato //Numero aditivo contrato
+				SC8->(MsUnLock())
+
+				//Grava CNB - Itens Contrato
+				DbSelectArea("CNB")
+				RecLock("CNB", .T.)
+
+				CNB->CNB_FILIAL := SC8->C8_FILENT
+
+				If CNB->(FieldPos("CNB_FILORI")) > 0
+				    CNB->CNB_FILORI := SC8->C8_FILIAL
+				EndIf
+
+				CNB_NUMERO := cPlanilha
+				CNB_ITEM   := StrZero(nItem, 3)
+				CNB_PRODUT := SC8->C8_PRODUTO
+				CNB_DESCRI := Posicione("SB1",1,xFilial("SB1")+SC8->C8_PRODUTO,"SB1->B1_DESC")
+				CNB_UM     := SC8->C8_UM
+				CNB_QUANT  := SC8->C8_QUANT
+				CNB_VLUNIT := SC8->C8_PRECO
+				CNB_VLTOT  := SC8->C8_TOTAL
+				CNB_VLFUTU := SC8->C8_TOTAL
+				CNB_CONTRA := cContrato
+				CNB_DTCAD  := aRet[1]
+				CNB_SLDMED := SC8->C8_QUANT
+				CNB_SLDREC := SC8->C8_QUANT
+				CNB_CONTA  := SC1->C1_CONTA
+				CNB_CC     := SC1->C1_CC
+				CNB_ITEMCT := SC1->C1_ITEMCTA
+				CNB_CLVL   := SC1->C1_CLVL
+
+				SB1->(dbSetOrder(1))
+				SB1->(dbSeek(XFilial("SB1")+SC8->C8_PRODUTO))
+
+				For nZ := 1 To Len(aCTBEnt)
+					If CNB->(FieldPos("CNB_EC"+aCTBEnt[nZ]+"CR")) > 0
+						If SC1->(FieldPos("C1_EC"+aCTBEnt[nZ]+"CR")) > 0
+							&("CNB_EC"+aCTBEnt[nZ]+"DB") := SC1->&("C1_EC"+aCTBEnt[nZ]+"DB")
+							&("CNB_EC"+aCTBEnt[nZ]+"CR") := SC1->&("C1_EC"+aCTBEnt[nZ]+"CR")
+						Else
+							&("CNB_EC"+aCTBEnt[nZ]+"DB") := SB1->&("B1_EC"+aCTBEnt[nZ]+"DB")
+							&("CNB_EC"+aCTBEnt[nZ]+"CR") := SB1->&("B1_EC"+aCTBEnt[nZ]+"CR")
+						EndIf
+					EndIf
+				Next nZ
+
+				CNB->(MsUnlock())
+				nItem++
+				nVlTtCNA += SC8->C8_TOTAL
+
+				//Caio.Santos - 11/01/13 - Req.72
+				RSTSCLOG("CTR",4,/*cUser*/)
+
+				// Estorno de Movimentos de SC
+				_cLanctoCT := Alltrim(GetNewPar("SI_PCOCTSC","900051"))
+
+				IF PcoExistLc(_cLanctoCT,"01","1")
+					SZW->(dbSetOrder(1))
+					IF SZW->(MsSeek(xFilial("SZW")+SC1->(C1_NUM+C1_ITEM)))
+
+						_cFilBkp := cFilAnt
+						While SZW->(!Eof()) .and. SZW->(ZW_FILIAL+ZW_NUMSC+ZW_ITEMSC) == XFilial("SZW")+SC1->(C1_NUM+C1_ITEM)
+							// Altera empresa
+							cFilAnt := SZW->ZW_CODEMP
+
+							_NPERCEMP := SZW->ZW_PERC
+
+							// Inclusão dos Movimentos do Contrato
+							PcoIniLan(_cLanctoCT)
+							PcoDetLan(_cLanctoCT,'01','MATA110')
+							PcoFinLan(_cLanctoCT)
+
+							// Restaura filial
+							cFilAnt := _cFilBkp
+
+							SZW->(dbSkip())
+						Enddo
+					ELSE
+						// Inclusão dos Movimentos do Contrato
+						PcoIniLan(_cLanctoCT)
+						PcoDetLan(_cLanctoCT,'01','MATA110')
+						PcoFinLan(_cLanctoCT)
+					ENDIF
+
+					_NPERCEMP := 0
+
+				ENDIF
+
+			End If
+
+		End If
+
+	Next
+
+	//Grava CNA - Planilha Contrato
+	RecLock("CNA", .T.)
+	CNA->CNA_FILIAL := SC8->C8_FILENT
+	CNA->CNA_CONTRA := cContrato
+	CNA->CNA_NUMERO := cPlanilha
+	CNA->CNA_FORNEC := cFornec
+	CNA->CNA_LJFORN := cLoja
+	CNA->CNA_DTINI  := aRet[1]
+	CNA->CNA_VLTOT  := nVlTtCNA
+	CNA->CNA_SALDO  := nVlTtCNA
+	CNA->(MsUnLock())
+
+	nVlTtCN9 += nVlTtCNA
+	nVlTtCNA :=	0
+
+	//Grava CNN - Usuario x Contrato
+	RecLock("CNN", .T.)
+	CNN->CNN_FILIAL := SC8->C8_FILENT
+	CNN->CNN_CONTRA := cContrato
+	CNN->CNN_USRCOD := aRet[2]
+	CNN->CNN_TRACOD := "001"
+	CNN->CNN_GRPCOD := ""
+	CNN->(MsUnLock())
+
+	//Grava CNC - Fornecedor x Contrato
+	RecLock("CNC", .T.)
+	CNC->CNC_FILIAL := SC8->C8_FILENT
+	CNC->CNC_NUMERO := cContrato
+	CNC->CNC_CODIGO := cFornec
+	CNC->CNC_LOJA   := cLoja
+	CNC->(MsUnLock())
+
+	//Grava CN9 - Cabeçalho Contrato
+	RecLock("CN9", .T.)
+	CN9->CN9_FILIAL 	:= SC8->C8_FILENT
+
+	If CN9->(FieldPos("CN9_FILORI")) > 0
+    	CN9->CN9_FILORI := SC8->C8_FILIAL
+	EndIf
+
+	CN9->CN9_NUMERO 	:= cContrato
+	CN9->CN9_VLINI  	:= nVlTtCN9
+	CN9->CN9_VLATU  	:= nVlTtCN9
+	CN9->CN9_SALDO		:= nVlTtCN9
+	CN9->CN9_SITUAC		:= "02" // EM ELABORACAO
+	CN9->CN9_DTINIC 	:= aRet[1]
+	CN9->CN9_CONDPG		:= cCondPg
+	CN9->CN9_TPCTO		:= aRet[3]
+	CN9->CN9_MOEDA		:= 1
+	//--------------------------------------------//
+	//Autor: Eric do Nascimento Data:16/02/12     //
+	//GAP: 104 Desc.: Atualizar Numero de Processo//
+	//--------------------------------------------//
+	CN9->CN9_NUMPR		:= SC8->C8_NPROC  // PL
+	CN9->CN9_VLDCTR     := "2"
+
+	If nOpc == '2'
+		CN9->CN9_XREGP      :='2' // Registro de preco = Nao
+	Elseif  nOpc == '3'
+		CN9->CN9_XREGP      :='1' // Registro de preco = Sim
+	Endif
+	CN9->CN9_XCOT       := cNumOld
+	CN9->(MsUnlock())
+
+	//==================================================
+	//Tratamento de controle de numeração na filial de origem
+	cFilAtual := cFilAnt
+	cFilAnt   := cFilSC8
+
+	CN9->(ConfirmSX8())
+	CNA->(ConfirmSX8())
+
+	cFilAnt := cFilAtual
+	//==================================================
+
+	aAdd( aContrGer , {cContrato, cFornec + "/" + cLoja, SC8->C8_FILENT} )
+
+Next nX
+
+//Atualizo os dados da Cotação para que as não seja possivel analisar os perdedores novamente
+//Para isso eu preencho os campos C8_NUMPED e C8_ITEMPED com "XXXX" assim como é feito no Padrão
+For nX := 1 to Len(aDadosCot)
+	For nY := 1 to Len(aDadosCot[1])
+		dbSelectArea("SC8")
+		SC8->(dbsetorder(1)) //C8_FILIAL+C8_NUM+C8_FORNECE+C8_LOJA+C8_ITEM+C8_NUMPRO+C8_ITEMGRD
+
+		If SC8->(dbSeek(xFilial("SC8")+cContr+aDadosCot[nX][nY][2]+aDadosCot[nX][nY][3]+aDadosCot[nX][nY][13]))
+			RecLock("SC8",.F.)
+			SC8->C8_NUMPED  := Repl("X",Len(SC8->C8_NUMPED))
+			Sc8->C8_ITEMPED := Repl("X",Len(SC8->C8_ITEMPED))
+			MsUnlock("SC8")
+		Endif
+
+	Next nY
+Next nX
+
+End Transaction
+
+For nX := 1 to Len(aContrGer)
+	cMensagem += "Contrato número: " + aContrGer[nX][1] + " gerado com sucesso para o fornecedor: " + aContrGer[nX][2] + "." + CHR(13)+CHR(10)
+	cMensagem += "Vide Filial: '" + aContrGer[nX][3] + "' !" + CHR(13)+CHR(10)
+Next
+
+If !Empty(aContrGer)
+	Aviso( "Geração de Contrato", cMensagem, {"Ok"}, 3 )
+EndIf
+
+RestArea(aArea)
+Return (.T.)
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³CNIA100   ºAutor  ³Microsiga           º Data ³  08/07/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³                                                            º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP                                                        º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function ValidaGCT()
+Local lRet := .T.
+Local aArea := GetArea()
+
+//Valida Codigo de Contrato
+DbSelectArea("CN9")
+DbSetOrder(1)
+If CN9->( DbSeek(xFilial("CN9")+StrZero( Val(MV_PAR02), 15, 0) ) )
+	MsgAlert("Numero de Contrato Já Existe.")
+	lRet := .F.
+End If
+
+RestArea(aArea)
+Return lRet
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SeparaGanhadorºAutor  ³Microsiga       º Data ³  10/26/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³                                                            º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP                                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+//Alterado por Rodrigo Guerato em 22/03/2013
+//Adicionado tratamento para separar os vencedores de acordo com o C8_FILENT
+*/
+Static Function SeparaGanhador(aDadosCot, aDadosCompl)
+Local aGanhadores := {}
+Local aFornecID   := {}
+Local aFornec     := {}
+Local nX, nY	    := 0
+Local nPosFil     := 0
+
+//Verifica ganhadores
+For nX := 1 to Len(aDadosCot)
+
+	For nY := 1 to Len(aDadosCot[nX])
+		nPosFil := aScan( aDadosCompl[nX][nY], {|x| AllTrim(x[1]) == "C8_FILENT"} )
+
+		If !Empty( aDadosCot[nX][nY][1] )
+			aAdd( aDadosCot[nX][nY], aDadosCompl[nX][nY][10][2] )
+
+			If nPosFil > 0
+				aAdd( aDadosCot[nX][nY], aDadosCompl[nX][nY][nPosFil][2] )
+			Endif
+
+			aAdd( aGanhadores, aDadosCot[nX][nY] )
+
+		End If
+	Next
+
+Next
+
+//Separa Ganhadores por Fornecedor + Filial de Entrega
+For nX := 1 to Len(aGanhadores)
+
+	//Filial
+	nPosFil := Len(aGanhadores[nX])
+
+	nPosFor := aScan( aFornecID, {|x| x[1] == aGanhadores[nX][2] .and. x[2] == aGanhadores[nX][nPosFil] } )
+
+	If nPosFor = 0
+
+		aAdd(  aFornec, {} 								)
+		aAdd(  aFornec[Len(aFornec)], aGanhadores[nX]  )
+		aAdd( aFornecID, {aGanhadores[nX][2], aGanhadores[nX][nPosFil] } )
+
+	Else
+
+		aAdd( aFornec[nPosFor], aGanhadores[nX] )
+		aAdd( aFornecID, {aGanhadores[nX][2], aGanhadores[nX][nPosFil] }  )
+
+	End If
+
+Next
+
+Return aFornec
+
+/*
+User Function CNIA100A(nOpc,cContr)
+
+Local cQuery    := ''
+Local nItem     := 0
+Local nVlTtCNA  := 0
+Local nVlTtCN9  := 0
+Local aParam    := {}
+Private aRet      := {}
+
+//Abertura das Tabelas de Contrato
+ChkFile("CN9")
+ChkFile("CNA")
+ChkFile("CNB")
+ChkFile("CNN")
+
+DbSelectArea("SC8")
+
+If SC8->C8_XGCT <> ''
+
+aParam    := {}
+aRet      := {}
+
+//-- array com o retorno do parambox
+AAdd(aRet,dDatabase)   // Data da Assinatura
+AAdd(aRet,Space(TAMSX3("CN9_NUMERO")[1]))   	 // Numero do Contrato
+AAdd(aRet,Space(15))   	 // Usuario
+AAdd(aRet,Space(TamSX3("CN9_TPCTO")[1]))   	 // Tipto Contrato
+
+//-- array com a configuracao do parambox
+AAdd(aParam,{1,"Data Assinatura",aRet[1],"@D","","","",50,.T.})
+AAdd(aParam,{1,"Nr. Contrato",aRet[2],X3PICTURE("CN9_NUMERO"),"U_ValidaGCT()","","",60,.T.})
+AAdd(aParam,{1,"Usuario",aRet[3],"","","USR","",60,.T.})
+AAdd(aParam,{1,"Tipo de Contrato",aRet[4],"","","CN1","",60,.T.})
+
+//-- define titulo, indicando o item
+cTit1:= "Dados para geraï¿½ï¿½o contrato"
+//-- chamada da funcao parambox()
+lRet := ParamBox(aParam,cTit1,@aRet,{||.T.},,.T.,80,3)
+
+If ! lRet
+Return(.F.)
+Endif
+
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä¿
+//ï¿½Reserva o numero de contratoï¿½
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+If Empty(aRet[2])
+cContrato := GetSxENum("CN9","CN9_NUMERO")
+Else
+cContrato := StrZero( Val(aRet[2]), 15, 0)
+EndIf
+
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä¿
+//ï¿½Reserva o numero da planilhaï¿½
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+cPlanilha := GetSxENum("CNA","CNA_NUMERO")
+
+
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä¿
+//ï¿½Gravaï¿½ï¿½o do Contratoï¿½
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+Begin Transaction
+
+nItem     := 1
+
+cAliasSC8 := GetNextAlias()
+cQuery    := "SELECT C8_NUM, C8_PRODUTO, C8_PRECO, C8_TOTAL, C8_COND, C8_FORNECE,"
+cQuery    += "C8_LOJA, C8_EMISSAO,C8_UM, C8_QUANT,B1_DESC, "
+cQuery    += "SC8.R_E_C_N_O_ AS RECNOSC8
+cQuery    += "FROM "+RetSqlName ("SC8") + " SC8 "
+cQuery    += "JOIN "+RetSqlName ("SB1") + " ON B1_COD = C8_PRODUTO "
+cQuery    += "WHERE C8_NUM = '" + cContr + "' AND SC8.D_E_L_E_T_ = '' "
+cQuery    := ChangeQuery(cQuery)
+
+If Select(cAliasSC8) > 0
+(cAliasSC8)->(dbCloseArea())
+EndIf
+
+dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasSC8,.T.,.T.)
+
+While (cAliasSC8)->(!EOF())
+
+cNumOld := (cAliasSC8)->C8_NUM
+cFornec  := (cAliasSC8)->C8_FORNECE
+cLoja    := (cAliasSC8)->C8_LOJA
+cDtIni   := (cAliasSC8)->C8_EMISSAO
+cCondPg  := (cAliasSC8)->C8_COND
+
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä¿
+//ï¿½Tabela CNB - Itens das planilhas de contratosï¿½
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+While (cAliasSC8)->(!EOF())  .AND. cNumOld == (cAliasSC8)->C8_NUM
+DbSelectArea("CNB")
+RecLock("CNB", .T.)
+CNB_FILIAL := xFilial("CNB")
+CNB_NUMERO := cPlanilha
+CNB_ITEM   := StrZero(nItem, 3)
+CNB_PRODUT := (cAliasSC8)->C8_PRODUTO
+CNB_DESCRI := (cAliasSC8)->B1_DESC
+CNB_UM     := (cAliasSC8)->C8_UM
+CNB_QUANT  := (cAliasSC8)->C8_QUANT
+CNB_VLUNIT := (cAliasSC8)->C8_PRECO
+CNB_VLTOT  := (cAliasSC8)->C8_TOTAL
+CNB_VLFUTU := (cAliasSC8)->C8_TOTAL
+CNB_CONTRA := cContrato
+CNB_DTCAD  := aRet[1]
+CNB_SLDMED := (cAliasSC8)->C8_QUANT
+CNB_SLDREC := (cAliasSC8)->C8_QUANT
+CNB->(MsUnlock())
+nItem++
+nVlTtCNA += (cAliasSC8)->C8_TOTAL
+
+
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä¿
+//ï¿½Atualiza o Status do Contratoï¿½
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+SC8->(DBGOTO((cAliasSC8)->RECNOSC8))
+RecLock("SC8", .F.)
+SC8->C8_XGCT := cContrato      //Numero aditivo contrato
+SC8->(MsUnLock())
+(cAliasSC8)->(dbSkip())
+
+Enddo
+
+
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä¿
+//ï¿½Tabela CNA - Cabeï¿½alho de planilhas de contratosï¿½
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+RecLock("CNA", .T.)
+CNA->CNA_FILIAL := xFilial("CNA")
+CNA->CNA_CONTRA := cContrato
+CNA->CNA_NUMERO := cPlanilha
+CNA->CNA_FORNEC := cFornec
+CNA->CNA_LJFORN := cLoja
+CNA->CNA_DTINI  := aRet[1]
+CNA->CNA_VLTOT  := nVlTtCNA
+CNA->CNA_SALDO  := nVlTtCNA
+CNA->(MsUnLock())
+
+nVlTtCN9 += nVlTtCNA
+nVlTtCNA :=	0
+
+
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+//ï¿½Tabela CNN - Amarraï¿½ï¿½o usuario X contratoï¿½
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+RecLock("CNN", .T.)
+CNN->CNN_FILIAL := xFilial("CNN")
+CNN->CNN_CONTRA := cContrato
+CNN->CNN_USRCOD := aRet[3]
+CNN->CNN_TRACOD := "001"
+CNN->CNN_GRPCOD := ""
+CNN->(MsUnLock())
+
+
+
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä¿
+//ï¿½Tabela CN9 - Contratosï¿½
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+RecLock("CN9", .T.)
+CN9->CN9_FILIAL 	:= xFilial("CN9")
+CN9->CN9_NUMERO 	:= cContrato
+CN9->CN9_VLINI  	:= nVlTtCN9
+CN9->CN9_VLATU  	:= nVlTtCN9
+CN9->CN9_SALDO		:= nVlTtCN9
+CN9->CN9_SITUAC		:= "02" // EM ELABORACAO
+CN9->CN9_DTINIC 	:= aRet[1]
+CN9->CN9_CONDPG		:= cCondPg
+CN9->CN9_TPCTO		:= aRet[4]
+CN9->CN9_MOEDA		:= 1
+If nOpc == '2'
+CN9->CN9_XREGP      :='2' // Registro de preco = Nao
+Elseif  nOpc == '3'
+CN9->CN9_XREGP      :='1' // Registro de preco = Sim
+Endif
+CN9->CN9_XCOT       := cNumOld
+CN9->(MsUnlock())
+
+Enddo
+
+CN9->(ConfirmSX8())
+CNA->(ConfirmSX8())
+End Transaction
+
+//Registra operacao na tabela de log
+COMA080(SC1->C1_NUM,SC1->C1_ITEM,"COI_DTHCTR","COI_UCTR")
+
+MsgAlert("CONTRATO GERADO COM SUCESSO")
+
+Else
+MsgAlert("CONTRATO JA GERADO.")
+Return(.F.)
+Endif
+
+Return (.T.)
+*/
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³CNIA100   ºAutor  ³Microsiga           º Data ³  08/07/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Exibe tela de parametros para geracao de contrato          º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP                                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function GeraGCTParam(aRet)
+Local aParam := {}
+Local lRet   := .F.
+
+//Array com o retorno do parambox
+AAdd(aRet,dDatabase)   						// Data da Assinatura
+//AAdd(aRet,GetSXENum("CN9","CN9_NUMERO")/*Space(TAMSX3("CN9_NUMERO")[1])*/)  // Numero do Contrato
+AAdd(aRet,Space(15))   	 					// Usuario
+AAdd(aRet,Space(TamSX3("CN9_TPCTO")[1]))   // Tipo Contrato
+
+//Array com a configuracao do parambox
+AAdd(aParam,{1,"Data Inic.Vigenc."	,aRet[1],"@D"						,"",""   ,"",50,.T.})
+//AAdd(aParam,{1,"Nr. Contrato"		,aRet[2],X3PICTURE("CN9_NUMERO")	,"ExistChav('CN9')","","",60,.T.})
+AAdd(aParam,{1,"Usuario"			,aRet[2],""							,"","USR","",60,.T.})
+AAdd(aParam,{1,"Tipo de Contrato"	,aRet[3],""							,"","CN1","",60,.T.})
+
+//Define titulo, indicando o item
+cTit1:= "Dados para geração do contrato"
+
+//Chamada da funcao parambox()
+lRet := ParamBox(aParam,cTit1,@aRet,{||.T.},,.T.,80,3)
+
+Return lRet

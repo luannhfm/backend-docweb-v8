@@ -1,0 +1,429 @@
+#include 'protheus.ch'
+#include 'parmtype.ch'
+#include "topconn.ch"
+
+
+/*/{Protheus.doc} SF0204J
+Funcao chamada no ponto de entrada MT150ROT que tem por objetivo realizar a atualizacao
+da cotacao com o ultimo preco de compra do produto.
+
+@author 	Jose Leite de Barros Neto
+@since 		20/09/2017
+@version 	1.0
+
+@type 	function
+/*/
+User Function SF0204J()
+	
+	Local _aArea := GetArea()
+	
+	If .Not. Empty(AllTrim(SC8->C8_NUMPED))
+		MsgAlert("Cotação já analisada, não será possível realizar a atualização dos preços da mesma.")
+	Else
+		AtuPrc()
+	EndIf
+	
+	RestArea(_aArea)
+	
+Return
+
+
+/** {Protheus.doc} AtuPrc
+Funcao para atualizar cotacao com ultimo preco
+
+@author: 	Jose Leite de Barros Neto
+@since: 	20/09/2017
+@Uso: 		SFIEMT
+*/
+Static Function AtuPrc()
+	
+	Local _cQuery  := ""
+	Local _cItem   := ""
+	Local _cProdut := ""
+	Local _cDscPrd := ""
+	Local _nUltPrc := 0
+	Local _cUltCot := ""
+	Local _cCodFor := ""
+	Local _cLojFor := ""
+	Local _cNomFor := ""
+	Local _dUltCot := dDataBase
+	Local _aDados  := {}
+	
+	If Select("TRA") > 0
+		DbSelectarea("TRA")
+		TRA->(DbCloseArea())
+	EndIf
+	
+	_cQuery := "SELECT DISTINCT C8.C8_ITEM, "+ CRLF
+	_cQuery += "  C8.C8_PRODUTO, "+ CRLF
+	_cQuery += "  TRIM(B1_DESC) B1_DESC "+ CRLF
+	_cQuery += " FROM "+ RetSqlName("SC8")+ " C8 "+ CRLF
+	_cQuery += "  INNER JOIN "+ RetSqlName("SB1")+ " B1 ON B1_FILIAL = '"+ FwXfilial("SB1") + "' "+ CRLF 
+	_cQuery += "  										AND B1_COD  = C8_PRODUTO "+ CRLF
+	_cQuery += "  										AND B1.D_E_L_E_T_ <> '*' "+ CRLF
+	_cQuery += "  WHERE C8_FILIAL    = '"+ SC8->C8_FILIAL +"' "+ CRLF
+	_cQuery += "  AND C8_NUM         = '"+ SC8->C8_NUM +"' "+ CRLF
+	_cQuery += "  AND C8_NUMPED      = ' ' "+ CRLF
+	_cQuery += "  AND C8.D_E_L_E_T_ <> '*' "+ CRLF
+	_cQuery += "  ORDER BY C8_ITEM, C8_PRODUTO "+ CRLF
+	
+	TCQUERY _cQuery NEW ALIAS "TRA"
+		
+	DbSelectArea("TRA")
+	TRA->(DbGoTop())
+	
+	While .Not. TRA->(Eof())
+		
+		_cItem   := TRA->C8_ITEM
+		_cProdut := TRA->C8_PRODUTO
+		_cDscPrd := TRA->B1_DESC
+		
+		If Select("TMP") > 0
+			DbSelectarea("TMP")
+			TMP->(DbCloseArea())
+		EndIf
+		
+		_cQuery := "SELECT * FROM "+ CRLF
+		_cQuery += "("+ CRLF
+		_cQuery += "  SELECT C8_PRECO"+ CRLF 
+		_cQuery += " FROM "+ RetSqlName("SC8") + " C8 "+ CRLF
+		_cQuery += "  WHERE C8_FILIAL    = '"+ SC8->C8_FILIAL +"' "+ CRLF
+		_cQuery += "  AND C8_NUMPED  <> ' ' AND C8_NUMPED <> 'XXXXXX'"+ CRLF
+		_cQuery += "  AND C8_PRODUTO  = '"+ _cProdut +"'"+ CRLF
+		_cQuery += "  AND D_E_L_E_T_ <> '*'"+ CRLF
+		_cQuery += "  ORDER BY C8_EMISSAO DESC"+ CRLF
+		_cQuery += ")"+ CRLF
+		_cQuery += "WHERE ROWNUM = 1"+ CRLF
+		
+		TCQUERY _cQuery NEW ALIAS "TMP"
+		
+		_nUltPrc := TMP->C8_PRECO
+		
+		TMP->(DbCloseArea())
+		
+		_cQuery := "SELECT * FROM "+ CRLF
+		_cQuery += "("+ CRLF
+		_cQuery += "  SELECT C8_NUM"+ CRLF 
+		_cQuery += " FROM "+ RetSqlName("SC8") + " C8 "+ CRLF
+		_cQuery += "  WHERE C8_FILIAL    = '"+ SC8->C8_FILIAL +"' "+ CRLF
+		_cQuery += "  AND C8_NUMPED  <> ' ' AND C8_NUMPED <> 'XXXXXX'"+ CRLF
+		_cQuery += "  AND C8_PRODUTO  = '"+ _cProdut +"'"+ CRLF
+		_cQuery += "  AND D_E_L_E_T_ <> '*'"+ CRLF
+		_cQuery += "  ORDER BY C8_EMISSAO DESC"+ CRLF
+		_cQuery += ")"+ CRLF
+		_cQuery += "WHERE ROWNUM = 1"+ CRLF
+		
+		TCQUERY _cQuery NEW ALIAS "TMP"
+		
+		_cUltCot := TMP->C8_NUM
+		
+		TMP->(DbCloseArea())
+		
+		_cQuery := "SELECT * FROM "+ CRLF
+		_cQuery += "("+ CRLF
+		_cQuery += "  SELECT C8_VALIDA"+ CRLF 
+		_cQuery += " FROM "+ RetSqlName("SC8") + " C8 "+ CRLF
+		_cQuery += "  WHERE C8_FILIAL    = '"+ SC8->C8_FILIAL +"' "+ CRLF
+		_cQuery += "  AND C8_NUMPED  <> ' ' AND C8_NUMPED <> 'XXXXXX'"+ CRLF
+		_cQuery += "  AND C8_PRODUTO  = '"+ _cProdut +"'"+ CRLF
+		_cQuery += "  AND D_E_L_E_T_ <> '*'"+ CRLF
+		_cQuery += "  ORDER BY C8_EMISSAO DESC"+ CRLF
+		_cQuery += ")"+ CRLF
+		_cQuery += "WHERE ROWNUM = 1"+ CRLF
+		
+		TCQUERY _cQuery NEW ALIAS "TMP"
+		
+		_dUltCot := StoD(TMP->C8_VALIDA)
+		
+		TMP->(DbCloseArea())
+		
+		_cQuery := "SELECT * FROM "+ CRLF
+		_cQuery += "("+ CRLF
+		_cQuery += "  SELECT C8.C8_FORNECE, C8.C8_LOJA, A2.A2_NOME"+ CRLF 
+		_cQuery += " FROM "+ RetSqlName("SC8") + " C8 "+ CRLF
+		_cQuery += " INNER JOIN "+ RetSqlName("SA2") + " A2 ON A2.D_E_L_E_T_ <> '*'"+ CRLF
+		_cQuery += " 	AND A2.A2_FILIAL = ' " + xFilial("SA2") + " ' "+ CRLF
+		_cQuery += " 	AND A2.A2_COD    = C8.C8_FORNECE "+ CRLF
+    	_cQuery += " 	AND A2.A2_LOJA   = C8.C8_LOJA "+ CRLF
+		_cQuery += "  WHERE C8.C8_FILIAL    = '"+ SC8->C8_FILIAL +"' "+ CRLF
+		_cQuery += "  AND C8.C8_NUMPED  <> ' ' AND C8_NUMPED <> 'XXXXXX'"+ CRLF
+		_cQuery += "  AND C8.C8_PRODUTO  = '"+ _cProdut +"'"+ CRLF
+		_cQuery += "  AND C8.D_E_L_E_T_ <> '*'"+ CRLF
+		_cQuery += "  ORDER BY C8.C8_EMISSAO DESC"+ CRLF
+		_cQuery += ")"+ CRLF
+		_cQuery += "WHERE ROWNUM = 1"+ CRLF
+		
+		TCQUERY _cQuery NEW ALIAS "TMP"
+		
+		_cCodFor := AllTrim(TMP->C8_FORNECE)
+		_cLojFor := AllTrim(TMP->C8_LOJA)
+		_cNomFor := AllTrim(TMP->A2_NOME)
+		
+		TMP->(DbCloseArea())
+		
+		aAdd(_aDados, { _cItem	,;
+					   _cProdut	,;
+					   _cDscPrd	,;
+					   _nUltPrc	,;
+					   _cUltCot	,;
+					   _dUltCot ,;
+					   _cCodFor ,;
+					   _cLojFor ,;
+					   _cNomFor })
+
+		TRA->(dbSkip())
+	End
+	
+	TRA->(DbCloseArea())
+	
+	If Len(_aDados) == 0
+		MsgInfo("Para esta cotação, não existe pesquisa de último preço.","INFO!")
+	Else
+		MontaTela(_aDados)
+	EndIf
+	
+Return
+
+
+/** {Protheus.doc} MontaTela
+Funcao para criar a tela de exibicao e gravar os dados
+
+@author: 	Jose Leite de Barros Neto
+@since: 	20/09/2017
+@Uso: 		SFIEMT
+*/
+Static Function MontaTela(p_aDados)
+	
+	Local _aStru	:= {}
+	Local _oDlg		:= Nil
+	Local _aCpoBro 	:= {}
+	Local _aButton	:= {}
+	Local _nOpc		:= 0
+	Local _cQuery	:= ""
+	Local _cChvSC8	:= ""
+	Local _nPreco  	:= 0
+	Local _nQuant  	:= 0
+	Local _nTotal	:= 0
+	Local _nCont	:= 0
+	
+	Private _lInverte 	:= .F.
+	Private _cMark   	:= GetMark()   
+	Private _oMark		:= Nil
+	
+	If Select("TTRB") > 0
+		DbSelectArea("TTRB")
+		TTRB->(DbCloseArea())
+	EndIf
+		
+	AADD(_aStru,{"OK"     		,"C"	,2						,0						})	
+	AADD(_aStru,{"C8_ITEM"   	,"C"	,TAMSX3("C8_ITEM")[1]	,0						})
+	AADD(_aStru,{"C8_PRODUTO"   ,"C"	,TAMSX3("C8_PRODUTO")[1],0						})
+	AADD(_aStru,{"B1_DESC"      ,"C"	,TAMSX3("B1_DESC")[1]	,0						})
+	AADD(_aStru,{"C8_PRECO"   	,"N"	,TAMSX3("C8_PRECO")[1]	,TAMSX3("C8_PRECO")[2]	})
+	AADD(_aStru,{"C8_NUM"   	,"C"	,TAMSX3("C8_NUM")[1]	,0						})
+	AADD(_aStru,{"C8_VALIDA"   	,"D"	,TAMSX3("C8_VALIDA")[1]	,0						})
+	AADD(_aStru,{"C8_FORNECE"  	,"C"	,TAMSX3("C8_FORNECE")[1],0						})
+	AADD(_aStru,{"C8_LOJA"   	,"C"	,TAMSX3("C8_LOJA")[1]	,0						})
+	AADD(_aStru,{"A2_NOME"   	,"C"	,TAMSX3("A2_NOME")[1]	,0						})
+		
+	//Cria Arquivo Temporario
+	_cArqTrb := Criatrab(_aStru,.T.)
+	DbUseArea(.t.,,_cArqTrb,"TTRB")
+		
+	For i := 1 to Len(p_aDados)
+		DbSelectArea("TTRB")	
+		If RecLock("TTRB",.T.)		
+			TTRB->C8_ITEM		:=  p_aDados[i][1]
+			TTRB->C8_PRODUTO	:=  p_aDados[i][2]
+			TTRB->B1_DESC		:=  p_aDados[i][3]
+			TTRB->C8_PRECO		:=  p_aDados[i][4]
+			TTRB->C8_NUM		:=  p_aDados[i][5]
+			TTRB->C8_VALIDA		:=  p_aDados[i][6]
+			TTRB->C8_FORNECE	:=  p_aDados[i][7]
+			TTRB->C8_LOJA		:=  p_aDados[i][8]
+			TTRB->A2_NOME		:=  p_aDados[i][9]
+			TTRB->(MsUnlock())
+		EndIf	
+	Next
+		
+	//Define quais colunas (campos da TTRB) serao exibidas na MsSelect
+	_aCpoBro	:= {	{ "OK"			,, " "         		,"@!"							},;			
+						{ "C8_ITEM"		,, "Item"         	,PesqPict("SC8","C8_ITEM")		},;			
+						{ "C8_PRODUTO"	,, "Codigo"       	,PesqPict("SC8","C8_PRODUTO")	},;
+						{ "B1_DESC"	    ,, "Descrição"     	,PesqPict("SB1","B1_DESC")		},;
+						{ "C8_PRECO"	,, "Ult. Preço"   	,PesqPict("SC8","C8_PRECO")		},;
+						{ "C8_NUM"		,, "Ult. Cotacao"   ,PesqPict("SC8","C8_NUM")		},;
+						{ "C8_VALIDA"	,, "Dt. Validade"   ,PesqPict("SC8","C8_VALIDA")	},;
+						{ "C8_FORNECE"	,, "Cod. Fornec."	,PesqPict("SC8","C8_FORNECE")	},;
+						{ "C8_LOJA"		,, "Loj. Fornec."	,PesqPict("SC8","C8_LOJA")		},;
+						{ "A2_NOME"		,, "Nome Fornec."   ,PesqPict("SA2","A2_NOME")		}}
+							
+	//Cria uma Dialog
+	DEFINE MSDIALOG _oDlg TITLE "Atualização Último Preço" From 9,0 To 350,800 PIXEL
+		
+		DbSelectArea("TTRB")
+		TTRB->(DbGotop())
+			
+		//Cria a MsSelect
+		_oMark := MsSelect():New("TTRB","OK","",_aCpoBro,@_lInverte,@_cMark,{17,1,150,400},,,,,)
+		_oMark:bMark := {|| MarkItem()} 
+		
+		//Adiciona botao na Enchoice
+		Aadd( _aButton, {"MTODOS"	, {|| MarcAll()} , "Marcar Todos"	 , "Marcar Todos"	 , {|| .T.}} )
+		Aadd( _aButton, {"DMTODOS"	, {|| DMarcAll()}, "Desmarcar Todos" , "Desmarcar Todos" , {|| .T.}} )
+		    
+	//Exibe a Dialog
+	ACTIVATE MSDIALOG _oDlg CENTERED ON INIT EnchoiceBar(_oDlg,{|| _nOpc := 1, _oDlg:End()},{|| _oDlg:End()},,_aButton)
+		
+	If _nOpc == 1
+		DbSelectArea("TTRB")
+		TTRB->(DbGotop())
+		While .Not. TTRB->(Eof())
+			
+			If .Not. Empty(AllTrim(TTRB->OK))
+				
+				If Select("TMP") > 0
+					DbSelectarea("TMP")
+					TMP->(DbCloseArea())
+				EndIf
+				
+				_cQuery := "SELECT * "+ CRLF
+				_cQuery += " FROM "+ RetSqlName("SC8") + " C8 "+ CRLF
+				_cQuery += "WHERE C8_FILIAL = '"+ SC8->C8_FILIAL +"' "+ CRLF
+				_cQuery += " AND C8_NUM = '"+ SC8->C8_NUM +"' "+ CRLF
+				_cQuery += " AND C8_PRODUTO = '"+ TTRB->C8_PRODUTO +"' "+ CRLF
+				_cQuery += " AND C8_FORNECE = '"+ TTRB->C8_FORNECE +"' "+ CRLF
+				_cQuery += " AND C8_LOJA = '"+ TTRB->C8_LOJA +"' "+ CRLF
+				_cQuery += " AND D_E_L_E_T_ <> '*' "+ CRLF
+				
+				TCQUERY _cQuery NEW ALIAS "TMP"
+				
+				DbSelectArea("TMP")
+				TMP->(DbGoTop())
+				
+				While .Not. TMP->(Eof()) 
+					
+					_cChvSC8 := TMP->(C8_FILIAL+C8_NUM+C8_FORNECE+C8_LOJA+C8_ITEM+C8_NUMPRO+C8_ITEMGRD)
+					_nPreco  := TTRB->C8_PRECO
+					_nQuant  := TMP->C8_QUANT
+					_nTotal  := _nQuant * _nPreco
+					
+					DbSelectArea('SC8')
+					SC8->(DbSetOrder(1)) //C8_FILIAL+C8_NUM+C8_FORNECE+C8_LOJA+C8_ITEM+C8_NUMPRO+C8_ITEMGRD
+					SC8->(DbGoTop())
+					If SC8->(DbSeek(_cChvSC8))
+						_nCont++
+						//Atualiza o preco de acordo com a ultima cotacao selecionada
+						If RecLock('SC8',.F.)
+							SC8->C8_PRECO   := _nPreco
+							SC8->C8_TOTAL   := _nTotal
+							If SC8->C8_BASEICM > 0
+								SC8->C8_BASEICM := _nTotal
+							EndIf
+							If SC8->C8_BASEIPI > 0
+								SC8->C8_BASEIPI := _nTotal
+							EndIf
+						EndIf
+						SC8->(MsUnlock())
+					EndIf
+					
+					TMP->(DbSkip())
+				End
+				TMP->(DbCloseArea())
+			EndIf
+			TTRB->(DbSkip())
+		End
+	EndIf
+	
+	If _nCont > 0
+		MsgInfo("Foram atualizados "+ cValToChar(_nCont) +" preço(s) de produto(s).","Sucesso!")
+	EndIf
+	
+	//Fecha a Area e elimina os arquivos de apoio criados em disco.
+	TTRB->(DbCloseArea())
+	
+	//Apaga Arquivo Temporario			
+	If File(_cArqTrb + GetDBExtension())
+		FErase(_cArqTrb  + GetDBExtension())
+	EndIf
+	
+Return
+
+
+/** {Protheus.doc} MarkItem
+Funcao para Marcar o item no Browse
+
+@author: 	Jose Leite de Barros Neto
+@since: 	20/09/2017
+@Uso: 		SFIEMT
+*/
+Static Function MarkItem()
+	
+	If RecLock("TTRB",.F.)
+		If Marked("OK")	
+			If TTRB->C8_PRECO <= 0
+				If MsgNoYes("Este registro esta com valor (zero), deseja continuar com a marcação?","Atenção")
+					TTRB->OK := _cMark
+				Else
+					TTRB->OK := ""
+				EndIf
+			EndIf
+		Else	
+			TTRB->OK := ""
+		Endif        
+		TTRB->(MsUnlock())
+	EndIf
+	
+	_oMark:oBrowse:Refresh()
+	
+Return
+
+
+/** {Protheus.doc} MarcAll
+Funcao para Marcar todos os itens no Browse
+
+@author: 	Jose Leite de Barros Neto
+@since: 	20/09/2017
+@Uso: 		SFIEMT
+*/
+Static Function MarcAll()
+	
+	DbSelectArea('TTRB')
+	TTRB->(DbGoTop())
+	While .Not. TTRB->(Eof())
+		If RecLock("TTRB",.F.)
+			TTRB->OK := _cMark
+			TTRB->(MsUnlock())
+		EndIf
+		TTRB->(DbSkip())
+	End
+	
+	TTRB->(DbGoTop())
+	_oMark:oBrowse:Refresh()
+	
+Return
+
+
+/** {Protheus.doc} DMarcAll
+Funcao para Desmarcar todos os itens no Browse
+
+@author: 	Jose Leite de Barros Neto
+@since: 	20/09/2017
+@Uso: 		SFIEMT
+*/
+Static Function DMarcAll()
+	
+	DbSelectArea('TTRB')
+	TTRB->(DbGoTop())
+	While .Not. TTRB->(Eof())
+		If RecLock("TTRB",.F.)
+			TTRB->OK := ""
+			TTRB->(MsUnlock())
+		EndIf
+		TTRB->(DbSkip())
+	End
+	
+	TTRB->(DbGoTop())
+	_oMark:oBrowse:Refresh()
+	
+Return

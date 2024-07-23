@@ -1,0 +1,1006 @@
+#Include "Protheus.ch"
+#Include "Topconn.ch"
+#Include "Ap5mail.ch"
+
+#Define BMP_ON     "LBOK"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SICOMA04  ºAutor  ³Adriano Luis Brandaoº Data ³  20/07/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³Funcao para Liberacao de documentos.                        º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP                                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function SICOMA04(_nOpcao)
+// _nOpcao = 1 / Consulta, 2 / Liberacao, 3 / Estornar
+Local _aArea	:= {}
+Local _aAreaCR	:= {}
+Local _cDoc		:= ""  
+Local _aAreaC7  := {}
+Local _cKey     := ""
+Private nOpc	:= 0
+
+If _nOpcao == 1 // Consulta
+	// se for solicitacao de compras
+	If SCR->CR_TIPO == "SC"
+		_aArea := GetArea()
+		_aAreaCR := SCR->(GetArea())
+		_cDoc := Left(SCR->CR_NUM,Len(SC1->C1_NUM))
+		SC1->(DbSetOrder(1))
+		If SC1->(DbSeek(xFilial("SC1")+_cDoc))
+			DbSelectArea("SC1")
+			A110Visual("SC1",RecNo(),2)
+		EndIf
+		RestArea(_aAreaCR)
+		RestArea(_aArea)
+	ElseIf SCR->CR_TIPO == "ED"
+		U_SICOMA03(_nOpcao)
+	ElseIf SCR->CR_TIPO == "SA"
+		U_SIESTA05(_nOpcao)
+	Else	// visualizacao padrao
+		A097Visual(,,2)
+	EndIf
+	
+ElseIf _nOpcao == 2 // Liberacao
+	
+	If !Empty(SCR->CR_DATALIB) .And. SCR->CR_STATUS$"03#05"
+		Help(" ",1,"A097LIB")
+		Return()
+		//ElseIf SCR->CR_STATUS$"01"
+		//	Aviso("A097BLQ","Esta operação não poderá ser realizada pois este registro se encontra bloqueado pelo sistema (aguardando outros niveis)",{"Ok"})
+		//	Return()
+	EndIf
+	
+	If SCR->CR_TIPO == "SC"
+		fLibSC()
+		//-> Luiz Junior
+		//-> Insere status para a SC. 'TR Analise'				
+		StatusTR("")
+	ElseIf SCR->CR_TIPO == "ED"
+		U_SICOMA03(_nOpcao)
+	ElseIf SCR->CR_TIPO == "SA"
+		U_SIESTA05(_nOpcao)
+	Else
+		A097Libera("SCR",recno(),2)        
+		
+		If SC7->C7_CONAPRO == "B" .And. SC7->C7_WFE == .T. //Se a aprovação anterior foi por WF
+		
+	  		_aAreaC7 := SC7->(GetArea()) 
+	  		_cKey    := SC7->(C7_FILIAL+C7_NUM+C7_ITEM)
+
+	  		SC7->(DbGoTop())     //Posiciono no topo da tabela e reposiciono no registro para garantir que todos os itens serão processados.
+	  		If SC7->(MsSeek(_cKey))
+	  		
+	  			While SC7->(!EOF()) .And. _cKey == SC7->(C7_FILIAL+C7_NUM+C7_ITEM)
+		
+					WFSalvaID('SC7','SC7->C7_WFE', .F.)   //A flag de envio é limpa para que o Schedule possa processar estes registros                              
+					SC7->(DbSkip())                       //e enviar para o proximo aprovador.
+				
+				EndDo                       
+			
+			EndIf
+		
+			RestArea(_aAreaC7)                               
+		
+		EndIf 
+
+	EndIf
+		
+ElseIf _nOpcao == 3 // Estornar
+	
+	If SCR->CR_STATUS$"01"
+		Aviso("A097BLQ","Esta operação não poderá ser realizada pois este registro se encontra bloqueado pelo sistema (aguardando outros niveis)",{"Ok"})
+		Return()
+	EndIf
+	
+	If SCR->CR_TIPO == "SC"
+		fEstSC()
+	ElseIf SCR->CR_TIPO == "ED"
+		U_SICOMA03(_nOpcao)
+	ElseIf SCR->CR_TIPO == "SA"
+		U_SIESTA05(_nOpcao)
+	Else
+		A097Estorna("SCR",recno(),2)
+	EndIf
+	
+EndIf
+
+Return
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³fLibSC    ºAutor  ³Adriano Luis Brandaoº Data ³  20/07/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³Funcao para Liberacao de solicitacao de compras.            º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP - CNI.                                                  º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+/*/
+-----------------------------------------------------------------------------
+Ajustes Realizados:
+Franklin B. Oliveira 			                                   14/06/2017
+	Adicionado a gravação da hora de liberação no campo CR_XHRALIB.
+-----------------------------------------------------------------------------
+/*/
+Static Function fLibSC()
+
+Local _aArea	  := GetArea()
+Local _aAreaC1	  := SC1->(GetArea())  
+Local _aAreaCR    := SCR->(GetArea())
+Local cCodLiber   := SCR->CR_APROV
+Local cDocto      := SCR->CR_NUM
+Local cTipo       := SCR->CR_TIPO
+Local aSize		  := {290,410}
+Local cObs 		  := IIF(!Empty(SCR->CR_OBS),SCR->CR_OBS,CriaVar("CR_OBS"))
+Local ca097User   := RetCodUsr()
+Local dRefer 	  := dDataBase
+Local aRetSaldo	  := {}
+Local nSaldo	  := 0
+Local CRoeda	  := ""
+Local nTotal	  := 0
+Local nSalDif	  := 0
+Local _cDoc		  := ""
+Local cName		  := ""
+//Local nOpc		  := 0
+Local lLiberou	  := .f.
+Local _cCodUsu	  := ""
+Local cParam	  := GetMv("SI_XMED", .F.) // FSW - Alteração para o Gap097
+Local _lLancSC	  := PcoExistLc("000051","02","1") // Verifica se existe lançamento ativo
+Local _lBloqSC	  := PcoExistLc("000051","02","2") // Verifica se existe bloqueio ativo
+Local _lGeraBlq   := .f.
+Local _cNumMed	  := ""
+Local _cSCRFiltro := ""
+Local aRetMed     := {}     //inserido por Carlos Queiroz em 20/05/13   
+Local cUndNeg	  := FWUnitBusiness()
+Private _NPERCEMP := 0
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Inicializa as variaveis utilizadas no Display.               ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+aRetSaldo 	:= MaSalAlc(cCodLiber,dRefer)
+nSaldo 	  	:= aRetSaldo[1]
+CRoeda 	  	:= A097Moeda(aRetSaldo[2])
+cName  	  	:= UsrRetName(ca097User)
+nTotal    	:= xMoeda(SCR->CR_TOTAL,SCR->CR_MOEDA,aRetSaldo[2],SCR->CR_EMISSAO,,SCR->CR_TXMOEDA)
+nSalDif		:= nSaldo - nTotal
+
+Do Case
+	Case SAK->AK_TIPO == "D"
+		cTipoLim :=OemToAnsi("Diario")
+	Case  SAK->AK_TIPO == "S"
+		cTipoLim := OemToAnsi("Semanal")
+	Case  SAK->AK_TIPO == "M"
+		cTipoLim := OemToAnsi("Mensal")
+	Case  SAK->AK_TIPO == "A"
+		cTipoLim := OemToAnsi("Anual")
+EndCase
+
+_cDoc := Left(SCR->CR_NUM,Len(SC1->C1_NUM))
+SC1->(DbSetOrder(1))
+SC1->(DbSeek(xFilial("SC1")+_cDoc))
+
+DEFINE MSDIALOG oDlg FROM 0,0 TO aSize[1],aSize[2] TITLE OemToAnsi("Liberacao de SC") PIXEL  //"Liberacao do PC"
+@ 0.5,01 TO 44,204 LABEL "" OF oDlg PIXEL
+@ 45,01  TO 128,204 LABEL "" OF oDlg PIXEL
+@ 07,06  Say OemToAnsi("Numero do Docto.") OF oDlg PIXEL
+@ 07,120 Say OemToAnsi("Emissao") OF oDlg SIZE 50,9 PIXEL
+@ 19,06  Say OemToAnsi("Centro de Custo") OF oDlg PIXEL
+@ 31,06  Say OemToAnsi("Aprovador") OF oDlg PIXEL SIZE 30,9
+@ 31,120 Say OemToAnsi("Data de ref. ") SIZE 60,9 OF oDlg PIXEL
+@ 53,06  Say OemToAnsi("Limite min.  ") +CRoeda OF oDlg PIXEL
+@ 53,110 Say OemToAnsi("Limite max. ")+CRoeda SIZE 60,9 OF oDlg PIXEL
+@ 65,06  Say OemToAnsi("Limite  ")+CRoeda  OF oDlg PIXEL
+@ 65,110 Say OemToAnsi("Tipo lim.") OF oDlg PIXEL
+@ 77,06  Say OemToAnsi("Saldo na data  ")+CRoeda OF oDlg PIXEL
+If SCR->CR_MOEDA == aRetSaldo[2]
+	@ 89,06 Say OemToAnsi("Total do documento ")+CRoeda OF oDlg PIXEL
+Else
+	@ 89,06 Say OemToAnsi("Total do documento, convertido em ")+CRoeda OF oDlg PIXEL
+EndIf
+@ 101,06 Say OemToAnsi("Saldo disponivel apos liberacao  ") +CRoeda SIZE 130,10 OF oDlg PIXEL
+@ 113,06 Say OemToAnsi("Observa‡äes ") SIZE 100,10 OF oDlg PIXEL
+@ 07,58  MSGET SCR->CR_NUM     When .F. SIZE 28 ,9 OF oDlg PIXEL
+@ 07,155 MSGET SCR->CR_EMISSAO When .F. SIZE 45 ,9 OF oDlg PIXEL
+@ 19,45  MSGET SC1->C1_CC      When .F. SIZE 155,9 OF oDlg PIXEL
+@ 31,45  MSGET cName           When .F. SIZE 50 ,9 OF oDlg PIXEL
+@ 31,155 MSGET oDataRef VAR dRefer When .F. SIZE 45 ,9 OF oDlg PIXEL
+@ 53,50  MSGET SAK->AK_LIMMIN Picture "@E 999,999,999.99" When .F. SIZE 55,9 OF oDlg PIXEL RIGHT
+@ 53,155 MSGET SAK->AK_LIMMAX Picture "@E 999,999,999.99" When .F. SIZE 45,9 OF oDlg PIXEL RIGHT
+@ 65,50  MSGET SAK->AK_LIMITE Picture "@E 999,999,999.99" When .F. SIZE 55,9 OF oDlg PIXEL RIGHT
+@ 65,155 MSGET cTipoLim When .F. SIZE 45,9 OF oDlg PIXEL CENTERED
+@ 77,115 MSGET oSaldo VAR nSaldo Picture "@E 999,999,999.99" When .F. SIZE 85,9 OF oDlg PIXEL RIGHT
+@ 89,115 MSGET nTotal Picture "@E 999,999,999.99" When .F. SIZE 85,9 OF oDlg PIXEL RIGHT
+@ 101,115 MSGET oSaldif VAR nSalDif Picture "@E 999,999,999.99" When .F. SIZE 85,9 OF oDlg PIXEL RIGHT
+@ 113,115 MSGET cObs Picture "@!" SIZE 85,9 OF oDlg PIXEL
+
+@ 132, 80 BUTTON OemToAnsi("Libera Docto")   SIZE 40 ,11  FONT oDlg:oFont ACTION (nOpc:=2,oDlg:End())  OF oDlg PIXEL
+@ 132,121 BUTTON OemToAnsi("Cancela")        SIZE 40 ,11  FONT oDlg:oFont ACTION (nOpc:=1,oDlg:End())  OF oDlg PIXEL
+@ 132,162 BUTTON OemToAnsi("Bloqueia Docto") SIZE 40 ,11  FONT oDlg:oFont ACTION (nOpc:=3,oDlg:End())  OF oDlg PIXEL
+
+ACTIVATE MSDIALOG oDlg CENTERED
+
+If nOpc == 2 .Or. nOpc == 3     
+
+	If Upper( AllTrim( cUndNeg ) ) <> 'RJ'
+	    // inserido por Carlos Queiroz em 20/05/13
+	    If nOpc == 2
+	    	aRetMed := U_fSldMedSC()
+	    	If !aRetMed[1]   
+	      		nOpc := 3
+	      		cObs := aRetMed[2]
+	    	EndIf
+	    EndIf   
+	EndIf
+	_cDoc := Left(SCR->CR_NUM,Len(SC1->C1_NUM))
+	SC1->(DbSetOrder(1))
+	If SC1->(DbSeek(xFilial("SC1")+_cDoc))
+		
+		lLiberou := MaAlcDoc({SCR->CR_NUM,SCR->CR_TIPO,nTotal,cCodLiber   ,,SC1->C1_XGRPAPR,,,,,cObs},dRefer,If(nOpc==2,4,6))
+		
+		If lLiberou
+			
+			// Guarda filtro da SCR
+			IF !Empty( _cSCRFiltro := SCR->(dbFilter()) )
+				SCR->(dbClearFilter())
+			ENDIF
+			
+			// Se liberou total, envia e-mail de liberado
+			SCR->(dbSetOrder(1))
+			SCR->(dbSeek(xFilial("SCR")+"SC"+_cDoc))
+			While SCR->(!Eof()) .and. SCR->CR_FILIAL == XFilial("SCR") .and. SCR->CR_TIPO == "SC" .and. Alltrim(SCR->CR_NUM) == Alltrim(_cDoc)
+				If (SCR->CR_STATUS $ ("03|05")) // aprovado
+					_cRet := "L"
+					//Gravo a Hora da liberação
+					Reclock("SCR", .F.)
+						SCR->CR_XHRALIB := Time()
+					MSUnLock("SCR")
+				ElseIf SCR->CR_STATUS == "04" // reprovado
+					_cRet := "B"
+				ElseIf (SCR->CR_STATUS $ ("01|02")) // em aprovacao
+					_cRet := "E"
+				EndIf
+				SCR->(dbSkip())
+			Enddo
+			
+			// Restaura filtro da SCR
+			IF !Empty( _cSCRFiltro ) // verifica filtro
+				SCR->&(_cSCRFiltro)
+			ENDIF
+			
+			// Se liberou total, envia e-mail de liberado
+			SC1->(DbSetOrder(1))
+			IF _cRet == "L" .and. SC1->(DbSeek(xFilial("SC1")+_cDoc))
+			
+				// Adicionado por Lucas Riva - 21/08/2013 para não validar Orçamento em SC gerada por SA ou PP
+				If Empty(SC1->C1_XMODOC)
+					_lBloqSC := .F.
+				EndIf	 
+					
+				// FSW - Alteração para o Gap087 - CNI
+				IF _lLancSC .and. _lBloqSC .and. U__fBloqSC(.f.,_cDoc)
+					_lGeraBlq := .t.
+				ENDIF
+					
+				_cCodUsu := SC1->C1_USER
+				Do While ! SC1->(Eof()) .And. SC1->C1_FILIAL == xFilial("SC1") .And. SC1->C1_NUM == _cDoc
+						
+					// grava LOG - Tabela COI
+					If FindFunction("RSTSCLOG")
+						RSTSCLOG("APR",1,cUserName)		//"APR"=Aprovação | 1=Aprovação da SC / 2=Estorno da Aprovação pelo MATA110 / 3=Estorno pelas demais funções | Cód. Usuário Aprovador
+					Else
+						COMA080(SC1->C1_NUM,SC1->C1_ITEM,"COI_DTHAPR","COI_UAPR", .F.)
+					EndIf
+						
+					// Atualiza status da SC
+					RecLock("SC1",.F.)
+					SC1->C1_APROV := IIF(_lLancSC .and. _lGeraBlq,"O","L")
+					SC1->(MsUnLock())
+					
+					// Gera lançamentos realizados
+					IF _lLancSC .and. !_lGeraBlq
+							
+						SZW->(dbSetOrder(1))
+						IF SZW->(MsSeek(xFilial("SZW")+SC1->(C1_NUM+C1_ITEM)))
+								
+							_cFilBkp := cFilAnt
+							While SZW->(!Eof()) .and. SZW->(ZW_FILIAL+ZW_NUMSC+ZW_ITEMSC) == XFilial("SZW")+SC1->(C1_NUM+C1_ITEM)
+								// Altera empresa
+								cFilAnt := SZW->ZW_CODEMP
+									
+								_NPERCEMP := SZW->ZW_PERC
+									
+								MsgRun("Gerando Movimentos da SC "+SC1->C1_NUM,"",{|| CursorWait(), PcoIniLan('000051'), PcoDetLan('000051','02','MATA110'), PcoFinLan('000051'), CursorArrow()})
+									
+								// Restaura filial
+								cFilAnt := _cFilBkp
+								
+								SZW->(dbSkip())
+							Enddo
+						ELSE
+							MsgRun("Gerando Movimentos da SC "+SC1->C1_NUM,"",{|| CursorWait(), PcoIniLan('000051'), PcoDetLan('000051','02','MATA110'), PcoFinLan('000051'), CursorArrow()})
+						ENDIF
+					ENDIF
+						
+					_NPERCEMP := 0
+						
+					SC1->(DbSkip())
+				EndDo
+					
+				// FSW - Alteração para o Gap097 - CNI
+				// Se parametro SI_XMED for igual a 1 deve fazer a medição na liberação da solicitação de compras
+				If (cParam == "1") .and. _cRet == "L" .and. !_lGeraBlq
+					_aRecSC1 := SC1->(GetArea())
+					U_CNI109AL(_cDoc, cTipo, nOpc,,@_cNumMed)
+					RestArea(_aRecSC1)
+				EndIf
+					&&fEmail("L",_cCodUsu,_cDoc)
+					//+------------------------------------------------------------------+
+					//| Walmir Junior                                         16/12/2015 |
+					//| Alteraçção no envio de email ao fim do processo de liberaçao,	 |
+					//| alterado p/ mandar p/ email configurado no parâmetro MV_XEMCAQC. |
+					//+------------------------------------------------------------------+
+					//U_NotifWF("A",_cDoc,"Solicitação de Compra",_cCodUsu,cObs)
+					U_SF0201X("A",_cDoc,"Solicitação de Compra",_cCodUsu,cObs,GetMv("MV_XEMCAQC"), _cNumMed)
+		
+					//Walmir Junior 22/03/2016 - Solicitação para que o alerta chegue também para o comprador.
+					DBSelectArea("SY1")
+					DBSetOrder(1)
+					If SY1->(DbSeek(xFilial("SY1")+POSICIONE("SC1",1,xFilial("SC1")+_cDoc,"C1_CODCOMP"))) 
+						U_SF0201X("A",_cDoc,"Solicitação de Compra",_cCodUsu,cObs,UsrRetMail(SY1->Y1_USER), _cNumMed)
+					EndIf	
+			ENDIF
+		Else  
+			MsgRun('Enviando solicitação para aprovação...',, {|| U_CWKFA001(,XFilial("SC1"),SC1->C1_NUM) } )
+		EndIf
+		
+		If nOpc == 3
+			// Se Bloqueou, envia e-mail de bloqueio
+			SC1->(DbSetOrder(1))
+			SC1->(DbSeek(xFilial("SC1")+_cDoc))
+			_cCodUsu := SC1->C1_USER
+			Do While ! SC1->(Eof()) .And. SC1->C1_FILIAL == xFilial("SC1") .And. SC1->C1_NUM == _cDoc
+				RecLock("SC1",.F.)
+				SC1->C1_APROV := "R"
+				SC1->(MsUnLock())
+				SC1->(DbSkip())
+			EndDo
+			&&fEmail("R",_cCodUsu,_cDoc)
+			U_NotifWF("R",_cDoc,"Solicitação de Compra",_cCodUsu,cObs)
+		EndIf
+	Else
+		ApMsgStop("Solicitacao de compras" + _cDoc + " nao localizada !!!","Verifique")
+	EndIf
+EndIf
+
+RestArea(_aAreaC1)
+RestArea(_aAreaCR)
+RestArea(_aArea)
+Return
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³fEstSC    ºAutor  ³Adriano Luis Brandaoº Data ³  21/07/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Funcao de estorno de liberacao.                            º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP - CNI                                                   º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function fEstSC()
+Local lEstorna	:= .f.
+Local _cDoc		:= ""
+
+//
+// Testar se o documento nao foi utilizado em licitação, cotação, pedido de compra ou eliminada por resíduo
+//
+
+If ApMsgYesNo("Confirma estorno da liberacao ?","Confirmar")
+	_cDoc := Left(SCR->CR_NUM,Len(SC1->C1_NUM))
+	// se ja foi utilizado em algum processo compras, nao pode ser estornado
+	If ! fVerUso(_cDoc)
+		ApMsgInfo("Esta solicitação já foi utilizada","Aviso")
+		Return
+	EndIf
+	
+	SC1->(DbSetOrder(1))
+	If SC1->(DbSeek(xFilial("SC1")+_cDoc))
+		
+		_nTotSC := fTotSC(_cDoc)
+		MaAlcDoc({SC1->C1_NUM,"SC",_nTotSC,,,,,1,1,},SC1->C1_EMISSAO,3)
+		SC1->(DbSetOrder(1))
+		IF SC1->(dbSeek(XFilial("SC1")+_cDoc)) .and. !Empty(SC1->C1_XGRPAPR)
+			MaAlcDoc({_cDoc,"SC",_nTotSC,,,SC1->C1_XGRPAPR,,1,1,SC1->C1_EMISSAO},,1)
+		EndIf
+		SCR->(dbSetOrder(1))
+		// Se gerou SCR, bloqueia solicitacao novamente.
+		IF SCR->(dbSeek(XFilial("SCR")+"SC"+SC1->C1_NUM))
+			
+			Do While ! SC1->(Eof()) .And. SC1->C1_FILIAL == xFilial("SC1") .And. SC1->C1_NUM == _cDoc
+				RecLock("SC1",.F.)
+				SC1->C1_APROV := "B"
+				SC1->(MsUnLock())
+				
+				// Exclui os lançamentos realizados
+				SZW->(dbSetOrder(1))
+				IF SZW->(MsSeek(xFilial("SZW")+SC1->(C1_NUM+C1_ITEM)))
+					
+					_cFilBkp := cFilAnt
+					While SZW->(!Eof()) .and. SZW->(ZW_FILIAL+ZW_NUMSC+ZW_ITEMSC) == XFilial("SZW")+SC1->(C1_NUM+C1_ITEM)
+						// Altera empresa
+						cFilAnt := SZW->ZW_CODEMP
+						
+						MsgRun("Estornando Movimentos da SC "+SC1->C1_NUM,"",{|| PcoIniLan('000051'), PcoDetLan('000051','02','MATA110',.T.), PcoFinLan('000051') })
+						
+						// Restaura filial
+						cFilAnt := _cFilBkp
+						
+						SZW->(dbSkip())
+					Enddo
+				ELSE
+					MsgRun("Estornando Movimentos da SC "+SC1->C1_NUM,"",{|| PcoIniLan('000051'), PcoDetLan('000051','02','MATA110',.T.), PcoFinLan('000051') })
+				ENDIF
+				
+				// Exclui contingencia
+				IF !Empty(SC1->C1_XCDCNTG)
+					MsgRun("Estornando Contingência da SC "+SC1->C1_NUM,"",{|| U__fPCOEstCT(SC1->C1_XCDCNTG) })
+					// Limpa codigo da contingencia
+					RecLock("SC1",.F.)
+					SC1->C1_XCDCNTG := ""
+					SC1->(MsUnLock())
+				ENDIF
+				
+				// grava LOG - Tabela COI
+				If FindFunction("RSTSCLOG")
+					RSTSCLOG("APR",3,cUserName)		//"APR"=Aprovação | 1=Aprovação da SC / 2=Estorno da Aprovação pelo MATA110 / 3=Estorno pelas demais funções | Cód. Usuário Aprovador
+				Else
+					COMA080(SC1->C1_NUM,SC1->C1_ITEM,"COI_DTHAPR","COI_UAPR", .T.)		//Compatibilidade com RPO sem nova função
+				EndIf
+				
+				U_CNIEstMe() // FSW - Gap097 - Estorno da medição e exclusão de pedido de compra
+				
+				SC1->(DbSkip())
+			EndDo
+		EndIf
+	Else
+		ApMsgStop("Solicitacao de compras" + _cDoc + " nao localizada !!!","Verifique")
+	EndIf
+EndIf
+
+Return
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³fEmail    ºAutor  ³Adriano Luis Brandaoº Data ³  21/07/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³Funcao para envio de e-mail para usuario se solicitacao foi º±±
+±±º          ³liberada ou bloqueada.                                      º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP - CNI                                                   º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+/***********************************************
+/Função Obsoleta - mantida somente para consulta - Remover na próxima manutenção - kley@totvs, 06-Set-2013
+/**********************************************/
+
+Static Function fEmail(_cAprov,_cCodUsu,_cDoc)
+// _cAprov  = L  Liberado.
+// _cAprov  = R  Reprovado.
+// _cCodUsu = Codigo do usuario.
+// _cDoc	= Numero da solicitacao de compras
+
+Local cMailDest	 := UsrRetMail(_cCodUsu)
+Local cFuncName  := "fEmail"
+Local cAssunto	 := ""
+Local cMensagem	 := ""
+Local cEol		 := Chr(13)+Chr(10)
+Local oMail, oMessage
+Local nErro
+Local cSrvSMTP   := GetMv("MV_RELSERV")
+Local cAccount   := GetMv("MV_RELACNT")
+Local cPassword  := GetMv("MV_RELPSW")
+Local lAuthent	 := GetMv("MV_RELAUTH",,.F.)
+Local cMailFrom  := GetMv("MV_RELFROM")
+Local lTLS		 := GetMv("MV_RELTLS",,.F.)
+Local lSSL		 := GetMv("MV_RELSSL",,.F.)
+
+cAssunto	:= "Solicitacao de Compra Nr." + _cDoc
+
+cMensagem := '<table style="width: 100%;" bordercolorlight="#000000" border="1">'
+cMensagem += '<tbody><tr><td style="width: 112px;">'
+cMensagem += '<p align="left">'
+cMensagem += '<img style="border-style: solid; border-color: inherit; border-width: 0px; width: 177px; height: 40px;" alt="Sistema FIERGS"'
+cMensagem += 'src="http://erp.sistemaindustria.org.br:8383/workflow/cni_logo.gif" align="middle"></p>'
+cMensagem += '</td><td style="width: 866px; text-align: center; vertical-align: middle;">'
+cMensagem += '<p><big><big> <font size="3"><big><big><b>Solicitação de Compra</b></big></big></font></big></big>'
+cMensagem += '</p></td></tr></tbody></table>'
+cMensagem += '<p>&nbsp;</p>'
+cMensagem += '<p>Sr(a). aprovador(a) ' + RTrim(UsrFullName(_cCodUsu)) + '</p>'
+cMensagem += '<p>Informamos que a Solicitação de Compra Nº ' + _cDoc + ' foi '
+If _cAprov == "L"
+	cMensagem	+= 'aprovada e encaminhada para a Área de Aquisições.</p>'
+Else
+	cMensagem	+= 'reprovada.</p>'
+EndIf
+cMensagem += '<p>Filial: ' + RTrim(cFilAnt) + " - " + RTrim(Posicione("SM0",1,cEmpAnt+cFilAnt,"M0_FILIAL")) + " - " + RTrim(Posicione("SM0",1,cEmpAnt+cFilAnt,"M0_NOME")) + '</p>'
+cMensagem += '<p>&nbsp;</p>'
+cMensagem += '<p><font size="2">Favor não responder este e-mail.</font></p><hr>'
+
+If !Empty(cMailDest)
+	oMail := TMailManager():New()
+	oMail:SetUseSSL(lSSL)
+	oMail:Init( "", cSrvSMTP, cAccount, cPassword, 0, Iif(lSSL,465,587)  )
+	oMail:SetSmtpTimeOut(30)
+	ConOut(cFuncName+":: Conectando no Servidor SMTP")
+	nErro := oMail:SmtpConnect()
+	If nErro # 0
+		ConOut(cFuncName+":: ERROR:" + oMail:GetErrorString(nErro))
+	    oMail:SMTPDisconnect()
+	    Return .F.
+	Endif
+	nErro := oMail:SmtpAuth(cAccount,cPassword)
+	If nErro # 0
+		ConOut(cFuncName+":: ERROR:" + oMail:GetErrorString(nErro))
+	    oMail:SMTPDisconnect()
+	    return .F.
+	Endif
+	oMessage := TMailMessage():New()
+	oMessage:Clear()
+	oMessage:cFrom                  := cMailFrom
+	oMessage:cTo                    := cMailDest
+	oMessage:cCc                    := ""
+	oMessage:cSubject               := cAssunto
+	oMessage:cBody                  := cMensagem
+	nErro := oMessage:Send(oMail)
+	If nErro <> 0
+		ConOut(cFuncName+":: ERROR:" + oMail:GetErrorString(nErro))
+	    oMail:SMTPDisconnect()
+	    Return .F.
+	Endif
+	ConOut(cFuncName+":: E-mail enviado para " + cMailDest)
+	ConOut(cFuncName+":: Desconectando do SMTP")
+	oMail:SMTPDisconnect()
+Else
+	ApMsgInfo("Não existe e-mail cadastrado para o usuario " + UsrRetName(_cCodUsu),"Email nao enviado")
+EndIf
+
+Return .T.
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³fTotSC    ºAutor  ³Adriano Luis Brandaoº Data ³  22/07/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³Funcao para totalizacao da solicitacao de compras.          º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP                                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function fTotSC(_cDoc)
+Local _cQuery := ""
+Local _nRet	  := 0
+
+_cQuery := "SELECT SUM(C1_QUANT*C1_VUNIT) TOTAL FROM "+RetSqlName("SC1")+" WHERE D_E_L_E_T_ = ' ' AND C1_FILIAL = '"+xFilial("SC1")+"' "
+_cQuery += "AND C1_NUM = '"+_cDoc+"'"
+
+TcQuery _cQuery New Alias "_QR1"
+
+_nRet := _QR1->TOTAL
+
+_QR1->(DbCloseArea())
+Return(_nRet)
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³fVerUso   ºAutor  ³Adriano Luis Brandaoº Data ³  22/07/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³Funcao para verificacao se solicitacao foi utilizada em     º±±
+±±º          ³processo de cotacao ou pedido de compras.                   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP - CNI                                                   º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function fVerUso(_cDoc)
+Local lRet := .t.
+Local _cQuery := ""
+
+_cQuery := "SELECT C1_NUM, C1_XCONTPR "
+_cQuery += "       FROM "+ RetSqlName("SC1")
+_cQuery += "       WHERE C1_FILIAL = '"+xFilial("SC1")+"' AND C1_NUM = '"+ _cDoc +"' "
+_cQuery += "       AND D_E_L_E_T_ = '' "
+_cQuery += "       AND ( C1_COTACAO <> ' ' OR C1_PEDIDO <> ' ' OR C1_RESIDUO <> ' ' OR C1_XCONTPR <> ' ')
+
+TcQuery _cQuery New Alias "_QR1"
+
+// se foi utilizado
+If ! Empty(_QR1->C1_NUM)
+	// FSW - Alteração para o Gap097
+	// Se for SC vinculada a contrato de preço pode deixar estornar e o estorno será realizado da medição e exclusão do pedido de compra
+	If (!Empty(AllTrim(_QR1->C1_XCONTPR)))
+		lRet := .T.
+	Else
+		lRet := .f.
+	EndIf
+EndIf
+
+_QR1->(DbCloseArea())
+
+Return(lRet)
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³_fPCOEstCT ºAutor  ³Microsiga          º Data ³  26/04/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Exclusao de contingencia                                   º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function _fPCOEstCT(_cCodCtg)
+Local _cArea := GetArea()
+
+ALJ->(dbSetOrder(1))
+ALJ->(dbSeek(XFilial("ALJ")+_cCodCtg))
+
+PcoIniLan("000356")
+While ALJ->(!Eof()) .and. ALJ->ALJ_FILIAL == XFilial("ALJ") .and. ALJ->ALJ_CDCNTG == _cCodCtg
+	PcoDetLan("000356","01","PCOA530",.T.) // Deleta Empenho caso exista
+	PcoDetLan("000356","02","PCOA530",.T.) // Deleta Empenho caso exista
+	Reclock("ALJ",.F.)
+	ALJ->(dbDelete())
+	ALJ->(MsUnlock())
+	ALJ->(dbSkip())
+Enddo
+PcoFinLan("000356")
+
+cFilterAux := ALI->(dbFilter())
+ALI->( dbClearFilter() )
+
+ALI->(dbSetOrder(1))
+ALI->(dbSeek(XFilial("ALI")+_cCodCtg))
+
+While ALI->(!Eof()) .and. xFilial("ALI")+ALI->ALI_CDCNTG == xFilial("ALI")+_cCodCtg
+	Reclock("ALI",.F.)
+	ALI->(dbDelete())
+	ALI->(MsUnlock())
+	
+	// Matando o processo de WorkFlow se registro for apagado
+	IF (Alltrim(ALI->ALI_PROCWF)<>"")
+		WFKillProcess( ALI->ALI_PROCWF )
+	EndIf
+	
+	ALI->(dbSkip())
+EndDo
+
+ALI->(dbSetFilter({||&(cFilterAux)},cFilterAux))
+
+RestArea(_cArea)
+Return()   
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³fSldMedSC º Autor ³ Carlos A. Queiroz  º Data ³  14/05/13   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Validacao referente a qtde SC x Saldo do Contrato no momen-º±±
+±±º          ³ to da Liberacao de Documentos.                             º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ CNI                                                        º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function fSldMedSC()
+Local lRet        := .T.
+Local aContratos  := {}
+Local aRet        := {.T.,""}
+Local cQuery1     := " "
+Local cQuery2     := " "
+Local cQuery3     := " "
+Local cObserv     := " "
+Local cObserv2    := " "
+Local nPosFil     := 0
+Local nPosContr   := 0
+Local nPosRev     := 0
+Local nSituac     := 0
+Local ni
+Local i
+
+cQuery1 := " SELECT * "
+cQuery1 += " FROM "+RetSQLName("SC1")+" SC1, "
+cQuery1 += " WHERE  SC1.C1_FILIAL   =   '"+SC1->C1_FILIAL+"'	AND "
+cQuery1 += "        SC1.C1_NUM      =   '"+SC1->C1_NUM+"'    AND   "
+cQuery1 += "        SC1.D_E_L_E_T_  <>  '*' "
+
+cQuery1	:= ChangeQuery(cQuery1)
+
+dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery1), "SC1MED", .T., .T. )
+
+dbselectarea("SC1MED")
+While SC1MED->(!eof())
+	nPosFil   := aScan(aContratos,{|x| AllTrim(x[1]) == alltrim(SC1MED->C1_XCONTFI)})
+	nPosContr := aScan(aContratos,{|x| AllTrim(x[2]) == alltrim(SC1MED->C1_XCONTPR)})
+	nPosRev   := aScan(aContratos,{|x| AllTrim(x[3]) == alltrim(SC1MED->C1_XCONTRV)})
+	
+	If !(nPosFil == nPosContr .and. nPosContr == nPosRev .and. nPosContr > 0)
+		aAdd(aContratos,{SC1MED->C1_XCONTFI,SC1MED->C1_XCONTPR,SC1MED->C1_XCONTRV})
+	EndIf
+	
+	SC1MED->(dbskip())
+EndDo
+
+
+For i:=1 to len(aContratos)
+	cQuery2 := " SELECT * "
+	cQuery2 += " FROM "+RetSQLName("CN9")+" CN9, "
+	cQuery2 += " WHERE  CN9.CN9_FILIAL   =   '"+aContratos[i][1]+"'	AND "
+	cQuery2 += "		CN9.CN9_NUMERO   =   '"+aContratos[i][2]+"'    AND "
+	cQuery2 += "		CN9.CN9_REVISA   =   '"+aContratos[i][3]+"'    AND "
+	cQuery2 += "		CN9.D_E_L_E_T_   <>  '*' "
+	
+	cQuery2	:= ChangeQuery(cQuery2)
+	
+	dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery2), "CN9CONTR", .T., .T. )
+	
+	dbselectarea("CN9CONTR")
+	If CN9CONTR->(!EOF())
+		if CN9CONTR->CN9_SITUAC <> "05"
+			lRet := .F.
+			nSituac := 1
+			cObserv += "     Filial Contr.: "+alltrim(aContratos[i][1])+" - Contrato: "+alltrim(aContratos[i][2]) +" - Revisão: "+alltrim(aContratos[i][3])+"."+chr(13)+chr(10)+chr(13)+chr(10)
+		endif
+	EndIf
+	
+	If Select("CN9CONTR") != 0
+		CN9CONTR->(dbclosearea())
+	EndIf
+	
+Next i
+
+If lRet
+	
+	For i:=1 to len(aContratos)
+		
+		cQuery3 := " SELECT * "
+		cQuery3 += " FROM "+RetSQLName("CNB")+" CNB, "
+		cQuery3 += " WHERE  CNB.CNB_FILIAL   =   '"+aContratos[i][1]+"'	AND "
+		cQuery3 += "		CNB.CNB_CONTRA   =   '"+aContratos[i][2]+"'    AND   "
+		cQuery3 += "		CNB.CNB_REVISA   =   '"+aContratos[i][3]+"'    AND   "
+		cQuery3 += "		CNB.D_E_L_E_T_   <>  '*' "
+		
+		cQuery3	:= ChangeQuery(cQuery3)
+		
+		dbUseArea( .T., "TOPCONN", TcGenQry(,,cQuery3), "CNBMED", .T., .T. )
+		
+		
+		dbselectarea("CNBMED")
+		
+		cObserv += " ***Alterar na Solicitação de Compras o(s) produto(s) informados para que ocorra a Liberação.***"+chr(13)+chr(10)
+		cObserv += "  ***Inconsistente(s): "+chr(13)+chr(10)+chr(13)+chr(10)
+		
+		SC1MED->(dbgotop())
+		While SC1MED->(!EOF())
+			CNBMED->(dbgotop())
+			While CNBMED->(!EOF())
+				if alltrim(SC1MED->C1_PRODUTO) == alltrim(CNBMED->CNB_PRODUT)
+					If !empty(SC1MED->C1_XCONTPR) .and. (CNBMED->CNB_SLDMED - SC1MED->C1_QUANT) < 0
+						lRet := .F.
+						nSituac := 2
+						cObserv += "     Contrato: "+alltrim(SC1MED->C1_XCONTPR)+" - Item SC: "+alltrim(SC1MED->C1_ITEM)+" - Produto: "+alltrim(SC1MED->C1_PRODUTO)+" - Quant.SC: "+alltrim(str(SC1MED->C1_QUANT))+" - Saldo Contr.: "+alltrim(str(CNBMED->CNB_SLDMED))+"."+chr(13)+chr(10)+chr(13)+chr(10)
+						exit
+					EndIf
+					//		cObserv += " Filial: "+alltrim(SC1MED->C1_FILIAL)+" Contrato: "+alltrim(SC1MED->C1_XCONTPR)+" Item: "+alltrim(SC1MED->C1_ITEM)+" Produto: "+alltrim(SC1MED->C1_PRODUTO)+" Quant.SC: "+alltrim(str(SC1MED->C1_QUANT))+" Saldo Contr.: "+alltrim(str(CNBMED->CNB_SLDMED))+" "+chr(13)+chr(10)
+					exit
+				endif
+				CNBMED->(dbskip())
+			EndDo
+			
+			SC1MED->(dbskip())
+		EndDo
+		
+		If Select("CNBMED") != 0
+			CNBMED->(dbclosearea())
+		EndIf
+		
+	Next i
+	
+EndIf
+
+If Select("SC1MED") != 0
+	SC1MED->(dbclosearea())
+EndIf
+
+If Select("CNBMED") != 0
+	CNBMED->(dbclosearea())
+EndIf
+
+If Select("CN9CONTR") != 0
+	CN9CONTR->(dbclosearea())
+EndIf
+
+If nSituac <> 0
+	cObserv2 := cObserv
+	If nSituac == 1
+		cObserv := "Ajustar Num. Contrato Revisado "+chr(13)+chr(10)+cObserv2
+	Elseif nSituac == 2
+		cObserv := "* Ajustar Qtde Itens *"+chr(13)+chr(10)+cObserv2
+	EndIf
+EndIf
+
+If !lRet
+	aRet := fObsMail(cObserv,nSituac)
+EndIf
+
+Return aRet
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ fObsMail  º Autor ³ Carlos A. Queiroz  º Data ³  15/05/13   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Interface contendo os detalhes do item que nao gera medicao.º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ CNI                                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function fObsMail(cObserv,nSituac)
+Local lRet       := .T.
+Local oDlg
+Local aRet       := {.T.,""}
+Local cTexto     := ""
+Local oMemo
+Local cFile      := ""
+Local oFont
+Local cFileLog   := ""
+Local cMask      := "Arquivos Texto (*.TXT) |*.txt|"
+Default cObserv  := ""
+Default nSituac  := 0
+
+cTexto += Replicate( "-", 135 ) +chr(13)+chr(10)
+cTexto += Replicate( "*", 135 ) +chr(13)+chr(10)+chr(13)+chr(10)
+
+If nSituac == 2
+	cTexto += "   Relação do(s) saldo(s) do(s) prod. no Contrato x Qtde na SC "+alltrim(SC1->C1_NUM)+" Filial "+alltrim(SC1->C1_FILIAL)+chr(13)+chr(10)+chr(13)+chr(10)
+ElseIf nSituac == 1
+	cTexto += "   O Contrato que está na Solicitação de Compras NÃO ESTÁ VIGENTE. Verifique a SC "+alltrim(SC1->C1_NUM)+" - Filial "+alltrim(SC1->C1_FILIAL)+" . "+chr(13)+chr(10)+chr(13)+chr(10)
+Else
+	cTexto += Replicate( "X", 135 ) +chr(13)+chr(10)+chr(13)+chr(10)
+EndIf                                                                 
+
+cTexto += Replicate( "*", 135 ) +chr(13)+chr(10)
+cTexto += Replicate( "-", 135 ) + CRLF + CRLF + CRLF
+
+/*
+for i:=1 to len(cJustCom)
+
+cObserv += substr(cJustCom,i,1)
+
+if i % 80 == 0
+cObserv += chr(13)+chr(10)
+endif
+
+next i
+*/
+
+If !Empty(alltrim(cObserv))
+
+	msginfo("A Solicitação de Compras "+alltrim(SC1->C1_FILIAL)+" "+alltrim(SC1->C1_NUM)+" irá ser rejeitada e retornada para o usuário "+alltrim(SC1->C1_SOLICIT)+" para manutenção.")
+
+	aRet := {.F.,cObserv}
+	cTexto += cObserv
+	
+	cFileLog := MemoWrite( CriaTrab( , .F. ) + ".log", cTexto )
+	
+	Define Font oFont Name "Arial" Size 6, 10
+	
+	Define MsDialog oDlg Title "Totvs" From 3, 0 to 340, 725 Pixel
+	
+	@ 5, 5 Get oMemo Var cTexto Memo When .T. Size 352, 145 Of oDlg Pixel //FONT oDlg:oFont COLOR CLR_BLACK,CLR_HGRAY
+	oMemo:bRClicked := { || AllwaysTrue() }
+	oMemo:oFont     := oFont
+	
+	Define SButton From 153, 275 Type  1 Action oDlg:End() Enable Of oDlg Pixel // Apaga
+	Define SButton From 153, 235 Type 13 Action ( cFile := cGetFile( cMask, "O arquivo será salvo como '.txt'"), If( cFile == "", .T., ;
+	MemoWrite( cFile+".txt", cTexto ) ) ) Enable Of oDlg Pixel
+	
+	Activate MsDialog oDlg Center
+	
+EndIf
+
+Return aRet 
+
+/*/{Protheus.doc} StatusTR
+(long_description)
+@author j2a.luizjunior
+@since 27/11/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function StatusTR(pNumSc)
+
+	Local cFilEmp 	:= xFilial("ZF6")
+	Local cCodZF6 	:= GetSXENum("ZF6","ZF6_CODIGO")
+	Local cNumSc  	:= pNumSc
+	
+	If Empty(cNumSc)
+		cNumSc := SCR->CR_NUM
+	EndIf
+	
+	cCodZF6 := Substr(cCodZF6,9,18)
+	cCodZF6 := cFilEmp + cCodZF6
+	
+	If Type("nOpc") == "U"
+		nOpc := 2
+	EndIf
+	
+	If nOpc = 2
+		DbSelectArea("SC1")
+		DbSetOrder(1)
+		If SC1->( DbSeek(xFilial("SC1") + PADR(cNumSc, TAMSX3("C1_NUM")[1])) )
+			If SC1->C1_CODCOMP == '051'
+				DbSelectArea("ZF6")
+				ZF6->(dbSetorder(1))
+				If RecLock("ZF6",.T.)
+					ZF6->ZF6_FILIAL := xFilial('ZF6')
+					ZF6->ZF6_NUMSC 	:= cNumSc
+					ZF6->ZF6_CODIGO := cCodZF6
+					ZF6->ZF6_PROCES := "TR Analise"
+					ZF6->ZF6_DATA 	:= Date()
+					ZF6->ZF6_HORA 	:= Time()
+					ZF6->ZF6_USUARI := cUserName
+					ZF6->ZF6_STTR 	:= 'N'			
+					ZF6->(MsUnLock())
+				EndIf
+			EndIf
+		EndIf
+	EndIf	
+	
+Return

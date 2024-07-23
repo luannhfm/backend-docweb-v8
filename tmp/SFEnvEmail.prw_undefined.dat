@@ -1,0 +1,136 @@
+#Include 'TOTVS.CH'
+#Include 'PROTHEUS.CH'
+
+/*/{Protheus.doc} SFEnvEmail
+Funcao para enviar email
+
+@author 	Jose Leite de Barros Neto
+@since 	10/07/2015
+@version 	1.0
+
+@param 	p_cDe, Indica quem esta enviando e-mail
+@param		p_cPara, Indica para quem sera enviado o e-mail
+@param		p_cCC, Indica para quem sera enviado a Copia do e-mail
+@param		p_cCCO, Indica para quem sera enviado a copia oculta do e-mail
+@param		p_cAssunto, Assunto do e-mail 
+@param		p_cMsg, Corpo (Mensagem) do e-mail
+@param 	p_cAnexo, Anexo do e-mail
+@param 	p_lConLe, Indica se será enviado confirmação de leitura
+
+@return 	lRetorno, Logico, Retorna T ou F para envio do Email
+/*/
+User Function SFEnvEmail(p_cDe, p_cPara, p_cCC, p_cCCO, p_cAssunto, p_cMsg, p_cAnexo, p_lConLe)
+	
+	Local lRetorno	:= .T.
+	Local nErro 		:= 0
+	Local cSrvSMTP	:= GetMv("MV_XRELSRV")
+	Local cFrom		:= GetMv("MV_RELFROM")
+	Local cAccount 	:= GetMv("MV_RELACNT")
+	Local cPassword	:= GetMv("MV_RELPSW")
+	Local lSSL		:= GetMv("MV_RELSSL",,.F.)
+	Local cFuncName	:= FunName()
+	Local cErrorMsg	:= ''
+	
+	Default p_cDe 		:= cFrom
+	Default p_cPara   	:= ''
+	Default p_cCC   	:= ''
+	Default p_cCCO		:= ''
+	Default p_cAssunto	:= ''
+	Default p_cMsg		:= ''
+	Default p_cAnexo	:= ''
+	Default p_lConLe	:= .F.
+	
+  	//Realiza a comunicacao com o servidor de e-mail
+	oMail := TMailManager():New()
+	
+	//Define o envio de e-mail utilizando uma comunicacao segura atraves do SSL
+	oMail:SetUseSSL(lSSL)
+	
+	//Define as configuracoes da classe TMailManager para realizar uma conexao com o servidor de e-mail.
+	oMail:Init( "", cSrvSMTP, cAccount, cPassword, 0, Iif(lSSL,465,587)  )
+	
+	//Seta o Time Out
+	oMail:SetSmtpTimeOut(120)
+	
+	ConOut(cFuncName+":: Conectando no Servidor SMTP")
+	
+	//Realiza a conexao com o SMTP
+	nErro := oMail:SmtpConnect()
+	
+	If nErro <> 0
+		cErrorMsg := cFuncName+":: ERROR:" + oMail:GetErrorString(nErro)
+		ConOut(cErrorMsg)
+		oMail:SMTPDisconnect()
+		lRetorno := .F.
+		Return( lRetorno )
+	EndIf
+	
+	//Passa por parametro a conta e a senha para conexao
+	nErro := oMail:SmtpAuth(cAccount,cPassword)
+	
+	If nErro <> 0
+		cErrorMsg := cFuncName+":: ERROR:" + oMail:GetErrorString(nErro)
+		ConOut(cErrorMsg)
+		oMail:SMTPDisconnect()
+		lRetorno := .F.
+		Return( lRetorno )
+	EndIf
+	
+	//Cria uma nova mensagem de e-mail
+	oMessage := TMailMessage():New()
+	
+	//Limpa o conteudo do objeto
+	oMessage:Clear()
+	
+	//De
+	oMessage:cFrom		:= p_cDe
+	
+	//Para
+	oMessage:cTo   		:= p_cPara
+	
+	//Com Copia
+	oMessage:cCc   		:= p_cCC
+	
+	//Com Copia Oculta
+	oMessage:cBcc		:= p_cCCO
+	
+	//Assunto
+	oMessage:cSubject 	:= p_cAssunto
+	
+	//Corpo (Texto do e-mail)
+	oMessage:cBody    	:= p_cMsg
+	
+	//Define se envia confirmação de leitura
+	oMessage:SetConfirmRead(p_lConLe)
+	
+	//Adiciona um Anexo
+	If .Not. Empty(AllTrim(p_cAnexo))
+		If oMessage:AttachFile( p_cAnexo ) < 0
+			cErrorMsg := "Erro ao anexar o arquivo"
+			Conout( cErrorMsg )
+			lRetorno := .F.
+			Return( lRetorno )
+		EndIf
+	EndIf
+	
+	//Envia o e-mail
+	nErro := oMessage:Send(oMail)
+	
+	If nErro <> 0
+		cErrorMsg := cFuncName+":: ERROR:" + oMail:GetErrorString(nErro)
+		ConOut(cErrorMsg)
+		oMail:SMTPDisconnect()
+		lRetorno := .F.
+		Return( lRetorno )
+	EndIf
+	
+	ConOut(cFuncName+":: E-mail enviado para " + p_cPara)
+	If .Not. Empty(p_cCC)
+		ConOut(cFuncName+":: Com cópia para " + p_cCC)
+	EndIf
+	ConOut(cFuncName+":: Desconectando do SMTP")
+	
+	//Desconecta do servidor SMTP
+	oMail:SMTPDisconnect()
+	
+Return( lRetorno )

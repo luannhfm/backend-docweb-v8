@@ -1,0 +1,412 @@
+#Include 'Protheus.ch'
+#Include 'Topconn.ch'
+#Include 'Tbiconn.ch'
+
+/*/{Protheus.doc} SF06A31X
+Funcao responsavel por realizar manutenção de Cronogramas Contabeis não 
+gerados por inconsistência na Integração SGE x Protheus.
+
+Rotina executada para ajustar cronograma de projetos, problema detectado no 
+final de Maio antes da apropriação contábil.
+
+@type 		User Function
+@author 	Walmir Junior
+@since 		04/06/2019
+@version 	1.0
+@return 	Nil, Nulo
+/*/
+User Function SF06A99X()
+Local _lRet	:= .F.	
+Local _aArea	:= GetArea()
+
+Processa({ |lEnd| _lRet := IMPCNW() }	,"ATUALIZANDO REGISTROS")
+
+If _lRet
+	Alert("Sucesso!")
+EndIf
+
+RestArea( _aArea )
+	
+Return
+
+/** {Protheus.doc} IMPCNW
+Funcao que chama a inclusão de cronograma contábil
+
+@author: 	Walmir Junior
+@since: 	04/06/2019
+@Uso: 		SFIEMT
+*/
+Static Function IMPCNW()
+	
+Local _lRet			:= .F.
+//Períodos não apropriados por erro da integração.
+Local _aPeriod		:= {/*'201809', '201903', '201904', '201905', '201905',*/ '201906'}
+
+For	_nY := 1 To Len(_aPeriod)
+	fInsCrg(_aPeriod[_nY])
+Next _nY
+
+Return _lRet
+
+/** {Protheus.doc} IMPCNW
+Funcao que realiza a inclusão de cronograma por competência.
+
+@author: 	Walmir Junior
+@since: 	04/06/2019
+@Uso: 		SFIEMT
+*/
+Static Function fInsCrg(_pPerd)
+
+Local _cQuery
+Local _cQryNB
+Local _cQryNW
+Local _cQuUpd
+
+Local _cColig
+Local _cRa
+Local _cCtrRM
+Local _cIdPLe
+Local _nRgt
+Local _cMsgAv
+
+Local _nVlAc
+Local _cFilCt
+Local _cRevisa
+Local _cParc
+Local _cComp
+Local _cDtPr
+Local _nVlrP
+Local _cHist
+Local _cCusto
+Local _cItemCt
+Local _cClvl
+Local _cCodPro
+Local _cConta
+Local _cCtrRM
+Local _cProdt
+
+Local _aDadosCNV := {}
+Local _aDadosCNW := {}
+Local _aParcelas := {}
+
+//Datas do período em que será inserido o cronograma acumulado.
+Local _cDtInPer  := '01/08/2019'
+Local _cDtFmPer	 := '31/08/2019'
+ 
+Local _cNumCron
+Local _cNumCtr
+
+Local _nContador := 0
+
+_oCrnPF	:= SF06A14X():New()
+
+//Monta select de busca dos contratos sem cronograma.
+_cQuery := "SELECT "
+_cQuery += "    CNW_V.* "
+_cQuery += "FROM "
+_cQuery += "    RM.ZMD_INT_PRT_CTO_CTB@RMSGE CTB "
+_cQuery += "INNER JOIN "
+_cQuery += "    RM.SCONTRATO@RMSGE CONT ON CONT.CODCOLIGADA = CTB.CODCOLIGADA "
+_cQuery += "                    AND CONT.CODCONTRATO = CTB.CODCONTRATO "
+_cQuery += "INNER JOIN "
+_cQuery += "    RM.SMATRICPL@RMSGE MAP ON MAP.CODCOLIGADA = CONT.CODCOLIGADA "
+_cQuery += "                    AND MAP.RA = CONT.RA "
+_cQuery += "                    AND MAP.IDHABILITACAOFILIAL = CONT.IDHABILITACAOFILIAL "
+_cQuery += "                    AND MAP.IDPERLET = CONT.IDPERLET "
+_cQuery += "INNER JOIN "
+_cQuery += "    RM.STURMA@RMSGE TU ON TU.CODCOLIGADA = MAP.CODCOLIGADA "
+_cQuery += "                AND TU.CODTURMA = MAP.CODTURMA "
+_cQuery += "                AND TU.IDPERLET = MAP.IDPERLET "
+_cQuery += "                AND TU.CODFILIAL = MAP.CODFILIAL "
+_cQuery += "INNER JOIN "
+_cQuery += "    RM.PROT_CNW@RMSGE CNW_V ON CONT.CODCOLIGADA = CNW_V.CODCOLIGADA "
+_cQuery += "                    AND CONT.CODCONTRATO = CNW_V.CODCONTRATO "
+_cQuery += "                    AND NOT EXISTS (  Select 1 From " + RetSqlName("CNW") + " CNW " 
+_cQuery += "                                        Where D_E_L_E_T_ = ' ' AND  "
+_cQuery += "										CNW_V.CNW_FILIAL = CNW.CNW_FILIAL AND "
+_cQuery += "                                        LTRIM(RTRIM(CNW_V.CODCONTRATO)) = LTRIM(RTRIM(CNW.CNW_XCTRRM))) "
+_cQuery += "INNER JOIN "
+_cQuery += "    RM.ZMD_TURMAS_COMPL@RMSGE TU_COMPL ON TU_COMPL.CODCOLIGADA = TU.CODCOLIGADA "
+_cQuery += "                                AND TU_COMPL.CODTURMA = TU.CODTURMA "
+_cQuery += " 				                AND TU_COMPL.IDPERLET = TU.IDPERLET "
+_cQuery += "                                AND TU_COMPL.CODFILIAL = TU.CODFILIAL "
+_cQuery += "                                AND TU_COMPL.TURMA_INI = 1 "
+_cQuery += "WHERE "
+_cQuery += "    SUBSTR(CNW_DTINI, 1, 6) = '"+_pPerd+"' AND " 
+_cQuery += "    CONT.DTCANCELAMENTO IS NULL AND "
+_cQuery += "    CONT.DTASSINATURA IS NOT NULL "
+
+//Executa query
+_cQuery := ChangeQuery(_cQuery)
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+
+//dbUseArea( .T., 'TOPCONN', TcGenQry( ,, _cQuery ), "TRBXNW", .F., .T. )
+TCQUERY _cQuery NEW ALIAS "TRBXNW"
+
+Count to _nRgt
+
+_cMsgAv := "Foram encontratos [" + AllTrim(Str(_nRgt)) + "] registros de contratos para o período ["+_pPerd+"], clique em 'Ok' para INCLUIR os Cronogramas."
+
+TRBXNW->(DBGoTop())
+
+If Aviso("[ATENÇÃO]",_cMsgAv,{"Ok", "Cancelar"}) == 1
+
+	Begin Transaction
+	//Varre rergistros para inclusão de cronograma.
+	While TRBXNW->(!Eof()) 
+		
+		//Obtem dados para consultas
+		_cColig := TRBXNW->(CODCOLIGADA)
+		_cRa	:= AllTrim(TRBXNW->(RA))
+		_cCtrRM := TRBXNW->(CODCONTRATO)
+		_cIdPLe := TRBXNW->(IDPERLET)
+		
+		//Posiciona Contrato
+		DbSelectArea('CN9')
+	    CN9->( DbOrderNickName('CN9RMGCT') ) //CN9_FILIAL+CN9_XCTRRM+CN9_XCOLRM
+		CN9->( DbGotop() )
+		If CN9->( DbSeek(	TRBXNW->(CNW_FILIAL) +  ;
+							PADR(AllTrim(_cCtrRM),TamSX3('CN9_XCTRRM')[1],Space(TamSX3('CN9_XCTRRM')[1])) + ;
+							cValToChar(_cColig)))
+							
+			_cFilCt		:= CN9->CN9_FILIAL				
+			_cNumCtr 	:= CN9->CN9_NUMERO
+			_cRevisa	:= CN9->CN9_REVISA
+			//Recupero a classe de valor do cliente
+			_cClvl := Posicione("SA1", 1, xFilial("SA1") + CN9->CN9_CLIENT + CN9->CN9_LOJACL, "A1_CLVL")
+								
+			//Itens
+			If Select('TMPCNB') > 0
+				DbSelectArea('TMPCNB')
+				TMPCNB->( DbCloseArea() )
+			EndIf
+			
+			//Busca dados da CNB para obter Conta
+			_cQryNB := " SELECT * " 
+			_cQryNB += " FROM RM.PROT_CNB@RMSGE " 
+			_cQryNB += " WHERE	CODCOLIGADA 	=  "+ cValToChar(_cColig)	+ " "
+			_cQryNB += " 		AND RA 			= '"+ _cRa 					+ "' " 
+			_cQryNB += " 		AND CODCONTRATO = '"+ Alltrim(_cCtrRM) 		+ "' "
+			_cQryNB += " 		AND IDPERLET 	=  "+ cValToChar(_cIdPLe)	+ " "
+			
+			DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQryNB),'TMPCNB',.T.,.F.)
+			
+			//Obtem conta
+			If .Not. TMPCNB->( Eof() )
+				While .Not. TMPCNB->(Eof())
+					_cConta 	:= PADR(AllTrim(TMPCNB->(CNB_CONTA)),TamSX3('CT1_CONTA')[1],Space(TamSX3('CT1_CONTA')[1]))
+					TMPCNB->(DbSkip())
+				EndDo			
+			EndIf	
+			
+			_aDadosCNV := {}
+		
+			//Cabeçalho do Cronograma Contábil		
+			aAdd(_aDadosCNV, CN9->CN9_FILIAL)
+			aAdd(_aDadosCNV, CN9->CN9_REVISA)
+			aAdd(_aDadosCNV, Posicione("CNA", 1, CN9->CN9_FILIAL + CN9->CN9_NUMERO + CN9->CN9_REVISA, "CNA_NUMERO"))
+			aAdd(_aDadosCNV, 1			)
+			aAdd(_aDadosCNV, _cConta	)
+			aAdd(_aDadosCNV, '1'		)//1=Mensal;2=Quinzenal;3=Diario
+			aAdd(_aDadosCNV, 30 		)//Dias entre as parcelas
+			
+			//Itens
+			If Select('TMPCNW') > 0
+				DbSelectArea('TMPCNW')
+				TMPCNW->( DbCloseArea() )
+			EndIf
+			
+			//Walmir Junior 04/06/2019 - (Comentário) View com dados compatível com CNW.
+			_cQryNW := " SELECT *												    "				
+			_cQryNW += " FROM RM.PROT_CNW@RMSGE				
+			_cQryNW += " WHERE	CODCOLIGADA 			=  "+ cValToChar(_cColig) 
+			_cQryNW += " AND RA 						= '"+ _cRa +"' 		        " 
+			_cQryNW += " AND CODCONTRATO 				= '"+ Alltrim(_cCtrRM) + "'	"
+			_cQryNW += " AND IDPERLET 					=  "+ cValToChar(_cIdPLe) 
+				
+			DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQryNW),'TMPCNW',.T.,.F.)
+			
+			MemoWrite( "C:\temp\"+FunName()+"_PROTCNW.TXT", _cQryNW )
+				
+			If .Not. TMPCNW->( Eof() )
+		    
+				_nCont 		:= 0
+					
+				While .Not. TMPCNW->( Eof() )
+						
+					_cConta  := PADR(AllTrim(TMPCNW->(CNW_CONTA)) ,TamSX3('CT1_CONTA') [1],Space(TamSX3('CT1_CONTA') [1]))
+					_cCusto	 := PADR(AllTrim(TMPCNW->(CNW_CC))    ,TamSX3('CTT_CUSTO') [1],Space(TamSX3('CTT_CUSTO') [1]))
+					_cItemCt := PADR(AllTrim(TMPCNW->(CNW_ITEMCT)),TamSX3('CTD_ITEM')  [1],Space(TamSX3('CTD_ITEM')  [1]))
+					_cProdt  := PADR(AllTrim(TMPCNW->CNW_XPRODU)  ,TamSX3('B1_XPRDSGE')[1],Space(TamSX3('B1_XPRDSGE')[1]))
+						
+					DbSelectArea('SB1')
+					SB1->(DbOrderNickName("SB1RMGCT"))
+					SB1->(DbGoTop())
+					SB1->(DbSeek(xFilial('SB1') + _cProdt + cValToChar(_cColig)))
+						
+					_cCodPro 	:= SB1->B1_COD
+					
+					SB1->(DbCloseArea())	
+		
+					_aParcelas := STATICCALL(SF06A18X,fCondCont,TMPCNW->CNW_VLTOT,SToD(TMPCNW->CNW_DTINI),SToD(TMPCNW->CNW_DTFIN)) 
+					
+					_nVlAc := 0
+					
+					_aDadosCNW := {}
+					
+					For j := 1 to Len(_aParcelas)
+						
+						//_cDtPr := StoD(cValToChar(Year(_aParcelas[j][1])) + StrZero(Month(_aParcelas[j][1]),2) + StrZero(28,2))
+						_cDtPr := _aParcelas[j][1]
+						_nVlrP := _aParcelas[j][2]
+						_cParc := StrZero(j,TamSX3('CNW_PARCEL')[1])
+						_cComp := StrZero(Month(_cDtPr),2) + '/' + cValToChar(Year(_cDtPr))
+						_cHist := "Parc: "+ _cParc + " - Compt: "+ _cComp
+						
+						If _pPerd == '201809'
+							If j == Len(_aParcelas)
+								aAdd(_aDadosCNW, { 		_cFilCt  ,;
+														_cRevisa ,;
+														_cParc	 ,;
+														'10/2018'	 ,;
+														cToD('30/10/2018'),;
+														_nVlrP + _nVlAc	 ,;
+														"Parc: "+ _cParc + " - Compt: 10/2018"	,;
+														'1' ,; 			//1=Sim;2=Nao
+														_cCusto	 ,;
+														_cItemCt ,;
+														_cClvl	 ,;
+														_cCodPro ,;
+														_cConta  ,;
+														_cCtrRM  })
+							Else
+								_nVlAc := _nVlAc + _nVlrP
+							EndIf
+						Else
+							If _cDtPr >= cToD(_cDtInPer) .Or. j == Len(_aParcelas)
+								aAdd(_aDadosCNW, { 		_cFilCt  ,;
+														_cRevisa ,;
+														_cParc	 ,;
+														Iif(_cDtPr < cToD(_cDtInPer) , StrZero(Month(cToD(_cDtInPer)),2) + '/' + cValToChar(Year(cToD(_cDtInPer))),_cComp)	 ,;
+														Iif(_cDtPr < cToD(_cDtInPer) , cToD(_cDtFmPer),_cDtPr) ,;
+														_nVlrP + _nVlAc	 ,;
+														Iif(_cDtPr < cToD(_cDtInPer) , "Parc: "+ _cParc + " - Compt: " + StrZero(Month(cToD(_cDtInPer)),2) + '/' + cValToChar(Year(cToD(_cDtInPer))),_cHist)	,;
+														'2' ,; 			//1=Sim;2=Nao
+														_cCusto	 ,;
+														_cItemCt ,;
+														_cClvl	 ,;
+														_cCodPro ,;
+														_cConta  ,;
+														_cCtrRM  })
+							Else
+								_nVlAc := _nVlAc + _nVlrP
+							EndIf
+						EndIf
+												
+					Next j
+					
+					TMPCNW->(DbSkip())
+				EndDo
+			EndIf
+			
+			_cNumCron 	:= _oCrnPF:GetNumCNW()
+			
+			DbSelectArea("CNV")
+			DbSetOrder(1)
+			If !CNV->(DbSeek(_cFilCt + _cNumCtr))					
+				If RecLock('CNV', .T.)
+					CNV->CNV_FILIAL := _aDadosCNV[1]
+					CNV->CNV_NUMERO := _cNumCron
+					CNV->CNV_CONTRA := _cNumCtr
+					CNV->CNV_REVISA := _aDadosCNV[2]
+					CNV->CNV_PLANIL := _aDadosCNV[3]
+					CNV->CNV_TXMOED := _aDadosCNV[4]
+					CNV->CNV_CONTA  := _aDadosCNV[5]
+					CNV->CNV_PERIOD := _aDadosCNV[6]	//1=Mensal;2=Quinzenal;3=Diario
+					CNV->CNV_DIAPAR := _aDadosCNV[7]	//Dias entre as parcelas
+					CNV->CNV_XCTBIL := "S"
+					CNV->(MsUnlock())
+				EndIf
+				
+				_nContador++
+				
+				ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'PF - SF06A14X: Gravou Cronograma Contabil - CNV')
+			
+				For _nX := 1 To Len(_aDadosCNW)
+					DbSelectArea("CNW")
+					DbSetOrder(1)
+					If !CNW->(DbSeek(_aDadosCNW[_nX][01] + _cNumCtr + _aDadosCNW[_nX][02] + cValToChar(_cNumCron) + _aDadosCNW[_nX][03]))						
+						
+						If RecLock('CNW', .T.)
+							CNW->CNW_FILIAL := _aDadosCNW[_nX][01]
+							CNW->CNW_CONTRA := _cNumCtr
+							CNW->CNW_REVISA := _aDadosCNW[_nX][02]
+							CNW->CNW_NUMERO := _cNumCron
+							CNW->CNW_PARCEL := _aDadosCNW[_nX][03]
+							CNW->CNW_COMPET := _aDadosCNW[_nX][04]
+							CNW->CNW_DTPREV := _aDadosCNW[_nX][05]
+							CNW->CNW_VLPREV := _aDadosCNW[_nX][06]
+							CNW->CNW_HIST   := _aDadosCNW[_nX][07]
+							CNW->CNW_FLGAPR := _aDadosCNW[_nX][08]
+							CNW->CNW_CC     := _aDadosCNW[_nX][09]
+							CNW->CNW_ITEMCT := _aDadosCNW[_nX][10]
+							CNW->CNW_CLVL   := _aDadosCNW[_nX][11]
+							CNW->CNW_XPRODU := _aDadosCNW[_nX][12]
+							CNW->CNW_XCONTA := _aDadosCNW[_nX][13]
+							CNW->CNW_XCTRRM := _aDadosCNW[_nX][14]
+							CNW->(MsUnlock())
+						EndIf
+					EndIf	
+				Next _nX
+				
+				DbSelectArea('CNA')
+				CNA->(DbSetOrder(1)) //CNA_FILIAL+CNA_CONTRA+CNA_REVISA+CNA_NUMERO
+				CNA->(DbGotop())
+				If CNA->( DbSeek( _cFilCt + _cNumCtr + _cRevisa + _aDadosCNV[3] ) )
+					If RecLock('CNA', .F.) 
+						CNA->CNA_CRONCT := _cNumCron  
+						CNA->(MsUnlock())
+					EndIf
+				EndIf
+					
+				CNA->(DbCloseArea())
+				
+				If _pPerd != '201809'
+					_cQuUpd := " UPDATE RM.ZMD_INT_PRT_CTO_CTB@RMSGE " 
+					_cQuUpd += " SET STS_RM_INC = '1', STS_PROT_INC = '2', RECMODIFIEDON = SYSDATE, RECMODIFIEDBY = 'mestre',"
+					_cQuUpd += " STS_RM_CANC = Null, STS_PROT_CANC = Null " 
+					_cQuUpd += " WHERE	CODCOLIGADA 			=  "+ cValToChar(_cColig) 	+" "
+					_cQuUpd += " AND RA 						= '"+ _cRa 		+"'" 
+					_cQuUpd += " AND CODCONTRATO 				= '"+ Alltrim(_cCtrRM) + "'	"
+					_cQuUpd += " AND IDPERLET 					=  "+ cValToChar(_cIdPLe) 	+" "
+					
+					MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+"_UPD.TXT",_cQuUpd)
+					
+					If TcSqlExec(_cQuUpd) >= 0
+						TcSqlExec("COMMIT")					
+					Endif
+				EndIf 
+			EndIf						
+		EndIf
+		TRBXNW->(DBSkip())
+		
+	EndDo
+	End Transaction
+EndIf 
+
+If _nContador > 0
+	MsgAlert(cValToChar(_nContador) + ' cronogramas foram inseridos.')
+Else
+	MsgAlert('Nenhum registro foi incluído.')
+EndIf
+
+If Select('TMPCNW') > 0
+	DbSelectArea('TMPCNW')
+	TMPCNW->( DbCloseArea() )
+EndIf
+
+If Select("TRBXNW") > 0
+	TRBXNW->(dbCloseArea())
+EndIf
+
+Return

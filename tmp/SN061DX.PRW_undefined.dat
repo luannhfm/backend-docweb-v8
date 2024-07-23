@@ -1,0 +1,480 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"  
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH" 
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<SN061DX>                                                   |
+|Rotina para Ler Arquivo de Retorno da Solicitação de Cartões - BB         |
+| ==> 001 - Banco do Brasil                                                |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<24/04/2014>                                                        |
+|@version<001>                                                             |
+|@return<Nil>,<Nil>                                                        |
+|                                                                          |
+|@parameters<Nil>                                                          |
+|@return<Nil>                                                              |
++--------------------------------------------------------------------------+
+|Uso        |SENAI										     			   |
++-----------+--------------------------------------------------------------+
+*/
+User Function SN061DX()
+Local _cArqRet 		:= ""
+Local _cArLayout	:= ZP1->ZP1_XPRRET					//-- Layout PR RT
+Local _cPathRoot	:= GetNewPar("MV_XRETLIB","\Pronatec\Layouts\PreCad\Retorno")   
+Local _aArqLyt 		:= {} 
+Local _aFilds		:= {}
+Local _nH_Arq		:= 0
+Local _cFileLog		:= ""
+Local _nCtaREG		:= 0 
+Local _nPosH		:= 0
+Local _nPosD		:= 0
+Local _nPosT		:= 0
+Local _bBlock		:= "" 
+Local _cTpReg   	:= "" 
+Local _lHeader		:= .f.
+Local _lDetalhe		:= .f.
+Local _lTrailler	:= .f. 
+Local _lE_Header	:= .f.
+Local _lE_Traill	:= .f.
+Local _lE_Detalh	:= .f.
+Local _cString 		:= ""    
+Local _lRetOK 		:= .t. 
+Local _lCtrNoS		:= .t.   
+Local _cString		:= ""
+Local _nTamTx		:= 0
+Local _nCtaA 		:= 0 
+Private _cNomArqR	:= 	""
+Private _aCabecalh 	:= {}
+Private _aDetalhe 	:= {}
+Private _aTrailler	:= {}
+Private _aColsCab	:= {}
+Private _aColsDet	:= {}
+Private _aColsTra	:= {}
+//-- Identifica o Codigo do Convenio que ser processado.
+Private _cConven	:= ZP1->ZP1_XCONV       
+//+-----------------------------------------------------------------------+
+//| Valida a convenio como BANCO DO BRASIL - Cartões Pre Pago.            |
+//+-----------------------------------------------------------------------+
+If ZP1->ZP1_XSCARD != "S"
+	Aviso(FunName()+"/"+ProcName(),"Convenio Selecionado não gera solicitação de Cartão pré pago - BB!",{"OK"})
+	Return .f.
+Endif 
+If ZP1->ZP1_XSTATU != "A"
+	Aviso(FunName()+"/"+ProcName(),"Convenio NÃO ATIVO!",{"OK"})
+	Return .f.
+Endif 
+//+-----------------------------------------------------------------------+
+//| Validacoes antes da chamada da rotina de geracao do arquivo de Remesa |
+//+-----------------------------------------------------------------------+
+If Alltrim(_cArLayout) == ""
+	Aviso(FunName()+"/"+ProcName(),"Não foi informado neste Convênio o nome do Arquivo de Configuração do Arquivo de Retorno de Solicitação de Cartões BB!",{"OK"})
+	_lRetOK := .f.
+Endif
+If _lRetOK
+	_cArqRet := cGetFile('Arquivo |*.*','Lêr Arquivo',1,'C:\TEMP',.F.,GETF_LOCALHARD)
+	If _cArqRet == ""
+		Aviso(FunName()+"/"+ProcName(),"Nome do Arquivo de Retorno não Foi Informado!",{"OK"})
+		_lRetOK := .f.
+	Endif  
+	//-- *********************************************************************
+	//--    Captura o NONE do Arquivo de RETORNO DE PAGAMENTO 
+	//-- *********************************************************************
+	_cString	:= Alltrim(_cArqRet)
+	_nTamTx		:= Len(_cString)
+	_nCtaA 		:= 0
+	For _nCtaA := _nTamTx to 1 step -1
+		If Substr(_cString,_nCtaA,1) == "\"
+			Exit			
+		Endif
+	Next _nCtaA
+	_cNomArqR	:= 	Substr(_cString,_nCtaA+1,_nTamTx)
+Endif  
+If _lRetOK
+	If !File(_cPathRoot+Alltrim(_cArLayout))
+		Aviso(FunName()+"/"+ProcName(),"Arquivo de Layout: "+_cPathRoot+Alltrim(_cArLayout)+". não foi encontrado!",{"OK"})
+		_lRetOK := .f.
+	EndIf
+EndIf     
+If _lRetOK
+	//+-----------------------------------------------------------------------+
+	//| Carrega o Layout do Arquivo de Retorno                                |
+	//+-----------------------------------------------------------------------+
+	_aArqLyt := u_fCrArqIn(_cPathRoot+Alltrim(_cArLayout))
+	//+-----------------------------------------------------------------------+
+	//| Identifica os Arrays de Header, Detalhe e Trailler                    |
+	//| OBS: Caso venha a existir tipo de arquivos com mais de uma linha por  |
+	//|      tipo; Tratar caso a caso. Deve-se adicionar ao array do tipo e   |
+	//|      tratar na seguencia.                                             |
+	//|      - Inicialmente estamos considerando um de cada tipo.             |
+	//+-----------------------------------------------------------------------+  
+	_nCtaA	:= 0
+	For _nCtaA := 1 To Len(_aArqLyt) 
+		_cLinTP := Substr(_aArqLyt[_nCtaA,1],2,1)
+		Do Case
+			Case _cLinTP == "H"   	//-- Header
+				_aCabecalh 	:= _aArqLyt[_nCtaA,4] 
+				_aCabecalh 	:= u_fAjustSt(_aCabecalh)
+				_lHeader	:= .t.
+			Case _cLinTP == "D"   	//-- Detalhe
+				_aDetalhe 	:= _aArqLyt[_nCtaA,4]
+				_aDetalhe 	:= u_fAjustSt(_aDetalhe)
+				_lDetalhe	:= .t.
+			Case _cLinTP == "T" 	//-- Trailler
+				_aTrailler	:= _aArqLyt[_nCtaA,4]   
+				_aTrailler	:= u_fAjustSt(_aTrailler)
+				_lTrailler	:= .t.
+		Endcase
+	Next _nCtaA    
+	//+-----------------------------------------------------------------------+
+	//| Abre o arquivo de RETORNO com acesso exclusivo                        |
+	//+-----------------------------------------------------------------------+
+	_nH_Arq	:= fOpen(_cArqRet,68) 
+	If _nH_Arq = -1
+		Aviso(FunName()+"/"+ProcName(),"Não foi Possivel Abrir o Arquivo de Retorno!",{"OK"})
+		_lRetOK := .f.
+	EndIf         
+Endif 	 
+//+-----------------------------------------------------------------------+
+//| Trata caso a caso os Layout's da Remessa                              |
+//+-----------------------------------------------------------------------+  
+If _lRetOK .and. Len(_aDetalhe) >= 1
+	//-- Seleciona o Arquivo TXT       
+	FT_FUse(_cArqRet)
+	//-- Manda o Ponteiro para topo 
+	FT_FGOTOP()
+	//-- Conta o Numero de Linhas 	
+	_nTotLIN := FT_FLASTREC()
+	//-- Inicializa o Termometro 	
+	ProcRegua(_nTotLIN)
+	//-- Loop de Leitura  
+	Do While !FT_FEof()
+        //-- Captura a linha a ser lida 
+		_cTexto := Upper(AllTrim(FT_FReadln()))
+		//-- Implementa Termometro
+		_nCtaREG++
+		IncProc("Total de Registros:"+Alltrim(Transform(_nTotLIN,"@E 999,999,999"))+"|  Lidos:"+Alltrim(Transform(_nCtaREG,"@E 999,999,999")))   
+		//-- Regras para definir se a linha e de Cabecalho, Detalhe ou Rodape	
+		_lE_Header := Iif(_lHeader,Iif(_nCtaREG==1,.t.,.f.),.f.)
+		_lE_Traill := Iif(_lTrailler,Iif(_nCtaREG==_nTotLIN,.t.,.f.),.f.)
+		_lE_Detalh := Iif(_lDetalhe,Iif((!_lE_Header .and. !_lE_Traill),.t.,.f.),.f.)
+		do Case
+			Case _lRetOK .and. _lE_Header
+			  	//+-----------------------------------------------------------------------+
+				//| ***** LER CABECALHO "Header"                                          |
+				//+-----------------------------------------------------------------------+
+			 	//--     
+				_aFilds	:= {} 
+				_nCtaA 	:= 0    
+				For _nCtaA := 1 To Len(_aCabecalh)    
+					aadd(_aFilds, Substr(_cTexto,_aCabecalh[_nCtaA,2,4],_aCabecalh[_nCtaA,2,6]))  
+				Next _nCtaA
+				aadd(_aColsCab,_aFilds)  
+				//-- *********************************************************************
+                //--    Considera a ultima linha, caso Header tenha mais de uma linha 
+				//-- *********************************************************************
+				_nPosH		:= Len(_aColsCab)
+				_nPc 		:= aScan(_aCabecalh, {|x| Upper(x[2,2]) == "ZP1_XCONTR" })
+				//-- *********************************************************************
+				//--    Valida o Contrato/Convenio 
+				//-- ********************************************************************* 
+                If _nPc > 0
+					If Val(_aColsCab[_nPosH,_nPc]) != Val(ZP1->ZP1_XCONTR)
+						Aviso(FunName()+"/"+ProcName(),"O Arquivo de retorno não pertence á este Contrato/Convênio!",{"OK"})
+						_lRetOK 	:= .f.
+						_lCtrNoS 	:= .f.
+						Exit
+					Endif  
+				Else
+					Aviso(FunName()+"/"+ProcName(),"O Identificardor do Codigo do Contrato [Contrato] não foi encontrato no [Header] do Arquivo de Retorno de Pagamento! Não é possivel processar o retorno!",{"OK"})
+					_lRetOK 	:= .f.
+					_lCtrNoS 	:= .f.
+					Exit
+				Endif 
+			Case _lRetOK .and. _lE_Detalh
+				//+-----------------------------------------------------------------------+
+				//| ***** LER DETALHE "Detalhe"                                           |
+				//+-----------------------------------------------------------------------+
+			 	//--     
+				_aFilds	:= {} 
+				_nCtaA 	:= 0 
+				For _nCtaA := 1 To Len(_aDetalhe)    
+					aadd(_aFilds, Substr(_cTexto,_aDetalhe[_nCtaA,2,4],_aDetalhe[_nCtaA,2,6]))   
+				Next _nCtaA
+				aadd(_aColsDet,_aFilds)   
+				//-- *********************************************************************
+                //--    Considera a ultima linha, para Tratamento Linha a linha lida
+				//-- *********************************************************************
+				_nPosD	:= Len(_aColsDet)   
+			Case _lRetOK .and. _lE_Traill
+				//+-----------------------------------------------------------------------+
+				//| ***** LER RODAPE "Trailler"                                           |
+				//+-----------------------------------------------------------------------+
+			 	//-- 
+				_aFilds	:= {} 
+				_nCtaA 	:= 0 
+				For _nCtaA := 1 To Len(_aTrailler)    
+					aadd(_aFilds, Substr(_cTexto,_aTrailler[_nCtaA,2,4],_aTrailler[_nCtaA,2,6])) 
+				Next _nCtaA
+				aadd(_aColsTra,_aFilds)    
+				//-- *********************************************************************
+                //--    Considera a ultima linha, caso Traller tenha mais de uma linha 
+				//-- *********************************************************************
+				_nPosT	:= Len(_aColsTra)  
+		Endcase
+		//-- Segue para Proxima Linha 
+		FT_FSkip()
+	EndDo
+	If _lRetOK
+		//-- *********************************************************************
+		//--    Fecha o Arquivo de Retorno que esta sendo lido
+		//-- *********************************************************************
+		fClose(_nH_Arq)   
+		//-- Chamada a Funcao de Gravacao 
+		Processa( {|| u_fLeRetSl() }, "Lendo Arquivo de Retorno", "Processando...")
+	Else
+ 		If _lCtrNoS
+			Aviso(FunName()+"/"+ProcName(),"Não existem registros aptos para retorno!",{"OK"})
+		Endif 
+	Endif 
+Endif 
+Return _lRetOK
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fLeRetSl>                                                  |
+|Rotina que processa as informacoes do retorno da remessa                  |
+|																		   |
+|@Author<Antonio Dantas>                                                   |
+|@since<29/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@Receive                                                                  |
+|<   _cFilial (c) - Codigo da Filial                                       |
+|    _cConven (c) - Codigo do Convenio (Protheus)                          |
+|   _cPeriodo (c) - Codigo do Periodo                                      |
+|       _cSeg (c) - Codigo da Seguencia (Calendario)                       |
+|    _cSessao (c) - Codigo da Sessao                                       |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _lRetOK (l) - (.t.) Se a Geracao do Arquivo foi OK                    |
+|                  (.f.) Por qualquer motivo não gerou arquivo de remesa   |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+User Function fLeRetSl()
+Local _aArea		:= GetArea()     
+Local _nNrRfCart	:= ""
+Local _cOcorrenc	:= ""
+Local _cStatus 		:= ""
+//-- 
+Local _Pid 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "ZP3_XIDCON"}) 	//-- Número do cartão
+Local _Prf 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "ZP3_XNRREF"}) 	//-- Número de referência
+//-- 
+Local _Pcp 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "ZP3_XCPF" }) 	//-- Cpf do Portador
+Local _Pnm 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "ZP3_XNOME"}) 	//-- Nome do Portador
+//-- 
+Local _Pds 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "ZP3_XDTSOL"}) 	//-- Data solicitação cartão
+Local _Pns 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "ZP3_XNRSOL"}) 	//-- Número da solicitação
+Local _Plt 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "ZP3_XNRLOT"}) 	//-- Número do lote
+Local _Pde 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "ZP3_XDTEMI"}) 	//-- Data emissão cartão
+Local _Pdv 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "ZP3_XDTVAL"}) 	//-- Data validade cartão
+Local _PRE 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "ZP3_XRESTR"}) 	//-- Tipo de restrição cartão
+Local _Pda 			:= aScan(_aDetalhe	,{|x| Upper(AllTrim(x[2,2])) == "ZP3_XDTATI"}) 	//-- Data de ativação cartão    
+//-- 
+Local _dXDTSOL 		:= CTOD("  /  /  ")
+Local _dXDTEMI 		:= CTOD("  /  /  ")
+Local _dXDTVAL 		:= CTOD("  /  /  ")
+Local _dXDTATI 		:= CTOD("  /  /  ")
+//--
+Local _nRegs		:= Len(_aColsDet)  
+Local _cPathRoot	:= GetNewPar("MV_XLOGPRO","\Pronatec\Logs\")   
+Local _cFileLog		:= CriaTrab(Nil,.F.)  
+//-- 
+Local _nTotCar		:={	{"Carões Liberados...",0},;
+						{"Carões á Liberar...",0},;
+						{"Carões Bloqueados..",0},; 
+						{"Total de Cartões...",0} } 
+//-- 
+Local _nHdl_log		:= fCreate(_cPathRoot + cFilAnt + "_" + FunName()+"_"+ProcName() + _cFileLog+"_LOG.txt")  
+Local _cTextLOG		:= ""
+Local _cMsgRetur	:= ""
+Local _aTpRetri		:={	{"0000","Sem restrição: liberado para uso" 			},;
+						{"0001","Pendente de Liberação"						},;
+						{"0010","Falsificado" 								},;
+						{"0011","Roubado" 									},;
+						{"0013","Perdido" 									},;
+						{"0015","Extraviado" 								},;
+						{"0030","Destruído" 								},;
+						{"0062","Cancelado a pedido do titular" 			},;
+						{"0084","Destruído pelo portador" 					},;
+						{"0124","Falecido" 									},;
+						{"0125","Cancelamento do Plástico" 					},;
+						{"0143","Bloqueio Automático" 						},;
+						{"0148","Transferência Suspeita"					},;
+						{"0157","Função débito inibida"						},;
+						{"0181","Bloqueio temporário"						},;
+						{"0205","Bloqueio provisório a pedido do cliente" 	},;
+						{"0217","Extraviado endereço"						},;
+						{"0324","Cartão retido no terminal de saque" 		},;
+						{"0325","Bloqueio prov./Retido no term. de saque" 	},;
+						{"0340","Falsificado – Segurança"					} }
+//-- 
+ProcRegua(_nRegs)  
+If Aviso(FunName()+"/"+ProcName(),"Tem certeza que deseja efetivar o processamento de Leitura do Retorno da Solicitação de Cartões BB?", {"Sim","Não"}) == 1
+	//-- *********************************************************************
+	//-- Implementa controle de Transacao.
+	//-- *********************************************************************
+	Begin Transaction           
+		//-- *********************************************************************
+		//--    Monta cabecalho do Lod de Leitura do Arquivo de Pre Cadastro
+		//-- *********************************************************************
+		_cTextLOG := "#RELATORIO DE LOG - RETORNO DE SOLICITAÇÃO DE CARTÕES - BB "+DTOC(date())+" as "+time()+CHR(13)+CHR(10) 
+		_cTextLOG += " Qtde de Regist: "+Alltrim(Transform(_nRegs,"@E 999,999,999"))+CHR(13)+CHR(10)  
+		//-- *********************************************************************
+		//--    Imprime o Cabecalho do Relatorio de LOG 
+		//-- *********************************************************************
+		_cTextLOG +=	PadR("Nr cartão" 	,TamSx3("ZP3_XIDCON")[1])+";"+;
+						PadR("Nr Refer" 	,TamSx3("ZP3_XNRREF")[1])+";"+;
+						PadR("Dt Solic" 	,TamSx3("ZP3_XDTSOL")[1])+";"+;
+						PadR("Nr Solic" 	,TamSx3("ZP3_XNRSOL")[1])+";"+;
+						PadR("Nr lote" 		,TamSx3("ZP3_XNRLOT")[1])+";"+;
+						PadR("Emissão" 		,TamSx3("ZP3_XDTEMI")[1])+";"+;
+						PadR("Validade" 	,TamSx3("ZP3_XDTVAL")[1])+";"+;
+						PadR("Restr" 		,TamSx3("ZP3_XRESTR")[1])+";"+;
+						PadR("Ativação" 	,TamSx3("ZP3_XDTATI")[1])+";"+;
+						PadR("Status" 		,TamSx3("ZP3_XSTATU")[1])+";"+;
+						PadR("Ocorr,"		,40)+CHR(13)+CHR(10)
+		fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+		//-- 
+		dbSelectArea("ZP3")
+		ZP3->(dbSetOrder(6))		//-- Numero de Referencia do Cartão
+		For _nCtaA := 1 To Len(_aColsDet)
+			IncProc("Total de Registros:"+Alltrim(Transform(_nRegs,"@E 999,999,999"))+"|  Lidos:"+Alltrim(Transform(_nCtaA,"@E 999,999,999")))   
+			//+-----------------------------------------------------------------------+
+			//|Definie o Numero de Referencia e a Ocorrencia "Restrição"              |
+			//+-----------------------------------------------------------------------+
+			_cStatus 	:= ""
+			_nNrRfCart	:= _aColsDet[_nCtaA,_Prf] 
+			_cOcorrenc	:= _aColsDet[_nCtaA,_PRE]  
+			//+-----------------------------------------------------------------------+
+			//| Define a Mensagem do Log relativo ao STATUS do CARTÃO.                |
+			//+-----------------------------------------------------------------------+
+			_nPos 		:= aScan(_aTpRetri,{|X| UPPER(AllTrim(X[1]))==_cOcorrenc})
+			_cMsgRetur	:= _aTpRetri[_nPos,2]
+			//+-----------------------------------------------------------------------+
+			//| Define a situação do cartão STATUS de acordo com o retorno do Banco   |
+			//+-----------------------------------------------------------------------+
+			If _cOcorrenc $ "0000#0001"
+				//--  C=Conveniado , P=Em Preparação
+				If _cOcorrenc == "0000"
+					_cStatus := "C"
+					//-- Contabiliza os cartões NOVOS liberados
+				 	_nTotCar[1,2]++      
+				Else
+					_cStatus := "P"
+					//-- Contabiliza os cartões NOVOS bloqueados
+				 	_nTotCar[2,2]++
+				Endif 	
+			Else 
+				//-- X=Extraviado/Roubando ou Perdido 
+			 	_cStatus := "X"
+				//-- Contabiliza os cartões Bloqueados 			 	
+				_nTotCar[3,2]++
+			Endif 
+			//-- 
+			_lFound := (ZP3->(dbSeek(_nNrRfCart)))
+   			ZP3->(RecLock("ZP3",!_lFound))
+			//-- DDMMAAAA  
+			//-- Data solicitação cartão
+			_dXDTSOL := cTOd(Substr(_aColsDet[_nCtaA,_Pds],1,2)+"/"+Substr(_aColsDet[_nCtaA,_Pds],3,2)+"/"+Substr(_aColsDet[_nCtaA,_Pds],7,2))
+			//-- Data emissão cartão
+			_dXDTEMI := cTOd(Substr(_aColsDet[_nCtaA,_Pde],1,2)+"/"+Substr(_aColsDet[_nCtaA,_Pde],3,2)+"/"+Substr(_aColsDet[_nCtaA,_Pde],7,2))
+			//-- Data validade cartão
+			_dXDTVAL := cTOd(Substr(_aColsDet[_nCtaA,_Pdv],1,2)+"/"+Substr(_aColsDet[_nCtaA,_Pdv],3,2)+"/"+Substr(_aColsDet[_nCtaA,_Pdv],7,2))
+			//-- Data de ativação cartão
+			_dXDTATI := cTOd(Substr(_aColsDet[_nCtaA,_Pda],1,2)+"/"+Substr(_aColsDet[_nCtaA,_Pda],3,2)+"/"+Substr(_aColsDet[_nCtaA,_Pda],7,2))
+			//-- 
+			If !_lFound
+				Replace ZP3->ZP3_XIDCON With _aColsDet[_nCtaA,_Pid]		//-- Número do cartão
+				Replace ZP3->ZP3_XNRREF With _aColsDet[_nCtaA,_Prf]		//-- Número de referência  
+				Replace ZP3->ZP3_XCONVE	With _cConven					//-- Convenio
+				//-- 
+				Replace ZP3->ZP3_XDTSOL With _dXDTSOL	   				//-- Data solicitação cartão
+				Replace ZP3->ZP3_XNRSOL With _aColsDet[_nCtaA,_Pns]		//-- Número da solicitação
+				Replace ZP3->ZP3_XNRLOT With _aColsDet[_nCtaA,_Plt]		//-- Número do lote
+				Replace ZP3->ZP3_XDTEMI With _dXDTEMI	   		   		//-- Data emissão cartão
+				Replace ZP3->ZP3_XDTVAL With _dXDTVAL	   		   		//-- Data validade cartão
+				Replace ZP3->ZP3_XDTATI With _dXDTATI					//-- Data de ativação cartão
+				If _cOcorrenc == "0000"	    
+					If Val(Alltrim(_aColsDet[_nCtaA,_Pcp])) > 0					//-- CPF do Portador
+						Replace ZP3->ZP3_XCPF 	With PadR(Alltrim(_aColsDet[_nCtaA,_Pcp]),TamSx3("ZP3_XCPF")[1])	   	//-- CPF do Portador
+						Replace ZP3->ZP3_XNOME 	With Substr(_aColsDet[_nCtaA,_Pnm],1,50)								//-- Nome do Portador
+					Endif 
+				Endif 
+			Endif 
+			Replace ZP3->ZP3_XRESTR With _aColsDet[_nCtaA,_PRE]		//-- Tipo de restrição cartão
+			/* 10-08-15 - Jose Leite - CSI
+				Alteracao realizada a pedido do Guilherme - GETEC
+				Suporte: 163479
+				Quando o cartao estiver extraviado (ZP3_XSTATU == 'X'), nao alterar para o novo status.
+			 */
+			//Inicio
+			If ZP3->ZP3_XSTATU <> 'X'
+				Replace ZP3->ZP3_XSTATU With _cStatus					//-- Status do Cartão
+			EndIf
+			//Fim
+			//+--------------------------------------------------------------------+
+			//| Registra os Cartoes BLOQUEADOS                                     |
+			//+--------------------------------------------------------------------+
+			If _cStatus == "X"
+				_cTextLOG :=	ZP3->ZP3_XIDCON			+";"+;
+								ZP3->ZP3_XNRREF			+";"+;
+								dtoc(ZP3->ZP3_XDTSOL)	+";"+;
+								ZP3->ZP3_XNRSOL			+";"+;
+								ZP3->ZP3_XNRLOT			+";"+;
+								dtoc(ZP3->ZP3_XDTEMI)	+";"+;
+								dtoc(ZP3->ZP3_XDTVAL)	+";"+;
+								ZP3->ZP3_XRESTR			+";"+;
+								dtoc(ZP3->ZP3_XDTATI)	+";"+;
+								ZP3->ZP3_XSTATU			+";"+;
+								_cMsgRetur+CHR(13)+CHR(10)
+				fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+			Endif 
+		Next _nCtaA     
+	End Transaction     
+Endif                 
+//-- Pega o Total de Cartões Lidos
+_nTotCar[4,2] := _nRegs
+//-- 
+_nCtaA := 0
+For _nCtaA := 1 to Len(_nTotCar)
+	_cTextLOG :=	PadR(Space(TamSx3("ZP3_XIDCON")[1])		,TamSx3("ZP3_XIDCON")[1])	+";"+;
+					PadR(_nTotCar[_nCtaA,1]					,TamSx3("ZP3_XNRREF")[1])	+";"+;
+					Alltrim(Transform(_nTotCar[_nCtaA,2],"@E 999,999,999"))			+";"+;
+					PadR(Space(TamSx3("ZP3_XNRSOL")[1])		,TamSx3("ZP3_XNRSOL")[1])	+";"+;
+					PadR(Space(TamSx3("ZP3_XNRLOT")[1])		,TamSx3("ZP3_XNRLOT")[1])	+";"+;
+					PadR(Space(TamSx3("ZP3_XDTEMI")[1])		,TamSx3("ZP3_XDTEMI")[1])	+";"+;
+					PadR(Space(TamSx3("ZP3_XDTVAL")[1])		,TamSx3("ZP3_XDTVAL")[1])	+";"+;
+					PadR(Space(TamSx3("ZP3_XRESTR")[1])		,TamSx3("ZP3_XRESTR")[1])	+";"+;
+					PadR(Space(TamSx3("ZP3_XDTATI")[1])		,TamSx3("ZP3_XDTATI")[1])	+";"+;
+					PadR(Space(TamSx3("ZP3_XSTATU")[1])		,TamSx3("ZP3_XSTATU")[1])	+";"+;
+					PadR(Space(40)							,40)+CHR(13)+CHR(10)
+	fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+Next _nCtaA
+//-- ****************************************************************
+//--    Fecha o Arquivo de Log
+//-- ****************************************************************
+fClose(_nHdl_Log) 
+If Aviso(FunName()+"/"+ProcName(),"Leitura encerrada. Deseja imprimir o arquivo de Log ["+_cFileLog+"_LOG.txt] neste momento?", {"Sim","Não"}) == 1
+	u_SN069BX(_cPathRoot + cFilAnt + "_" + FunName()+"_"+ProcName() + _cFileLog+"_LOG.txt")
+Endif    
+RestArea(_aArea)
+Return Nil

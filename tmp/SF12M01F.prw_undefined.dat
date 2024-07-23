@@ -1,0 +1,183 @@
+#Include 'protheus.ch'
+
+User Function SF12M01F()
+Local aButtons	:= {}
+Local aLinhas	:= {}
+Local aCampos	:= {}
+Local aSays		:= {}
+Local cArq 		:= ""
+Local nOpc 		:= 0
+
+	AADD(aSays, 'Este programa tem como objetivo importar dados para o contas a receber.') 
+	AADD(aSays, 'Deverá ser utilizado para importar titulos para o Sesi Park.') 
+
+	AADD(aButtons, { 1,.T.,{|| nOpc:= 1, FechaBatch() } } ) 
+	AADD(aButtons, { 2,.T.,{|| FechaBatch() } } )  
+	
+	FormBatch( 'Importação de contas a receber - SesiPark', aSays, aButtons, , 220, 560 )
+	
+	If nOpc == 1
+		cArq := cGetFile("*.csv|*.csv","Texto (CSV)", 1, "C:\", .f., GETF_LOCALHARD, .f.)
+		If !Empty(cArq)
+			Processa( {|| fLeArq(cArq, aLinhas, aCampos) }, "Aguarde...", "Lendo arquivo...", .F.)
+			Processa( {|| fImpTit(aLinhas, aCampos) }, "Aguarde...", "Lendo arquivo...", .F.)
+		Else
+			MsgStop("Não foi possivel localizar o arquivo!","[" + FunName() + "/" + ProcName() + "]")
+		EndIf
+	EndIf
+
+Return Nil
+
+Static Function fLeArq(cArq, aLinhas, aCampos)
+Local cAlias	:= "SE1"
+Local lCont		:= .T.
+Local lPrim		:= .T.
+Local nTotLin	:= 0
+Local nX		:= 0
+Local nY		:= 0
+	
+	FT_FUSE(cArq)
+	FT_FGOTOP()
+	
+	nTotLin := FT_FLastRec()
+	
+	ProcRegua(nTotLin)
+	
+	While !FT_FEOF() .and. lCont
+	    nX++
+	    cLinha := FT_FREADLN()
+	    IncProc(Str(nX) + ' de ' + Str(nTotLin) + ' linhas lidas')
+	    Aadd( aLinhas, Separa(cLinha, ";", .T.) )
+	    FT_FSKIP()
+	EndDo
+
+Return Nil
+
+Static Function fImpTit(aLinhas, aCampos)
+Local aVetSE1	:= {}
+Local cCCC     	:= GetNewPar("MV_XCCCPRQ","1301090103"   )
+Local cItemC  	:= GetNewPar("MV_XITEMPQ","1730403011603")
+Local cNaturez	:= GetNewPar("MV_XNATVDI","1300000024"   )
+Local cConCRed	:= GetNewPar("MV_XCONCRE","41010408002"  )
+Local cPrefixo	:= "MAN"
+Local cNumero	:= ""
+Local cTipo		:= ""
+Local cParcela	:= ""
+Local cCliente	:= ""
+Local cLoja		:= ""
+Local cNomCli	:= ""
+Local nTotLin 	:= 0
+Local nX		:= 0
+Local nValor	:= 0
+Local nTaxaFin	:= 0
+Local nDiasVen	:= 0
+	
+	ProcRegua( Len(aLinhas) )
+	
+	For nX := 2 To Len(aLinhas)
+		If AllTrim(aLinhas[nX][2]) <> "Dinheiro"
+			IncProc(Str(nX) + ' de ' + Str(nTotLin) + ' títulos lidos')
+			
+			//Prepara o array para o execauto
+			aVetSE1 := {}
+			//Trato informações inseridas na planilha
+			dEmissao := CtoD( Alltrim(aLinhas[nX][1]) )
+			cTipo	 := PadR( Iif(AllTrim(aLinhas[nX][2]) == "Débito", "CD", "CC"), TamSX3("E1_TIPO")[1] )
+			
+			//Cliente definido conforme bandeira
+			If AllTrim(aLinhas[nX][3]) == "Visa"
+				If AllTrim(cTipo) == "CC"
+					cCliente := PadR( "001", TamSX3("E1_CLIENTE")[1] )
+				Else
+					cCliente := PadR( "002", TamSX3("E1_CLIENTE")[1] )
+				EndIf
+			ElseIf AllTrim(aLinhas[nX][3]) == "Master"
+				If AllTrim(cTipo) == "CC"
+					cCliente := PadR( "003", TamSX3("E1_CLIENTE")[1] )
+				Else
+					cCliente := PadR( "004", TamSX3("E1_CLIENTE")[1] )
+				EndIf
+			ElseIf AllTrim(aLinhas[nX][3]) == "Elo"
+				If AllTrim(cTipo) == "CC"
+					cCliente := PadR( "005", TamSX3("E1_CLIENTE")[1] )
+				Else
+					cCliente := PadR( "006", TamSX3("E1_CLIENTE")[1] )
+				EndIf
+			ElseIf AllTrim(aLinhas[nX][3]) == "Amex"
+				cCliente := PadR( "007", TamSX3("E1_CLIENTE")[1] )
+			EndIf
+			
+			cLoja	 := PadR( "01", TamSX3("E1_LOJA")[1] )
+			cNomCli	 := Posicione("SA1", 1, xFilial("SA1") + cCliente + cLoja, "A1_NREDUZ")
+			cNumCart := PadR( AllTrim(aLinhas[nX][4]), TamSX3("E1_XDGCART")[1] )
+			nTaxaFin := Posicione("SAE", 1, xFilial("SAE") + PadR( cCliente, TamSX3("AE_COD")[1] ), "AE_TAXA")
+			nDiasVen := Posicione("SAE", 1, xFilial("SAE") + PadR( cCliente, TamSX3("AE_COD")[1] ), "AE_DIAS")
+			
+			//Valor informado menos a taxa financeira
+			nValor := Val(AllTrim(aLinhas[nX][5]))
+			nValor := nValor - (nValor * nTaxaFin/100)
+			
+			//Vencimento
+			dVencto := dEmissao + nDiasVen
+			
+			//Número do título
+			cNumero := fGetNum()
+			
+			aAdd(aVetSE1, {"E1_FILIAL",  FWxFilial("SE1"), 		Nil})
+			aAdd(aVetSE1, {"E1_PREFIXO", cPrefixo,         		Nil})
+			aAdd(aVetSE1, {"E1_NUM",     cNumero,          		Nil})
+			aAdd(aVetSE1, {"E1_PARCELA", cParcela,         		Nil})
+			aAdd(aVetSE1, {"E1_TIPO",    cTipo,            		Nil})
+			aAdd(aVetSE1, {"E1_CLIENTE", cCliente,         		Nil})
+			aAdd(aVetSE1, {"E1_LOJA",    cLoja,            		Nil})
+			aAdd(aVetSE1, {"E1_NOMCLI",  cNomCli,          		Nil})
+			aAdd(aVetSE1, {"E1_EMISSAO", dEmissao,         		Nil})
+			aAdd(aVetSE1, {"E1_VALOR",   nValor,           		Nil})
+			aAdd(aVetSE1, {"E1_VENCTO",  dVencto,          		Nil})
+			aAdd(aVetSE1, {"E1_VENCREA", DataValida(dVencto),	Nil})
+			aAdd(aVetSE1, {"E1_MOEDA",   1,                		Nil})
+			aAdd(aVetSE1, {"E1_NATUREZ", cNaturez,      		Nil})
+			aAdd(aVetSE1, {"E1_CCC",     cCCC,             		Nil})
+			aAdd(aVetSE1, {"E1_ITEMC",   cItemC,           		Nil})
+			aAdd(aVetSE1, {"E1_CREDIT",  cConCRed,         		Nil})
+			aAdd(aVetSE1, {"E1_XDGCART", cNumCart,         		Nil})
+			
+			//Inicia o controle de transação
+			Begin Transaction
+			    //Chama a rotina automática
+			    lMsErroAuto := .F.
+			    MSExecAuto({|x,y| FINA040(x,y)}, aVetSE1, 3)
+			     
+			    //Se houve erro, mostra o erro ao usuário e desarma a transação
+			    If lMsErroAuto
+			        MostraErro()
+			        DisarmTransaction()
+			    EndIf
+			//Finaliza a transação
+			End Transaction
+		EndIf
+	Next nX
+
+Return Nil
+
+Static Function fGetNum()
+Local cAliasSE1	:= GetNextAlias()
+
+	BeginSql alias cAliasSE1
+		SELECT
+		    MAX(SE1.E1_NUM) AS E1_NUM
+		FROM
+		    %table:SE1% SE1
+		WHERE
+		    SE1.%notDel%
+		    AND SE1.E1_FILIAL = '02MT0012'
+		    AND SE1.E1_PREFIXO = 'MAN'
+	EndSql
+	
+	If !(cAliasSE1)->( EoF() )
+		cNumero := Soma1( AllTrim((cAliasSE1)->E1_NUM) )
+	EndIf
+
+	(cAliasSE1)->( DbCloseArea() )
+
+Return cNumero

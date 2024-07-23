@@ -1,0 +1,304 @@
+#INCLUDE 'PROTHEUS.CH'
+
+
+/*/{Protheus.doc} UPDSX7
+@description Abstração do dicionario SX6
+
+@author	Fernando Alencar
+@since	11/11/2011
+
+@obs @method {create} 	cria um novo objeto
+	 @method {add} 	 	adiciona um indice
+	 @method {s}		seta os atributos do indice
+	 @method {remove} 	remove um indice se existir
+	 @method {confirm}	comita os indices adicionados
+	 @method {setlog}	seta o objeto responsavel pelo log
+/*/
+CLASS UPDSX7
+
+	DATA STRUCT
+	DATA MODEL
+	DATA MODELS //ACUMULA OS MODELOS ATÉ O CONFIRMA
+	DATA OLOG
+
+	METHOD CREATE() CONSTRUCTOR
+	METHOD ADD()
+	METHOD S()
+	METHOD REMOVE()
+	METHOD CONFIRM()
+	METHOD SETLOG()
+	METHOD POSICIONA()
+	METHOD PROXSEQ()
+    METHOD SETSX3()
+
+ENDCLASS
+
+
+/*/{Protheus.doc} CREATE
+@description Metodo construtor da Classe UPDSX7
+
+@author	Fernando Alencar
+@since	11/11/2011
+@version 1.0
+
+/*/
+METHOD CREATE() CLASS UPDSX7
+
+	::STRUCT := { 'CAMPO' , 'SEQUENC' , 'REGRA', 'CDOMIN', 'TIPO'  , ;
+				  'SEEK', 'ALIAS', 'ORDEM'   , 'CHAVE','CONDIC', 'PROPRI' }
+					
+	::MODELS := {}
+
+	IF TYPE("OLOG") != "U"
+		::OLOG 	 := OLOG
+	ELSE
+		::OLOG 	 := UPDLOG():CREATE()
+	ENDIF
+
+RETURN SELF
+
+
+/*/{Protheus.doc} ADD
+@description Adiciona Gatilho
+
+@author	 Fernando Alencar
+@since	 20/10/2011
+@version 1.0
+
+/*/
+METHOD ADD(CCAMPO, CSEQUENC, CREGRA, CDOMIN, CALIAS, NORDEM, CCHAVE, CCONDIC) CLASS UPDSX7
+
+	DEFAULT CCONDIC := ""
+	DEFAULT CALIAS  := NIL
+
+	::MODEL := 	{ ''  ,;//CAMPO
+				  ''  ,;//SEQUENC
+				  ''  ,;//REGRA
+				  ''  ,;//CDOMIN
+				  'P' ,;//TIPO
+				  'N' ,;//SEEK
+				  ''  ,;//ALIAS
+				  0	  ,;//ORDEM
+				  ''  ,;//CHAVE
+				  ''  ,;//CONDIC
+				  'U' };//PROPRI
+
+	AADD(::MODELS, ::MODEL) //REGISTRA O MODELO NA LISTA DE MODELOS
+
+	SELF:S('CAMPO'	, CCAMPO)
+	SELF:S('SEQUENC', CSEQUENC)
+	SELF:S('REGRA'	, CREGRA)
+	SELF:S('CDOMIN'	, CDOMIN)
+	SELF:S('CONDIC'	, CCONDIC)
+
+	IF CALIAS != NIL
+		SELF:POSICIONA(CALIAS, NORDEM, CCHAVE)
+	ENDIF
+
+RETURN SELF
+
+
+/*/{Protheus.doc} S
+@description Define valor do Atributo do Gatilho
+
+@author	 Fernando Alencar
+@since	 20/10/2011
+@version 1.0
+
+/*/
+METHOD S(ATTR, VALOR) CLASS UPDSX7
+
+	LOCAL nI := ASCAN(::STRUCT, ATTR)
+
+	IF nI = 0
+		::OLOG:LOG("ATENCAO: Não foi possível configurar o atributo: "+ATTR+"!")
+	ELSE
+		::MODEL[nI] := VALOR
+	ENDIF
+
+RETURN SELF
+
+
+/*/{Protheus.doc} CONFIRM
+@description Confirma Gravação do Gatilho
+
+@author	 Fernando Alencar
+@since	 20/10/2011
+@version 1.0
+
+/*/
+METHOD CONFIRM() CLASS UPDSX7
+
+	LOCAL nI
+
+	::OLOG:LOG("Os seguintes gatilhos foram adicionados ao dicionário SX7")
+
+	DBSELECTAREA("SX7")
+	SX7->(DBSETORDER(1))
+
+	FOR nI := 1 TO LEN(::MODELS)
+
+		::OLOG:LOG(" GATILHO [CAMPO:" + ::MODELS[nI][01] + ", SEQ:" + ::MODELS[nI][02] + "]")
+		
+		::REMOVE(PADR(::MODELS[nI][01],10), PADR(::MODELS[nI][04],10))
+		
+		SX7->(dbGoTop())
+		IIf(SX7->(dbSeek(PADR(::MODELS[nI][01],10)+PADR(::MODELS[nI][02],3))), SX7->(RLock()), SX7->(dbAppend()))
+		SX7->X7_CAMPO  		:= ::MODELS[nI][01]
+		SX7->X7_SEQUENC    	:= ::MODELS[nI][02]
+		SX7->X7_REGRA     	:= ::MODELS[nI][03]
+		SX7->X7_CDOMIN 		:= ::MODELS[nI][04]
+		SX7->X7_TIPO		:= ::MODELS[nI][05]
+		SX7->X7_SEEK		:= ::MODELS[nI][06]
+		SX7->X7_ALIAS    	:= ::MODELS[nI][07]
+		SX7->X7_ORDEM		:= ::MODELS[nI][08]
+		SX7->X7_CHAVE  		:= ::MODELS[nI][09]
+		SX7->X7_CONDIC  	:= ::MODELS[nI][10]
+		SX7->X7_PROPRI  	:= ::MODELS[nI][11]
+		SX7->(DBUNLOCK())
+
+        SELF:SETSX3(PADR(::MODELS[nI][01],10))
+
+        DBSELECTAREA("SX7")
+	NEXT
+
+	::OLOG:LINE()
+
+	::MODELS := {}
+
+RETURN SELF
+
+
+/*/{Protheus.doc} POSICIONA
+@description Define Regra de Posicionamento ao Gatilho
+
+@author	 Fernando Alencar
+@since	 20/11/2011
+@version 1.0
+
+/*/
+METHOD POSICIONA(CALIAS, NORDEM, CCHAVE) CLASS UPDSX7
+
+	SELF:S('SEEK'	, 'S')
+	SELF:S('ALIAS'	, CALIAS)
+	SELF:S('ORDEM'	, NORDEM)
+	SELF:S('CHAVE'	, CCHAVE)
+
+RETURN SELF
+
+
+/*/{Protheus.doc} PROXSEQ
+@description Obtem a proxima ordem disponivel para a criação de um gatilho
+
+@author	 Fernando Alencar
+@since	 20/11/2011
+@version 1.0
+
+/*/
+METHOD PROXSEQ(CCAMPO, CDOMINIO) CLASS UPDSX7
+
+	LOCAL CSEQUENCIA := "000"
+	
+	DEFAULT CCAMPO   := ""
+	DEFAULT CDOMINIO := ""
+	
+	DBSELECTAREA("SX7")
+	SX7->(DBSETORDER(1))
+	SX7->(DBGOTOP())
+	IF SX7->(DBSEEK(PADR(CCAMPO, 10)))
+		WHILE !SX7->(EOF()) .AND. ALLTRIM(SX7->X7_CAMPO) == ALLTRIM(CCAMPO)
+			IF ALLTRIM(SX7->X7_CDOMIN) == ALLTRIM(CDOMINIO)
+				CSEQUENCIA := SX7->X7_SEQUENC
+				EXIT
+			ELSE
+				CSEQUENCIA := SOMA1(X7_SEQUENC)
+			ENDIF
+			SX7->(DBSKIP())
+		ENDDO
+	ELSE
+		IF EMPTY(ALLTRIM(CCAMPO))	
+			WHILE !SX7->(EOF())
+				CSEQUENCIA := SOMA1(CSEQUENCIA)
+		
+				SX7->(DBSKIP())
+			ENDDO
+		ELSE
+			CSEQUENCIA := SOMA1(CSEQUENCIA)
+		ENDIF
+	ENDIF
+	
+	DBCLOSEAREA("SX7")
+
+RETURN CSEQUENCIA
+
+
+/*/{Protheus.doc} SETSX3
+@description Define o campo Trigger com Valor 'S' referente ao gatilho na tabela SX3
+
+@author	 Fernando Alencar
+@since	 08/07/2012
+@version 1.0
+
+/*/
+METHOD SETSX3(pField) CLASS UPDSX7
+
+    DBSELECTAREA("SX3")
+    SX3->(DBSETORDER(2))
+    SX3->(DbGoTop())
+    If SX3->(DBSeek(PADR(pField,10)))
+        SX3->(RLock())
+           X3_TRIGGER := 'S'
+        SX3->(DBUNLOCK())
+    EndIf
+    SX3->(DbCloseArea())
+
+RETURN
+
+
+/*/{Protheus.doc} REMOVE
+@description Metodo que remove um gatilho no dicionario.
+
+@author  Geanderson Silva
+@since   22/10/2014
+@version 1.0
+
+@param CCAMPO, caracter, Campo que ira disparar o gatilho.
+@param CDOMINIO, caracter, Campo que recebera o reultado do retorno do gatilho.
+
+/*/
+METHOD REMOVE( CCAMPO, CDOMINIO ) CLASS UPDSX7
+
+	LOCAL LACHOU 	 := .F.	
+	LOCAL CSEQUENCIA := "000"
+	
+	DEFAULT CCAMPO   := ""
+	DEFAULT CDOMINIO := ""
+
+	DBSELECTAREA("SX7")
+	SX7->(DBSETORDER(1))
+	SX7->(DBGOTOP())
+	IF SX7->(DBSEEK(PADR(CCAMPO, 10)))
+		WHILE !SX7->(EOF()) .and. ALLTRIM(SX7->X7_CAMPO) == ALLTRIM(CCAMPO)
+			IF ALLTRIM(SX7->X7_CDOMIN) == ALLTRIM(CDOMINIO)
+				CSEQUENCIA := X7_SEQUENC
+				LACHOU := .T.	
+				EXIT						
+			ENDIF
+			SX7->(DBSKIP())
+		ENDDO
+	
+		SX7->( DBGOTOP() )
+		IF SX7->(DBSEEK( PADR(CCAMPO, 10) + CSEQUENCIA )) .and. LACHOU
+			
+			IF SX7->(RLOCK())
+			
+				SX7->(DBDELETE())
+				SX7->(MSUNLOCK())
+				
+			ENDIF
+				
+		ENDIF
+		
+	ENDIF
+
+RETURN

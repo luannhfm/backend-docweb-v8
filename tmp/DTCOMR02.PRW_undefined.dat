@@ -1,0 +1,204 @@
+#INCLUDE "PROTHEUS.CH"
+
+User Function DTCOMR02()
+
+/*/f/
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+<Descricao> :  Função responsável pela encapsulamento da impressao do relatorio de solicitacao de compras.
+<Autor> : Antonio Cordeiro Moura.
+<Data> : 12/05/2014
+<Parametros> :
+<Retorno> : T/F
+<Processo> : FIEMT – Relação de solicitação de compras.
+<Tipo> Menu
+<Obs> :
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+*/
+
+Local _aArea  :=GETAREA()
+Local _aAreaSC:=SC1->(GETAREA())
+Local _cMens   :="" 
+
+Pergunte("MTR100",.F.)
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Verifica as perguntas selecionadas                           ³
+//³mv_par01             // a partir do numero                    ³
+//³mv_par02             // ate o numero                          ³
+//³mv_par03 // Todas/em Aberto/Canceladas/nao entregues/Pendentes³
+//³mv_par04             // Data emissao inicial                  ³
+//³mv_par05             // Data emissao final                    ³
+//³mv_par06             // Mostra Pedido Compra p/ cotacoes      ³
+//³mv_par07             // Impr. SC's Firmes, Previstas ou Ambas |
+//|mv_par08				// Considera solicitacoes de importacao  |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+
+//Ajusta X1 profile do usuario.
+
+IF isInCallStack("MATA150")  // Chamada do analisa cotação posiciona soicitação de compras
+	SC1->(DBSETORDER(1))
+	IF !SC1->(DBSEEK(XFILIAL('SC1')+SC8->C8_NUMSC))
+      _cMens+= 'Solicitação de compra: '+SC8->C8_NUMSC+ 'Nao  localizada !!!'
+   Endif
+Endif
+
+IF Empty(_cMens)
+	_sGrupo:=PadR("MTR100",Len(SX1->X1_GRUPO))
+	Gravasx1(_sGrupo, '01', SC1->C1_NUM)
+	Gravasx1(_sGrupo, '02', SC1->C1_NUM)
+   Gravasx1(_sGrupo, '03', 1)
+  	Gravasx1(_sGrupo, '04', CTOD('01/01/2010'))
+	Gravasx1(_sGrupo, '05', DDATABASE)
+	MATR100()
+ENDIF
+
+RestArea(_aArea)  
+RestARea(_aAreaSC)
+
+Pergunte("MTA150",.F.)
+
+
+Return()
+
+
+
+
+
+// Parametros:
+// 1 - Grupo de perguntas a atualizar
+// 2 - Codigo (ordem) da pergunta
+// 3 - Dado a ser gravado
+Static function GravaSX1 (_sGrupo, _sPerg, _xValor)
+local _aAreaAnt := getarea ()
+local _sUserName := ""
+local _sMemoProf := ""
+local _nTamanho := 0
+local _nLinha    := 0
+local _aLinhas   := {}
+local _lContinua := .T.
+
+// Na versao Protheus10 o tamanho das perguntas aumentou.
+_sGrupo = padr (_sGrupo, len (sx1 -> x1_grupo), " ")
+
+if _lContinua
+	if ! sx1 -> (dbseek (_sGrupo + _sPerg, .F.))
+		msgalert ("Programa " + procname () + ": grupo/pergunta '" + _sGrupo + "/" + _sPerg + "' nao encontrado no arquivo SX1." + _PCham ())
+		_lContinua = .F.
+	endif
+endif
+
+if _lContinua
+	// Atualizarei sempre no SX1. Depois vou ver se tem profile de usuario.
+	do case
+		case sx1 -> x1_gsc == "C"
+			reclock ("SX1", .F.)
+			sx1 -> x1_presel = val (cvaltochar (_xValor))
+			sx1 -> x1_cnt01 = ""
+			sx1 -> (msunlock ())
+		case sx1 -> x1_gsc == "G"
+			if valtype (_xValor) != sx1 -> x1_tipo
+				msgalert ("Programa " + procname () + ": incompatibilidade de tipos: o parametro '" + _sPerg + "' do grupo de perguntas '" + _sGrupo + "' eh do tipo '" + sx1 -> x1_tipo + "', mas o valor recebido eh do tipo '" + valtype (_xValor) + "'." + _PCham ())
+				_lContinua = .F.
+			else
+				reclock ("SX1", .F.)
+				sx1 -> x1_presel = 0
+				if sx1 -> x1_tipo == "D"
+					sx1 -> x1_cnt01 = "'" + dtoc (_xValor) + "'"
+				elseif sx1 -> x1_tipo == "N"
+					sx1 -> x1_cnt01 = str (_xValor, sx1 -> x1_tamanho, sx1 -> x1_decimal)
+				elseif sx1 -> x1_tipo == "C"
+					sx1 -> x1_cnt01 = _xValor
+				endif
+				sx1 -> (msunlock ())
+			endif
+		otherwise
+			msgalert ("Programa " + procname () + ": tratamento para X1_GSC = '" + sx1 -> x1_gsc + "' ainda nao implementado." + _PCham ())
+			_lContinua = .F.
+	endcase
+endif
+
+if _lContinua
+	
+	// Antes da versao 8.11 nao havia profile de usuario (para o P10 ainda nao testei).
+	//if "MP8.11" $ cVersao .and. type ("__cUserId") == "C" .and. ! empty (__cUserId)
+	if type ("__cUserId") == "C" .and. ! empty (__cUserId)
+		psworder (1) // Ordena arquivo de senhas por ID do usuario
+		PswSeek(__cUserID) // Pesquisa usuario corrente
+		_sUserName := PswRet(1) [1, 2]
+		
+		// Encontra e atualiza profile deste usuario para a rotina / pergunta atual.
+		// Enquanto o usuario nao alterar nenhuma pergunta, ficarah usando do SX1 e
+		// seu profile nao serah criado.
+
+       _cChave:='01'+Substr(_sUserName,1,13)
+
+		If FindProfDef (_cChave, _sGrupo, "PERGUNTE", "MV_PAR")
+			
+			// Carrega memo com o profile do usuario (o profile fica gravado
+			// em um campo memo)
+			_sMemoProf := RetProfDef (_cChave, _sGrupo, "PERGUNTE", "MV_PAR")
+			
+			// Monta array com as linhas do memo (tem uma pergunta por linha)
+			_aLinhas = {}
+			for _nLinha = 1 to MLCount (_sMemoProf)
+				aadd (_aLinhas, alltrim (MemoLine (_sMemoProf,, _nLinha)) + chr (13) + chr (10))
+			next
+			
+			// Monta uma linha com o novo conteudo do parametro atual.
+			// Pos 1 = tipo (numerico/data/caracter...)
+			// Pos 2 = '#'
+			// Pos 3 = GSC
+			// Pos 4 = '#'
+			// Pos 5 em diante = conteudo.
+			_sLinha = sx1 -> x1_tipo + "#" + sx1 -> x1_gsc + "#" + iif (sx1 -> x1_gsc == "C", cValToChar (sx1 -> x1_presel), sx1 -> x1_cnt01) + chr (13) + chr (10)
+			
+			// Se foi passada uma pergunta que nao consta no profile, deve tratar-se
+			// de uma pergunta nova, pois jah encontrei-a no SX1. Entao vou criar uma
+			// linha para ela na array. Senao, basta regravar na array.
+			if val(_sPerg) > len (_aLinhas)
+				aadd (_aLinhas, _sLinha)
+			else
+				// Grava a linha de volta na array de linhas
+				_aLinhas [val (_sPerg)] = _sLinha
+			endif
+			
+			// Remonta memo para gravar no profile
+			_sMemoProf = ""
+			for _nLinha = 1 to len (_aLinhas)
+				_sMemoProf += _aLinhas [_nLinha]
+			next
+			
+			// Grava o memo no profile
+			WriteProfDef(_cChave, _sGrupo, "PERGUNTE", "MV_PAR", ; // Chave antiga
+			_cChave, _sGrupo, "PERGUNTE", "MV_PAR", ; // Chave nova
+			_sMemoProf) // Novo conteudo do memo.
+		endif
+	endif
+endif
+
+restarea (_aAreaAnt)
+return .T.
+
+
+
+// --------------------------------------------------------------------------
+static Function _PCham ()
+local _i      := 0
+local _sPilha := chr (13) + chr (10) + chr (13) + chr (10) + "Pilha de chamadas:"
+do while procname (_i) != ""
+	_sPilha += chr (13) + chr (10) + procname (_i)
+	_i++
+enddo
+return _sPilha
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,337 @@
+#include 'totvs.ch'
+
+/*/{Protheus.doc} SF06A26X
+long_description
+@type class
+@author Walmir Junior
+@since 20/12/2018
+/*/
+CLASS SF06A26X
+
+	METHOD New() CONSTRUCTOR
+	METHOD GRVOCORR()
+	METHOD EXCOCORR()
+
+ENDCLASS
+
+
+/*/{Protheus.doc} NEW
+long_description
+@type method
+@author Walmir Junior
+@since 20/12/2018
+/*/
+METHOD New() CLASS SF06A26X
+
+Return(SELF)
+
+/*/{Protheus.doc} GRVOCORR
+(long_description)
+@type method
+@author Walmir Junior
+@since 20/12/2018
+@version 1.0
+@param p_cColig, character, (Descri��o do par�metro)
+@param p_cRa, character, (Descri��o do par�metro)
+@param p_cCtrRM, character, (Descri��o do par�metro)
+@param p_cIdPLe, character, (Descri��o do par�metro)
+@param p_cMsg, character, (Descri��o do par�metro)
+@param p_cTp, character, (Descri��o do par�metro)
+@param p_cErr, character, (Descri��o do par�metro)
+p_cTp	:=	'FIN' - Informa��o Originada da Integra��o Financeira - IMPFINRM.
+			'CTB' - Informa��o Originada da Integra��o Cont�bil - IMPGCTRM (U_IMPCRCTB).
+			'CTR' - Informa��o Originada da Integra��o do Contrato - IMPGCTRM.
+
+p_cErr	:=	'1' Erro Protheus Padr�o (Ex. Rotina Autom�tica).
+			'2' Erro Previsto no Processo da Integra��o (Ex. ainda n�o existe registro na view, depende de processo no SGE).
+/*/
+
+METHOD GRVOCORR(p_cColig,p_cRa,p_cCtrRM,p_cIdPLe,p_cMsg,p_cTp,p_cErr, p_nOcr, p_nParc) CLASS SF06A26X
+
+	Local _cQuery 	:= ''
+	Local _nStatus 	:= 0
+	Local _cChvRM	:= 'Colig: ' + p_cColig + ' / RA: '+ p_cRa + ' / IdPerLet: '+ p_cIdPLe + ' / CTR: '+ AllTrim(p_cCtrRM)
+	Local _cObserv 	:= fTrtMs(p_cMsg)
+	Local _cAliasRM := AllTrim(GetNewPar("MV_XSGEABD", ""))
+	Local _lLogUs	:= GetNewPar("MV_XLOGUSI", .F.)
+
+	If !_lLogUs
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  "SF06A26X: GRVOCORR - Controle de log para usu�rios desativado [MV_XLOGUSI].")
+		Return Nil
+	EndIf
+
+
+	/*	Gravar Status do Contrato	*/
+	_cQuery := " SELECT * FROM RM.ZMD_INT_RM_PROT"+ Iif( !Empty(_cAliasRM), _cAliasRM, "")
+	_cQuery += " WHERE SEQ =	(SELECT MAX(SEQ) FROM RM.ZMD_INT_RM_PROT"+ Iif( !Empty(_cAliasRM), _cAliasRM, "")
+	_cQuery += " 				 WHERE	CODCOLIGADA 		=  "+ p_cColig 			+" "
+	_cQuery += " 						AND RA 				= '"+ AllTrim(p_cRa) 	+"' "
+	_cQuery += " 						AND CODCONTRATO 	= '"+ Alltrim(p_cCtrRM) +"'	"
+	_cQuery += " 						AND IDPERLET 		=  "+ p_cIdPLe 			+" "
+	_cQuery += IIf(p_cTp == "FIN", "	AND IDPARCELA 		=  '"+ AllTrim(p_nParc) 			+"' ", "")
+	_cQuery += " 						AND TP_INTEGRACAO 	=  '"+ p_cTp 			+"' "
+	_cQuery += " 						AND TP_ERRO_PRT		=  '"+ p_cErr 			+"' "
+	_cQuery += " 						AND TP_OCORRENCIA	=  "+ Str(p_nOcr)		+" "
+	_cQuery += " 						AND ATIVO			=  'S' "
+	_cQuery += " 				) "
+
+	If Select("TMPSEQ") > 0
+		TMPSEQ->(dbClosearea())
+	Endif
+
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPSEQ',.T.,.F.)
+
+	If 	!TMPSEQ->(EoF()) .And. AllTrim(SubStr(_cObserv,1,150)) = AllTrim(SubStr(TMPSEQ->OBSERVACAO,1,150))
+
+		_cQuery := " UPDATE RM.ZMD_INT_RM_PROT"+ Iif( !Empty(_cAliasRM), _cAliasRM, "")
+		_cQuery += " SET RECMODIFIEDBY = 'mestre', RECMODIFIEDON = SYSDATE , RECMODIFIEDHOUR = TO_CHAR(SYSDATE, 'HH24:MI:SS')"
+		_cQuery += " WHERE SEQ = " + Str(TMPSEQ->(SEQ)) + " "
+
+		If (TCSQLExec(_cQuery) < 0)
+			Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "SF06A26X: GRVOCORR - TCSQLError() " + TCSQLError())
+		Else
+			TcSqlExec("COMMIT")
+			ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'SF06A26X: [UPDATE] Gravou DATA/HORA na tabela de Log para Usuarios (Log existente) - RM.ZMD_INT_RM_PROT')
+		EndIf
+
+	ElseIf !TMPSEQ->(EoF()) .And. AllTrim(SubStr(_cObserv,1,150)) != AllTrim(SubStr(TMPSEQ->OBSERVACAO,1,150))
+		_cQuery := " UPDATE RM.ZMD_INT_RM_PROT"+ Iif( !Empty(_cAliasRM), _cAliasRM, "")
+		_cQuery += " SET ATIVO = 'N', RECMODIFIEDBY = 'mestre', RECMODIFIEDON = SYSDATE , RECMODIFIEDHOUR = TO_CHAR(SYSDATE, 'HH24:MI:SS')"
+		_cQuery += " WHERE SEQ = " + Str(TMPSEQ->(SEQ)) + " "
+
+		If (TCSQLExec(_cQuery) < 0)
+			Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "SF06A26X: GRVOCORR - TCSQLError() " + TCSQLError())
+		Else
+			TcSqlExec("COMMIT")
+			ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'SF06A26X: [UPDATE] Gravou DATA/HORA na tabela de Log para Usuarios (Log existente) - RM.ZMD_INT_RM_PROT')
+		EndIf
+
+		_cQuery := "SELECT Coalesce(MAX(SEQ),0)+1 SEQ FROM RM.ZMD_INT_RM_PROT" + Iif( !Empty(_cAliasRM), _cAliasRM, "")
+
+		If (TCSQLExec(_cQuery) < 0)
+			Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "SF06A26X - TCSQLError() " + TCSQLError())
+		Else
+			If Select("TMPSEQ") > 0
+				TMPSEQ->(dbClosearea())
+			Endif
+			DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPSEQ',.T.,.F.)
+			_nNewSeq := TMPSEQ->(SEQ)
+
+			_cQuery := " INSERT INTO RM.ZMD_INT_RM_PROT"+ Iif( !Empty(_cAliasRM), _cAliasRM, "")
+			_cQuery += " (SEQ, CODCOLIGADA, RA, CODCONTRATO, IDPERLET, STS_RM, STS_PROT, TP_INTEGRACAO, TP_ERRO_PRT, "
+			_cQuery += " 	OBSERVACAO, RECCREATEDBY, RECCREATEDON, RECCREATEDHOUR, TP_OCORRENCIA " + IIf(p_cTp == "FIN",",IDPARCELA", "") +  ") "
+			_cQuery += " VALUES ( "	+ cValToChar(_nNewSeq)	+" "
+			_cQuery += "         ,"	+ p_cColig 				+" "
+			_cQuery += "         ,'"+ AllTrim(p_cRa) 		+"' "
+			_cQuery += "         ,"	+ AllTrim(p_cCtrRM)		+" "
+			_cQuery += "         ,"	+ p_cIdPLe				+" "
+			_cQuery += "         ,'1' "
+			_cQuery += "         ,'3' "
+			_cQuery += "         ,'"+ p_cTp 				+"' "
+			_cQuery += "         ,'"+ p_cErr				+"' "
+			_cQuery += "         ,'"+ _cObserv				+"' "
+			_cQuery += "         ,'mestre' "
+			_cQuery += "         ,SYSDATE "
+			_cQuery += "         ,TO_CHAR(SYSDATE, 'HH24:MI:SS') "
+			_cQuery += "         ,"	+ Str(p_nOcr)			+" "
+			_cQuery += IIf(p_cTp == "FIN", " ,'"+ AllTrim(p_nParc) 	+"' ", "")
+			_cQuery += " ) "
+
+			If (TCSQLExec(_cQuery) < 0)
+				Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "PF - SF06A26X: GRVOCORR - TCSQLError() " + TCSQLError())
+			Else
+				TcSqlExec("COMMIT")
+				ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'PF - SF06A26X: [INSERT] Gravou tabela de Log para Usuarios - RM.ZMD_INT_RM_PROT')
+			EndIf
+		EndIf
+	Else
+		_cQuery := "SELECT Coalesce(MAX(SEQ),0)+1 SEQ FROM RM.ZMD_INT_RM_PROT" + Iif( !Empty(_cAliasRM), _cAliasRM, "")
+
+		If (TCSQLExec(_cQuery) < 0)
+			Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "SF06A26X - TCSQLError() " + TCSQLError())
+		Else
+			If Select("TMPSEQ") > 0
+				TMPSEQ->(dbClosearea())
+			Endif
+			DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPSEQ',.T.,.F.)
+			_nNewSeq := TMPSEQ->(SEQ)
+
+			_cQuery := " INSERT INTO RM.ZMD_INT_RM_PROT"+ Iif( !Empty(_cAliasRM), _cAliasRM, "")
+			_cQuery += " (SEQ, CODCOLIGADA, RA, CODCONTRATO, IDPERLET, STS_RM, STS_PROT, TP_INTEGRACAO, TP_ERRO_PRT, "
+			_cQuery += " 	OBSERVACAO, RECCREATEDBY, RECCREATEDON, RECCREATEDHOUR, TP_OCORRENCIA" + IIf(p_cTp == "FIN",", IDPARCELA", "") +  ") "
+			_cQuery += " VALUES ( "	+ cValToChar(_nNewSeq)	+" "
+			_cQuery += "         ,"	+ p_cColig 				+" "
+			_cQuery += "         ,'"+ AllTrim(p_cRa) 		+"' "
+			_cQuery += "         ,"	+ AllTrim(p_cCtrRM)		+" "
+			_cQuery += "         ,"	+ p_cIdPLe				+" "
+			_cQuery += "         ,'1' "
+			_cQuery += "         ,'3' "
+			_cQuery += "         ,'"+ p_cTp 				+"' "
+			_cQuery += "         ,'"+ p_cErr				+"' "
+			_cQuery += "         ,'"+ _cObserv				+"' "
+			_cQuery += "         ,'mestre' "
+			_cQuery += "         ,SYSDATE "
+			_cQuery += "         ,TO_CHAR(SYSDATE, 'HH24:MI:SS') "
+			_cQuery += "         ,"	+ Str(p_nOcr)			+" "
+			_cQuery += IIf(p_cTp == "FIN", " ,'"+ AllTrim(p_nParc) 	+"' ", "")
+			_cQuery += " )"
+
+			If (TCSQLExec(_cQuery) < 0)
+				Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "PF - SF06A26X: GRVOCORR - TCSQLError() " + TCSQLError())
+			Else
+				TcSqlExec("COMMIT")
+				ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'PF - SF06A26X: [INSERT] Gravou tabela de Log para Usuarios - RM.ZMD_INT_RM_PROT')
+			EndIf
+		EndIf
+	EndIf
+
+	If Select("TMPSEQ") > 0
+		TMPSEQ->(dbClosearea())
+	Endif
+
+RETURN(Nil)
+
+/*
+Autor: Walmir Junior
+Data: 14/01/2018
+Finalidade: Tratar texto para que n�o tenha mais de 500 caracteres e para remover do texto [DD/MM/AAAA HH:MM:SS] 
+			ou [DD/MM/AA HH:MM:SS] se conter.
+*/
+Static Function fTrtMs(_cMsgT)
+	Local _cRet := SubsTr(_cMsgT,1,500)
+	Local _nTab	:= At("Tabela", _cRet)
+	Local _cMnp	:= ""
+	Local _nMnp	:= 0
+	Local _cDt	:= ""
+	Local _cAux	:= ""
+	Local _nAux	:= 0
+	Local _nCort:= 0
+	Local _nx	:= 0
+	Local _nDt	:= 0
+	Local _nHr	:= 0
+
+	If _nTab == 0
+		Return _cRet
+	Else
+		//Busca 30 caracteres partindo da palavra 'Tabela'.
+		_cMnp := SubStr(_cRet, _nTab, 30)
+		//Busca posi��o do primeiro caracter '/'.
+		_nMnp := At("/", _cMnp)
+
+		If _nMnp == 0
+			Return _cRet
+		Else
+			//Pega dez caracteres partindo de dois caracteres antes da '/'.
+			_cDt := SubStr(_cMnp, _nMnp-2, 10)
+			//Verifica se h� espa�o na string para o caso de data com 8 ou 10 caracteres.
+			_nAux := At(" ", _cDt)
+			If !_nAux == 0
+				_cDt := SubStr(	_cDt, 1, _nAux-1)
+				_nDt := 8
+			Else
+				_nDt := 10
+			EndIf
+
+			//Obtem a posi��o do primeiro espa�o depois do texto data.
+			_nAux := At(" ", SubStr(_cMnp,_nMnp, _nDt))
+			_nAux := _nMnp + _nAux
+
+			//Verifica se o texto � data.
+			If cToD(_cDt) == cToD("N�O�DATA")
+				Return _cRet
+			Else
+				_nCort := _nTab + _nMnp-3
+			EndIf
+
+			//Varre oito caracteres depois da data para validar se � hora.
+			_cAux := SubStr(_cMnp, _nAux, 8)
+			For _nx := 1 To 8
+				If SubsTr(_cAux, _nx, 1) $ "1234567890:"
+					_nHr++
+				EndIf
+			Next _nx
+
+			//Se for hora, corta o texto para retornar sem DATA/HORA.
+			If _nHr == 8
+				//Alimenta posi��o final de data e hora.
+				_nAux := _nCort + _nDt + _nHr + 1
+
+				//Obtem trecho com data e hora
+				_cAux := SubsTr(_cRet, _nCort, _nAux-_nCort)
+
+				//Remove trecho com data e hora.
+				_cRet := SubsTr(_cRet,1, _nCort-1) + SubsTr(_cRet,_nAux+1, Len(_cRet))
+			EndIf
+		EndIf
+	EndIf
+
+Return _cRet
+
+/*/{Protheus.doc} EXCOCORR
+(long_description)
+@type method
+@author Walmir Junior
+@since 08/01/2018
+@param p_nSeq, numeric, (Descri��o do par�metro)
+@param p_cColig, character, (Descri��o do par�metro)
+@param p_cRa, character, (Descri��o do par�metro)
+@param p_cCtrRM, character, (Descri��o do par�metro)
+@param p_cIdPLe, character, (Descri��o do par�metro)
+@param p_cTp, character, (Descri��o do par�metro)
+@param p_nOcr, numeric, (Descri��o do par�metro)
+p_cTp	:=	'FIN' - Informa��o Originada da Integra��o Financeira - IMPFINRM.
+			'CTB' - Informa��o Originada da Integra��o Cont�bil - IMPGCTRM (U_IMPCRCTB).
+			'CTR' - Informa��o Originada da Integra��o do Contrato - IMPGCTRM.
+
+p_nOcr	:=	Registro da Tabela Din�mica do RM Classis.
+/*/
+METHOD EXCOCORR(p_cColig,p_cRa,p_cCtrRM,p_cIdPLe,p_cTp,p_nOcr, p_nParc) CLASS SF06A26X
+
+	Local _cQuery 	:= ''
+	Local _cAliasRM := AllTrim(GetNewPar("MV_XSGEABD", ""))
+	Local _lLogUs	:= GetNewPar("MV_XLOGUSI", .F.)
+
+	If !_lLogUs
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  "SF06A26X: EXCOCORR - Controle de log para usu�rios desativado [MV_XLOGUSI].")
+		Return Nil
+	EndIf
+
+	/*	Gravar Status do Contrato	*/
+	_cQuery := " SELECT * FROM RM.ZMD_INT_RM_PROT"+ Iif(!Empty(_cAliasRM), _cAliasRM, "")
+	_cQuery += " WHERE 	CODCOLIGADA 			=  "+ p_cColig 			+" "
+	_cQuery += " 		AND RA 					= '"+ AllTrim(p_cRa) 	+"' "
+	_cQuery += " 		AND CODCONTRATO 		= '"+ Alltrim(p_cCtrRM) +"'	"
+	_cQuery += " 		AND IDPERLET 			=  "+ p_cIdPLe 			+" "
+	_cQuery += IIf(p_cTp == "FIN", " AND IDPARCELA =  '"+ AllTrim(p_nParc) 		+"' ", "")
+	_cQuery += " 		AND TP_INTEGRACAO 		= '"+ p_cTp 			+"' "
+	_cQuery += " 		AND TP_OCORRENCIA		=  "+ Str(p_nOcr)		+" "
+	_cQuery += " 		AND ATIVO				= 'S' "
+
+
+	If Select("TMPSEQ") > 0
+		TMPSEQ->(dbClosearea())
+	Endif
+
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPSEQ',.T.,.F.)
+
+	While !TMPSEQ->(EoF())
+
+		_cQuery := " UPDATE RM.ZMD_INT_RM_PROT"+ Iif(!Empty(_cAliasRM), _cAliasRM, "")
+		_cQuery += " SET ATIVO = 'N', RECMODIFIEDBY = 'mestre', RECMODIFIEDON = SYSDATE , RECMODIFIEDHOUR = TO_CHAR(SYSDATE, 'HH24:MI:SS')"
+		_cQuery += " WHERE SEQ = " + Str(TMPSEQ->(SEQ)) + " "
+
+		If (TCSQLExec(_cQuery) < 0)
+			Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "SF06A26X: EXCOCORR - TCSQLError() " + TCSQLError())
+		Else
+			TcSqlExec("COMMIT")
+			ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'SF06A26X: [UPDATE] Inativou Log Existente - RM.ZMD_INT_RM_PROT')
+		EndIf
+
+		TMPSEQ->(DBSkip())
+	EndDo
+
+	If Select("TMPSEQ") > 0
+		TMPSEQ->(dbClosearea())
+	Endif
+
+RETURN(Nil)

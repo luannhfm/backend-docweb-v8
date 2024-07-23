@@ -1,0 +1,207 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} FA070CAN
+O ponto de entrada FA070CAN sera executado apos gravacao dos dados de cancelamento no SE1 e antes de estornar os dados do SE5 e de comissao.
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	18/11/2015
+@version 	1.0
+
+@see 
+http://tdn.totvs.com/display/public/mp/FA070CAN+-+Grava+dados+de+cancelamento+--+11878
+/*/
+
+User Function FA070CAN()
+	
+	Local _aArea 	:= GetArea()
+	Local _aHistCob	:= Array(8)
+	
+	If SE1->E1_PREFIXO $ 'RMC/RMX/SGE/REN'
+		If SE1->E1_PREFIXO $ 'RMC/RMX'
+			fGrvTabRM()
+		EndIf
+		fGrvZZU()
+	EndIf
+	
+	//------------------------------------------------------
+	//-- Exclui Histórico de cobrança
+	//------------------------------------------------------
+	_aHistCob[1]:= SA1->A1_COD
+	_aHistCob[2]:= SA1->A1_LOJA
+	_aHistCob[3]:= SE1->E1_PREFIXO 
+	_aHistCob[4]:= SE1->E1_NUM
+	_aHistCob[5]:= SE1->E1_PARCELA
+	_aHistCob[6]:= SE1->E1_TIPO
+	_aHistCob[7]:= SE5->E5_DATA
+	_aHistCob[8]:= SE5->E5_SEQ
+
+	//---------------------------------------
+	//-- Chama Função que excluir historico
+	//---------------------------------------
+	DELHISTOR(_aHistCob,"FINA070")
+
+Return
+
+
+/** {Protheus.doc} fGrvTabRM
+Funcao para gravar tabelas intermediarias do Financeiro RM
+
+@param: 	<Nil>
+@author 	Jose Leite de Barros Neto
+@since 	18/11/2015
+@Uso: 		SFIEMT
+*/
+Static Function fGrvTabRM()
+	
+	Local _cFilial 	:= SE1->E1_FILIAL
+	Local	_cPrefixo	:= SE1->E1_PREFIXO  	
+	Local _cNumero	:= SE1->E1_NUM
+	Local	_cParcela	:= SE1->E1_PARCELA
+	Local	_cTipo 	:= SE1->E1_TIPO
+	Local _cIdLan	:= SubStr(SE1->E1_XIDESB,2,10)
+	Local _nSeq		:= 0
+	Local _cColig 	:= ''
+	Local	_cRa 		:= ''
+	Local	_cIdPLe	:= ''
+	Local _cObserv 	:= "REGISTRO STS_PROT_BX INSERIDO PELA ROTINA DE INTEGRACAO PROTHEUS x RM"
+	Local _cQuery	:= ''
+	Local _nNewSeq	:= 0
+	
+	DbSelectArea('CN9')
+	CN9->( DbOrderNickName("CN9RMGCT") ) //CN9_FILIAL+CN9_XCTRRM
+	CN9->( DbGotop() )
+	If CN9->( DbSeek( _cFilial + _cNumero ) )
+		
+		_nSeq 		:= Val(CN9->CN9_XNSQRM)
+		_cColig 	:= CN9->CN9_XCOLRM
+		_cRa 		:= CN9->CN9_XRARM
+		_cIdPLe	:= CN9->CN9_XIDPRM
+		
+		_cQuery := " UPDATE RM.ZMD_INT_PRT_FIN 	"
+		_cQuery += " SET STS_PROT_BX = '3' 		"
+		_cQuery += " ,DT_PROT_BX = ''"
+		_cQuery += " WHERE	CODCOLIGADA 			=  "+ _cColig 
+		_cQuery += " 		AND RA 				=  "+ _cRa  
+		_cQuery += " 		AND CODCONTRATO 	= '"+ Alltrim(_cNumero) + "'	"
+		_cQuery += " 		AND IDPERLET 		=  "+ _cIdPLe 
+		_cQuery += " 		AND IDLAN 			=  "+ _cIdLan
+		
+		If (TCSQLExec(_cQuery) < 0)
+			Conout("FA070CAN: fGrvTabRM - TCSQLError() " + TCSQLError())
+		Else
+			ConOut('FA070CAN: Gravou tabela de Status - RM.ZMD_INT_PRT_FIN')
+		EndIf
+		
+		_cQuery := "SELECT Coalesce(MAX(SEQ),0)+1 SEQ FROM RM.ZMD_INT_PRT_FIN_HIST WHERE IDLAN = "+ _cIdLan
+	
+		If (TCSQLExec(_cQuery) < 0)
+			Conout("FA070CAN: fGrvTabRM - TCSQLError() " + TCSQLError())
+		Else
+			DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPSEQ',.T.,.F.)
+			_nNewSeq := TMPSEQ->(SEQ)
+			TMPSEQ->(DbCloseArea())
+		EndIf
+	
+		_cQuery := " INSERT INTO RM.ZMD_INT_PRT_FIN_HIST "
+		_cQuery += " (SEQ, CODCOLIGADA, RA, CODCONTRATO, IDPERLET, IDLAN, DATA, HORA, STS_PROT, OBSERVACAO) "
+		_cQuery += " VALUES ( "+ cValToChar(_nNewSeq)
+		_cQuery += "         ,"+ _cColig
+		_cQuery += "         ,"+ _cRa
+		_cQuery += "         ,'"+ Alltrim(_cNumero) + "'			"
+		_cQuery += "         ,"+ _cIdPLe
+		_cQuery += "         ,"+ _cIdLan
+		_cQuery += "         ,to_char(sysdate, 'DD/MM/YYYY') 	"
+		_cQuery += "         ,to_char(sysdate, 'HH:MM:SS')		"
+		_cQuery += "         ,3											"
+		_cQuery += "         ,'"+ _cObserv +"') "
+		
+		If (TCSQLExec(_cQuery) < 0)
+			Conout("FA070CAN: fGrvTabRM - TCSQLError() " + TCSQLError())
+		Else
+			ConOut('FA070CAN: Gravou tabela de Log - RM.ZMD_INT_PRT_FIN_HIST')
+		EndIf
+		
+	EndIf
+	
+	CN9->( DbCloseArea() )
+	
+Return( Nil )
+
+
+/** {Protheus.doc} fGrvZZU
+Funcao para gravar tabela de controle de baixa de contas a receber protheus x rm
+
+@author 	Jose Leite de Barros Neto
+@since 	28/01/2016
+@Uso: 		SFIEMT
+*/
+Static Function fGrvZZU()
+	
+	Local _cChvZZU	:= PadR(SE1->E1_FILIAL,TamSX3("ZZU_FILIAL")[1])  + PadR(SE1->E1_PREFIXO,TamSX3("ZZU_PREFIXO")[1]) + PadR(SE1->E1_NUM,TamSX3("ZZU_NUMERO")[1]) + PadR(SE1->E1_PARCELA,TamSX3("ZZU_PARCELA")[1]) + PadR(SE1->E1_TIPO,TamSX3("ZZU_TIPO")[1])
+	Local _cSeqBx	:= SE5->E5_SEQ 
+	
+	DbSelectArea('ZZU')
+	ZZU->( DbSetOrder(1) ) //ZZU_FILIAL + ZZU_PREFIXO + ZZU_NUMERO + ZZU_PARCELA + ZZU_TIPO
+	ZZU->( DbGoTop() )
+	If ZZU->( DbSeek( _cChvZZU ) )
+		While .Not. ZZU->(EOF()) .And. ZZU->( ZZU_FILIAL + ZZU_PREFIX + ZZU_NUMERO + ZZU_PARCEL + ZZU_TIPO) == _cChvZZU 
+			If ZZU->ZZU_SEQBX == _cSeqBx
+				If ZZU->ZZU_PROCAN <> '1' 
+					If RecLock('ZZU',.F.)
+						ZZU->ZZU_PROCAN	:= '1'
+						ZZU->( MsUnlock() )
+					EndIf
+				EndIf
+			EndIf
+			ZZU->( DbSkip() )
+		End	
+	Else
+		If RecLock('ZZU',.T.)
+			ZZU->ZZU_FILIAL	:= SE1->E1_FILIAL 
+			ZZU->ZZU_PREFIX	:= SE1->E1_PREFIXO
+			ZZU->ZZU_NUMERO	:= SE1->E1_NUM
+			ZZU->ZZU_PARCEL	:= SE1->E1_PARCELA
+			ZZU->ZZU_TIPO	:= SE1->E1_TIPO
+			ZZU->ZZU_PROCAN	:= '1'
+			ZZU->ZZU_SEQBX	:= _cSeqBx
+			ZZU->( MsUnlock() )
+		EndIf
+	EndIf
+	
+	ZZU->( DbCloseArea() )
+	
+Return
+
+//-----------------------------------------------------
+/*/{Protheus.doc} DelHistor
+Deleta historico.
+
+@author Allan da Silva Faria
+@since 18/04/2016
+@version 1.0
+@param _aDados	, Array		, Dados do movimetação que gerou o historico
+@param _cFunName, Caracter	, Nome da rotina que gerou o historico
+/*/
+//-----------------------------------------------------
+
+Static Function DelHistor(_aDados,_cFunName)
+
+	Local _aArea := ZF1->(GetArea()) 
+
+	DEFAULT _cFunName := FunName()
+
+	_cFunName := PADR(_cFunName,TamSX3("ZF1_ORIGEM")[1])	
+
+	dbSelectArea("ZF1")
+	ZF1->(dbSetOrder(2))
+	ZF1->(dbGoTop())      //-- FILIAL - CLIENTE - LOJA - PREFIXO - NUM - PARCELA - TIPO - DATA - ORIGEM - SEQ
+	If ZF1->(dbSeek(FWxFilial("ZF1")+_aDados[1]+_aDados[2]+_aDados[3]+_aDados[4]+_aDados[5]+_aDados[6]+DTOS(_aDados[7])+_cFunName+_aDados[8]))
+		RecLock("ZF1",.F.)
+		ZF1->(dbDelete())
+		ZF1->(MsUnlock())
+	EndIf
+
+	RestArea(_aArea)
+
+Return Nil

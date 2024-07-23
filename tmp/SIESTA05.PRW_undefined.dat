@@ -1,0 +1,844 @@
+#Include "Protheus.ch"
+#Include "Topconn.ch"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ SIESTA05 ºAutor  ³Leonardo Soncin     º Data ³  28/11/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³Funcao para Liberacao de documentos.                        º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP                                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function SIESTA05(_nOpcao)
+
+	// _nOpcao = 1 / Consulta
+	// _nOpcao = 2 / Liberacao
+	// _nOpcao = 3 / Estornar
+	// _nOpcao = 4 / Consulta Aprovacao
+	Local _aArea	:= {}
+	Local _aAreaCR	:= {}
+	Local _cDoc		:= ""
+	Local _nTamDoc 	:= TamSx3("CP_NUM")[1]           
+	Private lCopia 	:= .F.
+
+	If _nOpcao == 1 // Consulta
+
+		_aArea := GetArea()
+		_aAreaCR := SCR->(GetArea())
+		_cDoc := Left(SCR->CR_NUM,_nTamDoc)
+		SCP->(DbSetOrder(1))
+		If SCP->(DbSeek(xFilial("SCP")+_cDoc))
+			DbSelectArea("SCP")
+			A105Visual("SCP",RecNo(),2)
+		EndIf
+		RestArea(_aAreaCR)
+		RestArea(_aArea)
+
+	ElseIf _nOpcao == 2 // Liberacao
+
+		_aArea := GetArea()
+		_aAreaCR := SCR->(GetArea())
+
+		//Validação para não permitir liberação de uma SA Bloqueada e vinculada à tabela ZE0
+		If SCR->CR_STATUS == "04"
+
+			_cDoc := Left(SCR->CR_NUM,_nTamDoc)
+
+			dbSelectArea("ZE0")
+			dbSetOrder(2)
+
+			If ZE0->(dbSeek(xFilial("SCR") + _cDoc))
+
+				Alert("Este registro já foi bloqueado e não poderá ser liberado.")
+				Return
+
+			EndIf 
+
+		EndIf
+
+		RestArea(_aAreaCR)
+		RestArea(_aArea)
+
+		fLibSA("SCR",RecNo(),_nOpcao)
+
+	ElseIf _nOpcao == 3 // Estornar
+
+		fEstSA()
+
+	ElseIf _nOpcao == 4 // Consulta Aprovacao
+
+		_aArea := GetArea()
+		_aAreaCR := SCR->(GetArea())
+		fPosic("SCP",Recno(),2,"SA")
+		RestArea(_aAreaCR)
+		RestArea(_aArea)
+
+	EndIf
+
+Return
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³fLibSA    ºAutor  ³Adriano Luis Brandaoº Data ³  20/07/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³Funcao para Liberacao de edital.                            º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP - CNI.                                                  º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function fLibSA(cAlias,nReg,nOpcx)
+
+	Local _aArea	:= GetArea()
+	Local _aAreaSCP	:= SCP->(GetArea())
+	Local cCodLiber := SCR->CR_APROV
+	Local cDocto    := SCR->CR_NUM
+	Local cTipo     := SCR->CR_TIPO
+	Local aSize		:= {290,410}
+	Local cObs 		:= IIF(!Empty(SCR->CR_OBS),SCR->CR_OBS,CriaVar("CR_OBS"))
+	Local ca097User := RetCodUsr()
+	Local dRefer 	:= dDataBase
+	Local aRetSaldo	:= {}
+	Local nSaldo	:= 0
+	Local CRoeda	:= ""
+	Local nTotal	:= 0
+	Local nSalDif	:= 0
+	Local _cDoc		:= ""
+	local _nTamDoc 	:= TamSx3("CP_NUM")[1]
+	Local cName		:= ""
+	Local nOpc		:= 0
+	Local lLiberou	:= .F.                  
+	Local cGrupo	:= ""
+	//Walmir 29/03/2016 Tela de saldo de contrato.
+	Local _cValFi	:= GetMV("MV_XEVAFIL")
+
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Inicializa as variaveis utilizadas no Display.               ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	aRetSaldo 	:= MaSalAlc(cCodLiber,dRefer)
+	nSaldo 	  	:= aRetSaldo[1]
+	CRoeda 	  	:= A097Moeda(aRetSaldo[2])
+	cName  	  	:= UsrRetName(ca097User)
+	nTotal    	:= xMoeda(SCR->CR_TOTAL,SCR->CR_MOEDA,aRetSaldo[2],SCR->CR_EMISSAO,,SCR->CR_TXMOEDA)
+	nSalDif		:= nSaldo - nTotal
+
+	Do Case
+		Case SAK->AK_TIPO == "D"
+		cTipoLim :=OemToAnsi("Diario")
+		Case  SAK->AK_TIPO == "S"
+		cTipoLim := OemToAnsi("Semanal")
+		Case  SAK->AK_TIPO == "M"
+		cTipoLim := OemToAnsi("Mensal")
+		Case  SAK->AK_TIPO == "A"
+		cTipoLim := OemToAnsi("Anual")
+	EndCase
+
+	_cDoc := Left(SCR->CR_NUM,_nTamDoc)
+	SCP->(DbSetOrder(1))
+	SCP->(DbSeek(xFilial("SCP")+_cDoc))
+
+	//Walmir Junior 29/03/2016 Tela de saldo de contrato.
+	If SubStr(cFilAnt,1,4) $ _cValFi
+		U_SF0212X(SCP->CP_XFILCN9+SCP->CP_XNUMCN9+SCP->CP_XREVCN9, ;
+		xFilial("SA1")+SCP->CP_XCLIENT+SCP->CP_XCLILJ, SCP->CP_QUANT)
+	EndIf
+
+	DEFINE MSDIALOG oDlg FROM 0,0 TO aSize[1],aSize[2] TITLE OemToAnsi("Liberacao de SA") PIXEL
+	@ 0.5,01 TO 44,204 LABEL "" OF oDlg PIXEL
+	@ 45,01  TO 128,204 LABEL "" OF oDlg PIXEL
+	@ 07,06  Say OemToAnsi("Numero do Docto.") OF oDlg PIXEL
+	@ 07,120 Say OemToAnsi("Emissao") OF oDlg SIZE 50,9 PIXEL
+	@ 19,06  Say OemToAnsi("Centro de Custo") OF oDlg PIXEL
+	@ 31,06  Say OemToAnsi("Aprovador") OF oDlg PIXEL SIZE 30,9
+	@ 31,120 Say OemToAnsi("Data de ref. ") SIZE 60,9 OF oDlg PIXEL
+	@ 53,06  Say OemToAnsi("Limite min.  ") +CRoeda OF oDlg PIXEL
+	@ 53,110 Say OemToAnsi("Limite max. ")+CRoeda SIZE 60,9 OF oDlg PIXEL
+	@ 65,06  Say OemToAnsi("Limite  ")+CRoeda  OF oDlg PIXEL
+	@ 65,110 Say OemToAnsi("Tipo lim.") OF oDlg PIXEL
+	@ 77,06  Say OemToAnsi("Saldo na data  ")+CRoeda OF oDlg PIXEL
+	If SCR->CR_MOEDA == aRetSaldo[2]
+		@ 89,06 Say OemToAnsi("Total do documento ")+CRoeda OF oDlg PIXEL
+	Else
+		@ 89,06 Say OemToAnsi("Total do documento, convertido em ")+CRoeda OF oDlg PIXEL
+	EndIf
+	@ 101,06 Say OemToAnsi("Saldo disponivel apos liberacao  ") +CRoeda SIZE 130,10 OF oDlg PIXEL
+	@ 113,06 Say OemToAnsi("Observa‡äes ") SIZE 100,10 OF oDlg PIXEL
+	@ 07,58  MSGET SCR->CR_NUM     When .F. SIZE 28 ,9 OF oDlg PIXEL
+	@ 07,155 MSGET SCR->CR_EMISSAO When .F. SIZE 45 ,9 OF oDlg PIXEL
+	@ 19,45  MSGET SCP->CP_CC      When .F. SIZE 155,9 OF oDlg PIXEL
+	@ 31,45  MSGET cName           When .F. SIZE 50 ,9 OF oDlg PIXEL
+	@ 31,155 MSGET oDataRef VAR dRefer When .F. SIZE 45 ,9 OF oDlg PIXEL
+	@ 53,50  MSGET SAK->AK_LIMMIN Picture "@E 999,999,999.99" When .F. SIZE 55,9 OF oDlg PIXEL RIGHT
+	@ 53,155 MSGET SAK->AK_LIMMAX Picture "@E 999,999,999.99" When .F. SIZE 45,9 OF oDlg PIXEL RIGHT
+	@ 65,50  MSGET SAK->AK_LIMITE Picture "@E 999,999,999.99" When .F. SIZE 55,9 OF oDlg PIXEL RIGHT
+	@ 65,155 MSGET cTipoLim When .F. SIZE 45,9 OF oDlg PIXEL CENTERED
+	@ 77,115 MSGET oSaldo VAR nSaldo Picture "@E 999,999,999.99" When .F. SIZE 85,9 OF oDlg PIXEL RIGHT
+	@ 89,115 MSGET nTotal Picture "@E 999,999,999.99" When .F. SIZE 85,9 OF oDlg PIXEL RIGHT
+	@ 101,115 MSGET oSaldif VAR nSalDif Picture "@E 999,999,999.99" When .F. SIZE 85,9 OF oDlg PIXEL RIGHT
+	@ 113,115 MSGET cObs Picture "@!" SIZE 85,9 OF oDlg PIXEL
+
+	@ 132, 80 BUTTON OemToAnsi("Libera Docto")   SIZE 40 ,11  FONT oDlg:oFont ACTION (nOpc:=2,oDlg:End())  OF oDlg PIXEL
+	@ 132,121 BUTTON OemToAnsi("Cancela")        SIZE 40 ,11  FONT oDlg:oFont ACTION (nOpc:=1,oDlg:End())  OF oDlg PIXEL
+	@ 132,162 BUTTON OemToAnsi("Bloqueia Docto") SIZE 40 ,11  FONT oDlg:oFont ACTION (nOpc:=3,oDlg:End())  OF oDlg PIXEL
+
+	ACTIVATE MSDIALOG oDlg CENTERED
+
+
+	If nOpc == 2 .Or. nOpc == 3               
+
+		SCR->(dbClearFilter())
+		SCR->(dbGoTo(nReg))
+
+		_cDoc := Left(SCR->CR_NUM,_nTamDoc)
+		SCP->(DbSetOrder(1))
+		If SCP->(DbSeek(xFilial("SCP")+_cDoc))         
+
+			dbSelectArea("CT1")
+			dbSetOrder(1)
+			dbSeek(xFilial("CT1")+SCP->CP_CONTA)
+
+			dbSelectArea("SZQ")
+			dbSetOrder(1)
+			dbSeek(xFilial("SZQ")+SCP->CP_CC+CT1->CT1_PREFIX)
+			cGrupo := SZQ->ZQ_COD
+
+			dbSelectArea("SCP")
+
+			Begin Transaction
+
+				lLiberou := MaAlcDoc({cDocto,cTipo,nTotal,cCodLiber,,cGrupo,,,,,cObs},dRefer,If(nOpc==2,4,6))
+
+				If lLiberou			
+					// Se liberou total
+					SCP->(DbSetOrder(1))
+					SCP->(DbSeek(xFilial("SCP")+_cDoc))
+					While !Eof("SCP") .and. SCP->CP_NUM == _cDoc
+						RecLock("SCP",.F.)
+						SCP->CP_STATSA := "L"
+						SCP->(MsUnLock())                      
+						dbSkip()
+					Enddo
+				EndIf
+
+				If nOpc == 3
+					// Se Bloqueou
+					SCP->(DbSetOrder(1))
+					SCP->(DbSeek(xFilial("SCP")+_cDoc))
+					While !Eof("SCP") .and. SCP->CP_NUM == _cDoc			
+						RecLock("SCP",.F.)
+						SCP->CP_STATSA := "B"
+						SCP->(MsUnLock())
+						dbSkip()
+					EndDo
+					//Caso seja uma SA importada do Sige, altero os registros da importação
+					dbSelectArea("ZE0")
+					ZE0->(dbSetOrder(2))
+					If ( ZE0->(dbSeek(xFilial("ZE0") + _cDoc)) )
+						BloqSolSige(_cDoc)
+					EndIf
+				EndIf
+
+			End Transaction
+
+			#IFDEF TOP
+			If TcSrvType() == "AS/400"
+				set filter to  &(cXFiltraSCR)
+			Else	
+				#ENDIF
+				SCR->(Eval(bFilSCRBrw))
+				#IFDEF TOP
+			EndIf 		
+			#ENDIF
+
+		Else
+			ApMsgStop("SA " + _cDoc + " nao localizado !!!","Verifique")
+		EndIf
+	EndIf
+
+	RestArea(_aAreaSCP)
+	RestArea(_aArea)
+
+Return
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³fEstSC    ºAutor  ³Adriano Luis Brandaoº Data ³  21/07/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Funcao de estorno de liberacao.                            º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP - CNI                                                   º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function fEstSA()
+
+	Local lEstorna	:= .f.
+	Local _cDoc		:= ""
+	local _nTamDoc 	:= TamSx3("CP_NUM")[1]        
+	Local cGrupo 	:= ""
+	Local nTot		:= 0
+	Local dEmissao        
+	Local nReg		:= SCR->(Recno())
+
+	//
+	// Testar se o documento nao foi utilizado em licitação, cotação, pedido de compra ou eliminada por resíduo
+	//
+
+	If ApMsgYesNo("Confirma estorno da liberação?","Confirmar")
+		_cDoc := Left(SCR->CR_NUM,_nTamDoc)      
+
+		SCQ->(DbSetOrder(1))
+		If SCQ->(MsSeek(xFilial("SCQ")+_cDoc))
+
+			Aviso("Atenção!","Ja foi gerada requisição para esta solicitação. Para estornar a provação deve-se excluir a requisição.",{"Ok"},2,"Estorno Inválido")      
+			Return
+
+		EndIf
+
+		SCP->(DbSetOrder(1))
+		If SCP->(DbSeek(xFilial("SCP")+_cDoc))
+
+			dEmissao	:= SCR->CR_EMISSAO
+
+			dbSelectArea("CT1")
+			dbSetOrder(1)
+			dbSeek(xFilial("CT1")+SCP->CP_CONTA)
+
+			dbSelectArea("SZQ")
+			dbSetOrder(1)
+			IF dbSeek(xFilial("SZQ")+SCP->CP_CC+CT1->CT1_PREFIX)
+				cGrupo := SZQ->ZQ_COD
+			ELSEIF dbSeek(xFilial("SZQ")+SCP->CP_CC)
+				cGrupo := SZQ->ZQ_COD
+			ENDIF		
+
+			dbSelectArea("SCP")   		
+			While !Eof() .and. SCP->CP_NUM == _cDoc                                          
+				nTot += SCP->CP_XVLRTOT			
+				dbSkip()		
+			Enddo
+
+			SCR->(dbClearFilter())
+			SCR->(dbGoTo(nReg))
+
+			MaAlcDoc({_cDoc,"SA",nTot,,,,,1,0,},dEmissao,3)
+
+			SCP->(DbSetOrder(1))
+			IF SCP->(dbSeek(XFilial("SCP")+_cDoc)) .and. !Empty(cGrupo)
+				MaAlcDoc({_cDoc,"SA",nTot,,,cGrupo,,1,1,dEmissao},,1)
+			EndIf
+			SCR->(dbSetOrder(1))        
+
+			// Se gerou SCR, bloqueia solicitacao novamente.
+			IF SCR->(dbSeek(xFilial("SCR")+"SA"+_cDoc))   
+				dbSelectArea("SCP")
+				While !Eof() .and. CP_FILIAL == xFilial("SCP") .and. CP_NUM == _cDoc		
+					RecLock("SCP",.F.)
+					SCP->CP_STATSA := "E"
+					SCP->(MsUnLock())                                          
+					dbSkip()
+				Enddo
+			EndIf
+		Else
+			ApMsgStop("SA " + _cDoc + " nao localizada!","Verifique")
+		EndIf
+	EndIf
+
+	#IFDEF TOP
+	If TcSrvType() == "AS/400"
+		set filter to  &(cXFiltraSCR)
+	Else	
+		#ENDIF
+		SCR->(Eval(bFilSCRBrw))
+		#IFDEF TOP
+	EndIf 		
+	#ENDIF
+
+Return                                
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÚÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÄÄÂÄÄÄÄÄÄÄÄÄÄ¿±±
+±±³Fun‡…o    ³A120Posic ³Revisao³Alexandre Inacio Lemes ³Data  ³05/05/2006³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Descri‡…o ³ Consulta do status das Aprovacoes Documentos PC/AE/CP/NF   ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Sintaxe e ³ Void A120Posic(ExpC1,ExpN1,ExpN2,ExpC2)                    ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³Parametros³ ExpC1 = Alias do arquivo                                   ³±±
+±±³          ³ ExpN1 = Numero do registro                                 ³±±
+±±³          ³ ExpN2 = Opcao selecionada                                  ³±±
+±±³          ³ ExpC2 = Tipo do Documento                                  ³±±
+±±ÃÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´±±
+±±³ Uso      ³ MATA120 / MATA125 / MATA103                                ³±±
+±±ÀÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function fPosic(cAlias,nReg,nOpcx,cTipoDoc)
+
+	Local aArea		:= GetArea()
+	//Local aSavCols  := aClone(aCols)
+	//Local aSavHead  := aClone(aHeader)
+
+	Local cHelpApv  := OemToAnsi("Este documento nao possui controle de aprovacao.")
+	Local cAliasSCR := "TMP"
+	Local cComprador:= ""
+	Local cSituaca  := ""
+	Local cNumDoc   := ""
+	Local cStatus   := ""
+	Local cTitle    := ""
+	Local cTitDoc   := ""
+
+	Local lBloq     := .F.
+	Local lQuery    := .F.
+
+	//Local nSavN		:= N
+	Local nX   		:= 0
+	Local nY        := 0
+
+	Local oDlg
+	Local oGet
+	Local oBold
+
+	#IFDEF TOP
+	Local cQuery   := ""
+	Local aStruSCR := {}
+	#ENDIF
+
+	DEFAULT cTipoDoc := "SA"
+
+	dbSelectArea(cAlias)
+	dbGoto(nReg)
+
+
+	//If !Empty(CO1->CO1_XGRLIB)
+	cTitle    := OemToAnsi("Aprovacao de SA")
+	cTitDoc   := OemToAnsi("SA")
+	cHelpApv  := OemToAnsi("Esta SA nao possui controle de aprovacao.")
+	cNumDoc   := SCP->CP_NUM
+	cStatus   := IIF(SCP->CP_STATSA=="L",OemToAnsi("SA LIBERADA"),OemToAnsi("AGUARDANDO LIB."))
+	//EndIf
+
+	If !Empty(cNumDoc)
+
+		aHeader:= {}
+		aCols  := {}
+
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Faz a montagem do aHeader com os campos fixos.               ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		dbSelectArea("SX3")
+		dbSetOrder(1)
+		MsSeek("SCR")
+		While !Eof() .And. (SX3->X3_ARQUIVO == "SCR")
+			IF AllTrim(X3_CAMPO)$"CR_NIVEL/CR_OBS/CR_DATALIB"
+				AADD(aHeader,{	TRIM(X3Titulo()),;
+				SX3->X3_CAMPO,;
+				SX3->X3_PICTURE,;
+				SX3->X3_TAMANHO,;
+				SX3->X3_DECIMAL,;
+				SX3->X3_VALID,;
+				SX3->X3_USADO,;
+				SX3->X3_TIPO,;
+				SX3->X3_ARQUIVO,;
+				SX3->X3_CONTEXT } )
+
+				If AllTrim(x3_campo) == "CR_NIVEL"
+					AADD(aHeader,{ OemToAnsi("Usuário"),"bCR_NOME",   "",15,0,"","","C","",""} )
+					AADD(aHeader,{ OemToAnsi("Situação"),"bCR_SITUACA","",20,0,"","","C","",""} )
+					AADD(aHeader,{ OemToAnsi("Usuário Lib."),"bCR_NOMELIB","",15,0,"","","C","",""} )
+				EndIf
+
+			Endif
+
+			dbSelectArea("SX3")
+			dbSkip()
+		EndDo
+
+		ADHeadRec("SCR",aHeader)
+
+		#IFDEF TOP
+		lQuery     := .T.
+
+
+		aStruSCR := SCR->(dbStruct())
+		cTipoDoc := "SA"
+		cAliasSCR := GetNextAlias()
+		cQuery    := "SELECT SCR.*,SCR.R_E_C_N_O_ SCRRECNO FROM "+RetSqlName("SCR")+" SCR "
+		cQuery    += "WHERE SCR.CR_FILIAL='"+xFilial("SCR")+"' AND "
+		cQuery    += "SCR.CR_NUM = '"+Padr(SCP->CP_NUM,Len(SCR->CR_NUM))+"' AND "
+		cQuery    += "SCR.CR_TIPO = 'ED' AND "
+		cQuery    += "SCR.D_E_L_E_T_=' ' "
+		cQuery := ChangeQuery(cQuery)
+		dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasSCR)
+
+		For nX := 1 To Len(aStruSCR)
+			If aStruSCR[nX][2]<>"C"
+				TcSetField(cAliasSCR,aStruSCR[nX][1],aStruSCR[nX][2],aStruSCR[nX][3],aStruSCR[nX][4])
+			EndIf
+		Next nX
+		#ELSE
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Abre o arquivo SCR sem filtros    ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		ChkFile("SCR",.F.,"TMP")
+
+		dbSelectArea(cAliasSCR)
+		dbSetOrder(1)
+		MsSeek(xFilial("SCR")+cTipoDoc+Padr(SCP->CP_NUM,Len(SCR->CR_NUM)))
+
+		#ENDIF
+
+		dbSelectArea(cAliasSCR)
+
+		While !Eof() .And.(cAliasSCR)->CR_FILIAL+(cAliasSCR)->CR_TIPO+Substr((cAliasSCR)->CR_NUM,1,;
+		len(SCP->CP_NUM)) ;
+		== xFilial("SCR") + cTipoDoc + cNumDoc
+
+			aadd(aCols,Array(Len(aHeader)+1))
+			nY++
+			For nX := 1 to Len(aHeader)
+				If IsHeadRec(aHeader[nX][2])
+					aCols[nY][nX] := IIf(lQuery , (cAliasSCR)->SCRRECNO , SCR->(Recno())  )
+				ElseIf IsHeadAlias(aHeader[nX][2])
+					aCols[nY][nX] := "SCR"
+				ElseIf aHeader[nX][02] == "bCR_NOME"
+					aCols[nY][nX] := UsrRetName((cAliasSCR)->CR_USER)
+				ElseIf aHeader[nX][02] == "bCR_SITUACA"
+					Do Case
+						Case (cAliasSCR)->CR_STATUS == "01"
+						cSituaca := OemToAnsi("Nivel Bloqueado")
+						Case (cAliasSCR)->CR_STATUS == "02"
+						cSituaca := OemToAnsi("Aguarando Liberação")
+						Case (cAliasSCR)->CR_STATUS == "03"
+						cSituaca := OemToAnsi("SA Aprovada")
+						Case (cAliasSCR)->CR_STATUS == "04"
+						cSituaca := OemToAnsi("SA Bloqueada")
+						lBloq := .T.
+						Case (cAliasSCR)->CR_STATUS == "05"
+						cSituaca := OemToAnsi("Nivel Liberado ")
+					EndCase
+					aCols[nY][nX] := cSituaca
+				ElseIf aHeader[nX][02] == "bCR_NOMELIB"
+					aCols[nY][nX] := UsrRetName((cAliasSCR)->CR_USERLIB)
+				ElseIf ( aHeader[nX][10] != "V")
+					aCols[nY][nX] := FieldGet(FieldPos(aHeader[nX][2]))
+				EndIf
+			Next nX
+			aCols[nY][Len(aHeader)+1] := .F.
+			dbSkip()
+		EndDo
+
+		If !Empty(aCols)
+			If lBloq
+				cStatus := OemToAnsi("BLOQUEADO")
+			EndIf
+			//n:=	 IIF(n > Len(aCols), Len(aCols), n)  // Feito isto p/evitar erro fatal(Array out of Bounds). Gilson-Localizações
+			DEFINE FONT oBold NAME "Arial" SIZE 0, -12 BOLD
+			DEFINE MSDIALOG oDlg TITLE cTitle From 109,095 To 400,600 OF oMainWnd PIXEL	 //"Aprovacao do Pedido de Compra // Contrato"
+			@ 005,003 TO 032,250 LABEL "" OF oDlg PIXEL
+			@ 015,007 SAY cTitDoc OF oDlg FONT oBold PIXEL SIZE 046,009 // "Pedido" / "Contrato" / "Nota Fiscal"
+			@ 014,041 MSGET cNumDoc PICTURE "" WHEN .F. PIXEL SIZE 050,009 OF oDlg FONT oBold
+			@ 132,008 SAY "Situacao :" OF oDlg PIXEL SIZE 052,009 //'Situacao :'
+			@ 132,038 SAY cStatus OF oDlg PIXEL SIZE 120,009 FONT oBold
+			@ 132,205 BUTTON "Fechar" SIZE 035 ,010  FONT oDlg:oFont ACTION (oDlg:End()) OF oDlg PIXEL  //'Fechar'
+			oGet:= MSGetDados():New(038,003,120,250,nOpcx,,,"")
+			oGet:Refresh()
+			@ 126,002 TO 127,250 LABEL "" OF oDlg PIXEL
+			ACTIVATE MSDIALOG oDlg CENTERED
+		Else
+			Aviso("Atencao",cHelpApv,{"Voltar"})
+		EndIf
+
+		dbSelectArea(cAliasSCR)
+		dbCloseArea()
+		//aHeader := aClone(aSavHead)
+		//aCols   := aClone(aSavCols)
+		//N		:= nSavN
+	Else
+		Aviso("Atencao",cHelpApv,{"Voltar"})
+	EndIf
+
+	dbSelectArea(cAlias)
+	RestArea(aArea)
+
+Return
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ SIESTA05 ºAutor  ³Leonardo Soncin     º Data ³  28/11/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³Funcao para Liberacao de documentos.                        º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP                                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+User Function SIEST5GR()
+
+	Local cGrupo  := "" 
+	Local cPrefix := ""  
+	Local cDoc	  := SCP->CP_NUM      
+	Local nPTot	  := aScan(aHeader,{|x| AllTrim(x[2])=="CP_XVLRTOT"})    
+	Local nPItem  := aScan(aHeader,{|x| AllTrim(x[2])=="CP_ITEM"})     
+	Local _nTot   := 0
+	Local nY
+	Local lEstorna := .T.             
+
+	For nY := 1 to Len(aCols)	
+		If !(GdDeleted( nY, aHeader, aCols))
+
+			dbSelectArea("CT1")
+			dbSetOrder(1)
+			dbSeek(xFilial("CT1")+SCP->CP_CONTA)
+			cPrefix	:= CT1->CT1_PREFIX
+
+			dbSelectArea("SZQ")    
+			dbSetOrder(1)
+			IF dbSeek(xFilial("SZQ")+_c105CCusto+cPrefix)
+				cGrupo	:= SZQ->ZQ_COD
+			ELSEIF dbSeek(xFilial("SZQ")+_c105CCusto+Space(TamSX3("CT1_PREFIX")[1]))
+				cGrupo	:= SZQ->ZQ_COD
+			ENDIF
+
+			dbSelectArea("SCP")
+
+			If INCLUI .or. ALTERA
+				SCP->(dbSeek(xFilial("SCR")+cA105Num+aCols[nY][nPItem]))
+				RecLock("SCP",.F.)
+				SCP->CP_CC := _c105CCusto
+				If !Empty(cGrupo)
+					SCP->CP_STATSA := "E"
+					SCP->CP_XAPROV := cGrupo
+				Endif			
+				SCP->(MsUnlock())
+			ENDIF                    
+
+			_nTot += aCols[nY][nPTot]	
+		Endif
+	Next nY
+
+	SCR->(dbSetOrder(1))
+
+	// Se gerou SCR, estorna.
+	If !INCLUI                                           
+		IF SCR->(dbSeek(xFilial("SCR")+"SA"+cDoc))
+			If ALTERA
+				IF SCR->CR_TOTAL >= _nTot
+					lEstorna := .F.
+				Endif		   				   
+			Endif
+			If lEstorna
+				MaAlcDoc({cDoc,"SA",_nTot,,,,,1,0,},SCP->CP_EMISSAO,3)
+			Else
+				//Atualiza valor da alcada
+				While SCR->(!Eof()) .and. SCR->CR_FILIAL == XFilial("SCR") .and. Alltrim(SCR->CR_NUM) == Alltrim(cDoc) .and. SCR->CR_TIPO == "SA"	       
+					RecLock("SCR",.F.)
+					SCR->CR_TOTAL := _nTot
+					SCR->(msUnlock())
+					SCR->(dbSkip())
+				Enddo			
+			Endif
+			_cStatus := _fVerifSA(cDoc) // Verificar se estava aprovado
+			// altera flag 
+			For nY := 1 to Len(aCols)	
+				If !(GdDeleted( nY, aHeader, aCols))
+					IF SCP->(dbSeek(xFilial("SCR")+cA105Num+aCols[nY][nPItem]))
+						RecLock("SCP",.F.)
+						SCP->CP_STATSA := _cStatus
+						SCP->(MsUnlock())			
+					EndIf
+				Endif
+			Next nY				
+		EndIf     
+	Endif
+
+	If INCLUI .or. ALTERA
+
+		// Gravar Alcada SCR                                
+		IF !SCR->(dbSeek(xFilial("SCR")+"SA"+cDoc))
+			MaAlcDoc({cDoc,"SA",_nTot,,,cGrupo,,1,1,SCP->CP_EMISSAO},,1) 
+		Endif
+
+		fGeraDBM(SCP->CP_FILIAL, SCP->CP_NUM + Space(TamSX3('CR_NUM')[1]-Len(SCP->CP_NUM)))
+
+	Endif
+
+Return     
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIESTA05  ºAutor  ³Microsiga           º Data ³  03/27/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Verifica status da SA                                      º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP                                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function _fVerifSA(cDoc)
+
+	Local _cRet := "E"
+
+	SCR->(dbSetOrder(1))
+	SCR->(dbSeek(xFilial("SCR")+"SA"+cDoc))
+	While SCR->(!Eof()) .and. SCR->CR_FILIAL == XFilial("SCR") .and. SCR->CR_TIPO == "SA" .and. Alltrim(SCR->CR_NUM) == Alltrim(cDoc)
+		If (SCR->CR_STATUS $ ("03|05")) // aprovado
+			_cRet := "L"
+		ElseIf SCR->CR_STATUS == "04" // reprovado
+			_cRet := "B"
+		ElseIf SCR->CR_STATUS == "02" // em aprovacao
+			_cRet := "E"
+		EndIf
+		SCR->(dbSkip())
+	Enddo
+
+Return(_cRet)
+
+
+/*/{Protheus.doc} BloqSolSige
+Função para alterar o status da solicitação importada do SIGE.
+
+@author franklin.oliveira
+@since 16/05/2016
+@version undefined
+@param pDoc, , descricao
+@type function
+/*/
+/*-------------------------------------------------------------------------
+Franklin B. Oliveira 										08/06/2017
+Adicionado pergunta se o bloqueio é para correção de cadastro de 
+amarração:
+-Se Sim: O sistema deverá integrar novamente a solicitação de armazém;
+-Se Não: o sistema deverá bloquear a solicitação apenas;
+-------------------------------------------------------------------------*/
+Static Function BloqSolSige(pDoc)
+
+	Local cSgeABD	:= AllTrim(GetNewPar("MV_XSGEABD", ""))
+	Local cQuery	:= ""
+
+	//Altero Satus da Requisição para "B" - Bloqueada
+	RecLock("ZE0", .F.)		
+	ZE0->ZE0_STSSOL := "B"
+	MSUnlock("ZE0")
+
+	If ApMsgYesNo("Bloqueio para correção de cadastro de amarração?", "ATENÇÃO")
+		//Conexão com o SIGE
+		If Empty(cSgeABD)
+			UserException("SF0405F: Não foi possível executar a rotina. Verifique o parâmetro MV_XSGEABD.")
+			DisarmTransaction()
+		EndIf
+
+		cQuery	:= "UPDATE " + CRLF
+		cQuery	+= "	RM.SOLICITA_MATERIAL" + cSgeABD + CRLF
+		cQuery	+= "SET SITUACAO = 'B'		"	+ CRLF
+		cQuery	+= "WHERE FILIAL 			= '" + AllTrim(ZE0->ZE0_FILIAL) + "'" + CRLF
+		cQuery	+= "AND CODIGO_CURSO  		= '" + AllTrim(ZE0->ZE0_CODCUR) + "'" + CRLF
+		cQuery	+= "AND CURSO_DISCIPLINA	= '" + AllTrim(ZE0->ZE0_CODDIS) + "'" + CRLF
+		cQuery	+= "AND CODIGO_TURMA    	= '" + AllTrim(ZE0->ZE0_CODTUR) + "'" + CRLF
+
+		If (TCSQLExec(cQuery) < 0)
+			Conout("SF0405F: Não foi possível atualizar registro na tabela SOLICITA_MATERIAL")
+			Conout("SF0405F: TCSQLError() " + TCSQLError())
+			DisarmTransaction()
+		EndIf
+	EndIf
+
+Return Nil
+
+
+/*/{Protheus.doc} fGeraDBM
+@description criação de registros na tabela DBM - Itens de Doc. com Alçada
+@type  Static Function
+@author Alan Teles de Oliveira
+@since 08/02/2019
+@version 12.1.17
+/*/
+Static Function fGeraDBM(p_cFilial, p_cNum)
+
+	Local cItem     := ''
+	Local lAdd      := .F.
+	Local aArea     := GetArea()
+
+	dbSelectArea('DBM')
+	DBM->(dbGoTop())
+	DBM->(dbSetOrder(1)) //DBM_FILIAL+DBM_TIPO+DBM_NUM+DBM_GRUPO+DBM_ITGRP+DBM_USER+DBM_USEROR
+
+	dbSelectArea('SCR')
+	SCR->(dbGoTop())
+	SCR->(dbSetOrder(1)) //CR_FILIAL+CR_TIPO+CR_NUM+CR_NIVEL
+
+	dbSelectArea('SCP')
+	SCP->(dbSetOrder(1)) //CP_FILIAL+CP_NUM+CP_ITEM+DTOS(CP_EMISSAO)
+	SCP->(dbSeek(p_cFilial + p_cNum))
+
+	If SCR->(dbSeek(p_cFilial + 'SA' + p_cNum))
+
+		While .not. SCR->(Eof()) .and. SCR->CR_FILIAL = p_cFilial .and. SCR->CR_TIPO = 'SA' .and. SCR->CR_NUM = p_cNum
+
+			lAdd := .not. DBM->(dbSeek(xFilial('DBM') + 'SA' + SCR->CR_NUM + SCR->CR_GRUPO + SCR->CR_ITGRP + SCR->CR_USER))
+
+			SCP->(dbGoTop())
+			SCP->(dbSeek(p_cFilial + AllTrim(p_cNum)))
+
+			While .not. SCP->(Eof()) .and. SCP->CP_FILIAL = p_cFilial .and. SCP->CP_NUM = AllTrim(p_cNum)
+
+				RecLock('DBM', lAdd)
+
+				DBM->DBM_FILIAL := xFilial('DBM')	
+				DBM->DBM_TIPO   := "SA"	
+				DBM->DBM_ITGRP  := SCR->CR_ITGRP
+				DBM->DBM_GRUPO  := SCR->CR_GRUPO
+				DBM->DBM_USER   := SCR->CR_USER
+				DBM->DBM_USAPOR := SCR->CR_APRORI
+				DBM->DBM_USAPRO	:= SCR->CR_APROV
+				DBM->DBM_NUM    := SCR->CR_NUM
+				DBM->DBM_ITEM   := SCP->CP_ITEM
+				DBM->DBM_VALOR 	:= SCP->CP_XVUNIT
+				DBM->DBM_ITEMRA := SCP->CP_ITEM
+
+				DBM->(MsUnLock())
+
+				SCP->(dbSkip())
+
+			End
+
+			SCR->(dbSkip())
+
+		End
+
+	EndIf
+
+	RestArea(aArea)
+
+Return

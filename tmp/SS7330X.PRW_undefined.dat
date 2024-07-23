@@ -1,0 +1,860 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "PARMTYPE.CH"
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <SS7330X>
+ 30 - Contatos com Clientes   
+
+@author<Antonio Dantas>
+@since<14/04/2015>
+@version<1.00>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function SS7330X()
+Local _oReport			:= Nil     
+Private _lCancel			:= .f.  
+Private _cPerg 			:= ""
+Private _cAlias			:= GetNextAlias()   
+Private _cAceAll   		:= SuperGetMv("MV_XACEALL",,"")       
+//+------------------------------------------------------------------+
+//| Verifica se o operador esta logado na filail DR que tem acesso   |
+//| a todas as filiais, ou somente na filial em que esta logada.     |
+//+------------------------------------------------------------------+
+_cPerg	:= FunName()			//-- Define o Grupo de Perguntas   
+//+------------------------------------------------------------------+
+//|   Interface de impressao                                         |
+//+------------------------------------------------------------------+
+_oReport := ReportDef()
+If !_lCancel
+	_oReport:PrintDialog()
+Endif	    
+Return
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <ReportDef>
+ 30 - Contatos com Clientes   
+
+@author<Antonio Dantas>
+@since<14/04/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function ReportDef()
+Local _cTitulo		:= "30 - Contatos com Clientes"
+Local _cSubTit		:= ""  
+Local _oReport		:= Nil
+//--
+Local _oVendedor		:= Nil
+Local _oCliente		:= Nil
+Local _oAgenda		:= Nil  
+Local _oHistory		:= Nil   
+Local _oProdutos		:= Nil 
+//+------------------------------------------------------------------+
+//| Carrega as perguntas relativas aos parametros de Impressao       |
+//|   Mv_par01 - Filial DE?                                          |
+//|   Mv_par02 - Filial ATE?                                         |
+//|   Mv_par03 - Polo de Venda DE?                                   |
+//|   Mv_par04 - Polo de Venda ATE?                                  |
+//|   Mv_par05 - Vendedor DE?                                        |
+//|   Mv_par06 - Vendedor ATE?                                       |
+//|   Mv_par07 - Cliente DE?                                         |
+//|   Mv_par08 - Cliente ATE?                                        |
+//|   Mv_par09 - Produto DE?                                         |
+//|   Mv_par10 - Produto ATE?                                        |
+//|   Mv_par11 - Data da Visita DE ?                                 |
+//|   Mv_par12 - Data da Visita ATE ?                                |
+//+------------------------------------------------------------------+
+//xParPerg(_cPerg)
+CriaSX1(_cPerg)
+//+------------------------------------------------------------------+
+//|  Monta tela de paramentos para usuario, se cancelar sair         |
+//+------------------------------------------------------------------+
+If !Pergunte(_cPerg,.t.)  
+	_lCancel := .T. 
+   Return
+Endif 
+//+------------------------------------------------------------------+
+//| Verifica se o operador esta logado na filail DR que tem acesso   |
+//| a todas as filiais, ou somente na filial em que esta logada.     |
+//+------------------------------------------------------------------+
+If !(cFilAnt $ _cAceAll)
+	Mv_par01	:= cFilAnt
+	Mv_par02	:= cFilAnt
+Endif 
+//-- Defini o sub-titulo do Relatorio 
+_cSubTit := " - Periodo [De: "+DtoC(Mv_par11)+"Ate: "+DtoC(Mv_par12)+"] "  
+//+------------------------------------------------------------------+
+//|   Seleciona a tabela temporaria que sera referencia              | 
+//+------------------------------------------------------------------+
+FWMsgRun(, {|| u_fGet330X() }, "Processando a Consulta das Agendas e Apontamentos!", "Aguarde...")
+//+------------------------------------------------------------------+
+//|    Construcao do Objeto de Impressao do Relatorio                |
+//+------------------------------------------------------------------+
+//                    New(cReport,cTitle,uParam,bAction,cDescription,lLandscape,uTotalText,lTotalInLine,cPageTText,lPageTInLine,lTPageBreak,nColSpace)
+_oReport := TReport():New(_cPerg,_cTitulo,_cPerg,{|_oReport|  ReportPrint(_oReport) },_cSubTit,.t.)
+//&&--  _oReport:SetLandScape() 			//-- Modo Paisagem 
+_oReport:SetPortrait() 			//-- Modo Retrato 
+//+------------------------------------------------------------------+
+//|    *****      S e c a o  -  1      *****                         |
+//+------------------------------------------------------------------+
+_oVendedor := TRSection():New(_oReport,"Vendedor",{"SA3"} )
+TRCell():New(_oVendedor	,"AD7_FILIAL"		,"AD7" 	,"Filial"			,PesqPict("AD7","AD7_FILIAL") 	,TamSX3("AD7_FILIAL")[1]			,.F.) 
+TRCell():New(_oVendedor	,"A3XDESCP"		,"SA3" 	,"Polo de Venda"	,"@!"    							,0									,.F.)
+TRCell():New(_oVendedor	,"A3_COD"			,"SA3" 	,"Codigo"			,PesqPict("SA3","A3_COD")    	,TamSX3("A3_COD")[1]				,.F.)    
+TRCell():New(_oVendedor	,"A3_NOME"			,"SA3" 	,"Nome"			,PesqPict("SA3","A3_NOME")		,TamSX3("A3_NOME")[1]			,.F.)   
+TRCell():New(_oVendedor	,"A3_ADMISS"		,"SA3" 	,"Admissão"		,"@!"								,13									,.F.) 
+TRCell():New(_oVendedor	,"A3_CEL"			,"SA3" 	,"Celular"			,PesqPict("SA3","A3_CEL")  		,TamSX3("A3_CEL")[1]				,.F.)    
+//+------------------------------------------------------------------+
+//|    *****      S e c a o  -  2      *****                         |
+//+------------------------------------------------------------------+
+_oCliente := TRSection():New(_oReport,"Cliente",{"SA1"} )
+TRCell():New(_oCliente	,"A1_CGC"			,"SA1" 	,"CGC/CPF"				,"@!"  							,25								,.F.)    
+TRCell():New(_oCliente	,"A1_NOME"			,"SA1" 	,"Nome"				,PesqPict("SA1","A1_NOME")   	,TamSX3("A1_NOME")[1]		,.F.)   
+TRCell():New(_oCliente	,"A1_NREDUZ"		,"SA1" 	,"Fantasia"			,PesqPict("SA1","A1_NREDUZ")   	,TamSX3("A1_NREDUZ")[1]		,.F.) 
+TRCell():New(_oCliente	,"A1_XQTEMP"		,"SA1" 	,"Nr Func."			,PesqPict("SA1","A1_XQTEMP")   	,TamSX3("A1_XQTEMP")[1]		,.F.) 
+TRCell():New(_oCliente	,"A1_MUN"			,"SA1" 	,"Cidade"				,PesqPict("SA1","A1_MUN")   	,TamSX3("A1_MUN")[1]			,.F.)    
+TRCell():New(_oCliente	,"A1XPOLO"			,"SA1" 	,"Polo de Venda"		,"@!"  							,40								,.F.)
+TRCell():New(_oCliente	,"A1_ULTCOM"		,"SA1" 	,"Ult Compra"			,PesqPict("SA1","A1_ULTCOM")   	,TamSX3("A1_ULTCOM")[1]		,.F.) 
+TRCell():New(_oCliente	,"A1VLRMEDI"		,"SA1" 	,"Vlr Med Compr"		,"@E 9,999,999.99"   			,15								,.F.) 
+//+------------------------------------------------------------------+
+//|    *****      S e c a o  -  3      *****                         |
+//+------------------------------------------------------------------+
+_oAgenda := TRSection():New(_oReport,"Agendas",{"AD5"} )
+TRCell():New(_oAgenda	,"AD5_DATA"		,"AD5" 	,"Data"			,"@!"								,13							,.F.)  
+TRCell():New(_oAgenda	,"AD5_SEQUEN"		,"AD5" 	,"Seg."			,PesqPict("AD5","AD5_SEQUEN")	,TamSX3("AD5_SEQUEN")[1]	,.F.)
+TRCell():New(_oAgenda	,"AD5_XRHINI"		,"AD5" 	,"Hr INI"			,PesqPict("AD5","AD5_XRHINI")  	,TamSX3("AD5_XRHINI")[1]	,.F.)
+TRCell():New(_oAgenda	,"AD5_XRHFIM"		,"AD5" 	,"Hr FIM"			,PesqPict("AD5","AD5_XRHFIM")  	,TamSX3("AD5_XRHFIM")[1]	,.F.)
+TRCell():New(_oAgenda	,"U5_CONTAT"		,"SU5" 	,"Contato"			,PesqPict("SU5","U5_CONTAT")  	,TamSX3("U5_CONTAT")[1]	,.F.) 
+TRCell():New(_oAgenda	,"UM_DESC"			,"SUM" 	,"Cargo"			,PesqPict("SUM","UM_DESC")    	,20							,.F.)   
+TRCell():New(_oAgenda	,"U5_FONE"			,"AD5" 	,"Telefone"		,PesqPict("SU5","U5_FONE")    	,TamSX3("U5_FONE")[1]	,.F.)   
+TRCell():New(_oAgenda	,"U5_CELULAR"		,"AD5" 	,"Celular"			,PesqPict("SU5","U5_CELULAR")  	,TamSX3("U5_CELULAR")[1]	,.F.)
+TRCell():New(_oAgenda	,"U5_EMAIL"		,"AD5" 	,"E-mail"			,PesqPict("SU5","U5_EMAIL")   	,TamSX3("U5_EMAIL")[1]	,.F.)  
+TRCell():New(_oAgenda	,"AC5_DESCRI"		,"AD5" 	,"Evento"			,PesqPict("SU5","AC5_DESCRI") 	,30							,.F.)
+//+------------------------------------------------------------------+
+//|    *****      S e c a o  -  4      *****                         |
+//+------------------------------------------------------------------+
+_oHistory := TRSection():New(_oReport,"Historico",{"AD5"} )
+TRCell():New(_oHistory	,"CXHISTOR"	,"" 	,""		,"@!"	,10		,.F.)  
+TRCell():New(_oHistory	,"AD5XRHIST"	,"" 	,""		,"@!"	,150	,.F.)  
+_oHistory:lHeaderSection := .f.  
+_oHistory:SetHeaderSection(.f.)
+//+------------------------------------------------------------------+
+//|    *****      S e c a o  -  5      *****                         |
+//+------------------------------------------------------------------+
+_oProdutos := TRSection():New(_oReport,"Produtos",{"SB1"} )
+TRCell():New(_oProdutos	,"SB1PROD"		,"" 	,"Produto"			,"@!"	   				,120	,.F.)  
+TRCell():New(_oProdutos	,"SB1QTDE"		,"" 	,"Qdte"			,"@E 9,999,999.99"	,13		,.F.)  
+TRCell():New(_oProdutos	,"SB1VLRUNI"	,"" 	,"Vlr Unit."		,"@E 9,999,999.99"	,13		,.F.)  
+TRCell():New(_oProdutos	,"SB1VLRTOT"	,"" 	,"Total"			,"@E 9,999,999.99"	,13		,.F.)  
+TRCell():New(_oProdutos	,"SB1PROPOS"	,"" 	,"Proposta"		,"@!"	   				,10		,.F.)  
+TRCell():New(_oProdutos	,"SC5PEDIDO"	,"" 	,"Pedido"			,"@!"	   				,10		,.F.)
+Return _oReport
+
+/*
++--------------------------------------------------------------------------+
+ {Protheus.doc}<ReportPrint>
+ 30 - Contatos com Clientes   
+
+@Author<Antonio Dsantas>
+@since<14/04/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
++--------------------------------------------------------------------------+
+*/
+Static Function ReportPrint(_oReport)
+Local _oVendedor		:= _oReport:Section(1)
+Local _oCliente		:= _oReport:Section(2)
+Local _oAgenda		:= _oReport:Section(3)  
+Local _oHistory		:= _oReport:Section(4)  
+Local _oProdutos		:= _oReport:Section(5)  
+//--
+Local _nRecs			:= 0 
+Local _cDescPolo		:= ""
+Local _cDescrCli		:= ""
+Local _cDescrCid		:= "" 
+Local _cCGG_CPF		:= ""
+//-- 
+Local _lImpVend		:= .t.
+Local _cVend_ATU 		:= ""
+//-- 
+Local _lImpCli		:= .t.
+Local _cCli_ATU 		:= ""
+Local _cLojaCli		:= ""
+//-- 
+Local _lImpApont 		:= .t.
+Local _cDtaApont		:= ""
+Local _cDtaSeque		:= ""
+
+Local _lTemProd 		:= .f. 
+Local _cCdProd		:= ""
+Local _nQtdeProd		:= 0 
+Local _nVlrProd 		:= 0 
+Local _nTotProd 		:= 0
+Local _cProposta		:= ""
+//-- 
+Local _cDescrCli 		:= ""  	
+Local _cPoloCli		:= ""
+Local _nCprMedia		:= 0.00 
+//-- 
+Local _lFirstTime		:= .t.   
+//+------------------------------------------------------------------+
+//| Posiciona no inicio o Arquivo Resultado da Consulta Sql          | 
+//+------------------------------------------------------------------+
+dbSelectArea(_cAlias)  
+(_cAlias)->(dbgotop())    
+//-- Conta o numero do Registro da Tabela Temporaria
+(_cAlias)->(dbEval({|| _nRecs++ }))
+_oReport:SetMeter(_nRecs)
+//-- 
+dbSelectArea(_cAlias)  
+(_cAlias)->(dbgotop())
+_cVend_ATU 	:= (_cAlias)->A3_COD
+_cCli_ATU 		:= (_cAlias)->A1_COD
+_cLojaCli		:= (_cAlias)->A1_LOJA
+_cDtaApont		:= Dtos((_cAlias)->AD6_DATA)
+_cDtaSeque		:= (_cAlias)->AD6_SEQUEN
+_lFirstTime 	:= .t.    
+//+------------------------------------------------------------------+
+//| Inicia Laco para impressao do Relatorio                          |
+//+------------------------------------------------------------------+
+Do While (_cAlias)->(!eof())   
+	_oReport:IncMeter()    
+	//+------------------------------------------------------------------+
+	//|  Imprime a IDENTIFICAÇÃO DO VENDEDOR                             |
+	//+------------------------------------------------------------------+
+	If _lImpVend  
+		_oVendedor:Init()
+		_oReport:SetLeftMargin(1)		//-- Seta a Margem a partir da posição 1
+		If !_lFirstTime
+			//-- Salta linha dupla 
+			_oReport:SkipLine()
+			_oReport:SkipLine()
+			_oReport:SkipLine()
+		Endif    
+		_cDescPolo	:= (_cAlias)->A3_XPOLO+" - "+Substr(A3_XDESCRP,1,30) 
+		//-- 
+		_oVendedor:Cell( "AD7_FILIAL"	):SetBlock({|| (_cAlias)->AD7_FILIAL  		}) 
+		_oVendedor:Cell( "A3XDESCP"		):SetBlock({||  _cDescPolo					})
+		_oVendedor:Cell( "A3_COD"		):SetBlock({|| (_cAlias)->A3_COD  			})    
+		_oVendedor:Cell( "A3_NOME"		):SetBlock({|| (_cAlias)->A3_NOME  		})   
+		_oVendedor:Cell( "A3_ADMISS"	):SetBlock({|| (_cAlias)->A3_ADMISS  		}) 
+		_oVendedor:Cell( "A3_CEL"		):SetBlock({|| (_cAlias)->A3_CEL  			})  
+		_oVendedor:PrintLine()		//-- Imprime e alinha   
+		_lImpVend := .f.
+	Endif 
+	If _lImpCli
+		_oCliente:Init()
+		_oReport:SetLeftMargin(3)		//-- Seta a Margem a partir da posição 3 
+		//+------------------------------------------------------------------+
+		//|  Imprime a IDENTIFICA O CLIENTE VISITADO                         |
+		//+------------------------------------------------------------------+
+		dbSelectArea("SA1")
+		SA1->(dbSetOrder(1))
+		SA1->(dbSeek(FwxFilial("SA1")+(_cAlias)->A1_COD+(_cAlias)->A1_LOJA))
+		//-- 		
+		_cDescrCli := Alltrim(SA1->A1_COD)+"/"+Alltrim(SA1->A1_LOJA)+" - "+Substr(SA1->A1_NOME,1,30)  	
+		_nCprMedia	:= SA1->A1_VACUM/SA1->A1_NROCOM 
+		_cPoloCli	:= SA1->A1_XPOLO+" - "+Substr(Posicione("ZCD",1,FwxFilial("ZCD")+SA1->A1_XPOLO,"ZCD_DESCRI"),1,31)
+		_cCGG_CPF 	:= Transform(Alltrim(SA1->A1_CGC),Iif(Len(Alltrim(SA1->A1_CGC))>11,"@R 99.999.999/9999-99","@R 999.999.999-99")) 
+		_oCliente:Cell( "A1_CGC"		):SetBlock({|| _cCGG_CPF					})    
+		_oCliente:Cell( "A1_NOME"		):SetBlock({|| _cDescrCli 				})   
+		_oCliente:Cell( "A1_NREDUZ"	):SetBlock({|| SA1->A1_NREDUZ			}) 
+		_oCliente:Cell( "A1_XQTEMP"	):SetBlock({|| SA1->A1_XQTEMP			}) 
+		_oCliente:Cell( "A1_MUN"		):SetBlock({|| SA1->A1_MUN				})    
+		_oCliente:Cell( "A1XPOLO"		):SetBlock({|| _cPoloCli					})
+		_oCliente:Cell( "A1_ULTCOM"	):SetBlock({|| SA1->A1_ULTCOM			}) 
+		_oCliente:Cell( "A1VLRMEDI"	):SetBlock({|| _nCprMedia				}) 
+		_oCliente:PrintLine()	//-- Imprime a Linha    
+		_lImpCli := .f.
+	Endif 
+	If _lImpApont
+		//+------------------------------------------------------------------+
+		//|  Imprime os Detalhes da AGENDA e APONTAMENTOS.                   |
+		//+------------------------------------------------------------------+
+		_oAgenda:Init()      
+		_oReport:SetLeftMargin(5)		//-- Seta a Margem a partir da posição 5
+		//+------------------------------------------------------------------+
+		//|  Defini o numero do telefone que sera impresso                   |
+		//+------------------------------------------------------------------+
+		_cTelef := "" 
+		If !Empty(Alltrim((_cAlias)->U5_FONE))
+			_cTelef := (_cAlias)->U5_FONE
+		Else
+			If !Empty(Alltrim((_cAlias)->U5_FCOM1)) 
+		 		_cTelef := (_cAlias)->U5_FCOM1
+		 	Else
+		 		_cTelef := (_cAlias)->U5_FCOM2
+		 	Endif 		
+		Endif  
+		//-- 	
+		_oAgenda:Cell( "AD5_DATA"	):SetBlock({|| (_cAlias)->AD5_DATA  			})  
+		_oAgenda:Cell( "AD5_SEQUEN"	):SetBlock({|| (_cAlias)->AD5_SEQUEN  			})
+		_oAgenda:Cell( "AD5_XRHINI"	):SetBlock({|| (_cAlias)->AD5_XRHINI  			})
+		_oAgenda:Cell( "AD5_XRHFIM"	):SetBlock({|| (_cAlias)->AD5_XRHFIM  			})
+		_oAgenda:Cell( "U5_CONTAT"	):SetBlock({|| (_cAlias)->U5_CONTAT  			}) 
+		_oAgenda:Cell( "UM_DESC"		):SetBlock({|| Substr((_cAlias)->UM_DESC,1,20) 	})   
+		_oAgenda:Cell( "U5_FONE"		):SetBlock({|| _cTelef 							})   
+		_oAgenda:Cell( "U5_CELULAR"	):SetBlock({|| (_cAlias)->U5_CELULAR  			})
+		_oAgenda:Cell( "U5_EMAIL"	):SetBlock({|| (_cAlias)->U5_EMAIL  			})  
+		_oAgenda:Cell( "AC5_DESCRI"	):SetBlock({|| (_cAlias)->AD5_EVENTO+" - "+Substr((_cAlias)->AC5_DESCRI,1,20) })
+		_oAgenda:PrintLine()		//-- Imprime a Linha 
+		//+------------------------------------------------------------------+
+		//|  Imprime o Historico do Apontamento                              |
+		//+------------------------------------------------------------------+
+		dbSelectArea("AD5")
+		AD5->(dbGoto((_cAlias)->AD5RECNO))
+		If !Empty(Alltrim(AD5->AD5_XRHIST))
+			//-- Finaliza a Sessão da Agenda                  
+	   		_oAgenda:Finish()
+			//-- Inicializa a Sessão do Historico 
+			_oHistory:Init()      
+			_oReport:SetLeftMargin(7)		//-- Seta a Margem a partir da posição 5
+			_oHistory:Cell( "AD5XRHIST" ):SetLineBreak(.T.)     
+			_oHistory:Cell( "CXHISTOR"	):SetBlock({|| "HISTORICO: "					})  
+			_oHistory:Cell( "AD5XRHIST"	):SetBlock({|| AD5->AD5_XRHIST					})  
+			_oHistory:PrintLine()		//-- Imprime a Linha 
+			_oHistory:Finish()
+		Endif 
+		_lImpApont := .f. 
+	Endif		//-- If _lImpApont 	
+	//+------------------------------------------------------------------+
+	//|  Imprime os PRODUTOS do apontamento.                             |
+	//+------------------------------------------------------------------+
+	_lTemProd := .f. 
+	//-- Verifica se existe o produto na Proposta 
+	If !Empty(Alltrim((_cAlias)->ADZ_PRODUT))
+		_lTemProd 		:= .t. 
+		_cCdProd		:= (_cAlias)->ADZ_PRODUT
+		_nQtdeProd		:= (_cAlias)->ADZ_QTDVEN 
+		_nQtdeProd		:= (_cAlias)->ADZ_PRCVEN 
+		_nTotProd 		:= (_cAlias)->ADZ_TOTAL 
+		_cProposta		:= "Sim"
+	Endif  
+	//-- Se não existir o produto na Proposta Verifica se existe produto
+	//-- Ofertado no Apontamento  
+	If !_lTemProd .and. !Empty(Alltrim((_cAlias)->AD6_CODPRO))
+		_lTemProd 		:= .t. 
+		_cCdProd		:= (_cAlias)->AD6_CODPRO
+		_nQtdeProd		:= (_cAlias)->AD6_QUANT 
+		_nVlrProd 		:= (_cAlias)->AD6_VLUNIT 
+		_nTotProd 		:= (_cAlias)->AD6_TOTAL
+		_cProposta		:= "Não"
+	Endif 
+	//-- Só imprime detalhes do Produtos se existir produto informado na Proposta ou no Apontamento. 
+	If _lTemProd
+		_cProdDesc	:= Alltrim(_cCdProd)+" - "+Substr(Posicione("SB1",1,FwxFilial("SB1")+_cCdProd,"B1_DESC"),1,100) 
+		_oProdutos:Init()      
+		_oReport:SetLeftMargin(6)		//-- Seta a Margem a partir da posição 6
+		_oProdutos:Cell( "SB1PROD"		):SetBlock({|| _cProdDesc			})  
+		_oProdutos:Cell( "SB1QTDE"		):SetBlock({|| _nQtdeProd			})  
+		_oProdutos:Cell( "SB1VLRUNI"	):SetBlock({|| _nVlrProd				})  
+		_oProdutos:Cell( "SB1VLRTOT"	):SetBlock({|| _nTotProd				})  
+		_oProdutos:Cell( "SB1PROPOS"	):SetBlock({|| _cProposta			})  
+		_oProdutos:Cell( "SC5PEDIDO"	):SetBlock({|| (_cAlias)->CK_NUMPV	})
+		_oProdutos:PrintLine()			//-- Imprime a Linha 
+	Endif 
+	//+------------------------------------------------------------------+
+	//|  Vai para o Proximo Registro da TABELA TEMPORARIA                | 
+	//|  ***Estabelece os Controles de Quebra                            |
+	//+------------------------------------------------------------------+
+	(_cAlias)->(dbskip()) 	
+	//+------------------------------------------------------------------+
+	//| Controle de Quebra do Apontameno/Agenda                          | 
+	//+------------------------------------------------------------------+
+	If Dtos((_cAlias)->AD6_DATA)+(_cAlias)->AD6_SEQUEN != _cDtaApont+_cDtaSeque
+		_cDtaApont		:=  Dtos((_cAlias)->AD6_DATA)
+		_cDtaSeque		:=  (_cAlias)->AD6_SEQUEN
+		_lImpApont 	:= .t.
+		_oProdutos:Finish()
+		//-- 
+	Endif 
+	//+------------------------------------------------------------------+
+	//| Controla a troca do Cliente para Impresao do Cabelhaço           |
+	//+------------------------------------------------------------------+
+	If (_cAlias)->A1_COD+(_cAlias)->A1_LOJA != _cCli_ATU+_cLojaCli
+		_cCli_ATU 		:= (_cAlias)->A1_COD
+		_cLojaCli		:= (_cAlias)->A1_LOJA
+		_lImpCli 		:= .t.
+		_lImpApont 	:= .t. 
+		_oProdutos:Finish()
+		_oAgenda:Finish()
+		_oCliente:Finish()
+		//-- 
+		_oReport:SkipLine()		//-- Salta uma Linha    
+		_oReport:SkipLine()
+		_oReport:SkipLine()
+	Endif 
+	//+------------------------------------------------------------------+
+	//| Controla a troca de Vendedor para Impresao do Cabelhaço          |
+	//+------------------------------------------------------------------+
+	If (_cAlias)->A3_COD != _cVend_ATU
+		_cVend_ATU := (_cAlias)->A3_COD
+		_oProdutos:Finish()
+   		_oAgenda:Finish()
+		_oCliente:Finish()
+		_oVendedor:Finish()
+		_lImpVend 		:= .t.
+		_lImpCli 		:= .t.
+		_lImpApont 	:= .t. 
+	Endif 
+	//-- Controle de Entrada, quebra.
+	_lFirstTime := .f.
+Enddo 
+//+------------------------------------------------------------------+
+//|     Finaliza todas as sessões por definitivo                     |
+//+------------------------------------------------------------------+
+_oVendedor:Finish()
+_oCliente:Finish()
+_oAgenda:Finish()  
+_oHistory:Finish()  
+_oProdutos:Finish()
+//+------------------------------------------------------------------+
+//|     Fecha o Arquivo de Trabalho                                  |
+//+------------------------------------------------------------------+
+(_cAlias)->(dbCloseArea())
+//+------------------------------------------------------------------+
+//|     Finaliza as sessoes                                          |
+//+------------------------------------------------------------------+
+Return
+
+
+/*
++--------------------------------------------------------------------------+
+{Protheus.doc}<fGet330X>
+ Monta query que busca as matriculas.
+
+@Author<Antonio Dsantas>
+@since<10/04/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
++--------------------------------------------------------------------------+
+*/
+User Function fGet330X()
+Local _cQuery		:= "" 
+_cQuery := ""
+_cQuery += "Select AD7.AD7_FILIAL, SA3.A3_COD, SA3.A3_NOME, SA3.A3_XPOLO, "+CRLF
+_cQuery += "        SA3.A3_XDESCRP, SA3.A3_ADMISS,SA3.A3_CEL, "+CRLF
+_cQuery += "        SA1.A1_COD, SA1.A1_LOJA, "+CRLF
+_cQuery += "        AD5.AD5_DATA, AD5.AD5_SEQUEN, AD5.AD5_XRHINI, AD5.AD5_XRHFIM, "+CRLF
+_cQuery += "        AD5.AD5_EVENTO, AC5.AC5_DESCRI, AD5.R_E_C_N_O_ as AD5RECNO, "+CRLF
+_cQuery += "        SU5.U5_CONTAT, SU5.U5_FUNCAO, SUM.UM_DESC, SU5.U5_FONE, SU5.U5_FCOM1, "+CRLF
+_cQuery += "        SU5.U5_FCOM2, SU5.U5_CELULAR, SU5.U5_EMAIL, "+CRLF
+_cQuery += "        AD1.AD1_NROPOR, AD1.AD1_DTASSI,"+CRLF
+_cQuery += "        AD6.AD6_DATA, AD6.AD6_SEQUEN, AD6.AD6_CODPRO, "+CRLF
+_cQuery += "        AD6.AD6_QUANT, AD6.AD6_VLUNIT, AD6.AD6_TOTAL, "+CRLF
+_cQuery += "        ADZ.ADZ_PRODUT, ADZ.ADZ_DESCRI, ADZ.ADZ_PROPOS, "+CRLF
+_cQuery += "        ADZ.ADZ_QTDVEN, ADZ.ADZ_PRCVEN, ADZ.ADZ_TOTAL, "+CRLF 
+_cQuery += "        SCK.CK_NUMPV "+CRLF
+_cQuery += " From "+RetSqlName("AD7")+" AD7 "+CRLF
+_cQuery += " Inner Join "+RetSqlName("AD5")+" AD5 on AD5.D_E_L_E_T_ = ' ' "+CRLF
+_cQuery += "              And AD5.AD5_FILIAL = AD7.AD7_FILIAL "+CRLF
+_cQuery += "              And AD5.AD5_VEND = AD7.AD7_VEND "+CRLF
+_cQuery += "              And AD5.AD5_DATA = AD7.AD7_DATA "+CRLF
+_cQuery += "              And ( "+CRLF
+_cQuery += "                    ( AD5.AD5_NROPOR = AD7.AD7_NROPOR ) "+CRLF
+_cQuery += "               or "+CRLF
+_cQuery += "                    ( AD5.AD5_CODCLI = AD7.AD7_CODCLI And AD5.AD5_LOJA = AD7.AD7_LOJA ) "+CRLF
+_cQuery += "                   ) "+CRLF
+_cQuery += "Left Join "+RetSqlName("AD1")+" AD1 on AD1.D_E_L_E_T_ = ' ' "+CRLF 
+_cQuery += "            And AD1.AD1_FILIAL = AD7.AD7_FILIAL "+CRLF
+_cQuery += "            And AD1.AD1_NROPOR = AD5.AD5_NROPOR "+CRLF
+_cQuery += "Inner Join "+RetSqlName("SA1")+" SA1 on SA1.D_E_L_E_T_ = ' ' "+CRLF
+_cQuery += "            And SA1.A1_FILIAL = '"+FwxFilial("SA1")+"' "+CRLF
+_cQuery += "            And SA1.A1_COD = AD1.AD1_CODCLI "+CRLF
+_cQuery += "            And SA1.A1_LOJA =  AD1.AD1_LOJCLI "+CRLF
+_cQuery += "Left Join "+RetSqlName("AC5")+" AC5 on AC5.D_E_L_E_T_ = ' ' "+CRLF
+_cQuery += "            And AC5.AC5_FILIAL = Substr(AD7.AD7_FILIAL,1,4) "+CRLF
+_cQuery += "            And AC5.AC5_EVENTO = AD5.AD5_EVENTO "+CRLF
+_cQuery += "Left Join "+RetSqlName("SA3")+" SA3 on SA3.D_E_L_E_T_ = ' ' "+CRLF
+_cQuery += "            And SA3.A3_FILIAL = '"+FwxFilial("SA3")+"' "+CRLF
+_cQuery += "            And SA3.A3_COD = AD7.AD7_VEND "+CRLF
+_cQuery += "Left Join "+RetSqlName("SU5")+" SU5 on SU5.D_E_L_E_T_ = ' ' "+CRLF
+_cQuery += "            And SU5.U5_FILIAL = '"+FwxFilial("SU5")+"' "+CRLF
+_cQuery += "            And SU5.U5_CODCONT = AD7_CONTAT "+CRLF
+_cQuery += "Left Join "+RetSqlName("SUM")+" SUM on SUM.D_E_L_E_T_ = ' ' "+CRLF
+_cQuery += "            And SUM.UM_FILIAL = AD7.AD7_FILIAL "+CRLF
+_cQuery += "            And SUM.UM_CARGO = SU5.U5_FUNCAO "+CRLF
+_cQuery += "Left Join "+RetSqlName("AD6")+" AD6 on AD6.D_E_L_E_T_ = ' ' "+CRLF 
+_cQuery += "            And AD6.AD6_FILIAL = AD5.AD5_FILIAL "+CRLF
+_cQuery += "            And AD6.AD6_VEND = AD5.AD5_VEND "+CRLF
+_cQuery += "            And AD6.AD6_DATA = AD5.AD5_DATA "+CRLF
+_cQuery += "            And AD6.AD6_SEQUEN = AD5.AD5_SEQUEN "+CRLF
+_cQuery += "            And AD6.AD6_CODPRO BetWeen '"+Mv_par09+"' And '"+Mv_par10+"' "+CRLF
+_cQuery += "Left Join "+RetSqlName("ADY")+" ADY on ADY.D_E_L_E_T_ = ' ' "+CRLF
+_cQuery += "            And ADY.ADY_FILIAL = AD7.AD7_FILIAL "+CRLF
+_cQuery += "            And ADY.ADY_OPORTU = AD1.AD1_NROPOR "+CRLF
+_cQuery += "            And ADY.ADY_REVISA = AD1.AD1_REVISA "+CRLF
+_cQuery += "            And ADY.ADY_STATUS = 'A' "+CRLF
+_cQuery += "Left Join "+RetSqlName("ADZ")+" ADZ on ADZ.D_E_L_E_T_ = ' ' "+CRLF 
+_cQuery += "            And ADZ.ADZ_FILIAL = ADY.ADY_FILIAL "+CRLF
+_cQuery += "            And ADZ.ADZ_PROPOS = ADY.ADY_PROPOS "+CRLF
+_cQuery += "            And ADZ.ADZ_REVISA = ADY.ADY_PREVIS "+CRLF
+_cQuery += "            And ADZ.ADZ_PRODUT = AD6.AD6_CODPRO "+CRLF
+_cQuery += "Left Join "+RetSqlName("SCK")+" SCK on SCK.D_E_L_E_T_ = ' '"+CRLF 
+_cQuery += "            And SCK.CK_FILIAL = ADZ.ADZ_FILIAL "+CRLF
+_cQuery += "            And SCK.CK_PROPOST = ADZ.ADZ_PROPOS "+CRLF
+_cQuery += "            And SCK.CK_ITEMPRO = ADZ.ADZ_ITEM "+CRLF
+_cQuery += "where AD7.D_E_L_E_T_ = ' ' "+CRLF
+_cQuery += "And AD7.AD7_FILIAL BetWeen '"+Mv_par01+"' And '"+Mv_par02+"' "+CRLF
+_cQuery += "And Substr(AD7.AD7_FILIAL,1,4) = '"+Substr(cFilAnt,1,4)+"' "+CRLF
+_cQuery += "And AD7.AD7_XPOLO BetWeen '"+Mv_par03+"' And '"+Mv_par04+"' "+CRLF
+_cQuery += "And AD7.AD7_VEND BetWeen '"+Mv_par05+"' And '"+Mv_par06+"' "+CRLF
+_cQuery += "And AD7.AD7_DATA BetWeen '"+DtoS(Mv_par11)+"' And '"+DtoS(Mv_par12)+"' "+CRLF
+_cQuery += "Order By AD7.AD7_FILIAL, AD7.AD7_VEND, AD7.AD7_CODCLI, AD7.AD7_LOJA, AD1.AD1_NROPOR, AD5.AD5_DATA, AD5.AD5_SEQUEN, AD6.AD6_CODPRO "+CRLF
+//+------------------------------------------------------------------+
+//| Grava o Resultado da Query para consulta                         |
+//+------------------------------------------------------------------+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select(_cAlias)>0
+	(_cAlias)->(DbCloseArea())
+Endif
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),_cAlias,.t.,.t.)
+//+------------------------------------------------------------------+
+//| Converte os campos tipo DATA                                     |
+//+------------------------------------------------------------------+
+TCSETFIELD( _cAlias, "A3_ADMISS"	,"D",8,0 )
+TCSETFIELD( _cAlias, "AD5_DATA"		,"D",8,0 )
+TCSETFIELD( _cAlias, "AD1_DTASSI"	,"D",8,0 )
+TCSETFIELD( _cAlias, "AD6_DATA"		,"D",8,0 )
+Return .t.
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <xParPerg>
+ Cria as perguntas.	  
+
+@author<Antonio Dantas>
+@since<13/02/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function xParPerg()	
+Local _aPerg := {}
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//   //-- MAPEAMENTOS DOS CAMPOS DE SX1
+//   aAdd (_aPerg,{"X1_PERGUNT","X1_PERPA","X1_PERENG","MV_CHL","C",5,0,0,"X1_GSC","X1_VALID",;
+//								"X1_VAR01",("X1_DEF01" e "X1_PYNE"),"X1_DEFSPA1","X1_DEFENG1","X1_CNT01",;
+//								"X1_VAR02","X1_DEF02","X1_DEFSPA2","X1_DEFENG2","X1_CNT02",;
+//								"X1_VAR03","X1_DEF03","X1_DEFSPA3","X1_DEFENG3","X1_CNT03",;
+//								"X1_VAR04","X1_DEF04","X1_DEFSPA4","X1_DEFENG4","X1_CNT04",;
+//								"X1_VAR05","X1_DEF05","X1_DEFSPA5","X1_DEFENG5","X1_CNT05",;
+//								"X1_F3","X1_GRPSXG","","X1_HELP","X1_PICTURE",{"Descricao para Tela PTG"},{"Descricao para Tela EPA"},{"Descricao para Tela USA"}})
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*&*
+//+------------------------------------------------------------------+
+//| Verifica se o operador esta logado na filail DR que tem acesso   |
+//| a todas as filiais, ou somente na filial em que esta logada.     |
+//+------------------------------------------------------------------+
+//-- Mv_par01 =     Filial DE?
+aAdd(_aPerg, {"Filial DE?","Filial DE?","Filial DE?","MV_CH1","C",TamSX3("AD5_FILIAL")[1],0,0,"G","u_fVldfil()",;
+					"MV_PAR01","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"SM0EPU","","","","",{"Codigo da Filial"},{"Codigo da Filial"},{"Codigo da Filial"}})
+
+//-- Mv_par02 =     Filial ATE?
+aAdd(_aPerg, {"Filial ATE?","Filial ATE?","Filial ATE?","MV_CH2","C",TamSX3("AD5_FILIAL")[1],0,0,"G","u_fVldfil()",;
+					"MV_PAR02","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"SM0EPU","","","","",{"Codigo da Filial"},{"Codigo da Filial"},{"Codigo da Filial"}})
+
+//-- Mv_par03 =     Polo de Venda DE?
+aAdd(_aPerg, {"Polo de Venda DE?","Polo de Venda DE?","Polo de Venda DE?","MV_CH3","C",TamSX3("AD7_XPOLO")[1],0,0,"G","",;
+					"MV_PAR03","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"ZCD","","","","",{"Cod do Polo de Venda DE"},{"Cod do Polo de Venda DE"},{"Cod do Polo de Venda DE"}})
+
+//-- Mv_par04 =     Polo de Venda ATE?
+aAdd(_aPerg, {"Polo de Venda ATE?","Polo de Venda ATE?","Polo de Venda ATE?","MV_CH4","C",TamSX3("AD7_XPOLO")[1],0,0,"G","",;
+					"MV_PAR04","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"ZCD","","","","",{"Cod do Polo de Venda ATE"},{"Cod do Polo de Venda ATE"},{"Cod do Polo de Venda ATE"}})
+
+//-- Mv_par05 =     Vendedor DE?
+aAdd(_aPerg, {"Vendedor DE?","Vendedor DE?","Vendedor DE?","MV_CH5","C",TamSX3("A3_COD")[1],0,0,"G","",;
+					"MV_PAR05","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"SA3","","","","",{"Codigo do Vendedor"},{"Codigo do Vendedor"},{"Codigo do Vendedor"}})
+
+//-- Mv_par06 =     Vendedor ATE?
+aAdd(_aPerg, {"Vendedor ATE?","Vendedor ATE?","Vendedor ATE?","MV_CH6","C",TamSX3("A3_COD")[1],0,0,"G","",;
+					"MV_PAR06","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"SA3","","","","",{"Codigo do Vendedor"},{"Codigo do Vendedor"},{"Codigo do Vendedor"}})
+
+
+//-- Mv_par07 =     Cliente DE?
+aAdd(_aPerg, {"Cliente DE?","Cliente DE?","Cliente DE?","MV_CH7","C",TamSX3("A1_COD")[1],0,0,"G","",;
+					"MV_PAR07","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"SA1","","","","",{"Codigo do Cliente"},{"Codigo do Cliente"},{"Codigo do Cliente"}})
+
+//-- Mv_par08 =     Cliente ATE?
+aAdd(_aPerg, {"Cliente ATE?","Cliente ATE?","Cliente ATE?","MV_CH8","C",TamSX3("A1_COD")[1],0,0,"G","",;
+					"MV_PAR08","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"SA1","","","","",{"Codigo do Cliente"},{"Codigo do Cliente"},{"Codigo do Cliente"}})     
+
+//-- Mv_par09 =     Produto DE?
+aAdd(_aPerg, {"Produto DE?","Produto DE?","Produto DE?","MV_CH9","C",TamSX3("B1_COD")[1],0,0,"G","",;
+					"MV_PAR09","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"SB1","","","","",{"Codigo do Produto"},{"Codigo do Produto"},{"Codigo do Produto"}})
+
+//-- Mv_par10 =     Produto ATE?
+aAdd(_aPerg, {"Produto ATE?","Produto ATE?","Produto ATE?","MV_CHA","C",TamSX3("B1_COD")[1],0,0,"G","",;
+					"MV_PAR10","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"SB1","","","","",{"Codigo do Produto"},{"Codigo do Produto"},{"Codigo do Produto"}})     
+
+//-- Mv_par11 =     Data da Visita DE ?
+aAdd(_aPerg, {"Data da Visita DE ?","Data da Visita DE ?","Data da Visita DE ?","MV_CHB","D",8,0,0,"G","",;
+					"MV_PAR11","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Data da Visita DE ?"},{"Data da Visita DE ?"},{"Data da Visita DE ?"}})
+
+//-- Mv_par12 =     Data da Visita ATE ?
+aAdd(_aPerg, {"Data da Visita ATE ?","Data da Visita ATE ?","Data da Visita ATE ?","MV_CHC","D",8,0,0,"G","",;
+					"MV_PAR12","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",;
+					"","","","","",{"Data da Visita ATE ?"},{"Data da Visita ATE ?"},{"Data da Visita ATE ?"}})
+
+u_SFAJUSX1(_cPerg,_aPerg) 
+Return 
+
+Static Function CriaSx1(cPerg)
+
+	Local nI		:= 0
+	Local nJ		:= 0
+	Local lSX1		:= .F.
+	Local aSaveArea	:= GetArea()
+	Local aPergs	:= {}
+	Local aEstrut	:= {}
+	Local aHelpEng	:= {}
+	Local aHelpSpa	:= {}
+	Local aHelpPor	:= {}
+	
+	//				X1_GRUPO   X1_ORDEM   X1_PERGUNT X1_PERSPA X1_PERENG  X1_VARIAVL X1_TIPO    X1_TAMANHO X1_DECIMAL X1_PRESEL
+	//				X1_GSC     X1_VALID   X1_VAR01   X1_DEF01  X1_DEFSPA1 X1_DEFENG1 X1_CNT01   X1_VAR02   X1_DEF02
+	//				X1_DEFSPA2 X1_DEFENG2 X1_CNT02   X1_VAR03  X1_DEF03   X1_fDEFSPA3 X1_DEFENG3 X1_CNT03   X1_VAR04   X1_DEF04
+	// 				X1_DEFSPA4 X1_DEFENG4 X1_CNT04   X1_VAR05  X1_DEF05   X1_DEFSPA5 X1_DEFENG5 X1_CNT05   X1_F3      X1_GRPSXG X1_PYME
+	
+	aEstrut := { "X1_GRUPO","X1_ORDEM"  ,"X1_PERGUNT","X1_PERSPA" ,"X1_PERENG" ,"X1_VARIAVL","X1_TIPO" ,"X1_TAMANHO","X1_DECIMAL","X1_PRESEL" ,;
+	"X1_GSC"    ,"X1_VALID","X1_VAR01"  ,"X1_DEF01"  ,"X1_DEFSPA1","X1_DEFENG1","X1_CNT01","X1_VAR02"  ,"X1_DEF02"  ,"X1_DEFSPA2",;
+	"X1_DEFENG2","X1_CNT02","X1_VAR03"  ,"X1_DEF03"  ,"X1_DEFSPA3","X1_DEFENG3","X1_CNT03","X1_VAR04"  ,"X1_DEF04"  ,"X1_DEFSPA4",;
+	"X1_DEFENG4","X1_CNT04","X1_VAR05"  ,"X1_DEF05"  ,"X1_DEFSPA5","X1_DEFENG5","X1_CNT05","X1_F3"     ,"X1_GRPSXG" ,"X1_PYME"}
+	
+	//-- Mv_par01 =     Filial DE?
+	aAdd(aPergs,{cPerg,"01","Filial DE?"			,"","","MV_CH1","C",TamSX3("AD5_FILIAL")[1],00,00,"G","u_fVldfil()","MV_PAR01","","","","","","","","","","","","","","","","","","","","","","","","","SM0EPU",""})
+	
+	//-- Mv_par02 =     Filial ATE?
+	aAdd(aPergs,{cPerg,"02","Filial ATE?"			,"","","MV_CH2","C",TamSX3("AD5_FILIAL")[1],00,00,"G","u_fVldfil()","MV_PAR02","","","","","","","","","","","","","","","","","","","","","","","","","SM0EPU",""})
+	
+	//-- Mv_par03 =     Polo de Venda DE?
+	aAdd(aPergs,{cPerg,"03","Polo de Venda DE?"		,"","","MV_CH3","C",TamSX3("AD7_XPOLO")[1],00,00,"G","","MV_PAR03","","","","","","","","","","","","","","","","","","","","","","","","","ZCD",""})
+	
+	//-- Mv_par04 =     Polo de Venda ATE?
+	aAdd(aPergs,{cPerg,"04","Polo de Venda ATE?"	,"","","MV_CH4","C",TamSX3("AD7_XPOLO")[1],00,00,"G","","MV_PAR04","","","","","","","","","","","","","","","","","","","","","","","","","ZCD",""})   
+	
+	//-- Mv_par05 =     Vendedor DE?
+	aAdd(aPergs,{cPerg,"05","Vendedor DE?"			,"","","MV_CH5","C",TamSX3("A3_COD")[1],00,00,"G","","MV_PAR05","","","","","","","","","","","","","","","","","","","","","","","","","SA3",""})
+	
+	//-- Mv_par06 =     Vendedor ATE?
+	aAdd(aPergs,{cPerg,"06","Vendedor ATE?"			,"","","MV_CH6","C",TamSX3("A3_COD")[1],00,00,"G","","MV_PAR06","","","","","","","","","","","","","","","","","","","","","","","","","SA3",""})
+	
+	//-- Mv_par07 =     Cliente DE?
+	aAdd(aPergs,{cPerg,"07","Cliente DE?"			,"","","MV_CH7","C",TamSX3("A1_COD")[1],00,00,"G","","MV_PAR07","","","","","","","","","","","","","","","","","","","","","","","","","SA1",""})
+	
+	//-- Mv_par08 =     Cliente ATE?
+	aAdd(aPergs,{cPerg,"08","Cliente ATE?"			,"","","MV_CH8","C",TamSX3("A1_COD")[1],00,00,"G","","MV_PAR08","","","","","","","","","","","","","","","","","","","","","","","","","SA1",""})
+	
+	//-- Mv_par09 =     Produto DE?
+	aAdd(aPergs,{cPerg,"09","Produto DE?"			,"","","MV_CH9","C",TamSX3("B1_COD")[1],00,00,"G","","MV_PAR09","","","","","","","","","","","","","","","","","","","","","","","","","SB1",""})
+	
+	//-- Mv_par10 =     Produto ATE?
+	aAdd(aPergs,{cPerg,"10","Produto ATE?"			,"","","MV_CHA","C",TamSX3("B1_COD")[1],00,00,"G","","MV_PAR10","","","","","","","","","","","","","","","","","","","","","","","","","SB1",""})
+	
+	//-- Mv_par11 =     Data da Visita DE ?
+	aAdd(aPergs,{cPerg,"11","Data da Visita DE ?"	,"","","MV_CHB","D",08,00,00,"G","","MV_PAR11","","","","","","","","","","","","","","","","","","","","","","","","","",""})
+	
+	//-- Mv_par12 =     Data da Visita ATE ?
+	aAdd(aPergs,{cPerg,"12","Data da Visita ATE ?"	,"","","MV_CHC","D",08,00,00,"G","","MV_PAR12","","","","","","","","","","","","","","","","","","","","","","","","","",""})
+	
+	ProcRegua(Len(aPergs))
+	dbSelectArea("SX1")
+	dbSetOrder(1)
+	IF ! dbSeek(cPerg)
+		For nI:= 1 To Len(aPergs)
+			If !Empty(aPergs[nI][1])
+				If !dbSeek(aPergs[nI,1]+aPergs[nI,2])
+					lSX1 := .T.
+					RecLock("SX1",.T.)
+					For nJ:=1 To Len(aPergs[nI])
+						If !Empty(FieldName(FieldPos(aEstrut[nJ])))
+							FieldPut(FieldPos(aEstrut[nJ]),aPergs[nI,nJ])
+						EndIf
+					Next nJ
+					MsUnLock()
+					dbCommit()
+					IncProc("Atualizando Perguntas de Relatorios" + "...")		//"Atualizando Perguntas de Relatorios"
+				EndIf
+			EndIf
+		Next nI
+	EndIf
+	
+	/*
+	Inclusao do "help" 
+	*/
+	AADD(aHelpPor,"Codigo da Filial"		)
+	AADD(aHelpPor,"Codigo da Filial"		)
+	AADD(aHelpPor,"Cod do Polo de Venda DE"	)
+	AADD(aHelpPor,"Cod do Polo de Venda ATE")
+	AADD(aHelpPor,"Codigo do Vendedor"		)
+	AADD(aHelpPor,"Codigo do Vendedor"		)
+	AADD(aHelpPor,"Codigo do Cliente"		)
+	AADD(aHelpPor,"Codigo do Cliente"		)
+	AADD(aHelpPor,"Codigo do Produto"		)
+	AADD(aHelpPor,"Codigo do Produto"		)
+	AADD(aHelpPor,"Data da Visita DE ?"		)
+	AADD(aHelpPor,"Data da Visita ATE ?"	)
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpEng,"")
+	Aadd(aHelpEng,"")
+	Aadd(aHelpEng,"")
+	Aadd(aHelpEng,"")
+	Aadd(aHelpEng,"")
+	Aadd(aHelpEng,"")
+	
+	PutSX1Help("P." + cPerg + "01.",aHelpPor,aHelpEng,aHelpSpa,.T.)
+	AHelpPor := {}
+	AHelpEng := {}
+	AHelpSpa := {}
+	/*..*/
+	AADD(aHelpPor,"Codigo da Filial"		)
+	AADD(aHelpPor,"Codigo da Filial"		)
+	AADD(aHelpPor,"Cod do Polo de Venda DE"	)
+	AADD(aHelpPor,"Cod do Polo de Venda ATE")
+	AADD(aHelpPor,"Codigo do Vendedor"		)
+	AADD(aHelpPor,"Codigo do Vendedor"		)
+	AADD(aHelpPor,"Codigo do Cliente"		)
+	AADD(aHelpPor,"Codigo do Cliente"		)
+	AADD(aHelpPor,"Codigo do Produto"		)
+	AADD(aHelpPor,"Codigo do Produto"		)
+	AADD(aHelpPor,"Data da Visita DE ?"		)
+	AADD(aHelpPor,"Data da Visita ATE ?"	)
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpEng,"")
+	Aadd(aHelpEng,"")
+	Aadd(aHelpEng,"")
+	Aadd(aHelpEng,"")
+	Aadd(aHelpEng,"")
+	Aadd(aHelpEng,"")
+	AHelpPor := {}
+	AHelpEng := {}
+	AHelpSpa := {}
+	/*..*/
+	AADD(aHelpPor,"Codigo da Filial"		)
+	AADD(aHelpPor,"Codigo da Filial"		)
+	AADD(aHelpPor,"Cod do Polo de Venda DE"	)
+	AADD(aHelpPor,"Cod do Polo de Venda ATE")
+	AADD(aHelpPor,"Codigo do Vendedor"		)
+	AADD(aHelpPor,"Codigo do Vendedor"		)
+	AADD(aHelpPor,"Codigo do Cliente"		)
+	AADD(aHelpPor,"Codigo do Cliente"		)
+	AADD(aHelpPor,"Codigo do Produto"		)
+	AADD(aHelpPor,"Codigo do Produto"		)
+	AADD(aHelpPor,"Data da Visita DE ?"		)
+	AADD(aHelpPor,"Data da Visita ATE ?"	)
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpSpa,"")
+	Aadd(aHelpEng,"")
+	Aadd(aHelpEng,"")
+	Aadd(aHelpEng,"")
+	Aadd(aHelpEng,"")
+	Aadd(aHelpEng,"")
+	Aadd(aHelpEng,"")
+	PutSX1Help("P." + cPerg + "03.",aHelpPor,aHelpEng,aHelpSpa,.T.)
+	AHelpPor := {}
+	AHelpEng := {}
+	AHelpSpa := {} 
+	
+	RestArea(aSaveArea)
+	
+Return

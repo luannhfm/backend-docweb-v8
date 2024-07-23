@@ -1,0 +1,373 @@
+#Include "TOTVS.ch"
+#Include "FWMVCDef.ch"
+
+/*/{Protheus.doc} CNTA300
+    @description Ponto de entrada da rotina CNTA300 em mvc
+    @type User Function
+    @author Rafael Karczevski
+    @since 09/07/2019
+    @version 1.0
+    @history 05/08/2020, Franklin de Brito de Oliveira, Incluido validaï¿½ï¿½es na confirmaï¿½ï¿½o do formulï¿½rio, conforme existente no P.E. CN10VLD.
+/*/
+User Function CNTA300()
+
+	Local aParam    := PARAMIXB
+	Local xRet      := .T.
+	Local oObj      := ""
+	Local cIdPonto	:= ""
+	Local cIdModel	:= ""
+	Local cClasse	:= ""
+	Local nOper		:= 0
+
+	Local lIsGrid    := .F.
+
+
+	If( aParam <> NIL )
+
+		oObj       := aParam[ 1 ]
+		cIdPonto   := aParam[ 2 ]
+		cIdModel   := aParam[ 3 ]
+		cClasse    := IIf( oObj <> Nil , oObj:ClassName() , "" )
+		nOper := oObj:GetOperation()
+
+		lIsGrid := (Len(aParam) > 3)
+
+		If( cIdPonto == "MODELPOS" )
+			//Chamada na validaï¿½ï¿½o total do modelo (MODELPOS)
+			//+------------------------------------------------------------------+
+			//| Antonio Dantas                                        29/06/2015 |
+			//| Valida a Oportunidade/Proposta (CRM) que esta sendo vinculada ao |
+			//| contrato. Rotina descrina no fonte [SS7399X.PRW]                 |
+			//+------------------------------------------------------------------+
+			//xRet := Iif(!Empty(Alltrim(M->CN9_XOPORT)), u_fVldOPort(nOper, M->CN9_XOPORT,M->CN9_XREVOP), .T.)
+			xRet := Iif(!Empty( Alltrim( oObj:GetValue('CN9MASTER', 'CN9_XOPORT') ) ), ;
+				u_fVldOPort(nOper, oObj:GetValue('CN9MASTER', 'CN9_XOPORT'), oObj:GetValue('CN9MASTER', 'CN9_XREVOP')), .T.)
+			//+------------------------------------------------------------------+
+			//|Franklin B. Oliveira									26/11/2015	 |
+			//|Funï¿½ï¿½o para validar se as datas de inicio e fim da execuï¿½ï¿½o estï¿½o |
+			//|preenchidos ou se estï¿½o com valores permitidos. 					 |
+			//|Apenas contrato de venda.										 |
+			//+------------------------------------------------------------------+
+			If xRet
+				xRet := Iif( CN1->CN1_ESPCTR == "2", U_SF6902F(), .T.)
+			EndIf
+			/* 26/09/2017 - Jose Leite - CSI
+				Tratamento para Contrato de Venda - Valida cliente na receita
+			*/
+			If xRet .And. .Not. Empty(AllTrim(M->CN9_XOPORT)) .And. .Not. Empty(AllTrim(M->CN9_XREVOP))
+				xRet := u_SF73E08J(M->CN9_CLIENT,M->CN9_LOJACL)
+			EndIf
+
+			If xRet
+				xRet := ValidFim(oObj) //Validaï¿½ï¿½o da Necessidade de Docente
+				If !xRet
+					MsgAlert("Contrato de Docente não pode ser alterado após a importação da Necessidade", "Processo não concluido!")
+				EndIf
+			EndIf
+
+		ElseIf( cIdPonto == "FORMPOS" )
+			//Chamada na validaï¿½ï¿½o total do formulï¿½rio (FORMPOS)
+
+
+		ElseIf( cIdPonto == "FORMLINEPRE" )
+			//Chamada na pre validaï¿½ï¿½o da linha do formulï¿½rio (FORMLINEPRE). Onde esta se tentando deletar uma linha.
+
+		ElseIf( cIdPonto == "FORMLINEPOS" )
+			//Chamada na validaï¿½ï¿½o da linha do formulï¿½rio (FORMLINEPOS)." +; CRLF
+
+		ElseIf( cIdPonto == "MODELCOMMITTTS" )
+			//Chamada apos a gravaï¿½ï¿½o total do modelo e dentro da transaï¿½ï¿½o (MODELCOMMITTTS).
+
+			AtualZBB(oObj,cIdPonto, cIdModel)
+
+		ElseIf( cIdPonto == "MODELCOMMITNTTS" )
+			//Chamada apos a gravaï¿½ï¿½o total do modelo e fora da transaï¿½ï¿½o (MODELCOMMITNTTS).
+
+		ElseIf( cIdPonto == "FORMPRE" )
+
+		ElseIf( cIdPonto == "FORMCOMMITTTSPRE" )
+			//Antes da gravaï¿½ï¿½o da tabela do formulï¿½rio. (FORMCOMMITTTSPRE).
+
+		ElseIf cIdPonto == "FORMCOMMITTTSPOS"
+			//Chamada apos a gravaï¿½ï¿½o da tabela do formulï¿½rio (FORMCOMMITTTSPOS).
+
+		ElseIf cIdPonto == "MODELCANCEL"
+			//Chamada no Botï¿½o Cancelar (MODELCANCEL).
+
+		ElseIf cIdPonto == "BUTTONBAR"
+			If M->CN9_ESPCTR == "1" 
+				xRet := {{"Importar Necessidade Docente", "DOCENTES", {|| SF69PE01X(oObj)     }} }
+				If M->CN9_TPCTO == '032' //So aparecer o botao, se o contrato for tipo 032
+					aAdd(xRet,	 {"Reimpressão Contrato Distrato", "DISTRATO",{|| U_SF69R04X(.F.,.T.) }} ) //Imprime Distrato de Docente
+					If cFilAnt == '03MT0017'
+						aAdd(xRet,	 {"Reimpressão Contrato Docente FATEC", "FATEC",  {|| U_SF69R04X(.T.,.F.,.T.) }} )
+					ElseIf M->CN9_TPCTO == '032' //So aparecer o botao, se o contrato for tipo 032
+						aAdd(xRet,	 {"Reimpressão Contrato Docente", "DOCENTE",  {|| U_SF69R04X(.T.,.F.) }} )
+					EndIf
+				endif
+			Else
+				xRet := {}
+			EndIf
+		EndIf
+
+	EndIf
+
+Return( xRet )
+
+//==========================================================================================================================
+// Tela de Verificaï¿½ï¿½es da Necessidade do Docente
+//==========================================================================================================================
+
+Static Function SF69PE01X(oModel)
+
+	Local oFolder
+	Local oButton1
+	Local oButton2
+	Local oGet1
+	Local cGet1 := Space(40)
+	Local oGet2
+	Local cGet2 := Space(8)
+	Local oGet3
+	Local cGet3 := Space(8)
+	Local oGet4
+	Local cGet4 := Space(8)
+	Local oGet5
+	Local cGet5 := Space(8)
+	Local oGet6
+	Local cGet6 := Space(8)
+	Local oGet7
+	Local cGet7 := Space(8)
+	Local cGet8 := Space(8)
+	Local oGroup1
+	Local oGroup2
+	Local oGroup3
+	Local oListBox1
+	Local oSay1
+	Local oSay2
+	Local oSay3
+	Local oSay4
+	Local oSay5
+	Local oSay6
+	Local oSay7
+	Local oSay8
+	Local aTabela   := {}
+	Local lRet 	:= .T.
+
+	Private aRet  := {}
+	Private nTot    := 0
+
+	Static oDlg
+
+//Grupo de Perguntas
+	lRet := Pergunte()
+	If !lRet
+		Return()
+	EndIf
+
+	dbSelectArea("ZBB")
+	ZBB->(dbSetOrder(1))
+	ZBB->(dbSeek(xFilial("ZBB") + aRet[1]))
+
+	If Empty(ZBB->ZBB_CONTRA)
+
+		cGet1   := Alltrim(Posicione("SA2",1,xFilial("SA2") + ZBB->ZBB_FORNEC,"A2_NOME"))
+		cGet2   := ZBB->ZBB_DTINI
+		cGet3   := ZBB->ZBB_DTFIM
+		cGet4   := Alltrim(ZBB->ZBB_FORNEC) + "/" + Alltrim(ZBB->ZBB_LOJFOR)
+		cGet5   := DtoC(ZBB->ZBB_DTAPRO)
+		cGet6   := SubStr(ZBB->ZBB_HRAPRO,1,5)
+		cGet7   := Alltrim(ZBB->ZBB_USER)
+		cGet8   := Alltrim(ZBB->ZBB_OBS)
+
+		dbSelectArea("ZBC")
+		ZBC->(dbSetOrder(1))
+		If ZBC->(dbSeek(xFilial("ZBC") + ZBB->ZBB_CODIGO))
+			While ZBC->(!EOF()) .AND. ZBC->ZBC_FILIAL == ZBB->ZBB_FILIAL .AND. ZBC->ZBC_CODNEC == ZBB->ZBB_CODIGO
+				aAdd(aTabela,{ZBC->ZBC_ITEM, ;
+					ZBC->ZBC_PRODUT + "-" + Alltrim(ZBC->ZBC_DESC),;
+					TRANSFORM(ZBC->ZBC_QUANT, Pesqpict("ZBC", "ZBC_QUANT" )) , ;
+					TRANSFORM(ZBC->ZBC_VALOR, Pesqpict("ZBC", "ZBC_VALOR" )) })
+				nTot += ZBC->ZBC_VALOR * ZBC_QUANT
+				ZBC->(dbSkip())
+			ENdDo
+		EndIf
+
+
+//Dialog para confirmaï¿½ï¿½o dos dados
+		DEFINE MSDIALOG oDlg TITLE "Necessidade do Docente - " + ZBB->ZBB_CODIGO FROM 000, 000  TO 500, 700 COLORS 0, 16777215 PIXEL
+
+		@ 003, 002 FOLDER oFolder SIZE 344, 223 OF oDlg ITEMS "Docente","Aprovação" COLORS 0, 16777215 PIXEL
+		@ 003, 001 GROUP oGroup1 TO 055, 339 PROMPT "Dados do Docente" OF oFolder:aDialogs[1] COLOR 0, 16777215 PIXEL
+		@ 015, 010 SAY oSay1 PROMPT "Docente:" SIZE 025, 009 OF oFolder:aDialogs[1] COLORS 0, 16777215 PIXEL
+		@ 012, 040 MSGET oGet1 VAR cGet1 SIZE 170, 010 OF oFolder:aDialogs[1] WHEN .F. COLORS 0, 16777215 PIXEL
+		@ 026, 040 MSGET oGet2 VAR cGet2 SIZE 060, 010 OF oFolder:aDialogs[1] WHEN .F. COLORS 0, 16777215 PIXEL
+		@ 039, 040 MSGET oGet3 VAR cGet3 SIZE 060, 010 OF oFolder:aDialogs[1] WHEN .F. COLORS 0, 16777215 PIXEL
+		@ 028, 010 SAY oSay2 PROMPT "Data Inicio:" SIZE 029, 009 OF oFolder:aDialogs[1] COLORS 0, 16777215 PIXEL
+		@ 040, 010 SAY oSay3 PROMPT "Data Fim:" SIZE 025, 009 OF oFolder:aDialogs[1] COLORS 0, 16777215 PIXEL
+		@ 015, 234 SAY oSay4 PROMPT "Codigo/Loja:" SIZE 036, 007 OF oFolder:aDialogs[1] COLORS 0, 16777215 PIXEL
+		@ 012, 266 MSGET oGet4 VAR cGet4 SIZE 060, 010 OF oFolder:aDialogs[1] WHEN .F. COLORS 0, 16777215 PIXEL
+		@ 056, 001 GROUP oGroup2 TO 205, 339 PROMPT "Dados da Necessidade" OF oFolder:aDialogs[1] COLOR 0, 16777215 PIXEL
+		@ 064, 003 LISTBOX oListBox1 FIELDS HEADER "Item", "Descrição", "Quantidade", "Valor" SIZE 333, 138 OF oFolder:aDialogs[1] COLORS 0, 16777215 PIXEL
+		oListBox1:SetArray( aTabela )
+		oListBox1:bLine := {|| {aTabela[oListBox1:nAt,1],aTabela[oListBox1:nAt,2],aTabela[oListBox1:nAt,3],aTabela[oListBox1:nAt,4]} }
+		@ 003, 002 GROUP oGroup3 TO 206, 337 PROMPT "Dados da Aprovação" OF oFolder:aDialogs[2] COLOR 0, 16777215 PIXEL
+		@ 016, 010 SAY oSay5 PROMPT "Data da Aprovação" SIZE 050, 007 OF oFolder:aDialogs[2] COLORS 0, 16777215 PIXEL
+		@ 014, 061 MSGET oGet5 VAR cGet5 SIZE 060, 010 OF oFolder:aDialogs[2] WHEN .F. COLORS 0, 16777215 PIXEL
+		@ 016, 128 SAY oSay6 PROMPT "Hora da Aprovação" SIZE 052, 007 OF oFolder:aDialogs[2] COLORS 0, 16777215 PIXEL
+		@ 015, 179 MSGET oGet6 VAR cGet6 SIZE 060, 010 OF oFolder:aDialogs[2] WHEN .F. COLORS 0, 16777215 PIXEL
+		@ 016, 247 SAY oSay7 PROMPT "Usuário" SIZE 025, 007 OF oFolder:aDialogs[2] COLORS 0, 16777215 PIXEL
+		@ 015, 268 MSGET oGet7 VAR cGet7 SIZE 064, 010 OF oFolder:aDialogs[2] WHEN .F. COLORS 0, 16777215 PIXEL
+		@ 034, 010 SAY oSay8 PROMPT "Observação" SIZE 032, 007 OF oFolder:aDialogs[2] COLORS 0, 16777215 PIXEL
+		@ 042, 010 GET oMultiGe1 VAR cGet8 OF oFolder:aDialogs[2] MULTILINE SIZE 322, 158 WHEN .F. COLORS 0, 16777215 HSCROLL PIXEL
+		@ 230, 243 BUTTON oButton1 PROMPT "OK" SIZE 037, 012 OF oDlg PIXEL ACTION { || IMPUT(oModel),oDlg:END() }
+		@ 230, 289 BUTTON oButton2 PROMPT "Cancelar" SIZE 037, 012 OF oDlg PIXEL ACTION oDlg:END()
+
+		ACTIVATE MSDIALOG oDlg CENTERED
+
+	Else
+		Aviso("Atenção", "Já existe contrato para essa Necessidade. Verifique!")
+	EndIf
+
+Return
+
+//===============================================================================================================
+//Grupo de Perguntas 
+//===============================================================================================================
+Static Function Pergunte()
+
+	Local aPergs    := {}
+	Local lRet		:= .T.
+
+	aAdd( aPergs ,{1,"Número da Necessidade" , Space(9) ,"@E",'.T.',"ZBB" ,'.T.', 70, .T.})
+
+	lRet := ParamBox(aPergs ,"Parametros ",aRet)
+
+Return(lRet)
+
+//=====================================================================================================
+//Funï¿½ï¿½o que adiciona aos campos do contrato as informaï¿½ï¿½es do Docente
+//=====================================================================================================
+Static Function IMPUT(oModel)
+
+	Local oMdlCN9 := oModel:GetModel( "CN9MASTER" )
+	Local oMdlCNA := oModel:GetModel( "CNADETAIL" )
+	Local oMdlCNB := oModel:GetModel( "CNBDETAIL" )
+	Local oMdlCNC := oModel:GetModel( "CNCDETAIL" )
+	Local aErrorCNB := {}
+	Local aErrorCNC	:= {}
+
+	oMdlCN9:LoadValue("CN9_DTINIC",		ZBB->ZBB_DTINI)
+	oMdlCN9:SetValue("CN9_VIGE",		Iif((ZBB->ZBB_DTFIM - ZBB->ZBB_DTINI) <> 0,ZBB->ZBB_DTFIM - ZBB->ZBB_DTINI,1))
+	oMdlCN9:SetValue("CN9_UNVIGE",		"1") // 1-Dias / 2-Meses / 3-Anos
+	oMdlCN9:SetValue("CN9_TPCTO",		SUPERGETMV("MV_XTPCTDC", .f., ""))
+	oMdlCN9:LoadValue("CN9_CONDPG",		SUPERGETMV("MV_XCOPGDC", .f., ""))
+	oMdlCN9:LoadValue("CN9_OBJCTO", 	Alltrim("Contrato do Docente " + Alltrim(Posicione("SA2",1,xFilial("SA2") + ZBB->ZBB_FORNEC,"A2_NOME"))))
+
+
+	oMdlCNA:LoadValue("CNA_XDESC","Contrato do Docente " )
+	oMdlCNA:LoadValue("CNA_FORNEC",ZBB->ZBB_FORNEC)
+	oMdlCNA:LoadValue("CNA_LJFORN",ZBB->ZBB_LOJFOR)
+	oMdlCNA:LoadValue("CNA_DTINI",ZBB->ZBB_DTINI)
+	oMdlCNA:LoadValue("CNA_DTFIM",ZBB->ZBB_DTFIM)
+	oMdlCNA:SetValue("CNA_TIPPLA","003") //Tipo da Planilha
+	oMdlCNA:SetValue("CNA_FLREAJ","2") //1 - Sim / 2 - Nï¿½o
+
+	oMdlCNC:SetValue("CNC_CODIGO",ZBB->ZBB_FORNEC)
+	oMdlCNC:SetValue("CNC_LOJA",ZBB->ZBB_LOJFOR)
+
+	dbSelectArea("ZBC")
+	ZBC->(dbSetOrder(1))
+	If ZBC->(dbSeek(xFilial("ZBC") + ZBB->ZBB_CODIGO))
+		While ZBC->(!EOF()) .AND. ZBC->ZBC_FILIAL == ZBB->ZBB_FILIAL .AND. ZBC->ZBC_CODNEC == ZBB->ZBB_CODIGO
+
+
+			oMdlCNB:SetValue("CNB_PRODUT",ZBC->ZBC_PRODUT)
+			oMdlCNB:SetValue("CNB_QUANT",ZBC->ZBC_QUANT)
+			oMdlCNB:SetValue("CNB_VLUNIT",ZBC->ZBC_VALOR)
+			oMdlCNB:LoadValue("CNB_TE", "004" )
+
+
+			oMdlCNB:VldData() 	//Valida Modelo CNBDETAIL
+			oMdlCNC:VldData()	//Valida Modelo CNCDETAIL
+
+			If !oMdlCNB:IsLineValidate()
+				aErrorCNB := oMdlCNB:oFormModel:aErrorMessage // verifica possiveis erros
+				aErrorCNC := oMdlCNC:oFormModel:aErrorMessage // verifica possiveis erros
+			EndIf
+
+			ZBC->(dbSkip())
+
+			If ZBC->(!EOF()) .AND. ZBC->ZBC_FILIAL == ZBB->ZBB_FILIAL .AND. ZBC->ZBC_CODNEC == ZBB->ZBB_CODIGO
+				oMdlCNB:AddLine()
+			EndIf
+		EndDo
+
+	EndIf
+
+Return
+
+//=====================================================================================================
+//Funï¿½ï¿½o para atualizar o cadastro de Necessidade do Docente.
+//=====================================================================================================
+Static Function AtualZBB(oModel,cIdPonto, cIdModel)
+
+	Local oModelCN9 := oModel:GetModel( "CN9MASTER" )
+	Local cTpCto	:= Alltrim(SUPERGETMV("MV_XTPCTDC", .f., "024"))
+
+	If oModelCN9:GetOperation() == 3 .And. oModelCN9:GetValue("CN9_TPCTO") == cTpCto
+		RecLock("ZBB", .F.)
+		ZBB->ZBB_CONTRATO := oModelCN9:GetValue("CN9_NUMERO")
+		ZBB->(MsUnLock())
+	EndIf
+
+Return
+
+
+//===================================================================================================
+//Validaao tudo OK
+
+Static Function ValidFim(oModel)
+
+	Local lRet	:= .T.
+	Local _nX	:= 0
+	Local oModelCN9 := oModel:GetModel( "CN9MASTER" )
+	Local oModelCNA := oModel:GetModel( "CNADETAIL" )
+	Local oModelCNB := oModel:GetModel( "CNBDETAIL" )
+	Local oModelCNC := oModel:GetModel( "CNCDETAIL" )
+	Local cTpCto	:= Alltrim(SUPERGETMV("MV_XTPCTDC", .f., "024"))
+
+	If oModelCN9:GetOperation() == 3 .And. oModelCN9:GetValue("CN9_TPCTO") == cTpCto
+
+		dbSelectArea("ZBB")
+		If oModelCN9:GetValue("CN9_DTINIC") <> ZBB->ZBB_DTINI .Or.;
+				oModelCN9:GetValue("CN9_DTFIM") <> ZBB->ZBB_DTFIM .Or.;
+				oModelCNA:GetValue("CNA_FORNEC") <> ZBB->ZBB_FORNEC .Or.;
+				oModelCNA:GetValue("CNA_LJFORN") <> ZBB->ZBB_LOJFOR .Or.;
+				oModelCNC:GetValue("CNC_CODIGO") <> ZBB->ZBB_FORNEC .Or.;
+				oModelCNC:GetValue("CNC_LOJA") <> ZBB->ZBB_LOJFOR
+			lRet := .F.
+		EndIf
+
+		If lRet
+			For _nX := 1 To oModelCNB:Length()
+				oModelCNB:GoLine( _nX )
+				dbSelectArea("ZBC")
+				ZBC->(dbSetOrder(1))
+				If ZBC->(dbSeek(xFilial("ZBC") + ZBB->ZBB_CODIGO + oModelCNB:GetValue("CNB_ITEM")))
+					If oModelCNB:GetValue("CNB_PRODUT") <> ZBC->ZBC_PRODUT .Or.;
+							oModelCNB:GetValue("CNB_QUANT") <> ZBC->ZBC_QUANT .Or.;
+							oModelCNB:GetValue("CNB_VLUNIT") <> ZBC->ZBC_VALOR
+						lRet := .F.
+						Exit
+					EndIf
+				Else
+					lRet := .F.
+					Exit
+				EndIf
+			Next _nX
+		EndIf
+	Else
+		lRet := .T.
+	EndIf
+
+Return(lRet)

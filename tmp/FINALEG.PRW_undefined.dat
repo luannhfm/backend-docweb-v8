@@ -1,0 +1,126 @@
+/*/{Protheus.doc} FINALEG
+Utilizado para alterar as legendas de diversas rotinas do financeiro, como FINA040, FNA050, FINA740, FINA750 entre outras.
+O retorno desse ponto de entrada substituirá as regras do padrão.
+Lembrando que as regras de legenda são consideradas na ordem do array retornado.
+A primeira regra atendida definirá a cor que será atribuída.
+Atenção para com a ordem das regras e com regras conflitantes.
+É chamado para retornar as regras de legendas e chamado também quando acionado o botão de legendas para que seja mostrada a tela
+@author j2a.luizjunior
+@since 05/10/2016
+@return array, Array com todas as regras de legendas. Estrutura do array: 1º posição: Regra;2ª posição: Cor.
+@see https://tdn.engpro.totvs.com.br/display/public/PROT/FINALEG+-+Manipula+legendas+financeiro
+/*/
+User Function FINALEG
+
+	Local lPrjCni 	  := FindFunction("ValidaCNI") .And. ValidaCNI()
+	Local lFaLegPares := ExistBlock("FaLegPARes") .And. ExecBlock("FaLegPARes",.f.,.f.)
+	Local nReg        := PARAMIXB[1]
+	Local cAlias      := PARAMIXB[2]
+	Local uRetorno    := {}
+	Local cCadastro   := Iif(FunName() == "Fina281", "Faturas a Receber", "Contas a Receber")
+	Local aLegenda    := { {"BR_VERDE"    , "Titulo em aberto"                         },;	//   "Titulo em aberto"					
+	                       {"BR_AZUL"     , "Baixado parcialmente"                     },;	//   "Baixado parcialmente"					
+	                       {"BR_VERMELHO" , "Titulo baixado"                           },;	//   "Titulo Baixado"					
+	                       {"BR_PRETO"    , "Titulo em bordero"                        },;	//   "Titulo em Bordero"				 	
+	                       {"BR_BRANCO"   , "Adiantamento com saldo"                   },;	//   "Adiantamento com saldo"
+	                       {"BR_CINZA"    , "Titulo baixado parcialmente e em bordero" },; 	//6. "Titulo baixado parcialmente e em bordero"
+						   {"BR_MARROM"   , "Adiantamento de Imp. Bx. com saldo" 	   }}   //7. "Adiantamento de Imp. Bx. com saldo" 	
+
+	If nReg = Nil	// Chamada direta da funcao onde nao passa, via menu Recno eh passado
+	
+		uRetorno := {}
+		
+		If cAlias = "SE1"   
+			
+			Aadd(aLegenda, {"BR_AMARELO"     , "Titulo Protestado"                                                                   }) //"Titulo Protestado"
+
+			//------- legenda customizado		
+			Aadd(aLegenda, { "BR_LARANJA"    , "Titulo Enviado a DR"                                                                 }) //Titulo enviado a cobrança de terceiro				
+			Aadd(aLegenda, { "BR_PINK"       , "Titulo Enviado a Tercirizada"                                                        }) //Titulo Enviado ao SPC
+			Aadd(aLegenda, { "BPMSTSK1A"     , "Título Cob. Judicial "                                                        }) //Titulo Enviado ao SPC
+			Aadd(uRetorno, { "E1_STATUS=='A' .And. (E1_XSITUAC  == '4' .Or. E1_SITUACA == '4' ) .And. E1_XDR == '1' "                                                           , aLegenda[9][1]             }) //Titulo enviado a cobrança de terceiro			
+			Aadd(uRetorno, { "E1_STATUS == 'A' .AND. E1_XSPC =='S' .AND. E1_XCOBJ != 'S'" , aLegenda[Len(aLegenda)-1][1] }) //"Titulo Protestado"
+			aAdd(uRetorno, { "E1_STATUS == 'A' .AND. E1_XCOBJ =='S' .AND. E1_XSPC != 'S' ","BPMSTSK1A"}) // Título Cob. Judicial 
+
+			//Legenda "X", para titulos no SPC/cobrança judicial - Késia Barros - 30/05/2022
+			aAdd(uRetorno, { "E1_STATUS == 'A' .AND. E1_XCOBJ =='S' .AND. E1_XSPC == 'S' ","BR_CANCEL"})
+
+			
+			//-------
+						
+			Aadd(uRetorno, { 'ROUND(E1_SALDO,2) = 0'													                                                                        , aLegenda[3][1]	         }) //"Titulo Baixado" 
+			Aadd(uRetorno, { '!Empty(E1_NUMBOR) .And. (ROUND(E1_SALDO,2) # ROUND(E1_VALOR,2))'			                                                                        , aLegenda[6][1]	         }) //"Titulo baixado parcialmente e em bordero"
+			Aadd(uRetorno, { 'E1_TIPO == "'+MVRECANT+'".and. ROUND(E1_SALDO,2) > 0 .And. !FXAtuTitCo()'	                                                                        , aLegenda[5][1]	         }) //"Adiantamento com saldo"
+			Aadd(uRetorno, { "!Empty(E1_NUMBOR) .And. ((E1_XSITUAC != '4' .And. E1_SITUACA != '4') .And. (E1_XSITUAC != '8' .And. E1_SITUACA != '8')) .And. E1_XSPC != 'S'  "   , aLegenda[4][1]	         }) //"Titulo em Bordero"
+			Aadd(uRetorno, { 'ROUND(E1_SALDO,2) # ROUND(E1_VALOR,2)  .And. !FXAtuTitCo()'				                                                                        , aLegenda[2][1]	         }) //"Baixado parcialmente"
+			Aadd(uRetorno, { 'ROUND(E1_SALDO,2) == ROUND(E1_VALOR,2) .And. E1_SITUACA == "F"'			                                                                        , aLegenda[8][1]	         }) //"Titulo Protestado"
+			Aadd(uRetorno, { '.T.', aLegenda[1][1] } )
+		Else
+		
+			If lPrjCni
+			
+				If !Empty(GetMv("MV_APRPAG")) .or. GetMv("MV_CTLIPAG")           
+					Aadd(aLegenda, {"BR_AMARELO", "Titulo aguardando liberacao"}) //Titulo aguardando liberacao
+					Aadd(uRetorno, { ' EMPTY(E2_DATALIB) .AND. (SE2->E2_SALDO+SE2->E2_SDACRES-SE2->E2_SDDECRE) > GetMV("MV_VLMINPG") .AND. E2_SALDO > 0', aLegenda[Len(aLegenda)][1] } ) 
+				EndIf
+				
+			Else
+				
+				If GetMv("MV_CTLIPAG")           
+					Aadd(aLegenda, {"BR_AMARELO", "Titulo aguardando liberacao"}) //Titulo aguardando liberacao
+					Aadd(uRetorno, { ' !( SE2->E2_TIPO $ MVPAGANT ).and. EMPTY(E2_DATALIB) .AND. (SE2->E2_SALDO+SE2->E2_SDACRES-SE2->E2_SDDECRE) > GetMV("MV_VLMINPG") .AND. E2_SALDO > 0', aLegenda[Len(aLegenda)][1] } ) 
+				EndIf
+				
+			EndIf
+			
+			If lFaLegPares
+				Aadd(uRetorno, { 'E2_TIPO == "'+MVPAGANT+'" .and. ROUND(E2_SALDO,2) > 0 .And. (ROUND(E2_SALDO,2) < ROUND(E2_VALOR,2))', aLegenda[Len(aLegenda)][1] } )										
+			EndIf
+			
+			Aadd(uRetorno, { 'E2_TIPO $ "INA/'+MVTXA+'" .and. ROUND(E2_SALDO,2) > 0 .And. E2_OK == "TA"  ', aLegenda[7][1] } )			
+			Aadd(uRetorno, { 'E2_TIPO == "'+MVPAGANT+'" .and. ROUND(E2_SALDO,2) > 0', aLegenda[5][1] } )			
+			Aadd(uRetorno, { 'ROUND(E2_SALDO,2) + ROUND(E2_SDACRES,2)  = 0', aLegenda[3][1] } )
+			Aadd(uRetorno, { '!Empty(E2_NUMBOR) .and.(ROUND(E2_SALDO,2)+ ROUND(E2_SDACRES,2) # ROUND(E2_VALOR,2)+ ROUND(E2_ACRESC,2))', aLegenda[6][1] } )						
+			Aadd(uRetorno, { '!Empty(E2_NUMBOR)', aLegenda[4][1] } )
+			Aadd(uRetorno, { 'ROUND(E2_SALDO,2)+ ROUND(E2_SDACRES,2) # ROUND(E2_VALOR,2)+ ROUND(E2_ACRESC,2)', aLegenda[2][1] } )
+			Aadd(uRetorno, { '.T.', aLegenda[1][1] } )
+		EndIf
+		
+	Else
+		
+		If cAlias = "SE1"  
+		
+			If cPaisLoc == "MEX" .And. X3Usado("ED_OPERADT")
+				Aadd(aLegenda, {"BR_PINK"	,"Adiantamento gerado por Nota Fiscal"}) //7. "Adiantamento gerado por Nota Fiscal"
+				Aadd(aLegenda, {"BR_LARANJA","Titulo com operacão de adiantamento"}) //8. "Titulo com operacão de adiantamento"
+			EndIf
+			
+			Aadd(aLegenda, {"BR_LARANJA"    , "Titulo Enviado a Terceirizada"                                                        }) //Titulo enviado a cobrança de terceiro				
+			Aadd(aLegenda, {"BR_PINK"       , "Titulo Enviado ao SPC"                                                                }) //Titulo Enviado ao SPC
+			
+			aAdd(aLegenda,{"BPMSTSK1A"      ,"Título Cob. Judicial"                                                                  })
+		    aAdd(aLegenda,{"BR_CANCEL"      , "Título SPC/SERASA e Cob. Judicial"                                                    })			
+			Aadd(aLegenda,{"BR_AMARELO", "Titulo Protestado"}) //"Titulo Protestado"
+	    Else 
+		
+			If lPrjCni
+			
+		    	If !Empty(GetMv("MV_APRPAG")) .or. GetMv("MV_CTLIPAG")    
+		    		Aadd(aLegenda, {"BR_AMARELO",  "Titulo aguardando liberacao"}) //Titulo aguardando liberacao 
+		    	EndIf
+				
+			Else
+			
+		    	If GetMv("MV_CTLIPAG")    
+		    		Aadd(aLegenda, {"BR_AMARELO",  "Titulo aguardando liberacao"}) //Titulo aguardando liberacao 
+		    	EndIf
+				
+			EndIf
+			
+		EndIf
+		
+		BrwLegenda(cCadastro, "Legenda", aLegenda)
+		
+	EndIf
+	
+Return uRetorno

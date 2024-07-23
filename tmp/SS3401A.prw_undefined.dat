@@ -1,0 +1,149 @@
+#Include 'Protheus.ch'
+
+User Function SS3401A()
+
+
+	
+	Local _cPlanilha 	:= "Relatorio"
+	Local _cTitulo		:= "Relatorio razao"	
+	Private cPerg		:= "SS3401A"	
+	Private _aDados 	:= {}
+	Private cCadastro	:= "Impressão do Relatorio Analítico de Contas"
+	Private aSays		:= {}
+	Private aButtons	:= {}
+	Private nOpca 		:= 0
+		//Alias	
+	Private _cTmp		    := GetNextAlias()
+	
+	
+	AjustaSx1(cPerg)
+	Pergunte(cPerg,.F. )
+	
+	AADD(aSays,"Este programa irá realizar a Impressão do Relatório" )
+	AADD(aSays,"Relatorio Analítico de Conta" )
+
+	AADD(aButtons, { 5,.T.,{|| Pergunte(cPerg,.T. )}})
+	AADD(aButtons, { 1,.T.,{|o| nOpca := 1,FechaBatch()}})
+	AADD(aButtons, { 2,.T.,{|o| FechaBatch() }} )
+
+	FormBatch( cCadastro, aSays, aButtons )
+
+If nOpca == 1
+
+
+
+
+//Gera Excel
+			Processa({|| FGeraExcel()})
+			
+	EndIf
+Return
+
+Static Function FGeraExcel()
+
+Local oExcel 		:= FWMSEXCEL():New()
+Local _cQuery 		:= ""
+Local _cPlanilha 	:= "Relatorio Analítico de Conta"
+Local _ctitulo		:= "Rel_Analitico de Conta"
+
+
+
+			_cQuery1 := " SELECT TO_DATE(CT2.CT2_DATA, 'yyyy/mm/dd') CT2_DATA,CT2.CT2_HIST,CT2.CT2_VALOR,CT2.CT2_DEBITO,CT1.CT1_DESC01,CT2.CT2_CCD,CTT.CTT_DESC01,CT2.CT2_ITEMD"
+			_cQuery1 += " FROM " + RetSqlName("CT2")+" CT2 "
+			_cQuery1 += " INNER JOIN " + RetSqlName("CT1") + " CT1 ON (CT1.CT1_FILIAL = CT2.CT2_FILIAL AND CT1.CT1_CONTA  = CT2.CT2_DEBITO)"
+			_cQuery1 += " INNER JOIN " + RetSqlName("CTT") + " CTT ON CT2.CT2_CCD = CTT.CTT_CUSTO" 
+//			_cQuery1 += " WHERE CT2.CT2_DEBITO 	>= '"+mv_par01+"'		 	"
+//			_cQuery1 += " AND CT2.CT2_DEBITO 	<= '"+mv_par02+"' 		   	"
+			_cQuery1 += " WHERE CT1.CT1_CONTA 	>= '"+mv_par01+"'		 	"
+			_cQuery1 += " AND CT1.CT1_CONTA 	<= '"+mv_par02+"' 		   	"
+			_cQuery1 += " AND CT2.CT2_DATA   	>= '"+DTOS(mv_par03)+"'	  	" 
+			_cQuery1 += " AND CT2.CT2_DATA    	<= '"+DTOS(mv_par04)+"'		"
+			_cQuery1 += " AND CT2.CT2_CCD		>= '"+mv_par05+"' 		   	"
+			_cQuery1 += " AND CT2.CT2_CCD		<= '"+mv_par06+"' 		   	"
+			_cQuery1 += " AND CT2.CT2_ITEMD		>= '"+mv_par07+"' 		   	"
+			_cQuery1 += " AND CT2.CT2_ITEMD		<= '"+mv_par08+"' 		   	"
+			_cQuery1 += " AND CT2.D_E_L_E_T_ <> '*'				    		"
+			_cQuery1 += " AND CT1.D_E_L_E_T_ <> '*'				    		"
+			_cQuery1 += " ORDER BY CT2.CT2_FILIAL, CT2.CT2_DEBITO, CT2.CT2_DATA			"
+
+	oExcel:AddworkSheet(_cPlanilha)
+	oExcel:AddTable (_cPlanilha,_cTitulo)
+	oExcel:AddColumn(_cPlanilha,_cTitulo,"DATA"      	,1,1)
+	oExcel:AddColumn(_cPlanilha,_cTitulo,"HISTORICO"  	,1,1)
+	oExcel:AddColumn(_cPlanilha,_cTitulo,"VALOR"  		,1,3)
+	oExcel:AddColumn(_cPlanilha,_cTitulo,"CONTA"		,1,1)
+	oExcel:AddColumn(_cPlanilha,_cTitulo,"DESC. CONTA" 	,1,1)
+	oExcel:AddColumn(_cPlanilha,_cTitulo,"UO" 			,1,1)
+	oExcel:AddColumn(_cPlanilha,_cTitulo,"DESC. UO" 	,1,1)
+	oExcel:AddColumn(_cPlanilha,_cTitulo,"ITEM CONT." 	,1,1)
+	
+	_cQuery1 := ChangeQuery( _cQuery1 )
+	
+	Memowrite("c:\util\SS3401A.txt",_cQuery1)
+			dbUseArea( .T., "TOPCONN", TcGenQry(,,_cQuery1), _cTmp, .T., .T. )
+			
+	(_cTmp)->( DBGOTOP() )
+	
+	While .Not. (_cTmp)->( EOF() )
+		
+	oExcel:AddRow(_cPlanilha,_cTitulo,{(_cTmp)->CT2_DATA,;
+				 (_cTmp)->CT2_HIST,;
+				 (_cTmp)->CT2_VALOR,;
+				 (_cTmp)->CT2_DEBITO,;
+				 (_cTmp)->CT1_DESC01,;
+				 (_cTmp)->CT2_CCD,;
+				 (_cTmp)->CTT_DESC01,;
+				 (_cTmp)->CT2_ITEMD})
+	
+	(_cTmp)->( DBSKIP() )
+	
+	EndDo
+	
+	(_cTmp)->( DBCLOSEAREA() )
+	
+	oExcel:Activate()
+		cPlaNew := Upper(cGetFile('Arquivos XLS (*.xls) |*.xls|', 'Salvar Planilha Como',,'C:\UTIL\',.T.,nOR( GETF_LOCALHARD, GETF_LOCALFLOPPY, GETF_RETDIRECTORY ),.F.))
+		oExcel:GetXMLFile(cPlaNew+"arquivo.XML")
+	
+	MsgInfo("O Arquivo foi salvo em: "+cPlaNew+".XML")
+//EndIf	
+	
+Return()
+	
+	
+
+Static Function AjustaSx1(cPerg)
+	
+	Local aHelp := {}
+
+	AAdd(aHelp, {{"Da Conta ?"}, {""}, {""}})
+	AAdd(aHelp, {{"Ate Conta ?"}, {""}, {""}})
+	AAdd(aHelp, {{"Da Data ?" }, {""}, {""}})
+	AAdd(aHelp, {{"Ate Data ?" }, {""}, {""}})
+	AAdd(aHelp, {{"Da UO ?" }, {""}, {""}})
+	AAdd(aHelp, {{"Ate UO ?" }, {""}, {""}})
+	AAdd(aHelp, {{"Do Item Contabil ?" }, {""}, {""}})
+	AAdd(aHelp, {{"Ate Item Contabil ?" }, {""}, {""}})
+
+
+	//???????????????????????????????????
+	//?MV_PAR01  Conta Contabil 		?
+	//?MV_PAR02  Conta Contabil 		?
+	//?MV_PAR03  Data 					?
+	//?MV_PAR04  Data 					?
+	//?MV_PAR05  Unidade Operacional	?
+	//?MV_PAR06  Unidade Operacional 	?
+	//?MV_PAR07  Item Contabil 			?
+	//?MV_PAR08  Item Contabil 			?
+	//???????????????????????????????????
+	
+	u_SFPUTSX1( cPerg, "01","Da Conta ?				","","","mv_ch1","C",TamSX3("CT1_CONTA")[1] ,0,0,"G","","CT1","","","mv_par01","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")
+	u_SFPUTSX1( cPerg, "02","Ate Conta ?			","","","mv_ch2","C",TamSX3("CT1_CONTA")[1] ,0,0,"G","","CT1","","","mv_par02","","","","","","","","","","","","","","","","",aHelp[2,1],aHelp[2,2],aHelp[2,3],"")
+	u_SFPUTSX1( cPerg, "03","Da Data ?				","","","mv_ch3","D",TamSX3("CT2_DATA")[1]	,0,0,"G","",""	,"","","mv_par03","","","","","","","","","","","","","","","","",aHelp[3,1],aHelp[3,2],aHelp[3,3],"")
+	u_SFPUTSX1( cPerg, "04","Ate Data ?				","","","mv_ch4","D",TamSX3("CT2_DATA")[1]	,0,0,"G","",""	,"","","mv_par04","","","","","","","","","","","","","","","","",aHelp[4,1],aHelp[4,2],aHelp[4,3],"")
+	u_SFPUTSX1( cPerg, "05","Da UO ?				","","","mv_ch5","C",TamSX3("CT2_CCD")[1]	,0,0,"G","","CTT","","","mv_par05","","","","","","","","","","","","","","","","",aHelp[5,1],aHelp[5,2],aHelp[5,3],"")
+	u_SFPUTSX1( cPerg, "06","Ate UO ?				","","","mv_ch6","C",TamSX3("CT2_CCD")[1]	,0,0,"G","","CTT","","","mv_par06","","","","","","","","","","","","","","","","",aHelp[6,1],aHelp[6,2],aHelp[6,3],"")
+	u_SFPUTSX1( cPerg, "07","Do Item Contabil ?		","","","mv_ch7","C",TamSX3("CTD_ITEM")[1]	,0,0,"G","","CTD","","","mv_par07","","","","","","","","","","","","","","","","",aHelp[7,1],aHelp[7,2],aHelp[7,3],"")
+	u_SFPUTSX1( cPerg, "08","Ate Item Contabil ?	","","","mv_ch8","C",TamSX3("CTD_ITEM")[1]	,0,0,"G","","CTD","","","mv_par08","","","","","","","","","","","","","","","","",aHelp[8,1],aHelp[8,2],aHelp[8,3],"")
+
+Return( Nil )	

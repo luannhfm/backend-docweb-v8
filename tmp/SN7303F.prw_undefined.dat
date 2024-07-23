@@ -1,0 +1,191 @@
+#Include 'Protheus.ch'
+#Include 'TopConn.ch'
+
+/*/{Protheus.doc} SN7303F
+	Função para schedule do envido do alerta de visitas a realizar.
+	
+@author Franklin B. Oliveira
+@since 22/02/2017
+
+@type function
+/*/
+User Function SN7303F()
+
+Local aRegAlert	:= {}
+Local cQuery	:= ""
+Local cDiasEnv	:= DToS(dDataBase + 2)
+
+	ConOut(" ")
+	ConOut(Replicate("=", 80))
+	ConOut("SN7301F: Iniciando Job alerta de visitas - CRM")
+	
+	ConOut("SN7301F: Empresa: " + cEmpAnt)
+	ConOut("SN7301F: Filial: " + xFilial("AD7"))
+	
+	cQuery := "SELECT AD7.AD7_TOPICO, "
+	cQuery += "	AD7.AD7_DATA, "
+	cQuery += "	AD7.AD7_HORA1, "
+	cQuery += "	AD7.AD7_HORA2, "
+	cQuery += "	AD7.AD7_CODCLI, "
+	cQuery += "	AD7.AD7_LOJA, "
+	cQuery += "	AD7.AD7_VEND, "
+	cQuery += "	AD7.AD7_XCOD, "
+	cQuery += " CASE "
+	cQuery += "  WHEN AD7.AD7_CODCLI IS NOT NULL "
+	cQuery += "  THEN SA1.A1_NOME "
+	cQuery += "  WHEN AD7.AD7_PROSPE IS NOT NULL "
+	cQuery += "  THEN SUS.US_NOME "
+	cQuery += " END AS NOMEENT, "
+	cQuery += " SA3.A3_NOME, "
+	cQuery += " SA3.A3_CODUSR "
+	cQuery += "FROM " + RetSqlName("AD7") + " AD7 "
+	cQuery += "LEFT JOIN " + RetSqlName("SA1") + " SA1 ON "
+	cQuery += " SA1.D_E_L_E_T_  = ' ' "
+	cQuery += " AND SA1.A1_FILIAL = '" + xFilial("SA1") + "' "
+	cQuery += " AND SA1.A1_COD    = AD7.AD7_CODCLI "
+	cQuery += " AND SA1.A1_LOJA   = AD7.AD7_LOJA "
+	cQuery += "LEFT JOIN " + RetSqlName("SUS") + " SUS ON "
+	cQuery += " SUS.D_E_L_E_T_  = ' ' "
+	cQuery += " AND SUS.US_FILIAL = '" + xFilial("SUS") + "' "
+	cQuery += " AND SUS.US_COD    = AD7.AD7_PROSPE "
+	cQuery += " AND SUS.US_LOJA   = AD7.AD7_LOJPRO "
+	cQuery += "LEFT JOIN " + RetSqlName("SA3") + " SA3 ON "
+	cQuery += " SA3.D_E_L_E_T_  = ' ' "
+	cQuery += " AND SA3.A3_FILIAL = '" + xFilial("SA3") + "' "
+	cQuery += " AND SA3.A3_COD    = AD7.AD7_VEND "
+	cQuery += "WHERE AD7.D_E_L_E_T_ = ' ' "
+	cQuery += " AND AD7.AD7_FILIAL = '" + xFilial("AD7") + "' "
+	cQuery += " AND AD7.AD7_DATA = '" + cDiasEnv + "' "
+	cQuery += "ORDER BY AD7.AD7_VEND, "
+	cQuery += " AD7.AD7_HORA1"
+
+	TCQUERY cQuery NEW ALIAS "ALIASAD7"
+	
+	TCSetField("ALIASAD7", "AD7_DATA", "D")
+	
+	While .Not. ALIASAD7->(EoF())
+		/*Array com as informações a serem enviadas por E-mail:
+		 aRegAlert[x, 01] = Assunto
+		 aRegAlert[x, 02] = Data
+		 aRegAlert[x, 03] = Hora início
+		 aRegAlert[x, 04] = Hora Fim
+		 aRegAlert[x, 05] = Cliente
+		 aRegAlert[x, 06] = Loja
+		 aRegAlert[x, 07] = Cod. Vendedor
+		 aRegAlert[x, 08] = Cod. Agenda
+		 aRegAlert[x, 09] = Nome Cliente
+		 aRegAlert[x, 10] = Nome Vendedor
+		 aRegAlert[x, 11] = Código de usuário do vendedor
+		*/
+		aAdd(aRegAlert,{;
+						ALIASAD7->AD7_TOPICO,;
+						ALIASAD7->AD7_DATA,;
+						ALIASAD7->AD7_HORA1,;
+						ALIASAD7->AD7_HORA2,;
+						ALIASAD7->AD7_CODCLI,;
+						ALIASAD7->AD7_LOJA,;
+						ALIASAD7->AD7_VEND,;
+						ALIASAD7->AD7_XCOD,;
+						ALIASAD7->NOMEENT,;
+						ALIASAD7->A3_NOME,;
+						ALIASAD7->A3_CODUSR;
+						})
+		ALIASAD7->(DbSkip())
+	EndDo
+
+	If .Not. Empty(aRegAlert)
+		For nX := 1 To Len(aRegAlert)
+			fEnvAlert(aRegAlert[nX])
+		Next nX
+	Else
+		ConOut("SN7301F: Não foram encontradas visitas agendadas para envio de alerta.")
+	EndIf
+
+	ALIASAD7->(DbCloseArea())
+	
+	ConOut("SN7301F: Finalizando Job alerta de visitas - CRM")
+	ConOut(Replicate("=", 80))
+	ConOut(" ")
+
+Return (Nil)
+
+Static Function fEnvAlert(aRegAlert)
+
+Local cEmlVend	:= UsrRetMail(AllTrim(aRegAlert[11]))
+Local cMens		:= ""
+Local cSubject	:= "Alerta de visita: " + aRegAlert[08]
+	
+	If Empty(cEmlVend)
+		ConOut("SN7301F: Não é possível enviar e-mail para o usuário [" + AllTrim(aRegAlert[11]) + "/" + UsrRetName(AllTrim(aRegAlert[11])) + "].")
+		Return(Nil)
+	EndIf
+	
+	//  Monta mensagem em HTML para o corpo do E-mail
+	cMens := '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">' + CRLF
+	cMens += '<html lang="pt-br">' + CRLF
+	cMens += '<head>' + CRLF
+	cMens += '  <meta content="text/html; charset=iso-8859-1" http-equiv="Content-Type" name="GENERATOR">' + CRLF
+	cMens += '  <title>' + cSubject + '</title>' + CRLF
+	cMens += '</head>' + CRLF
+	cMens += '<body bgproperties="fixed">' + CRLF
+	cMens += '	<p class="MsoNormal" style="text-align: left;" align="left">' + CRLF
+	cMens += '		<span style="font-family: &quot;Arial&quot;,&quot;sans-serif&quot;;">' + CRLF
+	cMens += '			<img id="_x0000_i1030" src="http://gps.totvs.com/workflow/titulo_wf_totvs.png" border="0" height="62" width="760">' + CRLF
+	cMens += '		</span>'+ CRLF
+	cMens += '	</p>'+ CRLF
+	cMens += '	<td style="padding: 0cm;">'+ CRLF
+	cMens += '		<p class="MsoNormal" align="left">'+ CRLF
+	cMens += '			<span style="font-size: 11pt; font-family:&quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(00,00,64);">'+ CRLF
+	cMens += '					<br>' + CRLF 
+	cMens += '					A : ' + UsrRetName(AllTrim(aRegAlert[11])) + ',' + CRLF 
+	cMens += '					<br>' + CRLF 
+	cMens += '					<br>' + CRLF
+	cMens += '					Foi registrada uma visita futura com os seguintes dados:' + CRLF
+	cMens += '					<br>' + CRLF
+	cMens += '					<table style="width:100%">' + CRLF
+	cMens += '						<tr>' + CRLF
+    cMens += '							<th>Assunto</th>' + CRLF
+    cMens += '							<th>Data</th>' + CRLF
+    cMens += '							<th>Hora Início</th>' + CRLF
+    cMens += '							<th>Hora Fim</th>' + CRLF
+    cMens += '							<th>Cliente</th>' + CRLF
+    cMens += '							<th>Loja</th>' + CRLF
+    cMens += '							<th>Nome Cliente</th>' + CRLF
+    cMens += '						</tr>' + CRLF
+    cMens += '						<tr>' + CRLF
+    cMens += '							<td>' + aRegAlert[01] + '</td>' + CRLF
+    cMens += '							<td>' + DToC(aRegAlert[02]) + '</td>' + CRLF
+    cMens += '							<td>' + aRegAlert[03] + '</td>' + CRLF
+    cMens += '							<td>' + aRegAlert[04] + '</td>' + CRLF
+    cMens += '							<td>' + aRegAlert[05] + '</td>' + CRLF
+    cMens += '							<td>' + aRegAlert[06] + '</td>' + CRLF
+    cMens += '							<td>' + aRegAlert[09] + CRLF
+    cMens += '						</tr>' + CRLF
+    cMens += '					</table>' + CRLF
+	cMens += '			</span>' + CRLF
+	cMens += '		</p>'+ CRLF
+	cMens += '	</td>'+ CRLF
+	cMens += '</body>'+ CRLF
+	cMens += '</html>'+ CRLF
+	
+	If .Not. (U_SFEnvEmail(, cEmlVend, , , cSubject, cMens, ))
+		ConOut("SN7301F: Não foi possível enviar e-mail.")
+		Return (Nil)
+	Else
+		ConOut("SN7301F: Alerta enviado para o Vendedor[" + aRegAlert[10] + "] da agenda [" + aRegAlert[08] + "].")
+	EndIf
+
+Return (Nil)
+
+Static Function Scheddef()
+
+Local aParam	:= {}
+Local aOrd		:= {}
+
+	aParam := { "P",;    //Tipo R para relatorio P para processo
+		"ParamDef",;	// Pergunte do relatorio, caso nao use passar ParamDef
+		"AD7",;  		// Alias
+		aOrd,;   		//Array de ordens
+		""}				//Título (para Relatório)
+
+Return aParam

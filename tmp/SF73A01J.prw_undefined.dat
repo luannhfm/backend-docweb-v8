@@ -1,0 +1,365 @@
+#Include 'Protheus.ch'
+#Include 'FWMVCDEF.CH'
+
+/*/{Protheus.doc} SF73A01J
+Funcao responsavel por realizar manutenção na carteira de clientes do vendedor CRM
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	28/09/2015
+@version 	1.0
+@return 	Nil, Nulo
+/*/
+User Function SF73A01J()
+	
+	Local oBrowse := FWMBrowse():New()
+	
+	Private aRotina	:= MenuDef()
+
+	DbSelectArea("ADL")                                                                                  	
+	ADL->( DbSetOrder(5) )
+	ADL->( DbGoTop() )
+
+	oBrowse:SetAlias('ADL')
+	oBrowse:SetDescription('Manutenção de Carteiras de Clientes')
+
+	oBrowse:Activate()
+	
+Return( Nil )
+
+
+/** {Protheus.doc} MenuDef
+Funcao de definicao do Menu
+
+@author: 	Jose Leite de Barros Neto
+@since: 	28/09/2015
+@Uso: 		SFIEMT
+*/
+Static Function MenuDef()
+	
+	Local aRotina := {}
+	
+	ADD OPTION aRotina TITLE "Pesquisar"			ACTION "PESQBRW"        		OPERATION 1 ACCESS 0
+	ADD OPTION aRotina TITLE "Visualizar"			ACTION "VIEWDEF.SF73A01J" 	OPERATION 2 ACCESS 0
+	ADD OPTION aRotina TITLE "Reprocessar"		ACTION "U_SF73A01R()" 		OPERATION 4 ACCESS 0
+	ADD OPTION aRotina TITLE "Trocar Carteira"	ACTION "U_SF73A01T()" 		OPERATION 4 ACCESS 0
+	ADD OPTION aRotina TITLE "Imprimir"			ACTION "VIEWDEF.SF73A01J" 	OPERATION 8 ACCESS 0  
+
+Return( aRotina )
+
+
+/** {Protheus.doc} ModelDef
+Define o modelo de dados
+
+@author: 	Jose Leite de Barros Neto
+@since: 	28/09/2015
+@Uso: 		SFIEMT
+*/
+Static Function ModelDef()
+	
+	Local oModel
+	Local oStruADL 		:= FWFormStruct(1,'ADL',/*bAvalCampo*/,/*lViewUsado*/)
+	
+	oModel := MPFormModel():New('SF73A01M',/*bPreValidacao*/, /*bPosValidacao*/, /*bCommit*/,/*bCancel*/)
+	oModel:AddFields('ADLMASTER', /*cOwner*/,oStruADL, /*bPreValidacao*/, /*bPosValidacao*/, /*bCarga*/ )
+	oModel:SetDescription('Vendedores X Clientes')
+	
+	oModel:SetPrimaryKey( { "ADL_FILIAL", "ADL_VEND", "ADL_ENTIDA", "ADL_CODENT", "ADL_LOJENT", "ADL_CGC" } )
+	
+Return( oModel )
+
+
+/** {Protheus.doc} ViewDef
+Define a interface
+
+@author: 	Jose Leite de Barros Neto
+@since: 	28/09/2015
+@Uso: 		SFIEMT
+*/
+Static Function ViewDef()
+	
+	Local oView
+	Local oModel   := FWLoadModel('SF73A01J')
+	Local oStruADL := FWFormStruct(2,'ADL')
+	
+	oView := FWFormView():New()
+	oView:SetModel(oModel)
+	oView:AddField('VIEW_ADL', oStruADL, 'ADLMASTER' )
+	oView:CreateHorizontalBox('SUPERIOR', 100 )
+	oView:SetOwnerView( 'VIEW_ADL','SUPERIOR' )
+	
+Return( oView )
+
+
+/** {Protheus.doc} SF73A01R
+Reprocessa a carteira de clientes de acordo com a oportunidade
+
+@author: 	Jose Leite de Barros Neto
+@since: 	28/09/2015
+@Uso: 		SFIEMT
+*/
+User Function SF73A01R()
+	
+	Local aArea := GetArea()
+	
+	If MsgYesNo("Confirma o reprocessamento da carteira ?","Confirmar")
+		Processa({|| ReprocADL()})
+		DbSelectArea("ADL")                                                                                  	
+		ADL->( DbSetOrder(5) )
+		ADL->( DbGoTop() )
+	EndIf
+	
+	RestArea( aArea )
+	
+Return( Nil )
+
+
+/** {Protheus.doc} SF73A01T
+Troca a carteira de clientes - de vendedor para vendedor
+
+@author: 	Jose Leite de Barros Neto
+@since: 	28/09/2015
+@Uso: 		SFIEMT
+*/
+User Function SF73A01T()
+	
+	Local aArea := GetArea()
+	
+	Private cPerg := 'SF73A01J' 
+	
+	If MsgYesNo("Deseja trocar de carteira ?","Confirmar")
+		AjustaSx1(cPerg)
+			
+		If .Not. Pergunte(cPerg,.T.)
+			Return( Nil )
+		EndIf
+	
+		Processa({|| TrocaADL(MV_PAR01, MV_PAR02)})
+			
+		DbSelectArea("ADL")                                                                                  	
+		ADL->( DbSetOrder(5) )
+		ADL->( DbGoTop() )
+	EndIf
+	
+	RestArea( aArea )
+	
+Return
+
+
+/** {Protheus.doc} ReprocADL
+Funcao para atualizar a tabela ADL (Controle de Contas do Vendedor)
+de acordo com as oportunidades (AD1)
+
+@author: 	Jose Leite de Barros Neto
+@since: 	28/09/2015
+@Uso: 		SFIEMT
+*/
+Static Function ReprocADL()
+
+	Local _cQuery 	:= ''
+	Local _cVend		:= ''
+	Local _cNomVen	:= ''
+	Local _cCodCli	:= ''
+	Local _cLjCli	:= ''
+	Local _cCgcCli 	:= ''
+	Local _cNome		:= ''
+	
+	Begin Transaction
+		
+		//Deleta todos os registros
+		DelADL()
+		
+		If Select('TRA') > 0
+			DbSelectArea('TRA')
+			TRA->( DbCloseArea() )
+		EndIf
+		
+		_cQuery := " SELECT *					"	 
+		_cQuery += " FROM " + RetSqlName('AD1') 
+		_cQuery += " WHERE SubStr(AD1_FILIAL,1,4) = '"+ SubStr(xFilial("AD1"),1,4)  +"' " 
+		_cQuery += " AND D_E_L_E_T_ <> '*'	"
+		_cQuery += " ORDER BY AD1_VEND 			"
+		_cQuery := ChangeQuery(_cQuery)
+		
+		DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TRA',.T.,.F.)
+		
+		ProcRegua(TRA->(RecCount()))
+		
+		TRA->( DbGoTop() )
+		
+		While .Not. TRA->( Eof() )
+			
+			_cVend	 	:= TRA->AD1_VEND
+			_cNomVen 	:= AllTrim(Posicione("SA3",1,xFilial("SA3") + _cVend,"A3_NOME"))
+			_cCodCli 	:= TRA->AD1_CODCLI
+			_cLjCli  	:= TRA->AD1_LOJCLI
+			_cCgcCli 	:= AllTrim(Posicione("SA1",1,xFilial("SA1") + _cCodCli + _cLjCli,"A1_CGC"))
+			_cNome   	:= SubStr(AllTrim(Posicione("SA1",1,xFilial("SA1") + _cCodCli + _cLjCli,"A1_NOME")),1,TAMSX3("ADL_NOME")[1])
+			
+			IncProc("Atualizando carteira do vendedor: "+ _cVend + " - "+ _cNomVen)
+			
+			DbSelectArea('ADL')
+			ADL->( DbSetOrder(2) ) //ADL_FILIAL + ADL_CGC
+			ADL->( DbGoTop() )
+			If ADL->( DbSeek( xFilial('ADL') + PADR( _cCgcCli ,TAMSX3("A1_CGC")[1]) ) )
+				If RecLock('ADL',.F.)
+					ADL->ADL_VEND := TRA->AD1_VEND
+					ADL->( MsUnlock() )
+				EndIf
+			Else
+				
+				If RecLock('ADL',.T.)
+					ADL->ADL_FILIAL	:= xFilial('ADL')
+					ADL->ADL_VEND	:= _cVend 
+					ADL->ADL_FILENT	:= '        '
+					ADL->ADL_ENTIDA	:= 'SA1'
+					ADL->ADL_CODENT	:= _cCodCli
+					ADL->ADL_LOJENT	:= _cLjCli
+					ADL->ADL_NOME	:= _cNome
+					ADL->ADL_CGC		:= _cCgcCli
+					ADL->( MsUnlock() )
+				EndIf
+				
+			EndIf
+			
+			ADL->( DbCloseArea() )
+			
+			TRA->( DbSkip() )
+		End
+		
+		TRA->( DbCloseArea() )
+		
+		MsgInfo("Reprocessamento realizado com sucesso!","Atenção")
+	
+	End Transaction
+	
+Return( Nil )
+
+
+/** {Protheus.doc} DelADL
+Funcao para deletar os registros da tabela ADL (Controle de Contas do Vendedor)
+
+@author: 	Jose Leite de Barros Neto
+@since: 	28/09/2015
+@Uso: 		SFIEMT
+*/
+Static Function DelADL()
+	
+	Local _cVend 	:= ''
+	Local _cNomVen	:= ''
+	
+	DbSelectArea('ADL')
+	ADL->( DbSetOrder(1) ) 
+	ADL->( DbGoTop() )
+	
+	ProcRegua(ADL->(RecCount()))
+	
+	While .Not. ADL->( Eof() ) .And. ADL->( ADL_FILIAL ) == xFilial('ADL')
+		
+		_cVend	 := ADL->ADL_VEND
+		_cNomVen := AllTrim(Posicione("SA3",1,xFilial("SA3") + _cVend,"A3_NOME"))
+		
+		IncProc("Deletando a carteira do vendedor: "+ _cVend + " - "+ _cNomVen)
+		
+		If RecLock("ADL",.F.)
+			ADL->( DbDelete() )
+			ADL->( MsUnlock() )
+		EndIf
+		
+		ADL->( DbSkip() )
+		
+	End
+	
+	ADL->( DbCloseArea() )
+	
+Return( Nil )
+
+
+/** {Protheus.doc} TrocaADL
+Funcao para trocar a carteira do vendedor 
+De vendedor Para Vendedor
+
+@author: 	Jose Leite de Barros Neto
+@since: 	28/09/2015
+@Uso: 		SFIEMT
+*/
+Static Function TrocaADL( p_cVendDe, p_cVendAte )
+	
+	Local cQuery  	:= ''
+	Local cNomeVen	:= AllTrim(Posicione("SA3",1,xFilial("SA3") + p_cVendDe ,"A3_NOME"))
+	Local lTroca		:= .F.
+	
+	Begin Transaction
+	
+		If Select('TRA') > 0
+			DbSelectArea('TRA')
+			TRA->( DbCloseArea() )
+		EndIf
+		
+		cQuery := " SELECT * "
+		cQuery += " FROM " + RetSqlName('ADL')
+		cQuery += " WHERE 	ADL_FILIAL    	= '"+ xFilial('ADL') +"' 	"
+		cQuery += " 			AND ADL_VEND  	= '"+ p_cVendDe +"'			"
+		cQuery += " 			AND D_E_L_E_T_	<> '*' 							"
+		cQuery += " ORDER BY ADL_FILIAL, ADL_VEND							"
+		cQuery := ChangeQuery(cQuery)
+		
+		DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),'TRA',.T.,.F.)
+		
+		If .Not. TRA->( EOF())
+		
+			ProcRegua(TRA->(RecCount()))
+			
+			TRA->( DbGoTop() )
+			
+			While .Not. TRA->( Eof() )
+				
+				IncProc("Alterando a carteira do vendedor: "+ p_cVendDe + " - "+ p_cVendAte)
+				
+				DbSelectArea('ADL')
+				ADL->( DbSetOrder(2) ) 
+				ADL->( DbGoTop() )
+				If ADL->( DbSeek( xFilial('ADL') + TRA->( ADL_CGC ) ) )
+					If RecLock("ADL",.F.)
+						ADL->ADL_VEND := p_cVendAte
+						ADL->( MsUnlock() )
+						lTroca := .T.
+					EndIf
+				EndIf
+				
+				TRA->( DbSkip() )	
+			End
+			
+		Else
+			MsgInfo("Não existe carteira de clientes para o vendedor: "+ p_cVendDe +" - "+ cNomeVen,"Atenção")
+		EndIf
+		
+		TRA->( DbCloseArea() )
+		
+		If lTroca
+			MsgInfo("Troca de carteira realizada com sucesso!","Atenção")
+		EndIf
+	
+	End Transaction
+	
+Return( Nil )
+
+
+/** {Protheus.doc} AjustaSx1
+Pergunta do Relatorio
+
+@author: 	Jose Leite de Barros Neto
+@since: 	28/09/2015
+@Uso: 		SFIEMT
+*/
+Static Function AjustaSx1(cPerg)
+	
+	Local aHelp := {}
+
+	AAdd(aHelp, {{"Informe o Codigo vendedor de"}		, {""}, {""}})
+	AAdd(aHelp, {{"Informe o Codigo vendedor para"}	, {""}, {""}})
+	
+	u_SFPUTSX1(cPerg,"01","De Vendedor:	"		,"","","mv_ch1","C",TAMSX3("A3_COD")[1],00,00,"G","","SA3"	,"","","mv_par01",""	,"","","",""	,"","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")
+	u_SFPUTSX1(cPerg,"02","Para Vendedor:	"	,"","","mv_ch2","C",TAMSX3("A3_COD")[1],00,00,"G","","SA3"	,"","","mv_par02",""	,"","","",""	,"","","","","","","","","","","",aHelp[2,1],aHelp[2,2],aHelp[2,3],"")
+	
+Return( Nil )

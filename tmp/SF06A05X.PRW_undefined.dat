@@ -1,0 +1,355 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+
+/*/{Protheus.doc} SF06A05X
+(long_description)
+@type class
+@author Luiz
+@since 21/09/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+CLASS SF06A05X
+
+	DATA aNewTit
+	DATA aBaixa
+	DATA aExcSE2
+	DATA aCarSE2
+
+	METHOD New() CONSTRUCTOR
+	METHOD BAIXASE2()	
+	METHOD INSERESE2()
+	METHOD EXCLUISE2()
+	METHOD BXCARSE2()
+	METHOD CHKBAIXA()
+
+ENDCLASS
+
+/*/{Protheus.doc} New
+(long_description)
+@type class
+@author Luiz
+@since 21/09/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+METHOD NEW() CLASS SF06A05X
+
+	Self:aNewTit := {}
+	Self:aBaixa  := {}
+	Self:aExcSE2 := {} 
+	Self:aCarSE2 := {}
+
+RETURN(SELF)
+
+/*/{Protheus.doc} BAIXASE2
+(long_description)
+@type class
+@author Luiz
+@since 21/09/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+METHOD BAIXASE2(pE4_CODIGO) CLASS SF06A05X
+	
+	Local   cMotBx      := GetNewPar("MV_XPCMOTB")
+	Local   nX          := 0 
+	Local   cE4_CODIGO  := pE4_CODIGO
+	Local   cHistBaixa  := "BAIXA PAGAMENTO CARTAO" 
+	Private lMsErroAuto := .F.
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ
+	//³Baixa titulo pai
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ 
+
+	DbSelectArea("SE2")
+	SE2->(DbSetOrder(6))
+	SE2->(DbGoTop())	
+	If SE2->(DbSeek(SF1->F1_FILIAL + SF1->F1_FORNECE + SF1->F1_LOJA + SF1->F1_SERIE + SF1->F1_DOC))
+	
+		While !SE2->(Eof()) .And. SE2->E2_FILIAL + SE2->E2_FORNECE + SE2->E2_LOJA + SE2->E2_PREFIXO + SE2->E2_NUM  == SF1->F1_FILIAL + SF1->F1_FORNECE + SF1->F1_LOJA + SF1->F1_SERIE + SF1->F1_DOC
+
+			For nX := 1 To FCount()
+				aAdd(Self:aBaixa, {FieldName(nX), SE2->&(FieldName(nX)), Nil})
+			Next nX
+	
+			aAdd(Self:aBaixa, {"AUTVLRPG"  , SE2->E2_VALOR         , Nil})
+			aAdd(Self:aBaixa, {"AUTMOTBX"  , cMotBx                , Nil})
+			aAdd(Self:aBaixa, {"AUTDTBAIXA", dDataBase             , Nil})
+			aAdd(Self:aBaixa, {"AUTDTDEB"  , DataValida(dDataBase) , Nil})
+			aAdd(Self:aBaixa, {"AUTHIST"   , cHistBaixa            , Nil})
+	
+			lMsErroAuto := .F.
+			lMsHelpAuto := .T.			
+			
+			DbSelectArea("SE2")
+			MsExecAuto({|x,y| FINA080(x,y)}, Self:aBaixa, 3)
+			
+			If (lMsErroAuto)
+				DisarmTransaction()
+				MostraErro()
+				Aviso("Erro", "Baixa do Título: " + SE2->E2_NUM + "/" + SE2->E2_PREFIXO + "/" + SE2->E2_PARCELA + "/" + SE2->E2_FORNECE + " não pode ser realizada.", {"Ok"}, 1)
+			EndIf
+		
+			SE2->(DbSkip())	
+		EndDo		
+	
+	EndIf		
+	
+RETURN
+
+/*/{Protheus.doc} NEWTITUL
+(long_description)
+@author j2a.luizjunior
+@since 22/09/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+METHOD INSERESE2(pE2_NUM,pE2_PREFIXO,pE2_FORNECE,pE2_LOJA,pZF2_ULTDIG,pE4_CODIGO) CLASS SF06A05X
+
+	Local   cE2_NUM     := pE2_NUM
+	Local   cE2_PREFIXO := pE2_PREFIXO
+	Local   cE2_FORNECE := pE2_FORNECE
+	Local   cE2_LOJA    := pE2_LOJA
+	Local   cZF2_ULTDIG := pZF2_ULTDIG
+	Local   cE4_CODIGO  := pE4_CODIGO
+	Local   cE2_XTIPO   := Posicione("SE2",6,SF1->F1_FILIAL + SF1->F1_FORNECE + SF1->F1_LOJA + SF1->F1_SERIE + SF1->F1_DOC,"E2_TIPO")
+	Local   cE2_XPARCE  := Posicione("SE2",6,SF1->F1_FILIAL + SF1->F1_FORNECE + SF1->F1_LOJA + SF1->F1_SERIE + SF1->F1_DOC,"E2_PARCELA")
+	Local   nZF2_DVENCT := Posicione("ZF2",1,xFilial("ZF2") + cE2_FORNECE + cE2_LOJA,"ZF2_DVENCT")
+	Local   cTipoTit    := GetNewPar("MV_XPCTIPO") 
+	Local   aCond       := {}	
+	Local   cTipPad     := MVNOTAFIS
+	Private lMsErroAuto := .F.
+
+	DbSelectArea("SE2")
+	SE2->(DbSetOrder(6))
+	SE2->(DbGoTop())	
+	If SE2->(DbSeek(SF1->F1_FILIAL + SF1->F1_FORNECE + SF1->F1_LOJA + SF1->F1_SERIE + SF1->F1_DOC))
+
+		While !SE2->(Eof()) .And. cTipPad == SE2->E2_TIPO .And. SE2->E2_FILIAL + SE2->E2_FORNECE + SE2->E2_LOJA + SE2->E2_PREFIXO + SE2->E2_NUM  == SF1->F1_FILIAL + SF1->F1_FORNECE + SF1->F1_LOJA + SF1->F1_SERIE + SF1->F1_DOC
+
+			aCond := Condicao(SE2->E2_VALOR,cE4_CODIGO,,dDataBase)
+
+			/*
+			Tratamento para os dados do titulo a ser inserido
+			*/
+			
+			DbSelectArea("SE2")
+			For nI := 1 To Len(aCond)
+			
+				/*
+				Trata data de venvimento, de acordo com o dia informado no cadastro de operadora
+				*/
+				nDVenc  := Val(SubStr(DToS(aCond[nI][1]),7,2))
+				cMesAno := SubStr(DToS(aCond[nI][1]),1,6)				
+				
+				nDVenc := nZF2_DVENCT
+				aCond[nI][1] := SToD(cMesAno + AllTrim(Str(nDVenc)))								
+				
+				cNomTPai := Posicione("SA2",1,xFilial("SA2") + SF1->F1_FORNECE + SF1->F1_LOJA ,"A2_NOME")
+				
+				For nX := 1 To FCount()
+					
+					Do Case
+						
+						Case FieldName(nX) == "E2_VALOR"
+							aAdd(Self:aNewTit, { FieldName(nX),aCond[nI][2]          , Nil})						
+						Case FieldName(nX) == "E2_XPREFIX"
+							aAdd(Self:aNewTit, { FieldName(nX),SF1->F1_SERIE         , Nil})						
+						Case FieldName(nX) == "E2_XNUM"
+							aAdd(Self:aNewTit, { FieldName(nX),SE2->E2_NUM           , Nil})							
+						Case FieldName(nX) == "E2_XPARCE"
+							aAdd(Self:aNewTit, { FieldName(nX),cE2_XPARCE            , Nil})
+						Case FieldName(nX) == "E2_XTIPO"
+							aAdd(Self:aNewTit, { FieldName(nX),cE2_XTIPO             , Nil})						
+						Case FieldName(nX) == "E2_XCODFOR"
+							aAdd(Self:aNewTit, { FieldName(nX),SF1->F1_FORNECE       , Nil})
+						Case FieldName(nX) == "E2_XLOJA"
+							aAdd(Self:aNewTit, { FieldName(nX),SF1->F1_LOJA          , Nil})
+						Case FieldName(nX) == "E2_XNCART"
+							aAdd(Self:aNewTit, { FieldName(nX),cZF2_ULTDIG           , Nil})
+						Case FieldName(nX) == "E2_PREFIXO"
+							aAdd(Self:aNewTit, { FieldName(nX),cE2_PREFIXO           , Nil})
+						Case FieldName(nX) == "E2_NUM"
+							aAdd(Self:aNewTit, { FieldName(nX),cE2_NUM               , Nil})
+						Case FieldName(nX) == "E2_FORNECE"
+							aAdd(Self:aNewTit, { FieldName(nX),cE2_FORNECE           , Nil})
+						Case FieldName(nX) == "E2_LOJA"	
+							aAdd(Self:aNewTit, { FieldName(nX),cE2_LOJA              , Nil})
+						Case FieldName(nX) == "E2_PARCELA"
+							aAdd(Self:aNewTit, { FieldName(nX),AllTrim(Str(nI))      , Nil})
+						Case FieldName(nX) == "E2_TIPO"
+							aAdd(Self:aNewTit, { FieldName(nX),cTipoTit              , Nil})
+						Case FieldName(nX) == "E2_EMISSAO"
+							aAdd(Self:aNewTit, { FieldName(nX),dDataBase             , Nil})																
+						Case FieldName(nX) == "E2_VENCTO"
+							aAdd(Self:aNewTit, { FieldName(nX),aCond[nI][1]          , Nil})
+						Case FieldName(nX) == "E2_VENCREA"
+							aAdd(Self:aNewTit, { FieldName(nX),aCond[nI][1]          , Nil})	
+						Case FieldName(nX) == "E2_VENCORI"
+							aAdd(Self:aNewTit, { FieldName(nX),aCond[nI][1]          , Nil})
+						Case FieldName(nX) == "E2_RATEIO"		
+							aAdd(Self:aNewTit, { FieldName(nX),"N"                   , Nil})							
+						Case FieldName(nX) == "E2_FLUXO"
+							aAdd(Self:aNewTit, { FieldName(nX),"N"                   , Nil})
+						Case FieldName(nX) == "E2_DESDOBR"		
+							aAdd(Self:aNewTit, { FieldName(nX),"N"                   , Nil})
+						Case FieldName(nX) == "E2_MULTNAT"
+							aAdd(Self:aNewTit, { FieldName(nX),"2"                   , Nil})	
+						Case FieldName(nX) == "E2_MODSPB"	
+							aAdd(Self:aNewTit, { FieldName(nX),"1"                   , Nil})
+						Case FieldName(nX) == "E2_TEMDOCS"	
+							aAdd(Self:aNewTit, { FieldName(nX),"2"                   , Nil})
+						Case FieldName(nX) == "E2_RATFIN"		
+							aAdd(Self:aNewTit, { FieldName(nX),"2"                   , Nil})
+						Case FieldName(nX) == "E2_HIST"
+							aAdd(Self:aNewTit, { FieldName(nX),"SF06A05X-CARTAOCREDITO-"+cNomTPai , Nil})				
+					EndCase
+					
+				Next nX
+				
+				MsExecAuto({|x,y,z| FINA050(x,y,z)}, Self:aNewTit, , 3)
+
+				If lMsErroAuto
+					DisarmTransaction()
+					MostraErro()			
+				EndIf	
+				
+				Self:aNewTit := {}			
+				
+			Next nI		
+
+			SE2->(DbSkip())	
+		EndDo			
+	
+	EndIf			
+	
+RETURN
+
+/*/{Protheus.doc} EXCLUISE2
+(long_description)
+@author j2a.luizjunior
+@since 26/09/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+METHOD EXCLUISE2(pDadosExc) CLASS SF06A05X
+	
+	Private lMsErroAuto := .F.	
+
+	Self:aExcSE2 := pDadosExc
+	
+	MsExecAuto({|x,y,z| FINA080(x,y,z)}, Self:aExcSE2, 5)
+				
+	If lMsErroAuto
+		DisarmTransaction()
+		MostraErro()			
+	EndIf
+				
+RETURN
+
+/*/{Protheus.doc} BXCARSE2
+(long_description)
+@author j2a.luizjunior
+@since 26/09/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+METHOD BXCARSE2(pPrefixo,pNumero) CLASS SF06A05X
+
+	Local   cPrefixo    := pPrefixo
+	Local   cNumero     := pNumero
+	Local   lCancel     := .F.	
+	Private lMsErroAuto := .F.	
+	
+	lCancel := ::CHKBAIXA(cPrefixo,cNumero)
+	If lCancel		
+		Return lCancel
+	EndIf
+	
+	DbSelectArea("SE2")
+	DbSetOrder(1)
+	If DbSeek(xFilial("SE2") + cPrefixo + cNumero)
+	
+		While !SE2->(Eof()) .And. xFilial("SE2") + cPrefixo + cNumero == SE2->E2_FILIAL + SE2->E2_PREFIXO + SE2->E2_NUM
+			
+			If SE2->E2_XPREFIX == SF1->F1_SERIE   .And. ; 
+			   SE2->E2_XNUM	   == SF1->F1_DOC     .And. ;				    
+			   SE2->E2_XCODFOR == SF1->F1_FORNECE .And. ;
+			   SE2->E2_XLOJA   == SF1->F1_LOJA  
+				   
+				For nX := 1 To FCount()
+					aAdd(Self:aCarSE2, {FieldName(nX), SE2->&(FieldName(nX)), Nil})
+				Next nX		
+					
+				MsExecAuto({|x,y,z| FINA050(x,y,z)}, Self:aCarSE2, , 5)	
+
+				If lMsErroAuto
+					DisarmTransaction()
+					MostraErro()			
+				EndIf		
+					
+				Self:aCarSE2 := {}				   
+				
+			EndIf
+			
+			SE2->(DbSkip())
+		EndDo
+		
+	EndIf
+	
+RETURN lCancel
+
+/*/{Protheus.doc} CHKBAIXA
+(long_description)
+@author j2a.luizjunior
+@since 29/09/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+METHOD CHKBAIXA(pPrefix,pNum) CLASS SF06A05X
+
+	Local lRet     := .F.
+	Local cPrefixo := pPrefix
+	Local cNumero  := pNum
+	
+	DbSelectArea("SE2")
+	DbSetOrder(1)
+	If DbSeek(xFilial("SE2") + cPrefixo + cNumero)
+	
+		While !SE2->(Eof()) .And. xFilial("SE2") + cPrefixo + cNumero == SE2->E2_FILIAL + SE2->E2_PREFIXO + SE2->E2_NUM
+			
+			If !Empty(SE2->E2_BAIXA) .And. SE2->E2_SALDO != SE2->E2_VALOR
+				lRet := .T.
+				Return lRet
+			EndIf
+
+			SE2->(DbSkip())
+		EndDo
+	
+	EndIf
+	
+RETURN lRet

@@ -1,0 +1,142 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "APWIZARD.CH"
+#INCLUDE "TBICONN.CH"
+#INCLUDE "TOPCONN.CH"
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <SF7353X>
+ Tela de Turmas concluídas paa Envio da Pesquisa de Satisfação
+
+@author<Renato Peixoto>
+@since<15/12/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function SF7353X()
+
+Local oDlg
+Local oGrp
+Local _ndbOri
+Local _ndbSige
+Local _cQry			:= ""
+Local cTitulo		:= "Envio da Pesquisa de Satisfação"
+Local aCmpAlt		:= {"RB_NCURSO"}
+Private aHeader	:= {}
+Private aCols		:= {}
+Private _aSize		:= MsAdvSize()
+Private _cdbSige	:= GetNewPar("MV_XDBSIGE", "MSSQL/SIGEPRO")	// comunicacao com BD sistema WebSis. Usado na //funcao.
+Private _cdbIp		:= GetNewPar("MV_XSRVSIG", "SRVP11TESTE" )	// IP do servidor
+Private _ndbPorta	:= GetNewPar("MV_XPRTSIG", 7890 )				// Porta do servidor
+Private _oOk		:= LoadBitmap( GetResources(), "LBOK")
+Private _oNo		:= LoadBitmap( GetResources(), "LBNO")
+Private oBrowse
+Private oButton
+
+_ndbOri := AdvConnection()
+_ndbSige := TCLink(_cdbSige, _cdbIp, _ndbPorta) // conexao com Sige
+
+If !TCSetConn(_ndbSige) // SETANDO CONEXAO COM BANCO DE DADOS DO SIGE
+	Aviso("Erro de Conexão ","Não foi possível se conectar ao Servidor: ( "+_cdbIp+" ), Banco: ( "+_cdbSige+" ), Porta: ( "+StrZero(_ndbPorta, 04)+" ). Entre em contrato com seu suporte do sistema.", {"OK"} )
+Else
+
+	/*
+	   CAMPOS DA VIEW
+	   ----------------
+	   COD_CURSO, COD_TURMA, NOME_CURSO, DATA_INICIO, DATA_TERMINO, SITUACAO_TURMA,
+	   MATRICULA, NOME_ALUNO, STATUS_MATRICULA, DATA_REGISTRO_CONCLUSAO, RAZAO_SOCIAL, CNPJ
+	*/
+	_cQry += " SELECT TOP 20 * FROM "
+	_cQry += " VISAO_BUSCA_TURMA_PROTHEUS "
+	_cQry += " ORDER BY COD_CURSO "
+
+	DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cQry)), "TRB", .F., .F.)
+
+	TRB->(dbGoTop())
+	While TRB->(!Eof())
+	aAdd(aCols,{.F.,;
+				TRB->COD_TURMA,;
+				TRB->COD_CURSO,;
+				TRB->NOME_CURSO,;
+				TRB->SITUACAO_TURMA,;
+				TRB->RAZAO_SOCIAL,;
+				TRB->CNPJ,;
+	           .F.})
+	            //_nTotVlr += TRB->D2_TOTAL
+				//_nTotQtd += TRB->D2_QUANT
+				//	            TRB->DATA_INICIO;
+	            //TRB->DATA_TERMINO;
+	TRB->(dbSkip())
+	EndDo
+
+	TRB->(dbCloseArea())
+	//-- *******************************************************************
+	//--    Monta a Interface (Tela) que sera apresentada ao usuario
+	//-- *******************************************************************
+	oDlg := MSDIALOG():New(_aSize[7],_aSize[1],_aSize[6],_aSize[5],cTitulo,,,,,,,,,.T.)
+	oBrowse := MsSelBr():New(000,000,600,280,,,,oDlg,,,,,,,,,,,,.F.,'',.T.,,.F.,,, )
+	oButton := tButton():New(300,500,'Enviar Pesquisa',oDlg,{|| alert("Envio de Pesquisa - SF7353X()") },80,15,,,.F.,.T.,.F.,,.F.,,,.F.)
+
+	If (empty(aCols))
+		aAdd(aCols,{.F.," ", " ", " ", " "," ", " ", .F.})
+	EndIf
+
+	oBrowse:SetArray(aCols)
+	oBrowse:bLDblClick := {|| aCols[oBrowse:nAT,1] := !aCols[oBrowse:nAT,1] }
+	oBrowse:lHasMark := .T.
+	oBrowse:bAllMark := {||fMarkAll()}
+	//oBrowse:bHeaderClick := {|| fOrdena(nCol)}
+
+	oBrowse:AddColumn(TCColumn():New(''             ,{|| IIf(aCols[oBrowse:nAT,1],_oOk,_oNo) },,,,,,.T.,.F.,,,,.F.,))
+	oBrowse:AddColumn(TCColumn():New('Turma'		,{|| aCols[oBrowse:nAT,2] },,,,'LEFT',,.F.,.F.,,,,.F.,))
+	oBrowse:AddColumn(TCColumn():New('Curso'		,{|| aCols[oBrowse:nAT,3] },,,,'LEFT',,.F.,.F.,,,,.F.,))
+	oBrowse:AddColumn(TCColumn():New('Nome Curso'	,{|| aCols[oBrowse:nAT,4] },,,,'LEFT',,.F.,.F.,,,,.F.,))
+	oBrowse:AddColumn(TCColumn():New('Situacao'	    ,{|| aCols[oBrowse:nAT,5] },,,,'LEFT',,.F.,.F.,,,,.F.,))
+	oBrowse:AddColumn(TCColumn():New('Empresa'	    ,{|| aCols[oBrowse:nAT,6] },,,,'LEFT',,.F.,.F.,,,,.F.,))
+	oBrowse:AddColumn(TCColumn():New('Cnpj Empresa'	,{|| aCols[oBrowse:nAT,7] },,,,'LEFT',,.F.,.F.,,,,.F.,))
+
+	//oDlg:bInit := {||EnchoiceBar(oDlg, , {||oDlg:End()},,aButtons)}
+	oDlg:lCentered := .T.
+	oDlg:Activate()
+
+	TcUnLink(_ndbSige) //Excluindo a conexão com o Banco de Dados SIGE.
+
+EndIf
+
+TCSetConn(_ndbOri) // SETANDO CONEXAO COM O BANCO DE DADOS ORIGINAL.
+
+Return
+
+/*/
+@author: caiocrol
+@data: 20/02/2015
+@descricao: marca todos os registros do browser
+/*/
+Static Function fMarkAll()
+
+	Local _nx := 0
+	for _nx:= 1 to Len(aCols)
+		aCols[_nx,1] := !aCols[_nx,1]
+	next
+Return nil
+
+/*/
+@author: caiocrol
+@data: 20/02/2015
+@descricao: ordena os registros do browse
+/*/
+Static Function fOrdena(_nCol)
+
+	If _nCol > 1
+		aSort(aCols,,, {|x,y| x[_nCol] < y[_nCol] } )
+	EndIf
+
+	oBrowse:Refresh()
+Return nil

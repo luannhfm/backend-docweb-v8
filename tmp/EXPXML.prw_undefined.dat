@@ -1,0 +1,333 @@
+#INCLUDE "TOTVS.CH"
+#INCLUDE "XMLXFUN.CH"
+#INCLUDE "TOPCONN.CH"
+
+/*/{Protheus.doc} EXPXML
+Função geradora de XML - Fina070 - Baixas a Receber
+	
+@author 	Luiz Junior
+@since 		16/01/2014
+@version 	1.0		         
+
+
+@return 	Nil, Nulo
+
+@example
+
+@see 
+
+/*/
+
+User Function EXPXML
+    
+	If IsBlind()
+		PROCXML()
+	Else
+		Processa({|| PROCXML() },"Aguarde...gerando xml financeiro!")
+	EndIf	
+
+Return
+
+/** {Protheus.doc} PROCXML
+Funcao para gerar o XML
+
+@param: 	<Nil>
+@author: 	Luiz Junior
+@since: 	16/01/2014
+@Uso: 		SFIEMT
+*/
+
+Static Function PROCXML
+
+Local nQtdReg	  	:= 0
+Local _cError	  	:= ""
+Local _cWarning 	:= ""
+Local _cDelimit 	:= "_"
+Local _cXMLRET  	:= ""
+Local cDirExp   	:= ""
+Local _cData	  	:= ""
+Local _cHora	  	:= ""
+Local _cFile	  	:= ""
+Local _cQuery    	:= ""
+Local _cDescricao	:= ""
+Local _cStatus   	:= "N"
+Local _cRet      	:= "0"
+Local _cMotivo   	:= ""
+Local _cID       	:= ""
+Local _cRotina   	:= "FINA070"
+Local _cDescricao	:= "Baixas a Receber"
+Local _cAlias    	:= ""
+Local _cAlJob    	:= ""
+Local nCont      	:= 0
+Local _cTipo     	:= "2"
+Local nHdl       	:= 0
+Local cEOL       	:= "CHR(13)+CHR(10)"
+Local _cUser     	:= ""
+Local _lJob			:= .F.
+
+If IsBlind()
+	
+	RpcClearEnv()
+	RpcSetType(3)
+	RpcSetEnv("01","01MT0001","job.imp","abcd1234","COM",GetEnvServer(),)
+	
+	_lJob := .T.
+	
+	If Select("_cAlJob") > 0
+		("_cAlJob")->(DbCloseArea())                          	
+	EndIf
+	
+	_cQuery := " SELECT ZZA_STATUS "
+	_cQuery += " FROM "+RetSqlName("ZZA") 
+	_cQuery += " WHERE D_E_L_E_T_ != '*' "
+	_cQuery += " AND   ZZA_TIPO    = '2' "
+	
+	TcQuery _cQuery New Alias _cAlJob
+	
+	If !(("_cAlJob")->ZZA_STATUS == _cStatus) 
+		
+		If _lJob
+			_lJob := .F.
+			RpcClearEnv()
+			Conout("Encerrou Job...")
+		EndIf
+		
+		Conout("Tabela ZZA Sendo Utilizada!")
+		Return
+		
+	EndIf
+	
+	DbSelectArea("ZZA")
+	DbSetOrder(1)
+	If DbSeek(xFilial("ZZA")+_cStatus+_cTipo)
+	
+		If RecLock("ZZA",.F.) 
+				
+			ZZA->ZZA_STATUS := "S"						
+			ZZA->ZZA_DATA   := dDataBase
+			ZZA->ZZA_HORA   := Time()
+			
+			MsUnlock()
+					
+		EndIf
+		
+		_cStatus        := "S"
+	
+	EndIf	
+	
+EndIf
+
+If Empty(cEOL)
+	cEOL := CHR(13)+CHR(10)
+Else
+	cEOL := Trim(cEOL)
+	cEOL := &cEOL
+EndIf
+
+cDirExp := GetNewPar("MV_LOCXML","\xml\exp\")	//GetMv("MV_LOCXML")
+
+//Verifica se o diretorio de gravacao do XML existe
+If !lIsDir(cDirExp)
+
+	//Cria diretorio
+	If !MontaDir(cDirExp) // Verifica se criou o diretorio
+		Conout("Erro na criacao do diretorio "+cDirExp+". Consulte ADM do Sistema!")
+		Return()
+	EndIf
+
+EndIf
+
+_cData	:= Dtos(Date())
+_cAlias := GetNextAlias()
+_cAlJob := GetNextAlias()
+
+If Select("_cAlias") > 0
+	("_cAlias")->(DbCloseArea())
+EndIf
+
+_cQuery   := " SELECT E5_FILIAL,          			"
+_cQuery   += "        E5_PREFIXO,         			"
+_cQuery   += "        E5_NUMERO,          			"
+_cQuery   += "        E5_PARCELA,         			"
+_cQuery   += "        E5_TIPO,             			"
+_cQuery   += "        E5_DATA             			"
+_cQuery   += " FROM "+RetsqlName("SE5")
+_cQuery   += " WHERE  E5_PREFIXO	IN ('RMC','RMX')	"
+_cQuery   += " AND    E5_TIPO 		= 'BOL'				"
+_cQuery   += " AND    E5_XGERARM  	= ' '   			"
+_cQuery   += " AND    E5_RECPAG  	= 'R'   			"
+_cQuery   += " AND    E5_TIPODOC  	IN ('BA','VL') 		"
+_cQuery   += " AND    E5_MOTBX		<> 'CAN'			"
+_cQuery   += " AND    D_E_L_E_T_ 	<> '*'   			"
+_cQuery   += " ORDER BY R_E_C_N_O_        				"
+
+TcQuery _cQuery New Alias _cAlias
+
+DbSelectArea("_cAlias")
+Count to nQtdReg
+("_cAlias")->(DbGoTop())
+
+If !IsBlind()
+	ProcRegua(nQtdReg)
+EndIf	
+
+("_cAlias")->(DbGoTop())
+
+_nCont := 0
+
+Conout("Iniciando Job")
+ConOut(Replicate("=",80))
+
+While !("_cAlias")->(Eof())
+
+	_nCont++
+	
+	_cHora := Time()
+	
+	_cData := ("_cAlias")->E5_DATA
+
+	_cFile := Alltrim(_cRotina)+_cData+StrTran(_cHora,":","")+cValToChar(_nCont)+".xml"
+	
+	nHdl   := fCreate(cDirExp+_cFile)
+
+	If nHdl == -1
+		MsgAlert("O arquivo de nome "+cDirExp+_cFile+" nao pode ser executado! Verifique os parametros.","Atencao!")
+		Return
+	EndIf
+	
+	Conout("Gerando arquivo: "+_cFile)
+    
+	If !IsBlind()
+		IncProc()
+	EndIf
+	
+	_cChave := ("_cAlias")->E5_FILIAL+("_cAlias")->E5_PREFIXO+("_cAlias")->E5_NUMERO+("_cAlias")->E5_PARCELA+("_cAlias")->E5_TIPO
+	
+	_cID    := Posicione("SE1",1,_cChave,"E1_XIDESB")
+	
+	_cXMLRET := ""
+	
+	nTamLin  := 1240
+	_cXMLRET := Space(nTamLin)//+cEOL // Variavel para criacao da linha do registros para gravacao
+
+	//_cXMLRET := ""
+
+	//Montagem das tags do XML
+	_cXMLRET += '<TOTVSIntegrator>'
+	_cXMLRET += '<ID>'       + AllTrim(_cID)     + '</ID>'
+	_cXMLRET += '<DATA>'     + AllTrim(_cData)   + '</DATA>'
+	_cXMLRET += '<HORA>'     + AllTrim(_cHora)   + '</HORA>'
+	_cXMLRET += '<RETORNO>'  + AllTrim(_cRet)    + '</RETORNO>'
+	_cXMLRET += '<MOTIVO>'   + AllTrim(_cMotivo) + '</MOTIVO>'
+	_cXMLRET += '<GlobalDocumentFunctionCode>'+ Alltrim(_cRotina) +'</GlobalDocumentFunctionCode>'
+	_cXMLRET += '<GlobalDocumentFunctionDescription>'+ AllTrim(_cDescricao) +'</GlobalDocumentFunctionDescription>'
+	_cXMLRET += '</TOTVSIntegrator>'
+	
+	//Espaços em branco
+    cCpo     := PADR(" ",45)
+	_cXMLRET := Stuff(_cXMLRET,1,45,cCpo)
+
+	//_cDelimit := "_"
+	//_cError   := ""
+	//_cWarning := ""
+
+	// Transforma a string XML em Objeto
+	//oXML := XMLParser( _cXMLRET, _cDelimit, @_cError, @_cWarning )
+
+	//Verifica se a estrutura foi criada
+	//IF !(Empty(_cError) .and. Empty(_cWarning))
+	//	Conout("Erro na criacao do XML")
+	//	Return()
+	//EndIf
+
+	// Salva o XML em disco
+	//XMLSaveFile( oXML, cDirExp+_cFile, .T.)
+	
+	If fWrite(nHdl,AllTrim(_cXMLRET),Len(AllTrim(_cXMLRET))) != Len(AllTrim(_cXMLRET))
+		//If !MsgYesNo("Ocorreu um erro na gravacao do arquivo. Continua?","Atencao!")
+			ConOut( "Atencao! Ocorreu um erro na gravacao do arquivo. Verifique" )
+			Exit
+		//EndIf
+	EndIf	
+		
+	FClose(_cXMLRET)	
+
+	ConOut( "GeraXml - " + DTOC( Date() ) + " " + Time() + " " + "GeraXml Final " )
+
+	DbSelectArea("SE5")
+	DbSetOrder(7)
+	If DbSeek(("_cAlias")->E5_FILIAL+("_cAlias")->E5_PREFIXO+("_cAlias")->E5_NUMERO+("_cAlias")->E5_PARCELA+("_cAlias")->E5_TIPO)
+	
+		While !SE5->(Eof()) .And. ("_cAlias")->E5_FILIAL+("_cAlias")->E5_PREFIXO+("_cAlias")->E5_NUMERO+("_cAlias")->E5_PARCELA+("_cAlias")->E5_TIPO ==;
+		                                  SE5->E5_FILIAL+        SE5->E5_PREFIXO+        SE5->E5_NUMERO+        SE5->E5_PARCELA+        SE5->E5_TIPO
+
+			If RecLock("SE5",.F.)
+		
+				SE5->E5_XGERARM := "S"
+				Conout("Atualizando arquivo: "+("_cAlias")->E5_FILIAL+("_cAlias")->E5_PREFIXO+("_cAlias")->E5_NUMERO+("_cAlias")->E5_PARCELA+("_cAlias")->E5_TIPO)
+		
+				MsUnlock()
+		
+			EndIf
+		
+			SE5->(DbSkip())
+		EndDo	
+	
+	EndIf
+	
+	Conout("Arquivo gerado com sucesso")
+
+	("_cAlias")->(DbSkip())	
+EndDo
+
+If nQtdReg = 0 //.And. !IsBlind()
+
+	Conout("O job nao encontrou dados para exportacao!")
+	Conout("Exportacao encerrada")
+	ConOut(Replicate("=",80))
+	
+	DbSelectArea("ZZA")
+	DbSetOrder(1)
+	If DbSeek(xFilial("ZZA")+_cStatus+_cTipo)
+		
+		If RecLock("ZZA",.F.)
+			
+			ZZA->ZZA_STATUS := "N"
+			ZZA->ZZA_DATA   := dDataBase
+			ZZA->ZZA_HORA   := Time()
+				
+			MsUnlock()
+			
+		EndIf
+	
+	EndIf	
+
+ElseIf nQtdReg > 0 //.And. !IsBlind()
+	
+	ConOut(Replicate("=",80))
+	
+	DbSelectArea("ZZA")
+	DbSetOrder(1)
+	If DbSeek(xFilial("ZZA")+_cStatus+_cTipo)
+		
+		If RecLock("ZZA",.F.)
+			
+			ZZA->ZZA_STATUS := "N"
+			ZZA->ZZA_DATA   := dDataBase
+			ZZA->ZZA_HORA   := Time()
+				
+			MsUnlock()
+			
+		EndIf
+	
+	EndIf
+	
+EndIf	
+
+If _lJob
+	_lJob := .F.
+	RpcClearEnv()
+	Conout("Encerrou Job...")
+EndIf
+
+Return

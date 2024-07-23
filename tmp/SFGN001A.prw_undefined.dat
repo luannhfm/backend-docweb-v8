@@ -1,0 +1,196 @@
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE 'TOPCONN.CH'
+#INCLUDE 'RWMAKE.CH'
+#INCLUDE 'TBICONN.CH'
+
+/*/{Protheus.doc} SFGN001A
+@description Estatística de uso das rotinas customizadas.
+@author alan.oliveira
+@since 10/10/2018
+@version 1.0
+
+@param p_cFun, characters, nome da função
+@param p_cPrg, characters, nome do fonte
+@type function
+/*/
+User Function SFGN001A(p_cFun, p_cPrg)
+
+	Local cAliasTMP := GetNextAlias()
+	Local cEmpAtu	:= If(Type('cEmpAnt') = 'U', ' ', cEmpAnt)
+	Local cFilAtu	:= If(Type('cFilAnt') = 'U', ' ', cFilAnt)
+	Local cFunAtu	:= AllTrim(p_cFun)
+	Local cOff		:= Upper(AllTrim(ReadVar()))
+	Local cSO		:= ''
+	Local cTpFunc	:= 'S'
+	Local cUsr		:= If(Type('__cUserID') == 'U' .or. Empty(__cUserID), ' ', __cUserID)
+	Local nSO		:= 0
+	Local lJob		:= (Type('oApp') == 'U' .or. Type('oApp:oMainWnd') == 'U')
+	Local lOnLine	:= .F.
+	Local aArea		:= GetArea() 
+
+	If lJob
+		Prepare Environment Empresa '01' Filial '01MT0001'
+	EndIf
+	
+	lOnLine := GetNewPar('SF_STATPRW', .F.)	
+
+	/*
+		cOff $ 'cGetUsr|cGetUser'
+			Protecao para saida depois de feito logoff
+			Se estiver com foco no botao este trecho nao resolve
+		IsInCallStack('CLICK')	 		 
+			Tratativa para temas diferentes do classic			
+	*/
+	If .not. lOnLine .or. cOff $ 'cGetUsr|cGetUser' .or. IsInCallStack('CLICK')
+		Return 
+	EndIf
+
+	If SubStr(p_cFun, 1, 2) == 'U_'
+		cFunAtu	:= SubStr(p_cFun, 3) 
+		cTpFunc := 'U'
+	EndIf
+
+	//Verifico se o programa ou função devem ser desconsiderados
+	If DescFuncao({p_cPrg, cFunAtu, cEmpAnt, cFilAtu, cUsr})
+		Return
+	EndIf
+
+	nSO := GetRemoteType()
+
+	Do Case
+		Case nSO < 0
+			cSO := 'JOB'
+		Case nSO = 0 .or. nSO = 1
+			cSO := 'Windows'
+		Case nSO = 2 
+			cSO := 'Linux/MacOS'			
+		Case nSO = 4 
+			cSO := 'TELNET'
+		Case nSO = 5 
+			cSO := 'HTML'
+		Case nSO = 7 
+			cSO := 'Windows CE'
+		OtherWise
+			cSO := 'Não Utilizado'
+	EndCase
+
+	If Select(cAliasTMP) > 0
+		(cAliasTMP)->(dbCloseArea())
+	EndIf
+
+	BeginSQL Alias cAliasTMP
+
+		SELECT 
+			R_E_C_N_O_ AS REC
+		FROM %Table:ZJC% ZJC
+		WHERE
+			ZJC.ZJC_FILIAL	= %Exp:xFilial('ZJC')%	AND 
+			ZJC.ZJC_EMP		= %Exp:cEmpAtu% 		AND 
+			ZJC.ZJC_FIL		= %Exp:cFilAtu% 		AND
+			ZJC.ZJC_DATA	= %Exp:DtoS(dDataBase)% AND
+			ZJC.ZJC_USER	= %Exp:cUsr% 			AND
+			ZJC.ZJC_FONTE	= %Exp:p_cPrg% 			AND
+			ZJC.ZJC_FUNCAO	= %Exp:cFunAtu% 		AND
+			ZJC.ZJC_TIPO	= %Exp:cTpFunc% 		AND
+			ZJC.ZJC_SOPER	= %Exp:cSO% 			AND
+			ZJC.%NotDel%
+
+	EndSQL
+
+	If .not. (cAliasTMP)->(Eof())
+		
+		ZJC->(DbGoTo((cAliasTMP)->REC))
+		
+		RecLock('ZJC', .F.,, .T.)
+			ZJC->ZJC_QTD += 1
+		ZJC->(MsUnlock())
+
+	Else
+		
+		RecLock('ZJC', .T.,, .T.)
+			ZJC->ZJC_FILIAL 	:= xFilial('ZJC')
+			ZJC->ZJC_EMP		:= cEmpAtu
+			ZJC->ZJC_FIL		:= cFilAtu
+			ZJC->ZJC_DATA		:= dDataBase
+			ZJC->ZJC_USER		:= cUsr
+			ZJC->ZJC_FONTE		:= p_cPrg
+			ZJC->ZJC_FUNCAO		:= cFunAtu
+			ZJC->ZJC_TIPO		:= cTpFunc
+			ZJC->ZJC_SOPER		:= cSO
+			ZJC->ZJC_QTD		:= 1
+		ZJC->(MsUnlock())
+
+	EndIf
+
+	If Select(cAliasTMP) > 0
+		(cAliasTMP)->(dbCloseArea())
+	EndIf
+
+	RestArea(aArea)
+
+Return
+
+
+/*/{Protheus.doc} DescFuncao
+@description Verifica se o programa ou função deve ser desconsiderada 
+			Array Info
+				p_aInfo[1] = nome do programa que será verificado
+				p_aInfo[2] = nome da função que será verificado
+				p_aInfo[3] = código da empresa que será verificado
+				p_aInfo[4] = código da filial que será verificado
+				p_aInfo[5] = código do usuario que será verificado
+@author alan.oliveira
+@since 10/10/2018
+@version 1.0
+@return lRet, verdadeiro se o programa ou função deve ser desconsiderada.
+@param p_aInfo, array, critérios para validar o programa ou função
+@type function
+/*/
+Static Function DescFuncao(p_aInfo)
+
+	Local cAliasTMP := GetNextAlias()
+	Local lRet 		:= .F.
+	Local aArea		:= GetArea()
+
+	If Select(cAliasTMP) > 0
+		(cAliasTMP)->(dbCloseArea())
+	EndIf
+
+	BeginSQL Alias cAliasTMP
+
+		SELECT 
+			ZJC.*
+		FROM %Table:ZJC% ZJC
+		WHERE
+			ZJC.ZJC_FILIAL	= %Exp:xFilial('ZJC')%	AND 			
+			ZJC.ZJC_SOPER	= 'DESCONSIDERAR'		AND
+			ZJC.%NotDel%
+
+	EndSQL
+
+	While .not. (cAliasTMP)->(Eof())
+
+		If;
+			(Empty((cAliasTMP)->ZJC_FONTE)	.or. AllTrim((cAliasTMP)->ZJC_FONTE)	== p_aInfo[1]) .and.;
+			(Empty((cAliasTMP)->ZJC_EMP) 	.or. AllTrim((cAliasTMP)->ZJC_EMP) 		== p_aInfo[3]) .and.;
+			(Empty((cAliasTMP)->ZJC_FIL) 	.or. AllTrim((cAliasTMP)->ZJC_FIL) 		== p_aInfo[4]) .and.;
+			(Empty((cAliasTMP)->ZJC_FUNCAO) .or. AllTrim((cAliasTMP)->ZJC_FUNCAO) 	== p_aInfo[2]) .and.;
+			(Empty((cAliasTMP)->ZJC_USER) 	.or. AllTrim((cAliasTMP)->ZJC_USER) 	== p_aInfo[5]) .and.;			
+			(Empty((cAliasTMP)->ZJC_DATA) 	.or. StoD((cAliasTMP)->ZJC_DATA) 		>= dDataBase)
+			
+				lRet := .T.
+				Exit
+				
+		EndIf	
+
+		(cAliasTMP)->(dbSkip())
+		
+	EndDo
+	
+	If Select(cAliasTMP) > 0
+		(cAliasTMP)->(dbCloseArea())
+	EndIf
+
+	RestArea(aArea)
+
+Return lRet

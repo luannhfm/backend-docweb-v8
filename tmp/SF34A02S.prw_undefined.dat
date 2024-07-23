@@ -1,0 +1,459 @@
+#include 'protheus.ch'
+#include 'parmtype.ch'
+#Include 'Topconn.ch'
+
+user function SF34A02S()
+
+    Local lSaveLog := .F.
+    Local lEnd  := .F.
+
+    oGrid := FWGridProcess():New( ;
+        "SF34A02P",;                            	//Nome da rotina de menu de processamento
+        "INCLUI ZD7",;                          	//Titulo da rotina de menu
+        "Rotina para incluir ZD7",;		        	//Descrição completa da rotina
+        { |oGrid, lEnd| SF34P02S(oGrid, @lEnd)},; 	//Bloco de código de processamento. O bloco recebe a variavel que informa que a rotina foi cancelada
+        "SF34A02S",;								//Nome do grupo de perguntas do dicionário de dados
+        Nil,;										//Nome da função que será executada caso o processamento permita processamento em grid
+        lSaveLog;									//Indica se permite a gravação de Log sempre que chamar o método SaveLog()
+    )
+    
+	oGrid:SetMeters(1)
+	oGrid:Activate()
+	
+Return Nil
+
+/*/{Protheus.doc} nomeStaticFunction
+	(long_description)
+	@type  Static Function
+	@author user
+	@since 15/03/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+/*/
+Static Function SF34P02S(oGrid, lEnd)
+	Local _cQuery       := ""
+	Local _cDbSql		:= 'MSSQL/RM'
+	Local _cSrvSql	    := 'SRVERPGTW'
+	//Local _cDbSql		:= 'MSSQL/RM_V26'
+	//Local _cSrvSql	    := 'SRVP12HML'
+	Local nHndERP       := AdvConnection()
+	Local _cEmpr        := SubStr(FWCodEmp(), 2, 1)
+
+	Local aDados        := {}
+	Local _cFilial      := ""
+	Local _cFilRat      := ""
+	Local nX
+	Local nTotal
+	//Local nCont         := 0 //Controla a atualização da regua
+
+	Local CMutuo       := " "
+	Local DMutuo       := " "
+	
+
+	Local cUsrRat    := UsrRetName(RetCodUsr())
+	Local dDataRat   := dDataBase
+	Local cHoraRat   := Time()
+	Local cCampoOri  := ""
+
+//-----------------------------------------------------
+//Verifica se existe Lançamentos para o Mes e Empresa
+//-----------------------------------------------------
+
+
+//--------------------------------
+//Conecta Banco RM
+//--------------------------------
+	nHndSql := TcLink(_cDbSql,_cSrvSql,7890)
+	ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Conectando ao Banco RM Folha")
+
+	If nHndSql < 0
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Erro ("+ str(nHndSql,4) +") ao conectar com "+ _cDbSql +" em "+ _cSrvSql)
+	Endif
+
+	If .Not. TCSetConn(nHndSql)
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Houve problema na troca de conexao para o Ambiente, contate o Administrador")
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": Processo Finalizado")
+		Return
+	EndIf
+
+	ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": MSSQL Server conectado - Handler"+ str(nHndSql,4))
+
+//---------------------------------------------
+//Realiza a Consulta no RM (Dados do Rateio)
+//--------------------------------------------- 
+For nX := 1 to 2 
+	_cQuery := " "
+	_cQuery += "SELECT  PITEMPARTIDA.CODCOLIGADA, "
+	_cQuery += "PFUNC.CODFILIAL, "   
+    _cQuery += "SUBSTRING(CONVERT(VARCHAR,PPARTIDA.DATA,103),7,4) + SUBSTRING(CONVERT(VARCHAR,PPARTIDA.DATA,103),4,2) AS 'MESANO', "   
+
+	_cQuery += "PITEMPARTIDA.CHAPA, "
+	_cQuery += "PFUNC.NOME, "
+	_cQuery += " PFUNC.JORNADAMENSAL/60 as JORMENSAL, "
+	
+	If(nX = 1)
+	_cQuery += "PEVENTO.CONTADEBITO AS CTADEB, "
+	_cQuery += "PITEMPARTIDA.CODEVENTO AS EVENTO, "
+	_cQuery += "(SELECT SUM(PITEM.valor) FROM PITEMPARTIDA PITEM "
+	_cQuery += "WHERE PITEM.CODCOLIGADA = PITEMPARTIDA.CODCOLIGADA "
+	_cQuery += "AND PITEM.CHAPA = PITEMPARTIDA.CHAPA "
+	_cQuery += "AND PITEM.CODEVENTO = PITEMPARTIDA.CODEVENTO "
+	_cQuery += "AND PITEM.CODLOTE = PITEMPARTIDA.CODLOTE) AS VALOR, "
+	EndIf
+
+	If(nX = 2)
+	_cQuery += "PENCARGO.CONTADEBITO AS CTADEB, "
+	_cQuery += "PITEMPARTIDA.CODENCARGO AS EVENTO, "
+	_cQuery += "(SELECT SUM(PITEM.valor) FROM PITEMPARTIDA PITEM "
+	_cQuery += "WHERE PITEM.CODCOLIGADA = PITEMPARTIDA.CODCOLIGADA "
+	_cQuery += "AND PITEM.CHAPA = PITEMPARTIDA.CHAPA "
+	_cQuery += "AND PITEM.CODENCARGO = PITEMPARTIDA.CODENCARGO "
+	_cQuery += "AND PITEM.CODLOTE = PITEMPARTIDA.CODLOTE) AS VALOR, "
+	EndIf
+
+	//_cQuery += "PFRATEIOFIXO.VALOR PERC, "
+	_cQuery += "PITEMPARTIDA.VALOR VALRAT, "
+	_cQuery += "PPARTIDA.CODCCUSTO, "
+	_cQuery += "PPARTIDA.DEBITO, "
+	_cQuery += "PPARTIDA.CREDITO, "
+	_cQuery += "PPARTIDA.VALOR, "
+	_cQuery += "PPARTIDA.COMPLEMENTO, "
+	_cQuery += "SC.IDITEMCONTABIL, "
+	_cQuery += "SUBSTRING(PPARTIDA.CODCCUSTO,12,10) CENTRO_CUSTO, "
+	_cQuery += "SC.ITEMCONTABIL, "
+	_cQuery += "SC.DESCRICAO, "
+
+	_cQuery += "CASE "
+	_cQuery += "WHEN SUBSTRING(PPARTIDA.CODCCUSTO,1,1) = 'I' THEN PPARTIDA.CODCOLIGADA "
+	_cQuery += "ELSE CONVERT(INT,SUBSTRING(PPARTIDA.CODCCUSTO,10,1))  END FILIAL_DESTINO, "
+
+	_cQuery += "CASE "
+	_cQuery += "WHEN SUBSTRING(PPARTIDA.CODCCUSTO,1,9) = 'C00000000' THEN 'G' "
+	_cQuery += "WHEN SUBSTRING(PPARTIDA.CODCCUSTO,1,1 ) = 'I' THEN 'P' "
+	_cQuery += "ELSE 'C' END AS TPRAT, "
+
+	_cQuery += "CASE "
+	_cQuery += "WHEN PPARTIDA.CODHISTP = '001' THEN '1' "
+	_cQuery += "WHEN PPARTIDA.CODHISTP = '002' THEN '2' "
+	_cQuery += "ELSE 3 END AS TIPO,   "
+
+	_cQuery += "(SELECT TOP(1) "
+	_cQuery += "CASE "
+	//_cQuery += "WHEN PC1.INTEGRCONTABIL = '002' THEN '' ELSE PL.CODGERENCIAL END " CORRETO
+	_cQuery += "WHEN PC1.INTEGRCONTABIL = '  ' THEN '' ELSE PL.CODGERENCIAL END " //GAMBI
+	_cQuery += "FROM PPARTIDA P1 "
+	_cQuery += "INNER JOIN PRATEIOLC PL ON P1.IDPARTIDA = PL.IDPARTIDA AND P1.CODLOTE = PL.CODLOTE AND PL.CODCOLIGADA = P1.CODCOLIGADA "
+	_cQuery += "INNER JOIN PCCUSTO PC1 ON PC1.CODCCUSTO = P1.CODCCUSTO AND P1.CODCOLIGADA = PC1.CODCOLIGADA "
+	_cQuery += "WHERE P1.IDPARTIDA    = PPARTIDA.IDPARTIDA "
+	_cQuery += "AND P1.CODCOLIGADA  = PPARTIDA.CODCOLIGADA "
+	_cQuery += "AND P1.CODLOTE      = PPARTIDA.CODLOTE "
+	_cQuery += "AND PL.VLRDEBITO > 0) AS MUTUO_DEBITO, "
+
+	_cQuery += "(SELECT TOP(1) "
+	_cQuery += "CASE "
+	//_cQuery += "WHEN PC1.INTEGRCONTABIL = '002' THEN '' ELSE PL.CODGERENCIAL END " CORRETO
+	_cQuery += "WHEN PC1.INTEGRCONTABIL = '  ' THEN '' ELSE PL.CODGERENCIAL END " //GAMBI
+	_cQuery += "FROM  PPARTIDA P1 "
+	_cQuery += "INNER JOIN PRATEIOLC PL ON P1.IDPARTIDA = PL.IDPARTIDA AND P1.CODLOTE = PL.CODLOTE AND PL.CODCOLIGADA = P1.CODCOLIGADA "
+	_cQuery += "INNER JOIN PCCUSTO PC1 ON PC1.CODCCUSTO = P1.CODCCUSTO AND P1.CODCOLIGADA = PC1.CODCOLIGADA "
+	_cQuery += "WHERE P1.IDPARTIDA   = PPARTIDA.IDPARTIDA "
+	_cQuery += "AND   P1.CODCOLIGADA = PPARTIDA.CODCOLIGADA "
+	_cQuery += "AND   P1.CODLOTE     = PPARTIDA.CODLOTE "
+	_cQuery += "AND   PL.VLRCREDITO > 0) AS MUTUO_CREDITO  "
+
+	_cQuery += "FROM PITEMPARTIDA "
+
+	_cQuery += "INNER JOIN PPARTIDA  ON PPARTIDA.CODCOLIGADA = PITEMPARTIDA.CODCOLIGADA AND PPARTIDA.IDPARTIDA = PITEMPARTIDA.IDPARTIDA "
+
+	_cQuery += "INNER JOIN PFUNC     ON PFUNC.CODCOLIGADA = PITEMPARTIDA.CODCOLIGADA AND PFUNC.CHAPA = PITEMPARTIDA.CHAPA "
+
+	//_cQuery += "INNER JOIN PFRATEIOFIXO             ON PFRATEIOFIXO.CODCOLIGADA = PITEMPARTIDA.CODCOLIGADA AND PFRATEIOFIXO.CHAPA = PITEMPARTIDA.CHAPA AND PFRATEIOFIXO.CODCCUSTO = PPARTIDA.CODCCUSTO "
+
+	_cQuery += "LEFT JOIN SITEMCONTABILPROTHEUS SC  ON (CASE WHEN SUBSTRING(PPARTIDA.CODCCUSTO,1,1) = 'I' THEN CONVERT(INT,SUBSTRING(PPARTIDA.CODCCUSTO,2,9)) "
+	_cQuery += "                                    WHEN SUBSTRING(PPARTIDA.CODCCUSTO,1,9) = 'C00000000' THEN PFUNC.IDITEMCONTABIL "
+	_cQuery += "                                    ELSE CONVERT(INT,SUBSTRING(PPARTIDA.CODCCUSTO,2,7))  END) = SC.IDITEMCONTABIL "
+	_cQuery += "                                    AND (CASE WHEN SUBSTRING(PPARTIDA.CODCCUSTO,1,1) = 'I' THEN PPARTIDA.CODCOLIGADA "
+	_cQuery += "                                    WHEN SUBSTRING(PPARTIDA.CODCCUSTO,1,9) = 'C00000000' THEN PFUNC.CODCOLIGADA "
+	_cQuery += "                                    ELSE CONVERT(INT,SUBSTRING(PPARTIDA.CODCCUSTO,10,1))  END) = SC.CODCOLIGADA "
+
+	//----------------------------------------------------------------
+	//Alterado para ajustar o mutuo, quando o evento esta em reversao
+    //----------------------------------------------------------------
+	If(nX = 1)
+	_cQuery += " INNER JOIN PEVENTO ON PEVENTO.CODCOLIGADA = PITEMPARTIDA.CODCOLIGADA AND PEVENTO.CODIGO = PITEMPARTIDA.CODEVENTO "
+	
+	ENDIF
+
+	If(nX = 2)
+	_cQuery += " INNER JOIN PENCARGO ON PENCARGO.CODCOLIGADA = PITEMPARTIDA.CODCOLIGADA AND PENCARGO.CODIGO = PITEMPARTIDA.CODENCARGO  "
+	//_cQuery += " AND 1=2 "
+	ENDIF
+
+	
+	
+	
+	
+	_cQuery += "WHERE PITEMPARTIDA.CODLOTE = '" + ALLTRIM(MV_PAR01) +"' "
+
+	
+	If(nX = 1)
+	_cQuery += " AND PITEMPARTIDA.CODEVENTO IS NOT NULL "
+	//_cQuery += " AND PITEMPARTIDA.CODEVENTO <> '3061' "
+	//_cQuery += " AND 1=2 "
+	ENDIF
+
+	If(nX = 2)
+	_cQuery += " AND PITEMPARTIDA.CODENCARGO IS NOT NULL "
+	//_cQuery += " AND 1=2 "
+	ENDIF
+	//_cQuery   += " AND PITEMPARTIDA.CHAPA  = '00002766' "
+	//_cQuery += "PPARTIDA.CODHISTP = '001'"
+	_cQuery += "AND PITEMPARTIDA.CODCOLIGADA IN ('" +_cEmpr+ "') "
+	_cQuery += "ORDER BY PITEMPARTIDA.CODCOLIGADA, PITEMPARTIDA.CHAPA, CODEVENTO "
+
+	TCQUERY _cQuery NEW ALIAS "TMPA"
+
+	If (TCSQLExec(_cQuery) < 0)
+		TMPA->(DbCloseArea())
+		ConOut("["+ dToC(Date()) + " " + Time() + "] - " + FunName() + ": TCSQLError() " + TCSQLError())
+		Return
+	EndIf
+
+	DbSelectArea("TMPA")
+	DbGoTop()
+
+	While .Not. TMPA->( EOF() )
+
+		//if Substr(TMPA->DEBITO,1,1) == '2' .OR. TMPA->CODCOLIGADA == TMPA->FILIAL_DESTINO
+		if Substr(TMPA->CTADEB,1,1) == '2' .OR. TMPA->CODCOLIGADA == TMPA->FILIAL_DESTINO
+		   CMutuo := " "	
+		   DMutuo := " "
+		 
+		 else
+		  CMutuo := TMPA->MUTUO_CREDITO  //[13]
+		  DMutuo := TMPA->MUTUO_DEBITO   //[12]
+					
+		EndIf
+
+		aAdd(aDados, {TMPA->CODCOLIGADA,;    //[1]
+					  TMPA->CODFILIAL,;      //[2]
+					  TMPA->MESANO,;         //[3]
+		 			  TMPA->CHAPA,;          //[4]
+					  TMPA->EVENTO,;         //[5]
+					  TMPA->VALOR,;          //[6]
+					  (TMPA->VALRAT * 100)/TMPA->VALOR,; 
+					  TMPA->VALRAT,;         //[8]
+					  TMPA->DEBITO,;         //[9]
+					  TMPA->CREDITO,;        //[10]
+					  TMPA->COMPLEMENTO,;    //[11]
+					  DMutuo           ,;    //[12]
+					  CMutuo           ,;    //[13]
+					  TMPA->CENTRO_CUSTO,;   //[14]
+					  TMPA->ITEMCONTABIL,;   //[15] 
+					  TMPA->FILIAL_DESTINO,; //[16]
+					  TMPA->TPRAT,;          //[17]
+					  TMPA->TIPO,;           //[18]
+					  TMPA->JORMENSAL }) //[19]
+		Conout( "FILIAL: " + AllTrim(STR(TMPA->CODCOLIGADA)) + "  => Matricula:  " + AllTrim(TMPA->CHAPA)  + "  => Nome:  " + AllTrim(TMPA->NOME) + "  => Evento:  " + AllTrim(TMPA->EVENTO), "  => Tipo:  " + AllTrim(TMPA->TPRAT) )
+		TMPA->(DBSKIP())
+	EndDo
+	
+	TMPA->( dbCloseArea() )
+
+	NEXT
+	//-----------------------------
+	// Volta para conexÃ£o ERP
+	//----------------------------
+	tcSetConn( nHndERP )
+	conout( "Banco = " + TcGetDB() )
+
+	nTotal := Len(aDados)
+	oGrid:SetMaxMeter( nTotal, 1, "Identificando registros que serão integrados")
+	
+	For nX := 1 to LEN(aDados)
+
+	//if(nX == 1 .OR. nX = nCont)
+	oGrid:SetIncMeter(1, "Processando registro " + StrZero( nX, 6) + " de " + StrZero( nTotal, 6) +  ".")
+	//nCont := nCont + 100
+	//EndIf
+
+	_cFilial := "0" + Alltrim(STR(aDados[nX][1])) + "MT" + STRZERO(aDados[nX][2],4)
+	_cFilRat := "0" + Alltrim(STR(aDados[nX][16])) + "MT0001" 
+
+	//-----------------------------------------------------
+	//Identifica o Codigo da Unidade Original
+	//-----------------------------------------------------
+
+	If     AllTrim(aDados[nX][1]) == "1"
+		cCampoOri := "091"
+	ElseIf AllTrim(aDados[nX][1]) == "2"
+		cCampoOri := "088"
+	ElseIf AllTrim(aDados[nX][1]) == "3"
+		cCampoOri := "089"
+	ElseIf AllTrim(aDados[nX][1]) == "4"
+		cCampoOri := "090"
+	ElseIf AllTrim(aDados[nX][1]) == "5"
+		cCampoOri := "092"
+	else
+		cCampoOri := "123"
+	
+	EndIf
+
+//----------------------------------
+//Credito
+//----------------------------------
+	RecLock("ZD7", .t. )
+
+					ZD7->ZD7_FILIAL     := _cFilial
+					//ZD7->ZD7_MESANO     := aDados[nX][3]
+					ZD7->ZD7_MESANO     := aDados[nX][3]
+					ZD7->ZD7_TIPFOL     := AllTrim(STR(aDados[nX][18]))
+					ZD7->ZD7_MAT        := aDados[nX][4]
+					ZD7->ZD7_CC         := aDados[nX][14]
+					ZD7->ZD7_ITEM	    := aDados[nX][15]
+					ZD7->ZD7_VERBA      := aDados[nX][5]
+					ZD7->ZD7_VALOR      := aDados[nX][6]
+					if(aDados[nX][7]) <= 100
+					ZD7->ZD7_PERC       := aDados[nX][7]
+					else
+					ZD7->ZD7_PERC       := 100
+					EndIf	
+					ZD7->ZD7_VALRAT     := aDados[nX][8]
+					ZD7->ZD7_FILRAT     := _cFilial
+					ZD7->ZD7_TPRAT      := aDados[nX][17]
+					ZD7->ZD7_USRRAT     := cUsrRat
+					ZD7->ZD7_DATRAT     := dDataRat
+					ZD7->ZD7_HORRAT     := cHoraRat
+					ZD7->ZD7_ORIGEM     := cCampoOri
+					ZD7->ZD7_CTACRE     := aDados[nX][10]
+					ZD7->ZD7_HRTRAB     := aDados[nX][19]
+
+	ZD7->( MsUnLock() )
+
+//----------------------------------
+//Debito
+//----------------------------------
+	RecLock("ZD7", .t. )
+
+					ZD7->ZD7_FILIAL     := _cFilial
+					//ZD7->ZD7_MESANO     := aDados[nX][3]
+					ZD7->ZD7_MESANO     := aDados[nX][3]
+					ZD7->ZD7_TIPFOL     := AllTrim(STR(aDados[nX][18]))
+					ZD7->ZD7_MAT        := aDados[nX][4]
+					ZD7->ZD7_CC         := aDados[nX][14]
+					ZD7->ZD7_ITEM	    := aDados[nX][15]
+					ZD7->ZD7_VERBA      := aDados[nX][5]
+					ZD7->ZD7_VALOR      := aDados[nX][6]
+					if(aDados[nX][7]) <= 100
+						ZD7->ZD7_PERC       := aDados[nX][7]
+					else
+						ZD7->ZD7_PERC       := 100
+					EndIf	
+					ZD7->ZD7_VALRAT     := aDados[nX][8]
+					ZD7->ZD7_FILRAT     := _cFilial
+					ZD7->ZD7_TPRAT      := aDados[nX][17]
+					ZD7->ZD7_USRRAT     := cUsrRat
+					ZD7->ZD7_DATRAT     := dDataRat
+					ZD7->ZD7_HORRAT     := cHoraRat
+					ZD7->ZD7_ORIGEM     := cCampoOri
+					ZD7->ZD7_CTADEB     := aDados[nX][9]
+					ZD7->ZD7_HRTRAB     := aDados[nX][19]
+
+	ZD7->( MsUnLock() )
+
+	
+//---------------------------
+//Inseri o Mutuo
+//--------------------------	
+	If !Empty(aDados[nX][13]) .and. aDados[nX][17] <> 'P' //.and. aDados[nX][1] <> aDados[nX][16]
+
+//----------------------------------
+//Credito
+//----------------------------------
+	//if SUBSTR(aDados[nX][10],1,1) <> '1' .and. SUBSTR(aDados[nX][10],1,1) <> '2'
+
+	RecLock("ZD7", .t. )
+
+					ZD7->ZD7_FILIAL     := _cFilial
+					//ZD7->ZD7_MESANO     := aDados[nX][3]
+					ZD7->ZD7_MESANO     := aDados[nX][3]
+					ZD7->ZD7_TIPFOL     := AllTrim(STR(aDados[nX][18]))
+					ZD7->ZD7_MAT        := aDados[nX][4]
+					ZD7->ZD7_CC         := aDados[nX][14]
+					ZD7->ZD7_ITEM	    := aDados[nX][15]
+					ZD7->ZD7_VERBA      := aDados[nX][5]
+					ZD7->ZD7_VALOR      := aDados[nX][6]
+					//ZD7->ZD7_PERC       := aDados[nX][7]
+					if(aDados[nX][7]) <= 100
+						ZD7->ZD7_PERC       := aDados[nX][7]
+					else
+						ZD7->ZD7_PERC       := 100
+					EndIf	
+					ZD7->ZD7_VALRAT     := aDados[nX][8]
+					ZD7->ZD7_FILRAT     := _cFilRat
+					ZD7->ZD7_TPRAT      := aDados[nX][17]
+					ZD7->ZD7_USRRAT     := cUsrRat
+					ZD7->ZD7_DATRAT     := dDataRat
+					ZD7->ZD7_HORRAT     := cHoraRat
+					ZD7->ZD7_ORIGEM     := cCampoOri
+					ZD7->ZD7_CTACRE     := aDados[nX][13]
+					ZD7->ZD7_HRTRAB     := aDados[nX][19]
+
+	ZD7->( MsUnLock() )
+
+	//EndIf
+
+
+//----------------------------------
+//Debito
+//----------------------------------
+//if SUBSTR(aDados[nX][9],1,1) == '3' .and. SUBSTR(aDados[nX][9],1,1) <> '2'
+	RecLock("ZD7", .t. )
+
+					ZD7->ZD7_FILIAL     := _cFilial
+					//ZD7->ZD7_MESANO     := aDados[nX][3]
+					ZD7->ZD7_MESANO     := aDados[nX][3]
+					ZD7->ZD7_TIPFOL     := AllTrim(STR(aDados[nX][18]))
+					ZD7->ZD7_MAT        := aDados[nX][4]
+					ZD7->ZD7_CC         := aDados[nX][14]
+					ZD7->ZD7_ITEM	    := aDados[nX][15]
+					ZD7->ZD7_VERBA      := aDados[nX][5]
+					ZD7->ZD7_VALOR      := aDados[nX][6]
+					if(aDados[nX][7]) <= 100
+						ZD7->ZD7_PERC       := aDados[nX][7]
+					else
+						ZD7->ZD7_PERC       := 100
+					EndIf	
+					//ZD7->ZD7_PERC       := aDados[nX][7]
+					ZD7->ZD7_VALRAT     := aDados[nX][8]
+					ZD7->ZD7_FILRAT     := _cFilRat
+					ZD7->ZD7_TPRAT      := aDados[nX][17]
+					ZD7->ZD7_USRRAT     := cUsrRat
+					ZD7->ZD7_DATRAT     := dDataRat
+					ZD7->ZD7_HORRAT     := cHoraRat
+					ZD7->ZD7_ORIGEM     := cCampoOri
+					ZD7->ZD7_CTADEB     := aDados[nX][12]
+					ZD7->ZD7_HRTRAB     := aDados[nX][19]
+
+	ZD7->( MsUnLock() )
+
+	//EndIf
+
+	EndIf
+
+	NEXT
+
+	//-----------------------------
+	// Volta para conexÃ£o ERP
+	//----------------------------
+	//tcSetConn( nHndERP )
+	//conout( "Banco = " + TcGetDB() )
+
+	MsgAlert("EXECUTOU" , "Teste Rotina" )
+
+
+RETURN

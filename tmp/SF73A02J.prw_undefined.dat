@@ -1,0 +1,399 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} SF73A02J
+Funcao responsavel por vincular mais de um cliente na Proposta Comercial. 
+Utilizada somente para a impressao do contrato(Word/PDF)
+
+Funcao chamada no ponto de entrada (FT600BUT).
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	22/09/2015
+@version 	1.0
+@return 	Nil, Nulo
+
+Alterações:
+	Nr		Data		Alterado por			Descrição
+	------- ----------- ----------------------- ---------------------------------------------------------------------------
+	#001	01/10/2015	Jonas Nascimento J2A	Alteracao do nome das variáveis, pois estava ocorrendo conflito.
+	#002	01/10/2015	Jonas Nascimento J2A	Adição das colunas [ZC3_CODCON & ZC3_NOMCON].
+	#003	01/10/2015	Jonas Nascimento J2A	Adição da coluna [R_E_C_N_O_] para realizar exclusão.
+	#004	01/10/2015	Jonas Nascimento J2A	Alteração no SQL para retornar o contato do cliente [SU5].
+
+/*/
+User Function SF73A02J()
+
+	Local _oProposta
+	Local _cProposta 	:= If(INCLUI,M->ADY_PROPOS,ADY->ADY_PROPOS)
+	Local _oRevisP
+	Local _cRevisP 		:= If(INCLUI,M->ADY_PREVIS,ADY->ADY_PREVIS)
+	Local _oOport
+	Local _cOport 		:= If(INCLUI,M->ADY_OPORTU,ADY->ADY_OPORTU)
+	Local _oRevisO
+	Local _cRevisO 		:= If(INCLUI,M->ADY_REVISA,ADY->ADY_REVISA)
+	Local _oSayProp
+	Local _oSayRevP
+	Local _oSayOp
+	Local _oSayRevOp
+	Local _oBtnCanc
+	Local _oBtnSalva
+	
+	Static _oDlg
+	
+	DEFINE MSDIALOG _oDlg TITLE "Filiais do Cliente" FROM 000, 000  TO 500, 600 COLORS 0, 16777215 PIXEL
+		
+	//Monta a Grid
+	fGetDados(_cOport, _cRevisO, _cProposta, _cRevisP)
+	    
+	@ 005, 006 SAY _oSayProp PROMPT "Proposta" SIZE 025, 007 OF _oDlg COLORS 0, 16777215 PIXEL
+	@ 012, 006 MSGET _oProposta VAR _cProposta SIZE 060, 010 OF _oDlg COLORS 0, 16777215 READONLY PIXEL
+	    
+	@ 005, 081 SAY _oSayRevP PROMPT "Rev Prop." SIZE 040, 007 OF _oDlg COLORS 0, 16777215 PIXEL
+	@ 012, 081 MSGET _oRevisP VAR _cRevisP SIZE 060, 010 OF _oDlg COLORS 0, 16777215 READONLY PIXEL
+	    
+	@ 005, 155 SAY _oSayOp PROMPT "Oportunidade" SIZE 036, 007 OF _oDlg COLORS 0, 16777215 PIXEL
+	@ 012, 156 MSGET _oOport VAR _cOport SIZE 060, 010 OF _oDlg COLORS 0, 16777215 READONLY PIXEL
+	    
+	@ 005, 231 SAY _oSayRevOp PROMPT "Rev Op." SIZE 040, 007 OF _oDlg COLORS 0, 16777215 PIXEL
+	@ 011, 232 MSGET _oRevisO VAR _cRevisO SIZE 060, 010 OF _oDlg COLORS 0, 16777215 READONLY PIXEL
+	
+	@ 228, 105 BUTTON _oBtnSalva PROMPT "Salvar" SIZE 037, 012 OF _oDlg ACTION fGrvZC3() PIXEL
+	@ 228, 160 BUTTON _oBtnCanc PROMPT "Cancelar" SIZE 037, 012 OF _oDlg ACTION _oDlg:End() PIXEL
+	
+	ACTIVATE MSDIALOG _oDlg CENTERED
+
+Return
+
+/** {Protheus.doc} fGetDados
+Funcao para Montar a MsNewGetDados
+
+@author: 	Jose Leite de Barros Neto
+@since: 	22/09/2015
+@Uso: 		SFIEMT
+*/
+Static Function fGetDados( _cOport, _cRevisO, _cProposta, _cRevisP )
+	Local _nX			:= 0
+	Local _aHeadeZC3	:= {}
+	Local _aColsZC3		:= {}
+	Local _aFieldZC3 	:= {"ZC3_CODCLI","ZC3_LOJA","ZC3_DESC","ZC3_CODCON","ZC3_NOMCON"} //#002
+	Local _aAlterZC3	:= {"ZC3_CODCLI","ZC3_CODCON", "RECNO"}
+	Local _cQuery		:= ''
+	Local _cLinOk		:= 'U_SF73A02LOk()' 
+	
+	Static _oMSNewGet
+
+	// Define field properties
+	DbSelectArea("SX3")
+	SX3->(DbSetOrder(2))
+	For _nX := 1 to Len(_aFieldZC3)
+		If SX3->(DbSeek(_aFieldZC3[_nX]))
+			Aadd(_aHeadeZC3, {AllTrim(X3Titulo()),SX3->X3_CAMPO,SX3->X3_PICTURE,SX3->X3_TAMANHO,SX3->X3_DECIMAL,SX3->X3_VALID,;
+				SX3->X3_USADO,SX3->X3_TIPO,SX3->X3_F3,SX3->X3_CONTEXT,SX3->X3_CBOX,SX3->X3_RELACAO})
+		Endif
+	Next _nX
+	aadd(_aHeadeZC3, {"Recno", "R_E_C_N_O_", "", 5, 0, "AllwaysTrue()", "", "N", "", "", "", ""}) //#003
+	
+	If Select('TRA') > 0
+		dbSelectArea('TRA')
+		TRA->( dbCloseArea() )
+	EndIf
+	
+	//#004
+	_cQuery := "SELECT"+CRLF
+	_cQuery += "   ZC3.*, NVL(SU5.U5_CONTAT, ' ') U5_CONTAT "+CRLF
+	_cQuery += "FROM "+CRLF
+	_cQuery += "   "+RetSqlName('ZC3')+" ZC3"+CRLF
+	_cQuery += "   LEFT JOIN "+RetSqlName('SU5')+" SU5 ON SU5.D_E_L_E_T_ = ' ' AND U5_FILIAL = '"+xFilial('SU5')+"' AND ZC3_CODCON = U5_CODCONT "+CRLF
+	_cQuery += "WHERE "+CRLF
+	_cQuery += "   ZC3.D_E_L_E_T_ = ' ' "+CRLF
+	_cQuery += "   AND ZC3_FILIAL = '"+xFilial('ZC3')+"' "+CRLF
+	_cQuery += "   AND ZC3_OPORTU = '"+ _cOport +"' "+CRLF
+	_cQuery += "   AND ZC3_REVISA = '"+ _cRevisO +"' "+CRLF
+	_cQuery += "   AND ZC3_PROPOS = '"+ _cProposta +"' "+CRLF
+	_cQuery += "   AND ZC3_PREVIS = '"+ _cRevisP +"' "+CRLF
+	MemoWrite("C:\temp\SF73A02J.txt", _cQuery)
+	_cQuery := ChangeQuery(_cQuery)	
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TRA',.T.,.F.)
+	
+	_aColsZC3 := {}
+	
+	If .Not. TRA->(EOF())
+		While .Not. TRA->( Eof() )
+			aAdd(_aColsZC3,{	TRA->ZC3_CODCLI 	,;
+								TRA->ZC3_LOJA		,;
+								TRA->ZC3_DESC		,;
+								TRA->ZC3_CODCON		,;
+								TRA->U5_CONTAT		,;
+								TRA->R_E_C_N_O_		,;
+								.F.})
+			TRA->( DbSkip() )
+		End
+	EndIf
+	
+	TRA->( dbCloseArea() )
+	
+	_oMSNewGet := MsNewGetDados():New( 036, 004, 217, 293, GD_INSERT+GD_DELETE+GD_UPDATE, _cLinOk, "AllwaysTrue", "+Field1+Field2", _aAlterZC3,, 999, "AllwaysTrue", "", "AllwaysTrue", _oDlg, _aHeadeZC3, _aColsZC3)
+
+Return( Nil )
+
+/** {Protheus.doc} SF73A02LOk
+Funcao para validar os dados da linha
+
+@author: 	Jose Leite de Barros Neto
+@since: 	22/09/2015
+@Uso: 		SFIEMT
+
+	#001 - 07/10/2015 - Jonas Nascimento J2A:
+		-> Validar se foi informado o contato do cliente.
+
+*/
+User Function SF73A02LOk()
+	Local _lRet			:= .T.
+	Local _aHeadeZC3 	:= aClone(_oMSNewGet:aHeader)
+	Local _aColsZC3		:= aClone(_oMSNewGet:aCols)
+	Local _nPosCod		:= Ascan(_aHeadeZC3, {|e| Alltrim(e[2]) = "ZC3_CODCLI"} )
+	Local _nPosLoj		:= Ascan(_aHeadeZC3, {|e| Alltrim(e[2]) = "ZC3_LOJA"} )
+	Local _nPosCon		:= Ascan(_aHeadeZC3, {|e| Alltrim(e[2]) = "ZC3_CODCON"} )
+	Local _lDuplicad	:= .F.
+	Local _cCodMsg		:= ""
+	
+	If _nPosCod > 0
+	
+		For i := 1 to Len(_aColsZC3)
+			// Se e_nControu um cliente/loja igual ao ja cadastrado, avisa e nao permite continuar
+			If .Not. (GdDeleted( _oMSNewGet:nAt, _aHeadeZC3, _aColsZC3)) .And. _aColsZC3[i][_nPosCod]+_aColsZC3[i][_nPosLoj] == _aColsZC3[_oMSNewGet:nAt][_nPosCod]+_aColsZC3[_oMSNewGet:nAt][_nPosLoj] .And. i != _oMSNewGet:nAt
+				_lDuplicad := .T.
+				_cCodMsg := "01"
+				Exit
+			Endif
+			//#001
+			If .Not. (GdDeleted( _oMSNewGet:nAt, _aHeadeZC3, _aColsZC3)) .And. Empty(_aColsZC3[i][_nPosCon])
+				_lDuplicad := .T.
+				_cCodMsg := "02"
+				Exit
+			Endif
+		Next
+		
+	EndIf
+
+	// Se e_nControu um registro igual ao ja cadastrado, avisa e nao permite continuar
+	//If .Not. (GdDeleted( _oMSNewGet:nAt, aHeader, aCols)) .And. _lDuplicad
+	If _lDuplicad
+		_lRet := .F.
+		//#001
+		Do Case
+			Case _cCodMsg == "01"
+				Help(" ",1, "SF73A02JEXIST","Cliente já existente.","Cliente já existente, verifique por favor.",1,0 )
+			Case _cCodMsg == "02"
+				Help(" ",1, "SF73A02JEXIST","Contato do Cliente.","Contato do cliente não informado, verifique por favor.",1,0 )
+		EndCase				
+	Endif
+
+Return( _lRet )
+
+/** {Protheus.doc} SF7304LOk
+Funcao para gravar os dados (inclusão, alteração e exclusão)
+
+@author: 	Jonas Nascimento J2A
+@since: 	01/10/2015
+@Uso: 		SFIEMT
+*/
+Static Function fGrvZC3(_cVal)
+	Local _aCols	:= _oMSNewGet:aCols
+	Local _lRet		:= .T.
+	
+	_lRet := U_SF73A02LOk()
+	
+	If _lRet
+		If MsgYesNo("Deseja salvar os dados?","Atenção")
+			For _nX := 1 To Len(_aCols)
+				If _aCols[_nX,6] > 0
+					ZC3->(DbGoTo(_aCols[_nX,6])) //Busca o registro na ZC3
+					
+					If _aCols[_nX,7]	//Exclusão de registro do BD
+						RecLock("ZC3",.F.)
+						ZC3->(DbDelete())
+						ZC3->(MsUnLock())
+					Else
+						RecLock("ZC3",.F.)	//Alteração de registro do BD
+						ZC3->ZC3_FILIAL		:= xFilial('ZC3')
+						ZC3->ZC3_OPORTU		:= IIF(INCLUI,M->ADY_OPORTU,ADY->ADY_OPORTU)
+						ZC3->ZC3_REVISA		:= IIF(INCLUI,M->ADY_REVISA,ADY->ADY_REVISA)
+						ZC3->ZC3_PROPOS		:= IIF(INCLUI,M->ADY_PROPOS,ADY->ADY_PROPOS)
+						ZC3->ZC3_PREVIS		:= IIF(INCLUI,M->ADY_PREVIS,ADY->ADY_PREVIS)
+						ZC3->ZC3_CODCLI 	:= _aCols[_nX][1]
+						ZC3->ZC3_LOJA 		:= _aCols[_nX][2]
+						ZC3->ZC3_DESC 		:= _aCols[_nX][3]
+						ZC3->ZC3_CODCON 	:= _aCols[_nX][4]
+						
+						ZC3->(MsUnLock())
+					EndIf
+				ElseIf !_aCols[_nX,7]
+						RecLock("ZC3",.T.)	//Inclusão de registro do BD
+						ZC3->ZC3_FILIAL		:= xFilial('ZC3')
+						ZC3->ZC3_OPORTU		:= IIF(INCLUI,M->ADY_OPORTU,ADY->ADY_OPORTU)
+						ZC3->ZC3_REVISA		:= IIF(INCLUI,M->ADY_REVISA,ADY->ADY_REVISA)
+						ZC3->ZC3_PROPOS		:= IIF(INCLUI,M->ADY_PROPOS,ADY->ADY_PROPOS)
+						ZC3->ZC3_PREVIS		:= IIF(INCLUI,M->ADY_PREVIS,ADY->ADY_PREVIS)
+						ZC3->ZC3_CODCLI 	:= _aCols[_nX][1]
+						ZC3->ZC3_LOJA 		:= _aCols[_nX][2]
+						ZC3->ZC3_DESC 		:= _aCols[_nX][3]
+						ZC3->ZC3_CODCON 	:= _aCols[_nX][4]
+						
+						ZC3->(MsUnLock())
+				EndIf
+			Next
+			_oDlg:End()
+		EndIf
+	EndIf
+
+Return
+
+
+/*/{Protheus.doc} FT30F3C3
+@description Rotina de consulta de contatos da entidade.
+@type  Function
+@author	Alan Teles de Oliveira
+@since 21/12/2018
+@version 12.1.17
+@return	lRet, logico, verdadeiro se localizado o contato
+/*/
+User Function FT30F3C3()
+
+	Local aArea		:= GetArea()
+	Local cEntidade	:= ""
+	Local cCodEnt	:= ""
+	Local lRet		:= .T.
+	Local cAliTmp	:= GetNextAlias()
+	Local cPesq	 	:= Space(50)
+	Local oDlg		:= Nil
+	Local oLstBx	:= Nil
+	Local aContato	:= {}
+	Local bRet		:= {|| If(!Empty(aTail(oLstBx:aArray[oLstBx:nAt])), (lRet := .T., Var_IXB := IIf(Len(oLstBx:aArray) >= oLstBx:nAt, oLstBx:aArray[oLstBx:nAt][1], 0), oDlg:DeActivate()), (lRet := .F., MsgInfo('Incluir pelo menos um contato responsável pela assinatura da proposta!')))}	
+	Local oPesq		:= Nil
+
+	If !Empty(AD1_CODCLI)
+
+		cEntidade	:= "SA1"
+		cCodEnt	:= AD1_CODCLI + AD1_LOJCLI
+
+	ElseIf !Empty(AD1_PROSPE)
+
+		cEntidade	:= "SUS"
+		cCodEnt	:= AD1_PROSPE + AD1_LOJPRO
+
+	EndIf
+
+	If Empty(cEntidade)
+	
+		MsgInfo("Nenhuma entidade (Código do Cliente/Código do Prospect) foi selecionada", 'Atenção - SF73A02J') 
+		lRet := .F.
+	
+	Else
+
+		If Select(cAliTmp) > 0
+			(cAliTmp)->(DbCloseArea())
+		EndIf
+
+		BeginSQL Alias cAliTmp
+				
+			SELECT 
+				SU5.U5_CODCONT,
+				SU5.U5_CONTAT,
+				SU5.R_E_C_N_O_ AS RECN 
+			FROM %Table:SU5% SU5 
+			INNER JOIN %Table:AC8% AC8 ON 
+				AC8.AC8_FILIAL = %Exp:xFilial('AC8')% AND 
+				AC8.AC8_FILENT = %Exp:xFilial(cEntidade)% AND 
+				AC8.AC8_ENTIDA = %Exp:cEntidade% AND 
+				AC8.AC8_CODENT = %Exp:cCodEnt% AND 
+				AC8.AC8_CODCON = SU5.U5_CODCONT AND 
+				AC8.%NotDel%
+			WHERE 
+				SU5.%NotDel%
+
+		EndSQL
+
+		While .not. (cAliTmp)->(Eof())
+
+			aAdd(aContato, {(cAliTmp)->U5_CODCONT, (cAliTmp)->U5_CONTAT, (cAliTmp)->RECN})
+		
+			(cAliTmp)->(DbSkip())
+		
+		EndDo
+
+		If Select(cAliTmp) > 0
+			(cAliTmp)->(DbCloseArea())
+		EndIf
+
+		If Len(aContato) == 0
+			aAdd(aContato,{Nil, Nil, Nil})
+		EndIf
+
+		oDlg := FWDialogModal():New()
+
+		oDlg:SetBackground(.F.) 
+		oDlg:SetTitle("Consulta")
+		oDlg:SetEscClose(.T.)
+		oDlg:SetSize(210,270)
+		oDlg:EnableFormBar(.T.)
+		oDlg:CreateDialog() 
+
+		oPanel := oDlg:getPanelMain()
+ 
+		oDlg:createFormBar()
+		oDlg:AddButton('Cancelar',{|| Var_IXB := ' ', oDlg:Deactivate()}, 'Não',, .T., .F., .T.,)
+		oDlg:AddButton('OK', {|| Eval(bRet)}, 'OK',, .T., .F., .T.,)
+
+		@ 003,002 MsGet oPesq Var cPesq Size 219,009 COLOR CLR_BLACK PIXEL OF oPanel
+		@ 003,228 Button 'Pesquisar' Size 037,012 PIXEL OF oPanel ACTION IF(!Empty(aTail(oLstBx:aArray[oLstBx:nAt])), fPesqBox(oLstBx, cPesq), Nil) 
+		@ 20,03 LISTBOX oLstBx FIELDS HEADER 'Código', 'Nome' SIZE 264,139 OF oPanel PIXEL 
+		
+		oLstBx:bLDblClick := bRet
+		oLstBx:SetArray(aContato)
+		oLstBx:bLine 	:= {|| {aContato[oLstBx:nAt,1], aContato[oLstBx:nAt,2], aContato[oLstBx:nAt,3]}}
+
+		oDlg:Activate()
+
+	EndIf
+
+	RestArea(aArea)
+
+Return lRet
+
+
+/*/{Protheus.doc} fPesqBox
+@description Posiciona em registro localizado na pesquisa.
+@type  Function
+@author Alan Teles de Oliveira
+@since 21/12/2018
+@version 12.1.17
+@param p_oLstBx, object, ListBox
+@param p_cPesq, characters, valor a ser pesquisado
+
+
+/*/
+Static Function fPesqBox(p_oLstBx, p_cPesq) 
+
+	Local nLen	:= 0
+	Local nPos	:= 0 
+
+	Default p_oLstBx	:= Nil
+	Default p_cPesq		:= ""
+
+	If .not. Empty(p_cPesq)
+
+		p_cPesq	:= AllTrim(Upper(p_cPesq))
+		nLen	:= Len(p_cPesq)
+		nPos	:= aScan(p_oLstBx:aArray, {|x| Left(Upper(x[1]), nLen) == p_cPesq .or. Left(Upper(x[2]), nLen) == p_cPesq})
+
+		If nPos > 0
+
+			p_oLstBx:nAt := nPos
+			p_oLstBx:Refresh()  
+
+		EndIf 
+
+	EndIf 
+
+Return   

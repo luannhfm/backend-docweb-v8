@@ -1,0 +1,126 @@
+#Include "Protheus.ch"
+#Include "Topconn.ch"
+#Include "Ap5mail.ch"
+
+/*/
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ GCP02GRV º Autor ³ Microsiga          º Data ³  24/11/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDescricao ³ Inclusao de rotinas customizadas no Browse da tela de      º±±
+±±º          ³ orcamentos.                                                º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ CNI                                                        º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+/*/
+
+User Function GCP02GRV()
+Local aArea 	:= GetArea()
+Local cGrupo 	:= M->CO1_XGRLIB
+Local cDoc 		:= M->CO1_CODEDT+M->CO1_NUMPRO
+Local cDocC 	:= Alltrim(M->CO1_CODEDT)+"/"+Alltrim(M->CO1_NUMPRO)
+Local _nTotEDT 	:= 999
+
+SCR->(dbSetOrder(1))
+// Se gerou SCR, bloqueia solicitacao novamente.
+IF SCR->(dbSeek(xFilial("SCR")+"ED"+M->CO1_CODEDT+M->CO1_NUMPRO))
+	MaAlcDoc({M->CO1_CODEDT+M->CO1_NUMPRO,"ED",_nTotEDT,,,,,1,0,},M->CO1_DTABER,3)
+	RecLock("CO1",.F.)
+	CO1->CO1_XLIBER := "B"
+	CO1->(MsUnLock())
+EndIf
+
+If !Empty(M->CO1_XGRLIB)
+	// Gravar Alcada SCR
+	MaAlcDoc({cDoc,"ED",_nTotEDT,,,cGrupo,,1,1,M->CO1_DTABER},,1)
+EndIf
+
+// Envio de E-mails para os aprovadores
+dbSelectArea("SAL")
+dbSetOrder(1)
+dbSeek(xFilial("SAL")+cGrupo)
+While !Eof("SAL") .and. SAL->AL_FILIAL == xFilial("SAL") .AND. SAL->AL_COD == cGrupo
+	
+	fEmail("B",SAL->AL_USER,cDocC)
+	
+	dbSelectArea("SAL")
+	dbSkip()
+EndDo
+
+RestArea(aArea)
+Return
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³fEmail    ºAutor  ³Adriano Luis Brandaoº Data ³  21/07/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³Funcao para envio de e-mail para usuario se solicitacao foi º±±
+±±º          ³liberada ou bloqueada.                                      º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP - CNI                                                   º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function fEmail(_cAprov,_cCodUsu,_cDoc)
+// _cAprov  = L  Liberado.
+// _cAprov  = R  Reprovado.
+// _cCodUsu = Codigo do usuario.
+// _cDoc	= Numero da solicitacao de compras
+
+Local cHtm			:= ""
+Local cMailDest		:= UsrRetMail(_cCodUsu)
+Local lResul		:= .F.
+Local lOk			:= .F.
+Local cError		:= ""
+Local lSend			:= .F.
+Local lDisConectou	:= .F.
+Local cAssunto		:= ""
+Local cMensagem		:= ""
+Local cEol			:= Chr(13) + Chr(10)
+
+cMensagem += "Prezado(a) aprovador(a), " + UsrRetName(_cCodUsu)
+cMensagem += cEol + cEol
+
+cAssunto	:= "Edital/Processo Nr. " + _cDoc
+
+cMensagem	+= "Informamos que o edital/processo Nr." + _cDoc + " foi incluído e está disponível para análise e liberação."
+
+cMensagem += cEol
+
+If ! Empty(cMailDest)
+	
+	CONNECT SMTP SERVER GetMv("MV_RELSERV") ACCOUNT GetMv("MV_RELACNT") PASSWORD GetMv("MV_RELPSW") RESULT lResul
+	
+	If GetMv("MV_RELAUTH")
+		//Retorna se conseguiu fazer autenticação
+		lOk := MailAuth(GetMv("MV_RELACNT"),GetMv("MV_RELPSW"))
+		
+		//Atribui retorno de envio de email na variável cError
+		If !lOk
+			GET MAIL ERROR cError
+			Apmsginfo("Problemas na autenticacao do envio de email de aviso:"+cError)
+			Return
+		EndIf
+	EndIf
+	
+	//Envio de email
+	SEND MAIL FROM GetMv("MV_RELACNT") TO AllTrim(cMailDest) SUBJECT cAssunto BODY cMensagem RESULT lSend
+	
+	If !lSend
+		GET MAIL ERROR cError
+		ApMsgInfo("Problemas no envio de email de aviso:"+cError)
+	EndIf
+	
+	//Desconecta do servidor
+	DISCONNECT SMTP SERVER RESULT lDisConectou
+Else
+	ApMsgInfo("Não existe e-mail cadastrado para o usuario " + UsrRetName(_cCodUsu),"Email nao enviado")
+EndIf
+
+Return

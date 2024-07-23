@@ -1,0 +1,200 @@
+#Include "Protheus.ch"
+#Include "TOPCONN.CH"
+
+/*/{Protheus.doc} SF0202J
+	
+@author 	Jose Leite de Barros Neto
+@since 	29/04/2014
+@version 	1.0		
+
+@return Nil
+
+@description
+Fonte baseado em BFFI001S
+Utilizado para incluir um titulo a pagar (SE2) referente aos impostos variaveis de notas fiscais  
+de Entrada ou Saida.
+
+@example
+Impostos variaveis:
+INSS Patronal
+
+/*/
+User Function SF0202J(cTpNf)
+
+	Local aArea		:= GetArea()
+	Local _cQuery	:= ""
+	Local _nMaxP	:= 0
+	
+	Private lImp,;	//VERIFICA INCIDENCIA DE IMPOSTO
+	cPref,;		//PREFIXO DO TITULO
+	cNum,;		//NUMERO DO TITULO
+	cParc,;		//PARCELA DO TITULO
+	cTipo,;		//TIPO DO TITULO
+	cForn,;		//FORNECEDOR DO TITULO
+	cLj,;		//LOJA DO TITULO
+	cNat,;		//NATUREZA DO TITULO
+	cObs,;		//OBSERVACAO DO TITULO
+	nVal,;	 	//VALOR DO TITULO
+	dVcto,;		//DATA DE VENCIMENTO
+	dVctoR,;		//DATA DE VENCIMENTO REAL
+	dEmiss		//DATA DE EMISSAO
+		
+	//Verifica se a natureza e o fornecedor entra na regra do calculo de INSS
+	/* 	Jose Leite - 20/05/2015
+	   	
+		Solicitado por: Jorge Fernandez - CSI
+		Observacao: Ajuste na regra da geracao do titulo
+
+		//Antes
+		If SA2->( A2_TIPO ) <> "F"
+	*/
+	//Inicio
+	If SA2->( A2_TIPO ) <> "F"
+		If SA2->( A2_TIPO ) == "J" .And. SA2->( A2_TPJ ) <> "3"
+			Return
+		EndIf	
+	EndIf
+	//Fim
+
+	//Verifico qual o P.E. que foi executado, para definir o tipo de N.F.
+	If cTpNf 	== 'E'
+		cPref := AllTrim(SF1->F1_SERIE)
+		cNum	 := AllTrim(SF1->F1_DOC)
+	Else
+		MsgAlert('Função chamada fora dos Pontos de Entrada de validação de Notas fiscais!')
+		Return
+	EndIf
+	
+	//VERIFICO O TIPO DO IMPOSTO PARA DEFINIR AS INFORMACOES VARIAVEIS
+	//INSS Patronal
+	If lImp := (nVal := Iif(cTpNf == 'E', SF1->F1_VALIMP1, 0)) > 0
+			 	
+		cParc := GetNewpar('MV_XPARINS','002')
+		cTipo := GetNewpar('MV_XTIPINS','INS')
+		cForn := GetNewpar('MV_XFRNINS','INSS')
+		cLj	 := GetNewpar('MV_XLOJINS','0000')
+		cNat	 := GetNewpar('MV_XNATINS','INSS')
+		cObs	 := '20% ' + AllTrim(Posicione("SA2",1,xFilial("SA2") + SF1->F1_FORNECE + SF1->F1_LOJA,"A2_NOME")) + ' - ' + cNum + ' ' +cPref
+		
+		/*
+		*****************************************************************************
+		*	@Data				13/08/2014
+		*	@Desenvolvedor 	Jose Leite de Barros Neto
+		*
+		*	Solicitado por Jorge Fernandez - UNETEC
+		*
+		*	Verificar: 
+		*	Se ja existe titulos, pega a ultima parcela e soma 1 
+		*	
+		*	Solicitado por Delci - COFIN - 03/10/14
+		*	Ajustar independente de prefixo (retirado o campo E2_PREFIXO)
+		*
+		* Jose Leite - 06/02/15
+		*	Suporte:
+		*	Solicitado por: Geziane
+		*	Observacao: Tratamento para sempre pegar o ultimo numero de parcela
+		*	
+		*	Antes
+		*	//_cQuery += " SELECT E2_FILIAL, E2_NUM, E2_VENCTO, E2_VENCREA, MAX(E2_PARCELA) E2_PARCELA "
+		*	
+		*	//_cQuery += "	GROUP BY E2_FILIAL, E2_NUM, E2_VENCTO, E2_VENCREA			"
+		*	//_cQuery += "	ORDER BY E2_FILIAL, E2_NUM, E2_PARCELA 					"
+		*	
+		*	Jose Leite - 28/05/15
+		*	Realizado o tratamento para descondiderar o 
+		*	E2_PARCELA <> ' '
+		*****************************************************************************
+		*/
+		
+		If Select("TRA") > 0
+			DbSelectarea("TRA")
+			DbCloseArea()
+		Endif
+		
+		_cQuery := ""
+		_cQuery += " SELECT MAX(TO_NUMBER(E2_PARCELA)) E2_PARCELA 		"
+		_cQuery += " FROM "+ RETSQLNAME("SE2")
+		_cQuery += " WHERE		E2_FILIAL 	= '"+FWxFilial("SE2")+"'		"
+		_cQuery += "		AND	 	E2_NUM		= '"+cNum+"'							"
+		_cQuery += "		AND		E2_PARCELA     <> ' '							"
+		_cQuery += "		AND	 	E2_TIPO		= '"+cTipo+"'					"
+		_cQuery += "		AND	 	E2_FORNECE	= '"+cForn+"'					"
+		_cQuery += "		AND	 	E2_LOJA		= '"+cLj+"'						"
+		_cQuery += "		AND	 	E2_NATUREZ	= '"+cNat+"'						"
+		_cQuery += "		AND 	D_E_L_E_T_ 	<> '*'								"
+		_cQuery := ChangeQuery(_cQuery)
+		
+		TCQUERY _cQuery NEW ALIAS "TRA"	
+		
+		While .Not. TRA->( Eof() )
+		
+			If !Empty(TRA->(E2_PARCELA))
+				_nMaxP := TRA->(E2_PARCELA) + 1
+			Else
+				_nMaxP := 0
+			EndIf
+			
+			TRA->(DbSkip())
+		End
+					
+		TRA->( DbCloseArea() )
+		
+		If _nMaxP > 0
+			cParc := StrZero(_nMaxP,3)
+		EndIf
+		//Fim
+		
+		dEmiss	:= SF1->F1_EMISSAO + 30
+		dVcto	:= DataValida(CtoD('20'+SubStr(DtoC(dEmiss),3,8)),.F.)
+		dVctoR	:= dVcto
+		dEmiss	:= SF1->F1_EMISSAO
+		
+		GerTit('INSS PATRONAL')
+		
+	EndIf
+
+	RestArea(aArea)
+
+Return( Nil )
+
+/** {Protheus.doc} GerTit
+Funcao para gerar o titulo a Pagar no financeiro
+
+@param: 	<Nil>
+@author 	José Leite de Barros Neto
+@since 	29/04/2014
+@Uso: 		SFIEMT
+*/	
+Static Function GerTit(cTpImp)
+
+	Local 	aVetSE2 	:= {}			//vetor utilizado na rotina automatica
+
+	Private lMsErroAuto := .F.	//variavel privada para identicação de erro da rotina automatica
+
+	//Alimento o vetor a ser utilizado no MsExecAuto()
+	aVetSE2:= {	{"E2_FILIAL"   	,xFilial('SE2')		,Nil},;
+					{"E2_PREFIXO"  	,cPref    		,Nil},;
+					{"E2_NUM"     	,cNum			,Nil},;
+					{"E2_PARCELA"  	,cParc 			,Nil},;
+					{"E2_TIPO"     	,cTipo      	,Nil},;
+					{"E2_FORNECE"  	,cForn    		,Nil},;
+					{"E2_LOJA"     	,cLj       		,Nil},;
+					{"E2_NATUREZ"	,cNat      		,Nil},;
+					{"E2_HIST"    	,cObs      		,Nil},;
+					{"E2_EMISSAO"  	,dEmiss			,Nil},;
+					{"E2_VENCTO"   	,dVcto			,Nil},;
+					{"E2_VENCREA"  	,dVctoR			,Nil},;
+					{"E2_VALOR"    	,nVal          	,Nil};
+				  }
+ 
+ 	//executa a rotina automatica para inclusao de titulo a pagar
+	MsExecAuto( { |x,y,z| FINA050(x,y,z)}, aVetSE2,, 3)  // 3 - Inclusao, 4 - Alteração, 5 - Exclusão
+ 
+ 	//Tratamento de resposta
+	If lMsErroAuto
+		MsgAlert('Houve um erro na inclusão do titulo referente ao imposto de: ' + cTpImp)
+		MostraErro()
+		lRet := .F.
+	Endif
+
+Return( Nil )

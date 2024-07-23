@@ -1,0 +1,91 @@
+#Include 'Protheus.ch'
+#Include 'TopConn.ch'
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "TBICONN.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "TBICODE.CH"
+#INCLUDE "AP5MAIL.CH"   
+
+/*/{Protheus.doc} SF73WF03
+Workflow CRM - Atualizar status de Oportunidades com mais de X dias.
+
+@type 		function
+@author 	Walmir Junior
+@since 		19/10/2017
+@version 	1.0
+@return 	Nil, Nulo
+/*/
+User Function SF73WF03(_aParam)
+Local _nDiaOp		:= 0			
+Local _cQuery		:= ""
+
+cCodEmp   := _aParam[1]
+cCodFil   := _aParam[2] 
+
+PREPARE ENVIRONMENT EMPRESA _aParam[1] FILIAL _aParam[2]
+
+_nDiaOp := GetNewPar("MV_XDIAOPR",100) //Quantidade de Dias para Alteração de Situação.
+
+ConOut("")
+ConOut(Replicate("=",10))
+ConOut("Inicio da Execução do WF - U_SF73WF03")
+
+ConOut("################" + cCodEmp + "###################" + cCodFil)
+
+_cQuery := " Select AD1_FILIAL, AD1_NROPOR, AD1_REVISA From "+RetSqlName("AD1")+" "+CRLF
+_cQuery += " WHERE D_E_L_E_T_ = ' ' AND AD1_STATUS = '1' AND "+CRLF
+_cQuery += " AD1_FILIAL = '" + xFilial("AD1") + "' AND"+CRLF
+_cQuery += " To_Char(AD1_DTINI) <=  To_Char(sysdate-" + Str(_nDiaOp) + ", 'YYYYMMDD') "+CRLF
+
+ConOut(_cQuery)
+
+MemoWrite("C:\temp\SF73WF03.txt", _cQuery)
+
+dbUseArea(.T.,"TOPCONN",TCGenQry(,,_cQuery),"TMPAD1",.t.,.t.)
+
+While TMPAD1->(!Eof())
+	ConOut("Encontrou Oportunidade(s).")
+	DbSelectArea("AD1")
+	AD1->(DbSetOrder(1))
+	AD1->( DbGoTop() )
+	If AD1->(DbSeek(TMPAD1->(AD1_FILIAL+AD1_NROPOR+AD1_REVISA)))
+		Begin Transaction
+			If RecLock("AD1",.F.)
+				AD1->AD1_STATUS := "2"
+				AD1->AD1_XDTWFS	:= dDatabase 
+				AD1->(MsUnlock())
+			EndIf
+			DbSelectArea("ADY")
+			ADY->( DbSetOrder(2) )
+			ADY->( DbGoTop() )
+			If ADY->( DbSeek(AD1->(AD1_FILIAL+AD1_NROPOR+AD1_REVISA)) )
+				While .Not. ADY->( Eof() ) .And. ;
+				AD1->(AD1_FILIAL+AD1_NROPOR+AD1_REVISA) == ADY->(ADY_FILIAL+ADY_OPORTU+ADY_REVISA)
+					ConOut("Encontrou Proposta(s).")
+					If ADY->ADY_STATUS == "A"
+						If RecLock("ADY",.F.)
+							ADY->ADY_STATUS := "C"
+							ADY->(MsUnlock())
+						EndIf
+						ConOut("Atualizou Status da Proposta [" + ADY_OPORTU + "].")
+					EndIf
+					ADY->( DbSkip() )
+				EndDo
+			EndIf
+		End Transaction
+		ConOut("Atualizou Status da Oportunidade.")
+	EndIf
+	AD1->(DbCloseArea())
+	ADY->(DbCloseArea())
+	TMPAD1->(DBSkip())
+EndDo
+
+TMPAD1->(dbCloseArea())
+
+ConOut("Fim da Execução do WF - U_SF73WF03")
+ConOut(Replicate("=",10))
+ConOut("")
+
+RESET ENVIRONMENT 
+	 
+Return

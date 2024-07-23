@@ -1,0 +1,577 @@
+#Include "RwMAke.ch"
+#Include "TopConn.ch"
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TopConn.Ch"
+#INCLUDE "FONT.CH"
+
+User Function SF06A53X( _cCliente, _cLjCLi )
+
+	Local _lRet := .T.
+	Local _aArea	:= GetArea()
+	Local _aAreaSA1	:= SA1->(GetArea())
+	Local _cQuery := ""
+	Local _nQuant := 0
+	Local _nPos   := 0
+	Local _nDel   := 0
+	Local _aNewTit := {}
+	Local _aTitBol := {}
+	Local _aOldTit := {} //aClone(aTitulos)
+	Local _cChave := ""
+	Local _aVetBx := {}
+	Local _nCont := 0
+	Local   oDlg 	   := NIL
+	Local   oProcess   := NIL
+	Local   cPerg 	   := "SIFR03"
+	Local   nOpc	   := 0
+	Local _dVencto := StoD("  /  /  ")
+	Private lMSErroAuto := .F.
+
+	DbSelectArea("SA1")
+	DbSetOrder(1)
+	SA1->(DbGoTop())
+	If SA1->(!DbSeek(xFilial("SA1")+_cCliente+_cLjCLi))
+		RestArea(_aAreaSA1)
+		RestArea(_aArea)
+		_lRet := .F.
+		Return(_lRet)
+	EndIF
+
+	_cQuery := " SELECT "
+	_cQuery += " 		COUNT(*) AS QUANT "
+	_cQuery += " FROM "
+	_cQuery +=  		RetSqlName("ZAK") + " ZAK "
+	_cQuery += " INNER JOIN " + RetSqlName("ZAL") + " ZAL ON (ZAK.ZAK_FILIAL||ZAK.ZAK_COD = ZAL.ZAL_FILIAL||ZAL.ZAL_CODATE) "
+	_cQuery += " INNER JOIN " + RetSqlName("ZAM") + " ZAM ON (ZAL.ZAL_FILIAL||ZAL_COD = ZAM.ZAM_FILIAL||ZAM.ZAM_CODNEG) "
+	_cQuery += " WHERE "
+	_cQuery += " 		ZAK.ZAK_CLIENT||ZAK.ZAK_LOJA = '" + SA1->A1_COD+SA1->A1_LOJA + "' AND "
+	_cQuery += " 		ZAL.ZAL_VALIDA >= '" + DtoS(dDatabase) + "' AND "
+	_cQuery += " 		ZAL.ZAL_STATUS = 'A' AND "
+	_cQuery += " 		ZAM.ZAM_OPER = 'B' AND "
+	_cQuery += " 		ZAK.D_E_L_E_T_ <> '*' AND "
+	_cQuery += " 		ZAL.D_E_L_E_T_ <> '*' AND "
+	_cQuery += " 		ZAM.D_E_L_E_T_ <> '*' AND "
+	_cQuery += " 		NOT EXISTS(SELECT * FROM " + RetSqlName("SE1") + " SE1 "
+	_cQuery += " 			WHERE "
+	_cQuery += " 		 		ZAM.ZAM_FILTIT = SE1.E1_FILIAL AND "
+	_cQuery += " 		 		ZAM.ZAM_PREFIX = SE1.E1_PREFIXO AND "
+	_cQuery += " 		 		ZAM.ZAM_NUM = SE1.E1_NUM AND "
+	_cQuery += " 		 		ZAM.ZAM_PARCEL = SE1.E1_PARCELA AND "
+	_cQuery += " 		 		ZAM.ZAM_TIPO = SE1.E1_TIPO AND "
+	_cQuery += " 		 		SE1.E1_SALDO = 0 AND "
+	_cQuery += " 		 		SE1.D_E_L_E_T_ = ' ') "
+
+
+	//Verifica se existe Alias,caso exista, fecha o mesmo para reabrir novamente
+	If Select("tRen") > 0
+		DbSelectArea("tRen")
+		tRen->(DbCloseArea())
+	EndIF
+
+	TcQuery _cQuery New Alias tRen
+
+	_nQuant := tRen->QUANT
+
+	If _nQuant > 0
+
+		_cQuery := " SELECT ZAL_COD, ZAM_OPER, ZAM_FILTIT, ZAM_PREFIX, ZAM_NUM, ZAM_PARCEL, ZAM_TIPO, "
+		_cQuery += " 		ZAK_CLIENT, ZAK_LOJA, ZAM_NATURE, ZAM_VENCTO, ZAM_VALOR, ZAL_COD, ZAM_DSCJUR, ZAM_DSCMLT "
+		_cQuery += " FROM "
+		_cQuery +=  		RetSqlName("ZAK") + " ZAK "
+		_cQuery += " INNER JOIN " + RetSqlName("ZAL") + " ZAL ON (ZAK.ZAK_FILIAL||ZAK.ZAK_COD = ZAL.ZAL_FILIAL||ZAL.ZAL_CODATE) "
+		_cQuery += " INNER JOIN " + RetSqlName("ZAM") + " ZAM ON (ZAL.ZAL_FILIAL||ZAL_COD = ZAM.ZAM_FILIAL||ZAM.ZAM_CODNEG) "
+		_cQuery += " WHERE "
+		_cQuery += " 		ZAK.ZAK_CLIENT = '" + SA1->A1_COD + "' AND "
+		_cQuery += " 		ZAK.ZAK_LOJA = '" + SA1->A1_LOJA + "' AND "
+		_cQuery += " 		ZAL.ZAL_VALIDA >= '" + DtoS(dDatabase) + "' AND "
+		_cQuery += " 		ZAL.ZAL_COD = '" + ZAL->ZAL_COD + "' AND "
+		_cQuery += " 		ZAL.ZAL_STATUS = 'A' AND "
+		_cQuery += " 		ZAK.D_E_L_E_T_ = ' ' AND "
+		_cQuery += " 		ZAL.D_E_L_E_T_ = ' ' AND "
+		_cQuery += " 		ZAM.D_E_L_E_T_ = ' '  ORDER BY ZAL.ZAL_COD DESC"
+
+		If Select("tRenTit") > 0
+			DbSelectArea("tRenTit")
+			tRenTit->(DbCloseArea())
+		EndIF
+
+		TcQuery _cQuery New Alias tRenTit
+
+		// MsgInfo("O cliente possui uma negociação em andamento, clique Ok para visualiza-la.")
+
+		If U_SF06A52X( tRenTit->ZAL_COD )
+
+			Begin Transaction
+
+				//Trato as Baixas...
+				tRenTit->(DbGoTop())
+				While tRenTit->(!Eof())
+
+					If tRenTit->ZAM_OPER = 'G'
+						tRenTit->(DbSkip())
+						Loop
+					EndIF
+					//	E1_FILIAL		+E1_PREFIXO		+E1_NUM		+E1_PARCELA		+E1_TIPO
+					_cChave := tRenTit->ZAM_FILTIT+tRenTit->ZAM_PREFIX+tRenTit->ZAM_NUM+tRenTit->ZAM_PARCEL+tRenTit->ZAM_TIPO
+					//_nPos := aScan(_aOldTit,{|x| x[15]+x[02]+x[03]+x[04]+x[11] = _cChave}) // PESQUISA NO ARRAY _AOLDTIT O INDICE 01 DA SE1
+
+					//Se encontrou, faz a baixa e retira o titulo do array
+					//If _nPos > 0
+					dbSelectArea("SE1")
+					dbSetOrder(1)
+					If SE1->(dbSeek(tRenTit->ZAM_FILTIT+ tRenTit->ZAM_PREFIX+ tRenTit->ZAM_NUM+ tRenTit->ZAM_PARCEL+ tRenTit->ZAM_TIPO ) )
+						If !Empty(SE1->E1_NUMBOR) .OR. !Empty(SE1->E1_PORTADOR)
+							RecLock("SE1",.F.)
+							SE1->E1_PORTADO := ""
+							SE1->E1_AGEDEP := ""
+							SE1->E1_NUMBCO := ""
+							SE1->E1_NUMBOR := ""
+							SE1->E1_SITUACA := "0"
+							SE1->E1_CONTA := ""
+							SE1->(MsUnlock())
+						EndIf
+						/*IF SE1->E1_VALJUR != 0 .Or. SE1->E1_PORCJUR != 0
+							If RecLock("SE1", .F.)
+								SE1->E1_VALJUR	:= 0
+								SE1->E1_PORCJUR	:= 0
+								SE1->(MsUnlock())
+							EndIf
+						EndIf*/
+					EndIf
+
+					If SE1->E1_SALDO > 0
+						lMsErroAuto := .F.
+						cOldFil := cFilAnt
+						cFilAnt := tRenTit->ZAM_FILTIT
+						//Baixa por Renegociação.
+						_aVetBx := {{"E1_FILIAL"	,tRenTit->ZAM_FILTIT   ,Nil},;
+							{"E1_CLIENTE"   ,tRenTit->ZAK_CLIENT  ,Nil},;
+							{"E1_LOJA"	    ,tRenTit->ZAK_LOJA     ,Nil},;
+							{"E1_PREFIXO"	,tRenTit->ZAM_PREFIX  ,Nil},;
+							{"E1_NUM"		,tRenTit->ZAM_NUM      ,Nil},;
+							{"E1_PARCELA"	,tRenTit->ZAM_PARCEL  ,Nil},;
+							{"E1_TIPO"	    ,tRenTit->ZAM_TIPO     ,Nil},;
+							{"AUTMOTBX"	    ,"REN"             	,Nil},;
+							{"AUTBANCO"	    ,""                	,Nil},;
+							{"AUTAGENCIA"   ,""                	,Nil},;
+							{"AUTCONTA"	    ,""                	,Nil},;
+							{"AUTDTBAIXA"	,dDataBase         	,Nil},;
+							{"AUTDTCREDITO" ,dDataBase         	,Nil},;
+							{"AUTHIST"	    ,"Baixa Negociacao Cob"	,Nil},;
+							{"AUTDESCONT"   ,tRenTit->(ZAM_DSCJUR+ZAM_DSCMLT)	,Nil}}//,;
+							// {"AUTJUROS"	    ,0					,Nil, .T.},;
+							// {"AUTMULTA"	    ,0					,Nil, .T.},;
+							// {"AUTACRESC"    ,0					,Nil, .T.},;
+							// {"AUTDECRESC"   ,0					,Nil, .T.},;
+							// {"AUTVALREC"	,tRenTit->ZAM_VALOR 	,Nil }}
+						//{"AUTVALREC"	,_aOldTit[_nPos,06],Nil }}
+
+						MsgRun( "Realizando a baixa do título  " + _cChave,'Aguarde', {|| 	CursorWait(),;
+							MSExecAuto({|x,y| fina070(x,y)}, _aVetBx, 3),;
+							CursorArrow() } )
+
+						If lMsErroAuto
+							DisarmTransaction()
+							Alert("Erro na execução da baixa. Contacte o administrador do sistema.")
+							Mostraerro()
+							_lRet := .F.
+							Return(_lRet)
+						EndIf
+
+						If !Empty(cOldFil)
+							cFilAnt := cOldFil
+							cOldFil := ""
+						EndIf
+
+						//Diogo C. Barros
+						//Verifica se relamente houve a baixa do titulo
+						_dVerBaixa := Posicione('SE1',1,tRenTit->ZAM_FILTIT+tRenTit->ZAM_PREFIX+tRenTit->ZAM_NUM+tRenTit->ZAM_PARCEL+tRenTit->ZAM_TIPO,'E1_BAIXA')
+						_cVerStatus := Posicione('SE1',1,tRenTit->ZAM_FILTIT+tRenTit->ZAM_PREFIX+tRenTit->ZAM_NUM+tRenTit->ZAM_PARCEL+tRenTit->ZAM_TIPO,'E1_STATUS')
+						If (!Empty(_dVerBaixa)) .AND. (_cVerStatus = 'A')
+							DisarmTransaction()
+							Alert("Erro na execução da baixa. Contacte o administrador do sistema.")
+							_lRet := .F.
+							Return(_lRet)
+						EndIf
+					EndIf
+					tRenTit->(DbSkip())
+				EndDo
+
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄca`¿
+				//³alterado por: Caio Renan Lima                                                                 ³
+				//³adequacao para a diferenca do valor total da divida em relacao ao valor total da renegociacao.³
+				//³entrar como acrescimo (juros) ou decrescimo (desconto).                                       ³
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄca`Ù
+				tRenTit->(DbGoTop())
+				_nTitG := 0
+				_nTitB := 0
+				_nContG := 0
+				_nContB := 0
+				While tRenTit->(!Eof())
+					If tRenTit->ZAM_OPER = 'B'
+						_nTitB += tRenTit->ZAM_VALOR
+						_nContB++
+					Else
+						_nTitG += tRenTit->ZAM_VALOR
+						_nContG++
+					EndIF
+
+					tRenTit->(DbSkip())
+				End
+				_nValJur := 0 //valor do juros
+				_nValDes := 0 //valor do desconto
+
+				_nDif := _nTitG - _nTitB // diferencao sera ou juros ou acrescimo. diferenca é igual titulos gerado menos baixado.
+				/*
+		If _nDif > 0
+			_nValJur := _nDif / _nContG
+		ElseIf _nDif < 0
+			_nValDes := (_nDif / _nContG) * -1
+		EndIf
+				*/
+				_anDif := {}
+				For _nx := 1 to _nContG
+					If _nx = _nContG
+						_nDif2 := Round(_nDif,2)
+						_nTArr := 0
+						For _ny := 1 to Len(_anDif)
+							_nTArr += _anDif[_ny]
+							If _ny = Len(_anDif)
+								_nDif2 := _nDif2 - _nTArr
+							EndIf
+						Next
+						Aadd(_anDif , _nDif2 )
+					Else
+						Aadd(_anDif , Round(_nDif / _nContG,2) )
+					EndIf
+				Next
+
+				_nTotal := _nTitB / _nContG // valor da parcela dos titulos gerados sera valor total dos baixadso / n de titulos gerados.
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//³final alteracao Caio Lima³
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+
+				tRenTit->(DbGoTop())
+				//Trato os novos titulos...
+				_nx := 0
+				While tRenTit->(!Eof())
+
+					If tRenTit->ZAM_OPER = 'B'
+						tRenTit->(DbSkip())
+						Loop
+					EndIF
+
+					_nx++
+
+					lMsErroAuto := .F.
+
+					_cChave := tRenTit->ZAM_FILTIT+tRenTit->ZAM_PREFIX+tRenTit->ZAM_NUM+tRenTit->ZAM_PARCEL+tRenTit->ZAM_TIPO
+
+					// Se a data de vencimento negociada for menor que a data atual, coloca o titulo vencendo hoje
+					If StoD(tRenTit->ZAM_VENCTO) < dDataBase
+						_dVencto := dDataBase
+					Else
+						_dVencto := StoD(tRenTit->ZAM_VENCTO)
+					EndIf
+					/*
+			aDados:={	{"E1_FILIAL"  ,tRenTit->ZAM_FILTIT		,Nil},;
+				{"E1_PREFIXO" ,tRenTit->ZAM_PREFIX		,Nil},;
+				{"E1_NUM"	  ,tRenTit->ZAM_NUM			,Nil},;
+				{"E1_PARCELA" ,tRenTit->ZAM_PARCEL     ,Nil},;
+				{"E1_TIPO"    ,tRenTit->ZAM_TIPO    	,Nil},;
+				{"E1_NATUREZA",tRenTit->ZAM_NATURE		,Nil},;
+				{"E1_CLIENTE" ,tRenTit->ZAK_CLIENT 	,Nil},;
+				{"E1_LOJA"    ,tRenTit->ZAK_LOJA		,Nil},;
+				{"E1_EMISSAO" ,dDataBase         	,Nil},;
+				{"E1_VENCTO"  ,_dVencto				,Nil},;
+				{"E1_VENCREA" ,_dVencto				,Nil},;
+				{"E1_VALOR"   ,tRenTit->ZAM_VALOR	    ,Nil}}
+					*/
+					//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄtµA¿
+					//³alterado por Caio Lima  ³
+					//³Juro sera Acrescimo     ³
+					//³desconto sera decrescimo³
+					//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄtµAÙ
+					//E1_RENDESC CAMPO DE DESCONTO DA RENEGOCIACAO
+					//E1_RENJURO CAMPO DE JUROS DA RENEGOCIACAO
+					If _anDif[_nx] < 0
+						_nValDes := _anDif[_nx] * -1
+						_nValJur := 0
+					Else
+						_nValJur := _anDif[_nx]
+						_nValDes := 0
+					EndIf
+					cOldFil := cFilAnt
+					cFilAnt := tRenTit->ZAM_FILTIT
+
+					aDados:={	{"E1_FILIAL"  ,tRenTit->ZAM_FILTIT		,Nil, .T.},;
+						{"E1_PREFIXO" ,tRenTit->ZAM_PREFIX	,Nil},;
+						{"E1_NUM"	  ,tRenTit->ZAM_NUM		,Nil},;
+						{"E1_PARCELA" ,tRenTit->ZAM_PARCEL  ,Nil},;
+						{"E1_TIPO"    ,tRenTit->ZAM_TIPO    ,Nil},;
+						{"E1_NATUREZA",tRenTit->ZAM_NATURE	,Nil},;
+						{"E1_CLIENTE" ,tRenTit->ZAK_CLIENT 	,Nil},;
+						{"E1_LOJA"    ,tRenTit->ZAK_LOJA	,Nil},;
+						{"E1_EMISSAO" ,dDataBase         	,Nil},;
+						{"E1_VENCTO"  ,_dVencto				,Nil},;
+						{"E1_VENCREA" ,_dVencto				,Nil},;
+						{"E1_VALOR"   ,tRenTit->ZAM_VALOR   ,Nil}} // valor total do titulo sera identico ao original.
+
+					//todo - gravação em tabelas complementares
+					// {"E1_RENJURO" ,_nValJur				,Nil},; // juros entrar como acrescimo.
+					// {"E1_RENDESC" ,_nValDes				,Nil},; // desconto entrar como decrescimo.
+
+					MsgRun( "Gravando novo título " + _cChave,'Aguarde', {|| 	CursorWait(),;
+						MSExecAuto({|x,y|Fina040(x,y)},aDados,3),;
+						CursorArrow() } )
+					//MsExecAuto( { |x,y| FINA040(x,y)} , aArray, 3)
+					If lMsErroAuto
+						DisarmTransaction()
+						Alert("Erro na execução da inclusao do titulo. Contacte o administrador do sistema.")
+						Mostraerro()
+						_lRet := .F.
+						Return(_lRet)
+					Else
+						// If MsgYesNo("Deseja realizar a impressão do termo de divida?")
+						// 	Private cFilTit := tRenTit->ZAM_FILTIT
+						// 	Private cNumRen := tRenTit->ZAM_NUM
+						// 	u_DTFINR03()
+						// EndIf
+						DbSelectArea("SE1")
+						SE1->(DbSetOrder(1))
+						//	E1_FILIAL		+E1_PREFIXO			+E1_NUM			+E1_PARCELA			+E1_TIPO
+						If SE1->(DbSeek(xFilial("SE1") + tRenTit->ZAM_PREFIX + tRenTit->ZAM_NUM + tRenTit->ZAM_PARCEL + tRenTit->ZAM_TIPO))
+							aAdd(_aNewTit,{	.F.,;
+								SE1->E1_PREFIXO,;
+								SE1->E1_NUM    ,;
+								SE1->E1_PARCELA,;
+								SE1->E1_VENCREA,;
+								SE1->E1_VALOR  ,;
+								0,;
+								0,;
+								0,;
+								SE1->E1_VALOR,;
+								SE1->E1_TIPO ,;
+								"",;
+								SE1->E1_CLIENTE,;
+								SE1->E1_LOJA   ,;
+								SE1->E1_FILIAL ,;
+								SE1->(RecNo()) ,;
+								0,;
+								.F.,;
+								0,;
+								SE1->E1_VENCTO,;
+								""})
+						EndIF
+					EndIF
+
+					tRenTit->(DbSkip())
+				EndDo
+
+				If !Empty(cOldFil)
+					cFilAnt := cOldFil
+					cOldFil := ""
+				EndIf
+				//Pego o codigo da renegociacao...
+				tRenTit->(DbGoTop())
+				_cReneg := tRenTit->ZAL_COD
+
+				//Atualizo a tabela de negociacao...
+				_cQuery := " UPDATE "
+				_cQuery += 		RetSqlName("ZAL")
+				_cQuery += " SET "
+				_cQuery += "	ZAL_STATUS = 'F' "
+				_cQuery += " WHERE "
+				_cQuery += "	ZAL_COD = '" + _cReneg + "' AND "
+				_cQuery += "	ZAL_STATUS = 'A' AND "
+				_cQuery += "	D_E_L_E_T_ <> '*' "
+				MsgRun( "Atualizando os dados da negociação...",'Aguarde', {|| 	CursorWait(),;
+					TcSqlExec(_cQuery),;
+					CursorArrow() } )
+
+			End Transaction
+
+			//Carrego os demais titulos no novo array...
+			For _nX := 1 To Len(_aOldTit) - _nDel
+				aAdd(_aNewTit,_aOldTit[_nX])
+			Next _nX
+
+			aTitulos := _aNewTit
+			tRenTit->(DbCloseArea())
+
+			/*If MsgYesNo("Deseja realizar a impressão do termo de divida?")
+				StaticCall(SF06A43X,RunReport,"1")
+			EndIf*/
+			
+			If MsgYesNo(" Titulos Gerados Com Sucesso! Deseja Gerar Boleto ? ","Gera Boleto")
+
+				/* NECESSARIO PARA GERAR BOLETO FIEMT (DECLARAÇÕES DE VARIAVEIS) */
+				Private cCodBanco  := ""
+				Private cDVBanco   := ""
+				Private aRadio     := {}
+				Private nRadio 	   := 1
+				Private oRadio     := Nil
+				Private cLocal     := GetMv("MV_XSAMAIL")
+				Private cArq       := Replace(DToS(dDataBase)+ Time(),":","")
+				Private lCopy      := .F.
+				Private aDCob      := {}
+				Private cCodBarra  := "" 
+				Private cLDigit    := ""
+				Private cNossoNum  := ""
+				// Paulo Schwind - 28/05/2019 - Criação do ParamÇetro para Instrução de Vencimento no Boleto - Solicitado por Franklin
+				Private _cXMIVBOL  := SUPERGETMV("MV_XMIVBOL",.T., "APÓS 29 DIAS DE VENCIDO, O BOLETO PERDERÁ A VALIDADE E DEVE SER SUBSTITUÍDO.")
+				Private oFont1	  := TFont():New("Arial",,13.5,,.T./*Bold*/,,,,,.F./*Underline*/)
+				Private oFont2 	  := TFont():New("Arial",,13,,.T.,,,,,.F.)
+				Private oFont3	  := TFont():New("Arial",,6,,.F.,,,,,.F.)
+				Private oFont4	  := TFont():New("Arial",,8,,.F.,,,,,.F.)
+				Private oFont5 	  := TFont():New("Courier",,6,,.T.,,,,,.F.)
+				Private oFont6 	  := TFont():New("Arial",,8,,.T.,,,,,.F.)
+				Private oFont7 	  := TFont():New("Arial",,18,,.t.,,,,,.f. )
+				Private oFont8	  := TFont():New("Arial",,14,,.t.,,,,,.f. )
+				Private oFont9	  := TFont():New("Arial",,9,,.F.,,,,,.F.)
+				Private oFont10	  := TFont():New("Arial",,9,,.T.,,,,,.F.)
+				Private oFont11	  := TFont():New("Arial",,7,,.F.,,,,,.F.)
+				Private oFont12	  := TFont():New("Courier",,6,,.F.,,,,,.F.)
+				Private oFontCep  := TFont():New("ECTpostnet",,16,,.T.,,,,,.F.)
+
+				//01/06/2016 Walmir Junior - Fontes ajuste de fontes no boleto.
+				Private _nLiAv	  := 5
+				Private _nL2Av	  := 10
+				Private _oFnt9	  := TFont():New("Arial",,9,,.F.,,,,,.F.)		//oFont3
+				Private _oFnt10	  := TFont():New("Arial",,10,,.F.,,,,,.F.)	//oFont4
+				Private _oFnt11	  := TFont():New("Arial",,11,,.F.,,,,,.F.)	//oFont9
+				Private _oFnt11n  := TFont():New("Arial",,11,,.T.,,,,,.F.)	//oFont9
+				Private _oFnt12	  := TFont():New("Arial",,12,,.T.,,,,,.F.)	//oFont10
+				Private _oFnt8c	  := TFont():New("Courier",,8,,.F.,,,,,.F.)	//oFont12
+				Private _oFnt8	  := TFont():New("Arial",,8,,.F.,,,,,.F.)		//oFont3
+				Private _oFnt10n  := TFont():New("Arial",,10,,.T.,,,,,.F.)	//oFont6
+				Private _oFnt9x	  := TFont():New("Arial",,9,,.F.,,,,,.F.)		//oFont11
+				Private _oFnt7	  := TFont():New("Arial",,7,,.F.,,,,,.F.)		//oFont3
+
+				cAlTmp := GetNextAlias()
+				BeginSql Alias cAlTmp
+					SELECT DISTINCT
+						SE1.*,
+						ZAM_FILTIT AS FILTIT
+					FROM %Table:ZAK% ZAK
+					INNER JOIN %Table:ZAL% ZAL 
+						ON ZAL_FILIAL = ZAK_FILIAL 
+						AND ZAL_CODATE = ZAK_COD
+						AND ZAL.%NotDel%
+					INNER JOIN %Table:ZAM% ZAM
+						ON ZAL_FILIAL = ZAM_FILIAL 
+						AND ZAL_COD = ZAM_CODNEG 
+						AND ZAM_OPER = 'G'
+						AND ZAM.%NotDel%
+					INNER JOIN %Table:SE1% SE1
+						ON E1_FILIAL = ZAM_FILTIT
+						AND E1_NUM = ZAM_NUM
+						AND E1_PREFIXO = ZAM_PREFIX
+						AND E1_CLIENTE = ZAK_CLIENT
+						AND E1_LOJA = ZAK_LOJA
+						AND SE1.%NotDel%
+					WHERE
+						ZAK.R_E_C_N_O_ = (SELECT
+												MAX(R_E_C_N_O_)
+											FROM %Table:ZAK% XZAK
+											WHERE
+												XZAK.ZAK_FILIAL = ' '
+												AND XZAK.ZAK_CLIENT = %Exp:ZAJ->ZAJ_CLIENT%
+												AND XZAK.ZAK_LOJA = %Exp:ZAJ->ZAJ_LOJA%
+												AND XZAK.ZAK_DATA = %Exp:dDataBase%
+												AND XZAK.%NotDel%)
+						ORDER BY E1_NUM, E1_PARCELA
+				EndSql
+				DbSelectArea(cAlTmp)
+				DbGoTop(cAlTmp)
+
+				If (cAlTmp)->(!eof())
+					
+					cOldFil := cFilAnt
+					cFilAnt := (cAlTmp)->FILTIT
+				
+					If Substr(cFilant,3,2) = "AM"
+						aAdd( aRadio, {"Caixa Economica Federal","104","0"} )
+						aAdd( aRadio, {"Banco Itaú SA","341","7"} )                                             
+					Else                                                 
+						aAdd( aRadio, {"Caixa Economica Federal","104","0"} )
+						aAdd( aRadio, {"Banco do Brasil","001","9"} )
+					Endif
+					//aAdd( aRadio, {"Santander","033","7"} )
+					//aAdd( aRadio, {"Banrisul","041","8"} )
+
+					DEFINE MSDIALOG oDlg FROM 0,0 TO 125,250 PIXEL TITLE "Selecione o Banco"
+
+					@ 001,003 TO 060,085 LABEL "" OF oDlg PIXEL
+					//@ 008,008 RADIO oRadio VAR nRadio ITEMS aRadio[1][1],aRadio[2][1],aRadio[3][1],aRadio[4][1],aRadio[5][1] SIZE 070,009 PIXEL OF oDlg
+					@ 008,008 RADIO oRadio VAR nRadio ITEMS aRadio[1][1],aRadio[2][1]SIZE 070,009 PIXEL OF oDlg
+
+					DEFINE SBUTTON FROM 003,095 TYPE 1 OF oDlg ENABLE ONSTOP "Confirmar" ACTION (nOpc:=1,oDlg:End())
+					DEFINE SBUTTON FROM 020,095 TYPE 2 OF oDlg ENABLE ONSTOP "Sair"      ACTION (nOpc:=0,oDlg:End())
+
+					ACTIVATE MSDIALOG oDlg CENTER
+
+					If nOpc == 1
+						
+						cCodBanco := aRadio[nRadio][2]
+						cDVBanco := aRadio[nRadio][3]
+						u_SFPUTSX1("SA6", '01','Banco','Banco','Banco','mv_ch1','C',TamSX3("EE_CODIGO")[1],0,0,'G','','SA6','','','mv_par01')
+						u_SFPUTSX1("SA6", '02','Agencia','Agencia','Agencia','mv_ch2','C',TamSX3("EE_AGENCIA")[1],0,0,'G','','','','','mv_par02')
+						u_SFPUTSX1("SA6", '03','Conta','Conta','Conta','mv_ch3','C',TamSX3("EE_CONTA")[1],0,0,'G','','','','','mv_par03')
+						u_SFPUTSX1("SA6", '04','Sub Conta','Sub Conta','Sub Conta','mv_ch4','C',TamSX3("EE_SUBCTA")[1],0,0,'G','','','','','mv_par04')
+						If Pergunte("SA6",.t.)
+							Private oPrn := Nil
+							Private cMarca := "  "
+							//StaticCall(SIFINR03,xGeraBol,cAlTmp)
+							//StaticCall(SIFINR03,Bloqueto,cAlTmp)
+							//oPrn:Setup()
+							//oPrn:Preview()
+							//oPrn:Print()
+						EndIf
+
+						fErase(cLocal+cArq+".PDF")
+						fErase(cLocal+cArq+".REL")
+					Endif
+				
+					If !Empty(cOldFil)
+						cFilAnt := cOldFil
+						cOldFil := ""
+					EndIf
+
+				EndIf
+				DbCloseArea(cAlTmp)
+			EndIf
+			
+		EndIF
+
+	Else
+		RestArea(_aAreaSA1)
+		RestArea(_aArea)
+	EndIF
+
+	
+	// 	//Adiciona de forma correta a array para gerar boleto
+	// 	aadd(_aTitBol,_aNewTit[1][2])
+	// 	aadd(_aTitBol,_aNewTit[1][2])
+	// 	aadd(_aTitBol,_aNewTit[1][3])
+	// 	aadd(_aTitBol,_aNewTit[1][3])
+	// 	aadd(_aTitBol,"")
+	// 	aadd(_aTitBol,"ZZZ")
+	// 	aadd(_aTitBol,_aNewTit[1][13])
+	// 	aadd(_aTitBol,_aNewTit[1][13])
+	// 	aadd(_aTitBol,_aNewTit[1][14])
+	// 	aadd(_aTitBol,_aNewTit[1][14])
+	// 	aadd(_aTitBol,STOD('20000101'))
+	// 	aadd(_aTitBol,STOD('21001231'))//_aNewTit[1][20])
+	// 	aadd(_aTitBol,DDATABASE)
+	// 	aadd(_aTitBol,DDATABASE)
+	// 	aadd(_aTitBol,1)
+	// 	aadd(_aTitBol,"")
+	// 	aadd(_aTitBol,"ZZZZZZ")
+	// 	aadd(_aTitBol,1)
+	// 	aadd(_aTitBol,_aNewTit[1][11])
+	// 	aadd(_aTitBol,_aNewTit[1][11])
+
+	// 	U_PFINR03(_aTitBol)
+	// EndIf
+
+Return(_lRet)

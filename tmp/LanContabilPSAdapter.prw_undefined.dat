@@ -1,0 +1,130 @@
+#include 'totvs.ch'
+#include 'parmtype.ch'
+
+/*/{Protheus.doc} LanContabilPSAdapter
+Classe Adapter para o serviço
+@author  Walmir Junior
+@since   20/09/2020
+@version 1.0
+/*/
+
+CLASS LanContabilPSAdapter FROM FWAdapterBaseV2
+	METHOD New()
+	METHOD GetListLanCtbilPS()
+EndClass
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} New
+Método construtor
+@param cVerb, verbo HTTP utilizado
+@author  Walmir Junior
+@since   20/09/2020
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Method New( cVerb ) CLASS LanContabilPSAdapter
+	_Super:New( cVerb, .T. )
+return
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} GetListLanCtbilPS
+Método que retorna uma lista de lançamentos contábeis de Produtos e Serviços
+@author  Walmir Junior
+@since   12/11/2020
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Method GetListLanCtbilPS(pFilial, pDtIni, pDtFim, pFilOriginal) CLASS LanContabilPSAdapter
+	Local aArea 	AS ARRAY
+	Local cWhere	AS CHAR
+	
+    aArea   := FwGetArea()
+	AddMapFields( self )
+	::SetQuery( GetQuery() )
+
+	cWhere := " D_E_L_E_T_ = ' ' AND CT2_FILIAL = '"+pFilial+"' "
+	If !Empty(pDtIni) .And. !Empty(pDtFim) 
+		cWhere += " AND CT2_DATA BETWEEN '"+pDtIni+"' AND '"+pDtFim+"' "
+	EndIf
+
+	If !Empty(pFilOriginal)
+		cWhere += "AND ( CT2_FILORI IN ("+pFilOriginal+") OR "
+		cWhere += "CT2_CCD IN (SELECT ZAT_CCFIL FROM " + RetSqlName("ZAT") + " WHERE D_E_L_E_T_ = ' ' AND SUBSTR(ZAT_FILORI,1,4) = '" + pFilial + "' AND ZAT_FILORI IN ("+pFilOriginal+")) OR "
+		cWhere += "CT2_CCC IN (SELECT ZAT_CCFIL FROM " + RetSqlName("ZAT") + " WHERE D_E_L_E_T_ = ' ' AND SUBSTR(ZAT_FILORI,1,4) = '" + pFilial + "' AND ZAT_FILORI IN ("+pFilOriginal+")))
+	EndIf
+
+	cWhere += " AND CT2_VALOR > 0 AND "
+	cWhere += " ( CT2_DC != '4' AND (CT2_DC != '2' OR (CT2_DC = '2' AND CT2_CREDIT != ' ')) ) AND "		//CT2_DC NOT IN ('2','4') AND 
+	cWhere += " CT2_SEQHIS = '001' AND"
+	cWhere += " ((SUBSTR(CT2_DEBITO,1,6) BETWEEN '310102' AND '320202') OR SUBSTR(CT2_DEBITO,1,1) = '4' OR " 
+    cWhere += " (SUBSTR(CT2_CREDIT,1,6) BETWEEN '310102' AND '320202') OR SUBSTR(CT2_CREDIT,1,1) = '4') "
+	
+	//cWhere := " D_E_L_E_T_ = ' ' AND CT2_FILIAL = '03MT' AND CT2_DATA = '20200124' AND CT2_VALOR > 0 "
+	
+	::SetWhere( cWhere )
+	
+    ::SetOrder( " CT2_FILIAL, CT2_DATA, CT2_LOTE, CT2_SBLOTE, CT2_DOC, CT2_LINHA " ) 
+
+	//Executa a consulta, se retornar .T. tudo ocorreu conforme esperado
+	If ::Execute() 
+		// Gera o arquivo Json com o retorno da Query
+		::FillGetResponse()
+	EndIf
+	
+    FwrestArea(aArea)
+
+return
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} AddMapFields
+Função para geração do mapa de campos
+@param oSelf, object, Objeto da prórpia classe
+@author  Walmir Junior
+@since   20/09/2020
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static Function AddMapFields( oSelf )
+	
+	oSelf:AddMapFields('filial'    					, 'CT2_FILIAL'  , .T., .T., { 'CT2_FILIAL'  , 'C', TamSX3( 'CT2_FILIAL' )[1] , 0 } )
+	oSelf:AddMapFields('data'      					, 'CT2_DATA'    , .T., .F., { 'CT2_DATA'    , 'C', TamSX3( 'CT2_DATA'   )[1] , 0 } )	
+	oSelf:AddMapFields('lote'	   					, 'CT2_LOTE'    , .T., .F., { 'CT2_LOTE'    , 'C', TamSX3( 'CT2_LOTE'   )[1] , 0 } )
+	oSelf:AddMapFields('subLote'   					, 'CT2_SBLOTE'  , .T., .T., { 'CT2_SBLOTE'  , 'C', TamSX3( 'CT2_SBLOTE' )[1] , 0 } )
+	oSelf:AddMapFields('documento' 					, 'CT2_DOC'  	, .T., .T., { 'CT2_DOC'  	, 'C', TamSX3( 'CT2_DOC' 	)[1] , 0 } )
+	oSelf:AddMapFields('linha'     					, 'CT2_LINHA'   , .T., .F., { 'CT2_LINHA'   , 'C', TamSX3( 'CT2_LINHA'  )[1] , 0 } )
+	oSelf:AddMapFields('tipoSaldo' 					, 'CT2_TPSALD'  , .T., .T., { 'CT2_TPSALD'  , 'C', TamSX3( 'CT2_TPSALD' )[1] , 0 } )
+	oSelf:AddMapFields('empOriginal' 				, 'CT2_EMPORI'  , .T., .T., { 'CT2_EMPORI'  , 'C', TamSX3( 'CT2_EMPORI' )[1] , 0 } )
+	oSelf:AddMapFields('filial_original'			, 'CT2_FILORI'  , .T., .T., { 'CT2_FILORI'  , 'C', TamSX3( 'CT2_FILORI' )[1] , 0 } )
+	oSelf:AddMapFields('moeda' 						, 'CT2_MOEDLC'  , .T., .T., { 'CT2_MOEDLC'  , 'C', TamSX3( 'CT2_MOEDLC' )[1] , 0 } )
+	oSelf:AddMapFields('conta_debito'  				, 'CT2_DEBITO'  , .T., .F., { 'CT2_DEBITO'  , 'C', TamSX3( 'CT2_DEBITO' )[1] , 0 } )
+    oSelf:AddMapFields('conta_credito' 				, 'CT2_CREDIT'  , .T., .T., { 'CT2_CREDIT'  , 'C', TamSX3( 'CT2_CREDIT' )[1] , 0 } )
+    oSelf:AddMapFields('item_contabil_debito' 		, 'CT2_ITEMD'  	, .T., .T., { 'CT2_ITEMD'  	, 'C', TamSX3( 'CT2_ITEMD' )[1]  , 0 } )
+	oSelf:AddMapFields('item_contabil_credito' 		, 'CT2_ITEMC'  	, .T., .T., { 'CT2_ITEMC'  	, 'C', TamSX3( 'CT2_ITEMC' )[1]  , 0 } )
+	oSelf:AddMapFields('centro_custo_debito' 		, 'CT2_CCD'     , .T., .F., { 'CT2_CCD'     , 'C', TamSX3( 'CT2_CCD'    )[1] , 0 } )	
+	oSelf:AddMapFields('centro_custo_credito'		, 'CT2_CCC'     , .T., .F., { 'CT2_CCC'     , 'C', TamSX3( 'CT2_CCC'    )[1] , 0 } )
+	oSelf:AddMapFields('hist'      					, 'CT2_HIST'    , .T., .F., { 'CT2_HIST'    , 'C', TamSX3( 'CT2_HIST'   )[1] , 0 } )
+	oSelf:AddMapFields('valor'     					, 'CT2_VALOR'   , .T., .F., { 'CT2_VALOR'   , 'N', TamSX3( 'CT2_VALOR'  )[1] , TamSX3( 'CT2_VALOR'  )[2]} )
+	oSelf:AddMapFields('percentual_disponivel'		, 'CT2_XPERDS'  , .T., .F., { 'CT2_XPERDS'  , 'C', TamSX3( 'CT2_XPERDS'  )[1] , 0} )
+	oSelf:AddMapFields('classe_valor_debito'		, 'CT2_CLVLDB'  , .T., .F., { 'CT2_CLVLDB'  , 'C', TamSX3( 'CT2_CLVLDB'  )[1] , 0} )
+	oSelf:AddMapFields('classe_valor_credito'		, 'CT2_CLVLCR'  , .T., .F., { 'CT2_CLVLCR'  , 'C', TamSX3( 'CT2_CLVLCR'  )[1] , 0} )
+	
+	
+return 
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} GetQuery
+Retorna a query usada no serviço
+@param oSelf, object, Objeto da prórpia classe
+@author  Walmir Junior
+@since   20/09/2020
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static Function GetQuery()
+	Local cQuery AS CHARACTER
+	
+	cQuery := " SELECT #QueryFields#"
+    cQuery +=   " FROM " + RetSqlName( 'CT2' ) + " CT2 "
+    cQuery += " WHERE #QueryWhere#"
+
+Return cQuery

@@ -1,0 +1,114 @@
+#Include "Protheus.ch"
+#Include "Tbiconn.ch"
+
+/*/{Protheus.doc} SF02S01X
+(long_description)
+@author j2a.luizjunior
+@since 29/11/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+User Function SF02S01X(pParam)
+	
+	Local aParams := pParam
+	
+	ConOut(Replicate("=",80))
+	ConOut('SF02S01X: Analisando produtos sem uso.' )
+	
+	If Valtype(aParams) != "U"
+		//+--------------------------------------------------------------+
+		//| Se for SCHEDULE prepara o ambiente                           |
+		//+--------------------------------------------------------------+
+		PREPARE ENVIRONMENT EMPRESA aParams[1] FILIAL aParams[2]    
+	EndIf
+	
+	CheckPrd()
+		
+Return
+
+/*/{Protheus.doc} CheckPrd
+(long_description)
+@author j2a.luizjunior
+@since 29/11/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function CheckPrd
+
+	Local cAlComp  := GetNextAlias()
+	Local dAno     := (Val(Substr(DToS(dDataBase),3,2)) - 2)
+	Local cData    := Substr(DToS(dDataBase),1,2) + AllTrim(Str(dAno)) + SubStr(DToS(dDataBase),5,4)
+	Local aProduto := {} 
+	Local cTo      := GetNewPar("MV_XCOMP","analista.csi@fiemt.com.br")
+	Local cSubJect := "Relação de Produtos Bloqueados - " + DToC(dDataBase)
+	Local cMsg     := ""
+	Local nQtd     := 0
+	
+	BeginSql Alias cAlComp
+
+		SELECT B1_UCOM,
+		       B1_COD 
+		FROM   %Table:SB1%
+		WHERE  B1_UCOM     != ' '
+		AND    B1_UCOM     <= %Exp:cData%
+		AND    B1_XPRDVEN   = 'N'		
+		AND    B1_MSBLQL   != '1'
+		AND    B1_TIPO     != 'MD'
+		AND    %NotDel%
+	
+	EndSql
+	
+	DbSelectArea(cAlComp)
+	(cAlComp)->(DbGoTop())
+	Count to nQtd
+	DbSelectArea(cAlComp)
+	(cAlComp)->(DbGoTop())
+	Conout("SF02S01X: Quantidade de registros a serem atualizados: " + AllTrim(Str(nQtd)))
+	
+	While !(cAlComp)->(Eof())
+		
+		DbSelectArea("SB1")
+		DbSetOrder(1)
+		If	DbSeek(xFilial("SB1") + (cAlComp)->B1_COD)
+		
+			While !SB1->(Eof()) .And. xFilial("SB1") + (cAlComp)->B1_COD == SB1->B1_FILIAL + SB1->B1_COD 
+				
+				If RecLock("SB1",.F.)
+				
+					SB1->B1_MSBLQL := "1"	
+				
+					MsUnlock()
+				EndIf
+				
+				aAdd(aProduto,{SB1->B1_COD,SB1->B1_DESC})
+				
+				SB1->(DbSkip())
+			EndDo
+		
+		EndIf
+		
+		(cAlComp)->(DbSkip())
+	EndDo
+	
+	cMsg += "Quantidade de Registros Atualizados: " + AllTrim(Str(nQtd)) + "<br>"
+		
+	For nI := 1 To Len(aProduto)
+		cMsg += AllTrim(aProduto[nI][1]) + " - " +AllTrim(aProduto[nI][2]) + "<br>"
+	Next nI
+	
+	If !Empty(cMsg)
+		lRet := U_SFEnvEmail(,cTo,,,cSubJect,cMsg,,, .F.)
+		If lRet
+			Conout("SF02S01X: Email enviado com sucesso.")
+		Else
+			Conout("SF02S01X: Falha ao enviar email.")		
+		EndIf
+	EndIf
+
+Return

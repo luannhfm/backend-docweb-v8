@@ -1,0 +1,497 @@
+#INCLUDE 'RWMAKE.CH'
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE 'TBICONN.CH'
+#INCLUDE 'TOPCONN.CH'
+#INCLUDE "AP5MAIL.CH"
+
+#DEFINE	CR	Chr(13) + Chr(10)
+
+Static __nHdlSMTP := 0
+
+/*/{Protheus.doc} IDAMAIL   
+@description Funcao para envio de email
+
+@author  Julio Storino
+@since   17/04/2012
+@version 1.0 - JGOMAIL
+
+@author  Helitom Silva
+@since   30/09/2014
+@version 2.0 - Revisado e reorganizado para o projeto IdaTools
+
+@param p_cMail, Caracter, String com o ou os e-mails dos destinatarios, pode ser informado com , ou ; separando-os.                                                                         
+@param p_cSubject, Caracter, Assunto do e-mail.                                                                                          
+@param p_cBody, Caracter, Texto do e-mail, aceita HTML.                                                                                  
+@param p_cError, Caracter, Variavel recebida por referencia que contera os  possiveis erros durante a operacao, deve ser  tratada no retorno da funcao de onde foi chamada. Se retornar vazio e porque nao houve erros.                                                                     
+@param p_cInfo, Caracter, Variavel recebida por referencia que contera informacoes detalhadas sobre a operacao de envio. deve ser tratada no retorno da funcao de onde foi chamada. Retorno vazio nao houve informacoes.      
+@param p_aAnexo, Array, Array contendo os anexos na forma do caminho onde se encontram, podendo ser o caminho absoluto ou o caminho relativo no server a partir da pasta protheus_data.                                     
+@param p_aPars, Array, Array com os parametros de conexao ao servidor de email para envio, conforme a seguinte estrutura:    
+                                                                       
+@obs Dados do parametro p_aPars:
+   
+	 01 - Boolean Indica se usa SSL                      
+     02 - Boolean Indica se usa TSL                      
+     03 - Boolean Indica se precisa autenticacao SMTP    
+     04 - Texto Endereco do servidor POP3                
+     05 - Texto Endereco do servidor SMTP                
+     06 - Numerico Porta do servidor POP                 
+     07 - Numerico Porta do servidor SMTP                
+     08 - Texto Usuario que ira realizar a autenticacao  
+     09 - Texto Senha do usuario de autenticacao         
+     10 - Texto Usuario que envia o e-mail               
+     11 - Numerico Timeout SMTP                          
+                                                         
+     Se for passado vazio, os seguintes parametros serao 
+     utilizados.                                         
+                                                         
+     MV_RELSSL	01 - Indica se usa SSL             
+     MV_RELTLS	02 - Indica se usa TSL             
+     MV_RELAUTH	03 - Indica se precisa autentic. SMTP  
+     ""			04 - Endereco do servidor POP3     
+     MV_RELSERV	05 - Endereco do servidor SMTP         
+     MV_RELPOP2	06 - Porta do servidor POP             
+     MV_RELSMPT	07 - Porta do servidor SMTP            
+     MV_RELAUSR	08 - Usuario de autenticacao           
+     MV_RELPSW	09 - Senha de autenticacao         
+     MV_RELACNT	10 - Usuario que envia o e-mail        
+     60    		11 - Timeout SMTP  
+
+/*/
+User Function IDAMAIL(p_cMail, p_cSubject, p_cBody, p_cError, p_cInfo, p_aAnexo, p_aPars, p_oServer)
+
+    Local oMessage 		:= Nil
+    Local cTic			:= ""
+    Local cInfoTmp		:= ""
+    Local nRet			:= 0
+    Local nErr     		:= 0
+    Local aMail			:= {}
+    Local cEMail		:= ""
+    Local cEmailTmp		:= ""
+    Local cEmailOri		:= ""
+    Local lEmailOK		:= .T.
+
+    Local nI, nZ		:= 0
+
+    Local lUsaSSL		:= .T.
+    Local lUsaTLS		:= .T.
+    Local lSMTPAuth		:= .T.
+    Local cPopAddr  	:= ""
+    Local cSMTPAddr 	:= ""
+    Local nPOPPort  	:= 0
+    Local nSMTPPort 	:= 0
+    Local cLogin     	:= ""
+    Local cPass     	:= ""
+    Local cFrom			:= ""
+    Local nSMTPTime 	:= 0
+
+    Default p_cMail		:= ""
+    Default p_cSubject	:= "Sem assunto"
+    Default p_cBody		:= "NiHil"
+    Default p_cError	:= ""
+    Default p_cInfo		:= ""
+    Default p_aAnexo	:= {}
+
+    If Empty(p_aPars)
+
+        p_aPars 	:= {}
+        aAdd( p_aPars , GetNewPar("MV_RELSSL"	, .T.) 							)	/* 01 - Indica se usa SSL */
+        aAdd( p_aPars , GetNewPar("MV_RELTLS"	, .T.) 							)	/* 02 - Indica se usa TSL */
+        aAdd( p_aPars , GetNewPar("MV_RELAUTH"	, .T.) 							)	/* 03 - Indica se precisa fazer autenticacao SMTP */
+        aAdd( p_aPars , ""		  							 					)	/* 04 - Endereco do servidor POP3 */
+        aAdd( p_aPars , GetNewPar("MV_RELSERV"	, "smtp.gmail.com") 			)   /* 05 - Endereco do servidor SMTP */
+        aAdd( p_aPars , GetNewPar("MV_RELPOP3"	, 00)	  	 					)	/* 06 - Porta do servidor POP */
+        aAdd( p_aPars , GetNewPar("MV_RELSMTP"	, 25)			             	)	/* 07 - Porta do servidor SMTP */
+        aAdd( p_aPars , GetNewPar("MV_RELACNT"	, "helitom.silvaa@gmail.com") 	) 	/* 08 - Usuario que ira realizar a autenticacao */
+        aAdd( p_aPars , GetNewPar("MV_RELPSW"	, "senha")  				)		/* 09 - Senha do usuario de autenticacao */
+        aAdd( p_aPars , GetNewPar("MV_RELFROM"	, "helitom.silvaa@gmail.com") 	)	/* 10 - Usuario que envia o e-mail (From) */
+        aAdd( p_aPars , 60         		  										)	/* 11 - Timeout SMTP */
+
+    EndIf
+
+    lUsaSSL		:= p_aPars[01]	/* 01 - Indica se usa SSL */
+    lUsaTLS		:= p_aPars[02] 	/* 02 - Indica se usa TSL */
+    lSMTPAuth	:= p_aPars[03]	/* 03 - Indica se precisa fazer autenticacao SMTP */
+    cPopAddr  	:= p_aPars[04]	/* 04 - Endereco do servidor POP3 */
+    cSMTPAddr 	:= p_aPars[05]  /* 05 - Endereco do servidor SMTP */
+    nPOPPort  	:= p_aPars[06]	/* 06 - Porta do servidor POP */
+    nSMTPPort 	:= p_aPars[07]  /* 07 - Porta do servidor SMTP */
+    cLogin     	:= p_aPars[08] 	/* 08 - Usuario que ira realizar a autenticacao */
+    cPass     	:= p_aPars[09] 	/* 09 - Senha do usuario de autenticacao */
+    cFrom		:= p_aPars[10]	/* 10 - Usuario que envia o e-mail */
+    nSMTPTime 	:= p_aPars[11]  /* 11 - Timeout SMTP */
+
+    If At(':', cSMTPAddr) > 0
+        nSMTPPort := Val(SubStr(cSMTPAddr, At(':', cSMTPAddr) + 1))
+        cSMTPAddr := SubStr(cSMTPAddr, 1, At(':', cSMTPAddr) - 1)
+    EndIf
+
+	/* Trata caso o paramentro p_cMail venha como Array ! */
+    If ValType(p_cMail) = "A"
+        For nI := 1 To Len(p_cMail)
+            cEmailTmp += p_cMail[nI] + ';'
+        Next
+        p_cMail := cEmailTmp
+        cEmailTmp := ""
+    EndIf
+
+	/* Prepara uma array com os e-mail (caso tenham vindo com separador , ou ; Troca possiveis , por ; - padronizacao de separacao de e-mails */
+    p_cMail := StrTran(p_cMail,',',';')
+    aMail   := StrToKArr(p_cMail, ';')
+
+	/* Prepara os destinatarios. */
+    For nI := 1 To Len(aMail)
+
+		/* Guardo e-mail original para Log */
+        cEMailOri += aMail[nI] + If(nI < Len(aMail),',','')
+
+		/* Tento ajustar algumas coisas comuns ao informar um e-mail */
+        cEmailTmp := Lower(aMail[nI])
+
+        If MailOK( @cEmailTmp , @cInfoTmp )
+            cEMail += cEmailTmp + If(nI < Len(aMail),',','')
+        EndIf
+
+    Next
+
+	/* Complementa o erro com mais informacoes */
+    cTic += "-------------------------------------------------" + CR
+    cTic += "[LOGIN    ]-" + cLogin + CR
+    cTic += "[PASS     ]-" + cPass + CR
+    cTic += "[FROM     ]-" + cFrom + CR
+    cTic += "[TO_ORI   ]-" + cEmailOri + CR
+    cTic += "[TO_OK    ]-" + cEmail + CR
+    cTic += "[SUBJECT  ]-" + p_cSubject + CR
+    cTic += "[SMTPADDR ]-" + cSMTPAddr + CR
+    cTic += "[PORTA    ]-" + cValToChar(nSMTPPort) + CR
+    cTic += "[USASSL   ]-" + If(lUsaSSL,'SIM','NAO') + CR
+    cTic += "[USATLS   ]-" + If(lUsaTLS,'SIM','NAO') + CR
+    cTic += "[USAAUTH  ]-" + If(lSMTPAuth,'SIM','NAO') + CR
+
+	/* Verifica se houve pelo menos 1 e-mail valido para envio ou tudo que veio eh invalido */
+    If Empty(cEmail)		/* Tudo Invaliado */
+        p_cInfo += "[ERROR]Email(s) informado(s) invalido(s)!" + CR
+        p_cInfo += cInfoTmp + CR + CR + cTic
+        Return
+    Else
+        p_cInfo += "Para o(s) destinatario(s) abaixo, o email foi enviado corretamente !" + CR + Space(10) + cEmail + CR + CR
+
+        If !Empty(cInfoTmp)
+            p_cInfo +=	"Para o(s) destinatario(s) abaixo, nao foi possivel enviar !" + CR + Space(10) + p_cInfo
+        EndIf
+    EndIf
+
+    If Empty(p_oServer)
+
+		/* Instancia um novo TMailManager */
+        p_oServer := tMailManager():New()
+
+		/* Usa SSL na conexao */
+        If lUsaSSL
+            p_oServer:SetUseSSL(.T.)
+        Else
+            p_oServer:SetUseSSL(.F.)
+        EndIf
+
+		/* Usa TLS na conexao */
+        If lUsaTLS
+            p_oServer:SetUseTLS(.T.)
+        Else
+            p_oServer:SetUseTLS(.F.)
+        EndIf
+
+		/* Inicializa */
+        p_oServer:init(cPopAddr, cSMTPAddr, cLogin, cPass, nPOPPort, nSMTPPort)
+
+		/* Define o Timeout SMTP */
+        if p_oServer:SetSMTPTimeout(nSMTPTime) != 0
+            p_cError += "[ERROR]Falha ao definir timeout"
+            p_cError += CR + CR + cTic
+            Return
+        endif
+
+		/* Conecta ao servidor */
+        nErr := p_oServer:smtpConnect()
+        If nErr <> 0
+            p_cError += "[ERROR]" + p_oServer:getErrorString(nErr)
+            p_cError += CR + CR + cTic
+            p_oServer:smtpDisconnect()
+            Return
+        EndIf
+
+        If lSMTPAuth
+            nRet := p_oServer:SMTPAuth(cLogin, cPass)
+            If nRet <> 0
+                nRet := p_oServer:SMTPAuth(cFrom, cPass)
+                If nRet != 0
+                    p_cError += "[ERROR]Falha na autenticação SMTP"
+                    p_cError += CR + CR + cTic
+                    Return
+                Endif
+            Endif
+        EndIf
+
+    EndIf
+
+	/* Cria uma nova mensagem (TMailMessage) */
+    oMessage := tMailMessage():new()
+    oMessage:clear()
+    oMessage:cFrom    := cFrom
+    oMessage:cTo      := cEMail
+    //	oMessage:cCC      := _cCC
+    oMessage:cSubject := p_cSubject
+    oMessage:cBody    := p_cBody
+
+	/* Anexa arquivos */
+    For nI := 1 To Len(p_aAnexo)
+        If oMessage:AttachFile( p_aAnexo[nI] ) < 0
+            p_cError += "[ERROR] Erro ao atachar o arquivo"
+            p_cError += CR + CR + cTic
+            Return
+        Else
+            oMessage:AddAtthTag( "Content-Disposition: attachment; filename=" + Substr(p_aAnexo[nI], RAt("\", p_aAnexo[nI]) + 1) )
+        EndIf
+    Next
+
+	/* Envia a mensagem */
+    nErr := oMessage:send(p_oServer)
+
+    If nErr <> 0
+        p_cError += '[ERROR]' + p_oServer:getErrorString(nErr)
+        p_cError += CR + CR + cTic
+        //p_oServer:smtpDisconnect()
+        //p_oServer := Nil
+        Return
+    EndIf
+
+	/* Disconecta do Servidor */
+    //p_oServer:smtpDisconnect()
+
+Return
+
+
+/*/{Protheus.doc} MailOK
+@description Avalia e-emails
+
+@author  Julio Storino
+@since   26/11/2012
+@version 1.0
+
+@param xMail, Caracter ou Arrays, Endereços de e-mail
+@param cLog, Caracter, Variavel de Log (informar como referencia @)
+@param _aParVal, Array, Endereços de e-mail
+
+@return _lFimRet, Logico, Se os emails forem válidos retorna .T.
+
+/*/
+Static Function MailOK( xMail, cLog, _aParVal )
+
+    Local _lRet		 := .T.
+    Local _lFimRet	 := .T.
+    Local _nZ, _nI	 := 0
+    Local _nTIG		 := 0
+    Local cMail		 := ""
+    Local cEmailTmp  := ""
+    Local aEmailTmp1 := {}
+    Local aEmailTmp2 := {}
+    Local _lJaArr	 := .F.
+    Local aMail		 := {}
+    Local aMailPerm	 := {'a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z','0','1','2','3','4','5','6','7','8','9','-','_','.','@'}
+
+    Local _aGRIni	 := {}
+
+    Private _lLog	 := (ValType("cLog") = "C")
+    Default xMail	 := "helitom@idainformatica.com"
+    Default cLog	 := ""
+    Default _aParVal := {}
+
+    If Empty( xMail )
+        Return( .T. )
+    EndIf
+
+    // Trata caso o paramentro cMail venha como Array !
+    If ValType(xMail) = "A"
+
+        For _nI := 1 To Len(xMail)
+            cEmailTmp += xMail[_nI] + ';'
+        Next
+
+        cMail 	  := cEmailTmp
+        cEmailTmp := ""
+        xMail	  := {}
+    Else
+        cMail := xMail
+        xMail	:= ""
+    EndIf
+
+    // Obtem base de e-mails repetidos (exclusao)
+    If Empty(_aParVal)
+
+        U_IDAINI("LE", _aGRIni := {{"QTDCLI", "QUANT",""}, {"INVALIDEXP", "*", ""}}, "\mailspool\validmail.ini")
+
+        aAdd( _aParVal , If(!Empty(_aGRIni[1][3]),_aGRIni[1][3],'4') )
+
+        // Carrega expressoes invalidas
+        aAdd( _aParVal , {} )
+
+        If ValType("_aGRIni[2][3]") = "A"
+            aEval( _aGRIni[2][3] , {|x| aAdd(_aParVal[2],x[3]) } )
+        EndIf
+
+        // Carrega os e-mail duplicados
+        aAdd( _aparVal , {} )
+
+		/*_cQuery := " SELECT T1.A1_EMAIL, "
+		_cQuery += "         COUNT(DISTINCT(" + Iif(TCGetDB() = "ORACLE", "SUBSTR", "SUBSTRING") + "(T2.A1_CGC,1,8))) "
+		_cQuery += " FROM " + RetSQLName("SA1") + " T1 "
+		_cQuery += " INNER JOIN " + RetSQLName("SA1") + " T2 ON (T2.A1_EMAIL = T1.A1_EMAIL) "
+		_cQuery += " WHERE T1.D_E_L_E_T_ = ' ' "
+		_cQuery += "   AND T1.A1_EMAIL <> ' '	"
+		_cQuery += " GROUP BY T1.A1_EMAIL "
+		_cQuery += " HAVING COUNT(DISTINCT(" + Iif(TCGetDB() = "ORACLE", "SUBSTR", "SUBSTRING") + "(T2.A1_CGC,1,8))) > " + _aParVal[1]
+		_cQuery += " ORDER BY 2 DESC "
+
+        If Select("MAIL") > 0
+			MAIL->(DbCloseArea())
+        Else
+			DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),"MAIL",.F.,.T.)
+            If MAIL->(!Eof())
+                While MAIL->(!Eof())
+					aAdd( _aparVal[3], MAIL->A1_EMAIL )
+					MAIL->(DbSkip())
+                EndDo
+            EndIf
+			MAIL->(DbCloseArea())
+        EndIf*/
+	
+    EndIf
+
+	// Prepara uma array com os e-mail (caso tenham vindo com separador , ou ;
+	// Troca possiveis , por ; - padronizacao de separacao de e-mails
+	cMail := StrTran(cMail, ',', ';')
+	aMail := StrToKArr(cMail, ';')
+
+    For _nI := 1 To Len(aMail)
+
+		// Reinicio a variavel de controle.
+		_lRet := .T.
+
+  		// Tento ajustar algumas coisas comuns ao informar um e-mail
+		cEmailTmp := Lower(aMail[_nI])
+		cEmailTmp := StrTran(cEmailTmp,Space(1),'') 	//o mesmo que alltrim so que mais eficiente
+
+		// Retira caracter estranho no inicio do e-mail
+        If (Left(cEmailTmp,1) $ '<>.;,/')
+			cEmailTmp := Substr(cEmailTmp,2,999)
+        EndIf
+
+		// Retira caracter estranho no final do email
+        If (Right(cEmailTmp,1) $ '<>.;,/')
+			cEmailTmp := Substr(cEmailTmp,1,Len(cEmailTmp)-1)
+        EndIf
+			
+		// Corrige alguns erros comuns
+		cEmailTmp := StrTran(cEmailTmp,'..','.')
+		cEmailTmp := StrTran(cEmailTmp,'@@','@')
+
+   		// Valida email duplicados na base
+        If Len(_aParVal[3]) > 0 .and. !Empty( aScan( _aParVal[3] , {|x| cEmailTmp = lower(AllTrim(x)) } ) )
+			xLog("Usado em varios clientes distintos!",@cLog)
+			_lRet := .F.
+        EndIf
+
+   		// Valida caracteres nao permitidos
+        If _lRet
+            For _nZ := 1 To Len(cEmailTmp)
+                If !(_lRet := (aScan(aMailPerm,{|x| Substr(cEmailTmp,_nZ,1)==x})<>0))
+					xLog("Possui caracteres estranhos !",@cLog)
+					Exit
+                EndIf
+            Next _nZ
+        EndIf
+
+		// Valida Tamanho Minimo - Existencia de @ - Existencia de Ponto
+        If _lRet .And. ( (Len(cEmailTmp) < 7) .Or. !('@' $ cEmailTmp) .Or. !('.' $ cEmailTmp) )
+			xLog("Nao possui formato de e-mail !",@cLog)
+			_lRet := .F.
+        EndIf
+
+		// Fragmenta o e-mail em pedacos com os divisores . antes de depois do @	
+        If _lRet
+			_lJaArr := .F.
+            For _nZ := 1 To Len(cEmailTmp)
+                If Substr(cEmailTmp,_nZ,1) = "."
+                    If _lJaArr
+						aAdd( aEmailTmp2 , "" )
+                    Else
+						aAdd( aEmailTmp1 , "" )
+                    EndIf
+                ElseIf Substr(cEmailTmp,_nZ,1) = "@"
+					_lJaArr := .T.
+                Else
+                    If _lJaArr
+                        If Empty(aEmailTmp2)
+							aAdd( aEmailTmp2 , Substr(cEmailTmp,_nZ,1) )
+                        Else
+							aEmailTmp2[Len(aEmailTmp2)] += Substr(cEmailTmp,_nZ,1)
+                        EndIf
+                    Else
+                        If Empty(aEmailTmp1)
+							aAdd( aEmailTmp1 , Substr(cEmailTmp,_nZ,1) )
+                        Else
+							aEmailTmp1[Len(aEmailTmp1)] += Substr(cEmailTmp,_nZ,1)
+                        EndIf
+                    EndIf
+                EndIf
+            Next _nI
+        EndIf
+
+		// Verifica a existencia de sequencias invalidas
+        If _lRet
+            For _nZ := 1 To Len(_aParVal[2])
+                If _aParVal[2][_nZ] $ cEmailTmp
+					xLog("Possui sequencia invalida !", @cLog)
+					_lRet := .F.
+					Exit
+                EndIf
+            Next
+        EndIf
+
+		// Adiciona os e-mails validados no retorno da funcao (podendo ser string ou array)
+        If _lRet
+            If ValType(xMail) = 'A'
+                If aScan( xMail , {|| lower(AllTrim(x))==lower(AllTrim(cEmailTmp))}) = 0
+					aAdd( xMail , Lower(cEmailTmp) )
+                EndIf
+            Else
+                If !(lower(AllTrim(cEmailTmp)) $ lower(AllTrim(xMail)))
+					xMail += Lower(cEmailTmp) + If(_nI < Len(aMail),',','')
+                EndIf
+            EndIf
+        EndIf
+
+    Next
+
+    If Empty(xMail)
+		_lFimRet := .F.
+    EndIf
+
+Return _lFimRet
+
+
+/*/{Protheus.doc} xLog
+@description Armazena Log
+
+@author  Julio Storino
+@since   14/03/2013
+@version 1.0
+
+@param cMsg, Caracter, Mensagem a ser armazenada no Log
+
+/*/
+Static Function xLog(cMsg, cLog)
+
+    If _lLog
+        cLog += cMsg + CR
+    EndIf
+
+Return

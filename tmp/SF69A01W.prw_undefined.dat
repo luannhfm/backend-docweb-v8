@@ -1,0 +1,807 @@
+#include 'protheus.ch'
+#include 'fwmvcdef.ch'
+
+/*/{Protheus.doc} SF69A01W
+@description MVC do Cadastro da Necessidade de Docentes
+
+@author  Walmir Junior
+@since   21/06/2020
+@version 1.0 
+/*/
+User Function SF69A01W()
+
+	Local oBrowse
+	Private _nhDia     := SuperGetMv( "MV_XHDIADC", .F., 8  )
+	Private _nMxDia    := SuperGetMv( "MV_XDIAMXD", .F., 90 )
+	Private _nMnInt    := SuperGetMv( "MV_XMINVIG", .F., 180)
+	Private _nIntFun   := SuperGetMv( "MV_XINTFUN", .F., 180)
+	Private aRotina    := MenuDef()
+
+	oBrowse := FWMBrowse():New()
+	oBrowse:SetAlias( 'ZBB' )
+	oBrowse:SetDescription('Cadastro de Necessidade de Docentes')
+	oBrowse:AddLegend("ZBB_APROV == 'P' ", "QMT_COND" 	, "Pendente"	)
+	oBrowse:AddLegend("ZBB_APROV == 'A' ", "QMT_OK" 	, "Aprovada"	)
+	oBrowse:AddLegend("ZBB_APROV == 'R' ", "QMT_NO"		, "Reprovada"	)
+	oBrowse:AddLegend("ZBB_APROV == 'C' ", "BEND"       , "Cancelada"	)
+
+
+	oBrowse:Activate()
+
+Return Nil
+
+//===================================================================================================
+
+/*/{Protheus.doc} MenuDef   
+@description Montagem do Menu
+
+@author  Walmir Junior
+@since   21/06/2020
+@version 1.0 
+/*/
+Static Function MenuDef()
+
+	Local aRotina := {}
+
+	aAdd( aRotina, { 'Visualizar'   				, 'VIEWDEF.SF69A01W', 0, 2, 0, NIL } )
+	aAdd( aRotina, { 'Incluir'      				, 'VIEWDEF.SF69A01W', 0, 3, 0, NIL } )
+	aAdd( aRotina, { 'Alterar'    					, 'VIEWDEF.SF69A01W', 0, 4, 0, NIL } )
+	aAdd( aRotina, { 'Cancelar'    					, 'STATICCALL(SF69A01W,fCanc)', 0, 4, 0, NIL } )
+
+Return aRotina
+
+//===================================================================================================
+
+/*/{Protheus.doc} ModelDef
+@description Monta Model de apresentaï¿½ï¿½o
+
+@author  Walmir Junior
+@since   21/06/2020
+@version 1.0 
+/*/
+Static Function ModelDef()
+
+	Local oModel 	:= MPFormModel():New('SF69X01W')
+	Local oStruZBB 	:= FWFormStruct( 1, 'ZBB' )
+	Local oStruZBC 	:= FWFormStruct( 1, 'ZBC' )
+	Local oStruZBH 	:= FWFormStruct( 1, 'ZBH' )
+	Local oStruZBJ 	:= FWFormStruct( 1, 'ZBJ' ) 
+	Local aTmp		:= {}
+
+	oStruZBB:SetProperty("ZBB_CONTRA", MODEL_FIELD_WHEN, {|| .F.})
+
+	oModel:AddFields( 'ZBBMASTER', , oStruZBB )
+	oModel:AddGrid('ZBCDETAIL','ZBBMASTER',oStruZBC)
+	oModel:AddGrid('ZBHDETAIL','ZBBMASTER',oStruZBH)
+	oModel:AddGrid('ZBJDETAIL','ZBBMASTER',oStruZBJ)
+	oModel:AddCalc( 'ZBCDETAILCALC', 'ZBBMASTER', 'ZBCDETAIL', 'ZBC_TOTAL', 'ZBC_TOT01', 'SUM', { | oFW | .T. },,'Total da Necessidade:' )
+	oModel:SetRelation('ZBCDETAIL',{{'ZBC_FILIAL','ZBB_FILIAL'}, {'ZBC_CODNEC','ZBB_CODIGO'}},ZBC->(IndexKey(1)))
+	oModel:SetRelation('ZBHDETAIL',{{'ZBH_FILIAL','ZBB_FILIAL'}, {'ZBH_CODNEC','ZBB_CODIGO'}},ZBH->(IndexKey(1)))
+	oModel:SetRelation('ZBJDETAIL',{{'ZBJ_FILIAL','ZBB_FILIAL'}, {'ZBJ_CODNEC','ZBB_CODIGO'}},ZBJ->(IndexKey(1)))
+	oModel:SetPrimaryKey( {'ZBB_FILIAL','ZBB_CODIGO'} )
+
+	If SB5->(FIELDPOS('B5_XVLDF') > 0 .And.  FIELDPOS('B5_XVLMXDF') > 0 )
+		//Gatilho para a filiais e diferenciado para FATEC
+
+		//  FwStruTrigger: ( cDom, cCDom, cRegra, lSeek, cAlias, nOrdem, cChave, cCondic )
+		aTmp := FwStruTrigger( 	'ZBC_PRODUT' 	/*cDom*/,; 
+								'ZBC_VALOR' 	/*cCDom*/,; 
+								'U_xValFat()'  	/*cRegra*/,;
+								.T. 			/*lSeek*/,; 
+								'SB5' 			/*cAlias*/,; 
+								1 				/*nOrdem*/,; 
+								'U_ChavB5()' 	/*cChave*/,; 
+								'.T.' 			/*cCondic*/ )
+		
+		oStruZBC:AddTrigger(aTmp[1] , ; // [01] identificador (ID) do campo de origem
+							aTmp[2] , ; // [02] identificador (ID) do campo de destino
+							aTmp[3] , ; // [03] Bloco de código de validação da execução do gatilho
+							aTmp[4] ) // [04] Bloco de código de execução do gatilho
+	EndIf
+
+Return oModel
+
+//===================================================================================================
+
+/*/{Protheus.doc} ViewDef
+@description Apresentaï¿½ï¿½o do model e View junto
+
+@author  Walmir Junior
+@since   21/06/2020
+@version 1.0 
+/*/
+Static Function ViewDef()
+
+	Local oModel	:= ModelDef()
+	Local oStruZBB	:= FWFormStruct( 2, 'ZBB')
+	Local oStruZBC 	:= FWFormStruct( 2, 'ZBC')
+	Local oStruZBH 	:= FWFormStruct( 2, 'ZBH')
+	Local oStruZBJ 	:= FWFormStruct( 2, 'ZBJ')
+	Local oStrCalc 	:= FWCalcStruct( oModel:GetModel('ZBCDETAILCALC') )
+	Local oView		:= FWFormView():New()
+
+	oStruZBB:RemoveField( 'ZBB_GRPAPR')
+	oStruZBB:RemoveField( 'ZBB_OBS')
+	oStruZBB:RemoveField( 'ZBB_USER')
+	oStruZBB:RemoveField( 'ZBB_DTAPRO')
+	oStruZBB:RemoveField( 'ZBB_HRAPRO')
+	oStruZBB:RemoveField( 'ZBB_VLTOT')
+	oStruZBC:RemoveField( 'ZBC_FILIAL')
+	oStruZBC:RemoveField( 'ZBC_CODNEC')
+	oStruZBH:RemoveField( 'ZBH_CODNEC')
+	oStruZBJ:RemoveField( 'ZBJ_FILIAL')
+	//oStruZBJ:RemoveField( 'ZBJ_CODIGO')
+	oStruZBJ:RemoveField( 'ZBJ_CODDR')
+
+	oView:SetModel( oModel )
+	oView:AddField( 'VIEW_ZBB', oStruZBB, 'ZBBMASTER' )
+	oView:AddField( 'CALC', oStrCalc,'ZBCDETAILCALC')
+	oView:AddGrid ( 'VIEW_ZBC', oStruZBC, 'ZBCDETAIL' )
+	oView:AddGrid ( 'VIEW_ZBH', oStruZBH, 'ZBHDETAIL' )
+	oView:AddGrid ( 'VIEW_ZBJ', oStruZBJ, 'ZBJDETAIL' )
+
+	oView:AddIncrementField( 'VIEW_ZBC',  'ZBC_ITEM'  )
+	//oView:AddIncrementField( 'VIEW_ZBJ',  'ZBJ_CODIGO'  )
+
+	oView:CreateHorizontalBox( 'SUPERIOR'  ,  40 )
+	oView:CreateHorizontalBox( 'INFERIOR',   60 )
+
+	//Criando a folder dos produtos (filhos)
+	oView:CreateFolder('PASTA_FILHOS', 'INFERIOR')
+	oView:AddSheet('PASTA_FILHOS', 'ABA_FILHO01', "Disciplina")
+	oView:AddSheet('PASTA_FILHOS', 'ABA_FILHO02', "Turmas")
+	oView:AddSheet('PASTA_FILHOS', 'ABA_FILHO04', "Ocorrencias")
+	oView:AddSheet('PASTA_FILHOS', 'ABA_FILHO03', "Outro")
+
+	//Criando os vinculos onde serï¿½o mostrado os dados
+	oView:CreateHorizontalBox('ITENS_FILHO01', 100,,, 'PASTA_FILHOS', 'ABA_FILHO01' )
+	oView:CreateHorizontalBox('ITENS_FILHO02', 100,,, 'PASTA_FILHOS', 'ABA_FILHO02' )
+	oView:CreateHorizontalBox('ITENS_FILHO03', 100,,, 'PASTA_FILHOS', 'ABA_FILHO03' )
+	oView:CreateHorizontalBox('ITENS_FILHO04', 100,,, 'PASTA_FILHOS', 'ABA_FILHO04' )
+
+	oView:SetOwnerView( 'VIEW_ZBB', 'SUPERIOR' )
+	oView:SetOwnerView('VIEW_ZBC', 'ITENS_FILHO01' )
+	oView:SetOwnerView('VIEW_ZBH', 'ITENS_FILHO02' )
+	oView:SetOwnerView( 'ZBCDETAILCALC', 'ITENS_FILHO03' )
+	oView:SetOwnerView('VIEW_ZBJ', 'ITENS_FILHO04' )
+	oView:EnableTitleView( 'VIEW_ZBB' )
+	oView:EnableTitleView( 'VIEW_ZBC' , 'Itens da Necessidade de Docentes')
+	oView:SetCloseOnOk( {|| .t.} )
+
+	// Adiciona um botao a rotina 
+	oView:AddUserButton( 'Vl Max.Hora/Aula', 'CLIPS', {|oView| U_SF69A17X() } )
+
+
+Return oView
+
+//===================================================================================================
+
+/*/{Protheus.doc} ViewDef
+@description Apresentaï¿½ï¿½o do model e View junto
+
+@author  Walmir Junior
+@since   13/08/2020
+@version 1.0 
+/*/
+Static Function fCanc()
+
+	Local _aArea := GetArea()
+
+
+	If ZBB->ZBB_APROV == 'C'
+		Aviso("[ATENÇÃO] " + FunName()+"/"+ProcName(),"Esta necessidade de docente, já se encontra CANCELADA.",{"OK"},2)
+		Return
+		//Validar se a necessidade de docente já originou contrato. Nesse caso, não permitir cancelamento.
+	ElseIf !Empty(ZBB->ZBB_CONTRA)
+		Aviso("[ATENÇÃO] " + FunName()+"/"+ProcName(),"NÃO é possí­vel 'CANCELAR' esta necessidade de docente, pois, já originou contrato.",{"OK"},2)
+		Return
+	EndIf
+
+	If 1 == Aviso("[ATENÇÃO] " + FunName()+"/"+ProcName(),"Deseja realmente 'CANCELAR' a necessidade de docente [" + ALLTRIM(ZBB->ZBB_CODIGO) + "]?",{"SIM", "NÃƒO"},2)
+		If Reclock("ZBB", .F.)
+			REPLACE ZBB->ZBB_APROV WITH 'C'
+			MSUnlock("ZBB")
+		Endif
+	EndIf
+
+	RestArea(_aArea)
+Return
+
+//===================================================================================================
+
+/*/{Protheus.doc} fVldIns
+@description Validação
+@author  Walmir Junior
+@since   17/08/2020
+		
+@param _cTpVal,_cWhen
+
+@return _lRet,  Lï¿½gico
+
+/*/
+Static Function  fVldIns(_cTpVal, _cWhen)
+	Local _lRet         := .T.
+	Local oModel        := FWModelActive()
+	Local oModelZBB     := oModel:GetModel( 'ZBBMASTER' )
+	Local oModelZBC     := oModel:GetModel( 'ZBCDETAIL' )
+	Local _nVldHr       := 0
+	Local _nX           := 0
+	Local lMaxVl        := .F.
+//	Local lVlDif		:= .F.
+	Local nOper			:= oModel:GetOperation()
+	Local dDtVig
+	Local lFatec := cempant ==  GetNewPar("MV_XEMP", "01")  .And. cfilant == GetNewPar("MV_XFIL", "03MT0017")
+
+	If nOper == 3 .Or. ( nOper == 4 .And. oModelZBB:GetValue("ZBB_APROV") == "P" )
+
+		//Validação do Campo (When = 'C')
+		//Validação Final (When = 'F')
+		If _cWhen == 'F'
+
+			If _cTpVal == 'QTDPROD'
+
+				For _nX := 1 To oModelZBC:Length()
+					oModelZBC:GoLine( _nX )
+					_nVldHr += oModelZBC:GetValue("ZBC_QUANT")
+				Next _nX
+
+				If _nVldHr > (_nMxDia * _nhDia)
+
+					cMsgErro += "Sua necessidade de docente, excede o limite máx de horas para esta modalidade de contratação [MEI e PF]." + CRLF
+					_lRet := .F.
+
+				EndIf
+
+			ElseIf _cTpVal == 'VLRMAX'
+
+				For _nX := 1 To oModelZBC:Length()
+					oModelZBC:GoLine( _nX )
+					If lFatec
+						If oModelZBC:GetValue("ZBC_VALOR") > Posicione("SB5",1, xFilial("SB5") + oModelZBC:GetValue("ZBC_PRODUT"), "B5_XVLMXDF")
+							// Valor maximo FATEC
+							lMaxVl := .T.
+							Exit
+						EndIf
+					Else
+						If oModelZBC:GetValue("ZBC_VALOR") > Posicione("SB5",1, xFilial("SB5") + oModelZBC:GetValue("ZBC_PRODUT"), "B5_XVLMXDC")
+							lMaxVl := .T.
+							Exit
+						EndIf
+						// If oModelZBC:GetValue("ZBC_VALOR") <> Posicione("SB5",1, xFilial("SB5") + oModelZBC:GetValue("ZBC_PRODUT"), "B5_XVLDC")
+						// 	lVlDif := .T.
+						// 	Exit
+						// EndIf
+					EndIf
+				Next _nX
+
+				If lMaxVl
+
+					cMsgErro += "Sua necessidade de docente tem produtos com valor máximo excedido. " + CRLF
+					_lRet := .F.
+
+					// ElseIf lVlDif
+
+					// 	cMsgErro += "Sua necessidade de docente tem produtos com valores diferente da sugestÃ£o. " + CRLF
+					// 	_lRet := .F.
+
+				EndIf
+
+			ElseIf _cTpVal == 'VIGENCI'
+
+				If _nMxDia <  DateDiffDay(oModelZBB:GetValue("ZBB_DTINI"), oModelZBB:GetValue("ZBB_DTFIM"))
+					cMsgErro += "Sua necessidade de docente, excede o limite máx de dias de vigêcia [" + AllTrim(Str(_nMxDia)) + "] para modalidade de contratação [MEI e PF]." + CRLF
+					_lRet := .F.
+				EndIf
+
+			ElseIf _cTpVal == 'INTVIGE'
+				dDtVig := (fBusDtF(oModelZBB:GetValue("ZBB_FORNEC"), oModelZBB:GetValue("ZBB_LOJFOR"), oModelZBB:GetValue("ZBB_DTINI"), _nMnInt))
+				If oModelZBB:GetValue("ZBB_DTINI") <= dDtVig
+					cMsgErro += "Voce selecionou um iní­cio de vigêcia que não respeita o intervalo de '" + AllTrim(Str(_nMnInt)) + "' dias do fim do ultimo contrato. Data para liberação é "+ DtoC(dDtVig) + CRLF
+					_lRet := .F.
+
+				EndIf
+
+			EndIf
+		EndIf
+	EndIf
+Return _lRet
+
+//===================================================================================================
+
+/*/{Protheus.doc} fBusDtF
+@description Busca a Data Final do ultimo contrato se houver
+@author  Walmir Junior
+@since   02/09/2020
+@param 
+@return _dRet Data Fim do ultimo contrato
+
+/*/
+Static Function fBusDtF(_cClient, _cLoja, _dDataIni, nVig )
+	Local _dRet := CTOD('01/01/1900')
+	Local _cSQL := ""
+	Local cCodProf := ""
+	Local cCodFor := ""
+
+	//Valida se o Professor tem mais de um cadastro de Fornecedor
+	cQry := " SELECT * FROM " + RetSQLTab("ZBF") + CRLF
+	cQry += " WHERE ZBF_FORNEC = '"+alltrim(_cClient)+"'"
+	cQry += " AND ZBF.D_E_L_E_T_ = ' ' "
+
+	If Select("BF1") > 0
+		BF1->(dbClosearea())
+	Endif
+
+	DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(cQry)), "BF1", .F., .F.)
+
+	While BF1->(!EOF())
+		cCodProf += "'" + Alltrim(BF1->ZBF_CODPRO) + "',"
+		BF1->(dbSkip())
+	EndDo
+	BF1->(dbClosearea())
+
+	cQry := " SELECT ZBF_FORNEC FROM " + RetSQLTab("ZBF") + CRLF
+	cQry += " WHERE ZBF_CODPRO IN (" + SubStr(cCodProf,1, Len(cCodProf)-1 ) + ")"
+	cQry += " GROUP BY ZBF_FORNEC "
+
+	If Select("BF2") > 0
+		BF2->(dbClosearea())
+	Endif
+
+	DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(cQry)), "BF2", .F., .F.)
+
+	While BF2->(!EOF())
+		cCodFor += "'" + Alltrim(BF2->ZBF_FORNEC)  + "',"
+		BF2->(dbSkip())
+	EndDo
+	BF2->(dbClosearea())
+
+	_cSQL += " SELECT CN9_DTFIM " + CRLF
+	_cSQL += " FROM "+RetSQLTab("CN9") + CRLF
+	_cSQL += " INNER JOIN "+RetSQLTab("CNC")+"  ON CNC.D_E_L_E_T_ = ' ' AND "+ CRLF
+	_cSQL += " CNC_FILIAL = CN9_FILIAL AND " + CRLF
+	_cSQL += " CNC_NUMERO = CN9_NUMERO AND " + CRLF
+	_cSQL += " CNC_REVISA = CN9_REVISA " + CRLF
+	_cSQL += " WHERE CN9.D_E_L_E_T_ = ' ' AND  " + CRLF
+	_cSQL += " CN9_DTASSI <> ' ' AND " + CRLF
+	_cSQL += " CN9_SITUAC <> '02' AND " + CRLF
+	// _cSQL += " CNC_CODIGO = '"+alltrim(_cClient)+"' AND " + CRLF
+	// _cSQL += " CNC_LOJA = '"+alltrim(_cLoja)+"' AND " + CRLF
+	_cSQL += " CNC_CODIGO IN ("+ SubStr(cCodFor,1,Len(cCodFor)-1) +") " + CRLF
+	//_cSQL += "  AND  ROWNUM = 1 " + CRLF
+	_cSQL += " ORDER BY CN9_DTFIM DESC " + CRLF
+
+	MemoWrite("D:\LOGSQL\" + FunName() + "_" + ProcName() + ".txt" , _cSQL)
+
+	If Select("TRB") > 0
+		TRB->(dbClosearea())
+	Endif
+
+	DbUseArea(.T., "TOPCONN", TCGenQry(,,ChangeQuery(_cSQL)), "TRB", .F., .F.)
+
+	While !(TRB->(Eof()))
+		If STOD(TRB->CN9_DTFIM) + nVig >= (_dDataIni )
+			_dRet := STOD(TRB->CN9_DTFIM) + nVig 
+			Exit
+		else
+			_dRet := STOD(TRB->CN9_DTFIM) + nVig 
+		EndIf
+		TRB->(dbSkip())
+	Enddo
+
+	TRB->(dbClosearea())
+
+Return _dRet
+
+//===================================================================================================
+
+/*/{Protheus.doc} SF69X01W
+@description Ponto de Entrada MVC
+@author  Walmir Junior
+@since   21/06/2020
+		
+@param PARAMIXB, Array, [Objeto][IdPonto][IdModel]
+
+@return uRet,  Retorno diversos do PE
+
+/*/
+User Function SF69X01W()
+
+	Local _lRet         := .T.
+	Local _aArea	    := GetArea()
+	Local oModel        := ParamIXB[1]
+	Local cIdPonto      := ParamIXB[2]
+	Local cIdModel      := ParamIXB[3]
+	Local lQtdProd      := .T.
+	Local lVldMax       := .T.
+	Local lVigenci      := .T.
+	Local lIntVig       := .T.
+	Local _nOper := oModel:GetOperation()
+
+	Private cMsgErro    := ""
+
+	If cIdPonto == 'MODELPRE' /* Chamada antes da alteração de qualquer campo do modelo. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'MODELPOS' /* Chamada na validação total do modelo. */
+
+		//Valida Total de Horas das Turmas com os Produtos.
+		_lRet	:= fVldTur(oModel)
+
+		// Chamada para alteração somente das TURMAS
+		if _nOper == 4 .And. _lRet
+			_lRet := fVlUpd(oModel)
+		endif
+
+	ElseIf cIdPonto == 'FORMPRE' /* Chamada na antes da alteração de qualquer campo do formulário. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'FORMPOS' /* Chamada na validação total do formulário. */
+
+		fVlOco(oModel) // Valida tela de Ocorrencias
+
+		lQtdProd    := fVldIns('QTDPROD', 'F') //Valida a quantidade de produtos.
+		lVldMax     := fVldIns('VLRMAX', 'F')  //Valida valor maximo do produto
+		lVigenci    := fVldIns('VIGENCI', 'F') //Valida as datas de vigencia selecionadas.
+		lIntVig     := fVldIns('INTVIGE', 'F') //Valida o intervalo entre o fim do ultimo contrato e o inicio da vigencia previsto.
+
+		If !lQtdProd .Or. !lVldMax .Or. !lVigenci .Or. !lIntVig
+			If cIdModel == "ZBJDETAIL"
+				If MsgYesNo("Sua solicitação será encaminhada para o DR. Deseja realmente confirmar?","Confirmação")
+					AtuAPro(.T.)
+					_lRet := .T.
+				else
+					Help(Nil,Nil,"Operação Cancelada",Nil, cMsgErro ,1,0,Nil,Nil,Nil,Nil,Nil,{"Operação não foi gravada."})
+					_lRet := .F.
+				EndIF
+			EndIf
+		Else
+			If cIdModel == "ZBJDETAIL"
+				AtuAPro(.F.)
+			EndIf
+		EndIf
+
+	ElseIf cIdPonto == 'FORMLINEPRE' /* Chamada na pre validação da linha do formulario. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'FORMLINEPOS' /* Chamada na validação da linha do formulario. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'MODELVLDACTIVE' /* Chamada na validação da ativação do Modelo. */
+
+		_nOper := oModel:GetOperation()
+		if _nOper == 4 .AND. ZBB->ZBB_APROV == 'R'
+			Help("",1,"Operação Inválida",,"Necessidades Reprovadas nÃ£o podem ser Editadas.",1,,,,,,,{"Este registro não poder ser editado"})
+			_lRet := .F.
+		endif
+
+	ElseIf cIdPonto == 'MODELCOMMITTTS' /* Chamada apos a gravação total do modelo e dentro da transação. */
+
+		lQtdProd    := fVldIns('QTDPROD', 'F') //Valida a quantidade de produtos.
+		lVldMax     := fVldIns('VLRMAX', 'F')  //Valida valor maximo do produto
+		lVigenci    := fVldIns('VIGENCI', 'F') //Valida as datas de vigencia selecionadas.
+		lIntVig     := fVldIns('INTVIGE', 'F') //Valida o intervalo entre o fim do ultimo contrato e o inicio da vigencia previsto.
+
+		If !lQtdProd .Or. !lVldMax .Or. !lVigenci .Or. !lIntVig
+
+			Help(Nil,Nil,"Operação CONCLUIDA",Nil, cMsgErro ,1,0,Nil,Nil,Nil,Nil,Nil,{"Necessidade Incluida com sucesso e encaminhada para o DR para aprovação."})
+			_lRet := .T.
+			GravaDR(lQtdProd,lVldMax,lVigenci,lIntVig, oModel)
+
+		Else
+			If _nOper == 3
+				Help(Nil,Nil,"Operação CONCLUIDA",Nil,"Confirmado pelo usuário",1,0,Nil,Nil,Nil,Nil,Nil,{"Necessidade Incluida com sucesso e encaminhada para o Grupo Local para aprovação."})
+			ElseIf _nOper == 4
+				Help(Nil,Nil,"Operação CONCLUIDA",Nil,"Confirmado pelo usuário",1,0,Nil,Nil,Nil,Nil,Nil,{"Necessidade Atualizada com sucesso."})
+			EndIf
+
+		EndIf
+
+	ElseIf cIdPonto == 'MODELCOMMITNTTS' /* Chamada apos a gravação total do modelo e fora da transação. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'FORMCOMMITTTSPRE' /* Chamada antes da gravação da tabela do formulario. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'FORMCOMMITTTSPOS' /* Chamada apos a gravação da tabela do formulario. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'MODELCANCEL' /* Cancela */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'BUTTONBAR' /* Usado para Criação de Botoes Estrutura: { {'Nome', 'Imagem Botap', { || bBlock } } } */
+		_lRet := { {'Turmas x Produtos', 'Imagem Botap', { || U_SF69A14X(oModel) } } }
+	EndIf
+
+	RestArea(_aArea)
+
+Return _lRet
+
+//========================================================================================================================
+//Atualização do Grupo de Aprovação 
+//========================================================================================================================
+Static Function AtuAPro(lGrp)
+
+	Local oModel    := FWModelActive()
+	Local oModelZBB := oModel:GetModel( 'ZBBMASTER' )
+
+	If Empty(oModelZBB:GetValue("ZBB_GRPAPR")) .Or. oModel:GetOperation() == 4 //Altera
+		If lGrp
+			BeginSql Alias "TMP"
+            SELECT ZBD_CODIGO
+            FROM %table:ZBD% ZBD
+            WHERE ZBD.%notDel%
+            AND ZBD.ZBD_DR = %exp:"1"%
+			AND ZBD.ZBD_FILIAL = %exp:xFilial("ZBD")%
+			EndSql
+		Else
+			BeginSql Alias "TMP"
+            SELECT ZBD_CODIGO
+            FROM %table:ZBD% ZBD
+            WHERE ZBD.%notDel%
+            AND ZBD.ZBD_FILIAL = %exp:xFilial("ZBD")%
+			EndSql
+		EndIF
+
+		oModelZBB:SetValue("ZBB_GRPAPR",TMP->ZBD_CODIGO)
+
+		TMP->(dbCloseArea())
+	EndIf
+
+Return
+
+//==============================================================================================
+//Atualizaçao da Turma, somente quando o contrato nao estiver com o status Vigente
+//==============================================================================================
+Static Function fVlUpd(oModel)
+
+	Local oModelZBB     := oModel:GetModel( 'ZBBMASTER' )
+	Local oModelZBC     := oModel:GetModel( 'ZBCDETAIL' )
+	Local oModelZBH     := oModel:GetModel( 'ZBHDETAIL' )
+	Local lRet 			:= .T.
+	Local aZBB			:= FWSX3Util():GetAllFields( "ZBB" )
+	Local cCampo
+	Local x,y,z
+
+	If oModelZBB:GetValue("ZBB_APROV") == "A"
+
+		//Verifica Cabeçalho
+		For x := 1 to Len(aZBB)
+			cCampo := aZBB[x]
+			If oModelZBB:GetValue(cCampo) <> ZBB->&(cCampo)
+				lRet := .F.
+				Exit
+			EndIf
+		Next x
+
+		If lRet
+			//Verifica Itens
+			For y := 1 To oModelZBC:Length()
+				oModelZBC:GoLine( y )
+				ZBC->(dbSetOrder(1)) //Necessidade + Item
+				If ZBC->(dbSeek(xFilial("ZBC") + ZBB->ZBB_CODIGO + oModelZBC:GetValue("ZBC_ITEM")))
+					If oModelZBC:GetValue("ZBC_PRODUT") <> ZBC->ZBC_PRODUT .Or.;
+							oModelZBC:GetValue("ZBC_QUANT") <> ZBC->ZBC_QUANT .Or.;
+							oModelZBC:GetValue("ZBC_VALOR") <> ZBC->ZBC_VALOR
+						lRet := .F.
+						Exit
+					EndIf
+				Else
+					lRet := .F.
+					Exit
+				EndIf
+			Next y
+		EndIf
+
+		If !lRet
+			Help("",1,"Operação Inválida",,"Apenas necessidades 'Pendentes' podem ser editadas.",1,,,,,,,{"Este registro não poder ser editado"})
+		EndIf
+
+	EndIf
+
+	//Verifica turma
+	dbSelectArea("CN9")
+	CN9->(dbSetOrder(1))
+	IF CN9->(dbSeek(xFilial("CN9") + oModelZBB:GetValue("ZBB_CONTRA")))
+		If CN9->CN9_SITUAC == "02"
+			lRet := .T.
+		Else
+			For z := 1 To oModelZBH:Length()
+				oModelZBH:GoLine( z )
+				ZBH->(dbSetOrder(3)) // mudar para necessidade + turma ( 3 )
+				If ZBH->(dbSeek(xFilial("ZBH") + ZBB->ZBB_CODIGO + oModelZBH:GetValue("ZBH_TURMA")))
+					If oModelZBH:GetValue("ZBH_TURMA") <> ZBH->ZBH_TURMA .OR. ;
+							oModelZBH:GetValue("ZBH_CODCUR") <> ZBH->ZBH_CODCUR .OR.;
+							oModelZBH:GetValue("ZBH_PRODUT") <> ZBH->ZBH_PRODUT .OR.;
+							oModelZBH:GetValue("ZBH_QTD") <> ZBH->ZBH_QTD
+
+						lRet := .F.
+						Exit
+					EndIf
+				Else
+					lRet := .F.
+					Exit
+				EndIf
+			Next z
+		EndIf
+	EndIf
+
+	If !lRet
+		Help("",1,"Operação Inválida",,"Contrato já está Vigente e a Necessidade não pode ser alterado.",1,,,,,,,{"Este registro não poder ser editado"})
+	EndIf
+
+Return(lRet)
+//===============================================================================
+
+Static Function fVldTur(oModel)
+
+	Local lRet := .T.
+	Local oModelZBC     := oModel:GetModel( 'ZBCDETAIL' )
+	Local oModelZBH     := oModel:GetModel( 'ZBHDETAIL' )
+	Local aPrdVal		:= {}
+	Local z
+	Local aArea			:= GetArea()
+
+	For z := 1 To oModelZBH:Length()
+		oModelZBH:GoLine( z )
+		If !Empty(oModelZBH:GetValue("ZBH_TURMA")) .And. !oModelZBH:IsDeleted(z)
+			If aScan(aPrdVal,{ |x| x[1] == oModelZBH:GetValue("ZBH_PRODUT") }) == 0
+				aAdd(aPrdVal,{oModelZBH:GetValue("ZBH_PRODUT"),oModelZBH:GetValue("ZBH_QTD")})
+			else
+				aPrdVal[aScan(aPrdVal,{ |x| x[1] == oModelZBH:GetValue("ZBH_PRODUT") }),2] += oModelZBH:GetValue("ZBH_QTD")
+			EndIf
+		EndIf
+	Next z
+
+	If !Empty(aPrdVal)
+		For z := 1 To oModelZBC:Length()
+			oModelZBC:GoLine( z )
+
+			nPosPrd := aScan(aPrdVal,{ |x| x[1] == oModelZBC:GetValue("ZBC_PRODUT") })
+
+			If nPosPrd = 0
+				Help("",1,"Operação Inválida",,"Turma não vinculada ao produto.",1,,,,,,,{"Acione a opção 'Turma x Produto' no menu 'outras ações'."})
+				lRet := .F.
+				Exit
+			EndIf
+
+			If(aPrdVal[nPosPrd,2] <> oModelZBC:GetValue("ZBC_QUANT"))
+				Help("",1,"Operação Inválida",,"Quantidade de Horas nas turmas são diferente das horas total.",1,,,,,,,{"Ajuste quantidade de horas conforme aba das diciplinas"})
+				lRet := .F.
+				Exit
+			else
+				lRet := .T.
+			EndIf
+		Next z
+	EndIf
+
+	RestArea(aArea)
+
+Return(lRet)
+
+//======================================================================================
+Static Function GravaDR(lQtdProd,lVldMax,lVigenci,lIntVig, oModel)
+
+	Local cTit  		:= "Motivo"
+	Local oMultiGe1
+	Local cMsg 			:= Space(200)
+	Local oGroup1
+	Local oBtn
+	Local cCod			:= "000"
+
+	DEFINE MSDIALOG oDlg TITLE cTit FROM 000, 000  TO 200, 470 COLORS 0, 16777215 PIXEL
+
+	@ 004, 006 GROUP oGroup1 TO 094, 231 PROMPT "Descreva a Justificativa" OF oDlg COLOR 0, 16777215 PIXEL
+	@ 011, 009 GET oMultiGe1 VAR cMsg OF oDlg MULTILINE SIZE 219, 060 COLORS 0, 16777215 HSCROLL PIXEL VALID IIF(Empty(cMsg),;
+		MsgAlert("Favor Preencher o Motivo","ATENÇÃO"),.T.)
+	@ 076, 187 BUTTON oBtn PROMPT "Salvar" SIZE 037, 012 OF oDlg PIXEL ACTION oDlg:End()
+
+	ACTIVATE MSDIALOG oDlg CENTERED
+
+	dbSelectArea("ZBJ")
+	ZBJ->(dbSetOrder(2))
+	If ZBJ->(dbSeek(xFilial("ZBJ") + M->ZBB_CODIGO ))
+		While ZBJ->(!EOF()) .AND. ZBJ->ZBJ_CODNEC == M->ZBB_CODIGO
+			RecLock("ZBJ", .F.)
+			ZBJ->(DBDELETE())
+			ZBJ->(MSUNLOCK())
+			ZBJ->(dbSkip())
+		ENDDO
+	EndIF
+
+	If !lQtdProd
+		RecLock("ZBJ", .T.)
+		ZBJ->ZBJ_FILIAL := xFilial("ZBJ")
+		ZBJ->ZBJ_CODIGO := cCod:= Soma1(cCod)
+		ZBJ->ZBJ_CODNEC := M->ZBB_CODIGO
+		ZBJ->ZBJ_CODDR  := ""
+		ZBJ->ZBJ_DESC   := "Quantidade de Horas Maior que permitido."
+		ZBJ->ZBJ_OBS    := Alltrim(cMsg)
+		ZBJ->(MsUnLock())
+	EndIf
+
+	If !lVldMax
+		RecLock("ZBJ", .T.)
+		ZBJ->ZBJ_FILIAL := xFilial("ZBJ")
+		ZBJ->ZBJ_CODIGO := cCod:= Soma1(cCod)
+		ZBJ->ZBJ_CODNEC := M->ZBB_CODIGO
+		ZBJ->ZBJ_CODDR  := ""
+		ZBJ->ZBJ_DESC   := "Valor Máximo excedido."
+		ZBJ->ZBJ_OBS    := Alltrim(cMsg)
+		ZBJ->(MsUnLock())
+	EndIf
+
+	If !lVigenci
+		RecLock("ZBJ", .T.)
+		ZBJ->ZBJ_FILIAL := xFilial("ZBJ")
+		ZBJ->ZBJ_CODIGO := cCod:= Soma1(cCod)
+		ZBJ->ZBJ_CODNEC := M->ZBB_CODIGO
+		ZBJ->ZBJ_CODDR  := ""
+		ZBJ->ZBJ_DESC   := "Ultrapassado Limite Máximo da Vigencia."
+		ZBJ->ZBJ_OBS    := Alltrim(cMsg)
+		ZBJ->(MsUnLock())
+	EndIf
+
+	If !lIntVig
+		RecLock("ZBJ", .T.)
+		ZBJ->ZBJ_FILIAL := xFilial("ZBJ")
+		ZBJ->ZBJ_CODIGO := cCod:= Soma1(cCod)
+		ZBJ->ZBJ_CODNEC := M->ZBB_CODIGO
+		ZBJ->ZBJ_CODDR  := ""
+		ZBJ->ZBJ_DESC   := "Excedido Período Mínimo de Intervalo do Docente."
+		ZBJ->ZBJ_OBS    := Alltrim(cMsg)
+		ZBJ->(MsUnLock())
+	EndIf
+
+
+Return
+
+//=========================================================================================
+
+Static Function fVlOco(oMdl)
+
+	Local nOperation  := oMdl:GetOperation()
+	Local oModelZBJ    := oMdl:GetModel( 'ZBJDETAIL' )
+	Local lRet 		  := .T.
+
+	If nOperation == MODEL_OPERATION_INSERT
+		If Empty( oModelZBJ:GetValue('ZBJDETAIL','ZBJ_CODNEC' ) )
+			oModelZBJ:SetValue('ZBJDETAIL',"ZBJ_CODNEC",M->ZBB_CODIGO )
+			lRet := .T.
+		EndIf
+	EndIf
+
+Return(lRet)
+
+ /*/{Protheus.doc} ChavB5()
+	(Chave para a tabela SB5)
+	@type  Function
+	@author user
+	@since 21/06/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+	/*/
+User Function ChavB5()
+
+Local oModel        := FWModelActive()
+Local oModelZBC     := oModel:GetModel( 'ZBCDETAIL' )
+Local cChave := &('xFilial("SB5")+' + '"' + oModelZBC:GetValue("ZBC_PRODUT") +'"')
+
+Return cChave
+
+
+/*/{Protheus.doc} User Function xValFat
+	( Retorna o valor do Gatilho para a FATEC ou outra filial)
+	@type  Function
+	@author user
+	@since 21/06/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+	/*/
+User Function xValFat()
+	
+Local lFatec := cempant ==  GetNewPar("MV_XEMP", "01")  .And. cfilant == GetNewPar("MV_XFIL", "03MT0017")
+Local nVal := 0
+
+nVal :=  IIF(lFatec, SB5->B5_XVLDF, SB5->B5_XVLDC )     
+
+Return nVal 

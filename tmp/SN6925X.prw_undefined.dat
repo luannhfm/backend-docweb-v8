@@ -1,0 +1,1137 @@
+#Include "Protheus.Ch"
+#Include "Topconn.Ch"
+#Include "MsOle.Ch"
+
+#Define oleWdFormatDocument "0"
+#Define oleWdFormatHTML "102"
+#Define oleWdFormatPDF "17"
+
+/*/{Protheus.doc} SN6925X
+Funcao para Gerar no PDF o Contrato de Venda - SENAI - Rotina de Integração 
+PROTHEUS x WORD gera a partir de TEMPLATE Contrato.
+	
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	27/09/2016
+@version 	1.0
+/*/
+User Function SN6925X()
+	
+	Local _aArea 	:= GetArea()
+	Local _lRet		:= .T.
+	Local _cMsgErro	:= ""
+	
+	Private _cCtrNr		:= CN9->CN9_NUMERO				// Número do Contrato
+	Private _cNrCtrVen	:= CN9->CN9_XNROCV				// Número do Contrato de Venda
+	Private _cCtrNrRev	:= CN9->CN9_REVISA				// Número da revisão do Contrato
+	Private _cFilCtr	:= CN9->CN9_FILIAL				// Filial do contato
+	Private _cNroOpor	:= CN9->CN9_XOPORT				// Codigo da Oportunidade
+	Private _cRevOpor	:= CN9->CN9_XREVOP				// Codigo da Revisao da Oportunidade
+	Private _aCondPg	:= {}
+	Private _nValorIn	:= CN9->CN9_VLINI				// Valor do Contrato
+	Private _cValorIn	:= Extenso(_nValorIn)			// Valor do Contrato por Extenso
+	Private _cDtFim		:= DtoC(CN9->CN9_DTFIM)		// Data Fim da Vigencia do Contrato
+	Private _cExcCntdo	:= AllTrim(CN9->CN9_XCCTDO) // Comissao de execucao do Contratado
+	Private _cExcCntte	:= AllTrim(CN9->CN9_XCCTTE) // Comissao de execucao da Contratante
+	Private _cDirImg	:= AllTrim(CN9->CN9_XDIRIM) // Utiliza direito de imagem
+	Private _cGerNome	:= ""
+	Private _cGerCPF	:= ""
+	Private _cGerRG		:= ""
+	Private _cGerFunc	:= ""
+	Private _cGerOrEx	:= ""
+	
+	DbSelectArea("CN1")
+	CN1->(DbSetOrder(1))
+	If CN1->(DbSeek(xFilial("CN1")+CN9->CN9_TPCTO))
+		If CN1->CN1_ESPCTR == "2"	//Contrato de Venda
+			If CN9->CN9_SITUAC == '03' .AND. CN9->CN9_XMINUT == 'N' 							
+				FWMsgRun(, {|| fExpCtr()}, "Gerando o doc. WORD do Contrato.", "Aguarde...")
+			Else
+				If .Not. CN9->CN9_SITUAC == '03'														
+					_cMsgErro := "Permitido somento p/ contratos em situação 03-Emitido"
+					_lRet := .F.
+				ElseIf CN9->CN9_XMINUT <> 'N'
+					_cMsgErro := "Minutas do Cliente devem ser impressas diretamente no Word"
+					_lRet := .F.
+				EndIf
+			EndIf
+		Else
+			_cMsgErro := "Impressão válida somente para Contrato de Venda!"
+			_lRet := .F.
+		EndIf
+	Else
+		_cMsgErro := "Tipo de Contrato não encontrado!"
+		_lRet := .F.
+	EndIf
+
+	If !_lRet
+		Aviso(FunName()+"/"+ProcName(), _cMsgErro, {"OK"})
+	EndIf
+	
+	RestArea(_aArea)
+
+Return( _lRet )
+
+
+/*/{Protheus.doc} fExpCtr
+Carrega as DocVariables, Instancia modelo do Word, executa macros e Gera
+Contrato de Venda em PDF.
+	
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	27/09/2016
+@version 	1.0
+/*/
+Static Function fExpCtr()
+	
+	Local _aAreaSM0		:= SM0->(GetArea())
+	Local _aAreaSA1		:= SA1->(GetArea())
+	Local _cArqNome		:= "GCT"+ Alltrim(CN9->CN9_XNROCV) + DtoS(dDataBase) + StrTran(Time(),":","")
+	Local _cEmpNome		:= fCompEmp()
+	Local _cEmpCNPJ		:= ""
+	Local _cEmpTel		:= ""
+	Local _cEmpEnd		:= ""
+	Local _cEmpCEP		:= ""
+	Local _cEmpBair		:= ""
+	Local _cEmpMun		:= ""
+	Local _cEmpUF		:= ""
+	Local _cCliNome		:= ""
+	Local _cCliFant		:= ""
+	Local _cCliCNPJ		:= ""
+	Local _cCliIE		:= ""
+	Local _cCliEnd		:= ""
+	Local _cCliBair		:= ""
+	Local _cCliCep		:= ""
+	Local _cCliMun		:= ""
+	Local _cCliEst		:= ""
+	Local _cCliTel		:= ""
+	local _cCliEMl := ""
+	Local _cRespNom1	:= ""
+	Local _cRespCrg1	:= ""
+	Local _cRespRG1		:= ""
+	Local _cRespCPF1	:= ""
+	Local _cRespNom2	:= ""
+	Local _cRespCrg2	:= ""
+	Local _cRespRG2		:= ""
+	Local _cRespCPF2	:= ""
+	Local _cRespTel		:= ""
+	Local _cRespLeg2	:= ""
+	Local _cPropNr		:= ""
+	Local _cPropRv		:= ""
+	Local _cRAlim  		:= ""
+	Local _cRApos  		:= ""
+	Local _cRCert  		:= ""
+	Local _cRHosp  		:= ""
+	Local _cRVPH   		:= ""
+	Local _cREstF  		:= ""
+	Local _cROutr  		:= ""
+	Local _cRAdVi  		:= ""
+	Local _nCtaA 		:= 0 			
+	Local _hWord		:= ""
+	Local _cAliasRM 	:= GetNewPar("MV_XSGEABD", "")
+	Local _cTipoPrd		:= ""	
+	Local _cCodPrd		:= ""
+	Local _cDscPrd		:= ""
+	Local _cModulo		:= ""
+	Local _cQtdBenf 	:= ""
+	Local _cCurso  		:= ""
+	Local _cModal  		:= ""
+	Local _cTurma  		:= ""
+	Local _dDtIniT		:= dDataBase
+	Local _dDtIniF		:= dDataBase
+	Local _cCargaH 		:= ""
+	Local _cTurno  		:= ""
+	Local _cDtInic 		:= ""
+	Local _cDtFinl 		:= ""
+	Local _cPrdDesp		:= AllTrim(GetNewPar("MV_XCTRPDV", ""))
+	Local _cPathFull	:= ""
+	Local _cIniVige		:= ""						// Data Inicio da Vigencia do Contrato
+	Local _cFimVige		:= ""							// Data Fim da Vigencia do Contrato
+	Local _cIniExec		:= ""						// Data Inicio da Execução 
+	Local _cFimExec		:= ""						// Data Fim da Execução 
+	Local jReprCli := JsonObject():New()
+	Local lTemDesc := .F.
+	local nRepr := 0
+	local nTotalRepr := 0
+
+	Private _aMacroExc	:= {}
+	Private _cArqDOT	:= fRetMinuta()
+	Private _cPathDOT	:= SuperGetMv("MV_XGCTDOT",,"")
+	Private _cPathDOC	:= SuperGetMv("MV_XGCTDOC",,"")
+	Private _cPathREP	:= SuperGetMv("MV_XGCTREP",,"")
+	Private _aParamVLD	:= { { "_cPathDOT"	,"MV_XGCTDOT - Repositorio DOT docs de Integracao WORD (GCT)" 		},;
+								  { "_cPathDOC"	,"MV_XGCTDOC - Repositorio DOC docs de Integracao WORD (GCT)" 		},;
+								  { "_cPathREP"	,"MV_XGCTREP - Repositorio LOCAL p/emissao dos documentos (GCT)" 	}}
+	
+	//Valida se os parametros estao preenchidos
+	For _nCtaA := 1 To Len(_aParamVLD)
+		_cValorVar	:= &(_aParamVLD[_nCtaA,1])
+		If _cValorVar == ""
+			Aviso(FunName()+"/"+ProcName(),"Integração não pode ser realizada pois o parametro ["+_aParamVLD[_nCtaA,2]+"] não esta preenchido",{"OK"})
+			Return .f.
+		Endif
+	Next _nCtaA
+	
+	_hWord := OLE_CreateLink()	
+	
+	OLE_SetProperty( _hWord, oleWdVisible, .F. )
+	
+	If _hWord == "-1"
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel estabelecer comunicação com o Microsoft Word",{"OK"})
+		Return
+	EndIf
+	
+	If File(_cPathREP + _cArqDOT)
+		FErase(_cPathREP + _cArqDOT)
+	Endif	
+	//--Dantas aqui 
+	
+	_cPathFull := _cPathDOT+_cArqDOT
+	_cPathFull := Alltrim(_cPathFull)
+	If !CpyS2T(_cPathFull,Alltrim(_cPathREP),.T.)
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel copiar TEMPLATE de "+_cPathFull+" para gerar "+Alltrim(_cPathREP)+" a integração!",{"OK"})
+		Return
+	Endif
+
+	//Busca dados da empresa
+	DbSelectArea("SM0")
+	SM0->(DbSetOrder(1))
+	If (SM0->(DbSeek( cEmpAnt + _cFilCtr)))
+		cM0NomeCom := AllTrim(SM0->M0_NOMECOM)
+		_cEmpCNPJ	:= Transform(AllTrim(SM0->M0_CGC),Iif(Len(AllTrim(SM0->M0_CGC))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+		_cEmpEnd	:= AllTrim(SM0->M0_ENDENT)
+		_cEmpCEP	:= Transform(AllTrim(SM0->M0_CEPENT), "@R 99999-999")
+		_cEmpBair	:= AllTrim(SM0->M0_BAIRENT)
+		_cEmpMun	:= AllTrim(SM0->M0_CIDENT)
+		_cEmpUF	:= AllTrim(SM0->M0_ESTENT)
+		_cEmpTel 	:= Transform(SubStr(SM0->M0_TEL,4,2) + SubStr(SM0->M0_TEL,7,11), "@R (99)9999-9999")
+	Else
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar a empresa no sigamat!",{"OK"})
+		Return
+	Endif
+	
+	RestArea(_aAreaSM0)
+	
+	//Busca dados do Cliente
+	DbSelectArea("SA1")
+	SA1->(DbSetOrder(1))
+	SA1->(DbGotop())
+	If SA1->(DbSeek( xFilial("SA1") + CN9->CN9_CLIENT + CN9->CN9_LOJACL ))
+		_cCliNome := AllTrim(SA1->A1_NOME)
+		_cCliFant := AllTrim(SA1->A1_NREDUZ)
+		_cCliCNPJ := Transform(AllTrim(SA1->A1_CGC),Iif(Len(AllTrim(SA1->A1_CGC))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+		_cCliIE   := AllTrim(SA1->A1_INSCR)
+		_cCliEnd  := AllTrim(SA1->A1_END)
+		_cCliBair := AllTrim(SA1->A1_BAIRRO)
+		_cCliCep  := Transform(AllTrim(SA1->A1_CEP), "@R 99999-999")
+		_cCliMun  := AllTrim(SA1->A1_MUN)
+		_cCliEst  := AllTrim(SA1->A1_EST)
+		_cCliTel  := AllTrim(SA1->A1_TEL)
+		_cCliEMl := AllTrim(SA1->A1_EMAIL)
+	Else
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o cliente!",{"OK"})
+		Return
+	EndIf
+	
+	RestArea(_aAreaSA1)
+	
+	If Select("TRA") > 0
+		DbSelectArea("TRA")
+		TRA->(DbCloseArea())
+	EndIf
+		
+	_cSql := "SELECT "+CRLF
+	_cSql += "  U5_CONTAT, U5_CPF, U5_RG, U5_XORGEXP, U5_FUNCAO, U5_DDD, U5_FONE, U5_FCOM1 "+CRLF
+	_cSql += "FROM "+CRLF
+	_cSql += "  "+RetSqlName("CN9")+" CN9 "+CRLF
+	_cSql += "  INNER JOIN "+RetSqlName("AD1")+" AD1 ON AD1.D_E_L_E_T_ = ' ' AND CN9_FILIAL = AD1_FILIAL AND CN9_XOPORT = AD1_NROPOR "+CRLF
+	_cSql += "  INNER JOIN "+RetSqlName("AD9")+" AD9 ON AD9.D_E_L_E_T_ = ' ' AND AD1_FILIAL = AD9_FILIAL AND AD1_NROPOR = AD9_NROPOR AND AD1_REVISA = AD9_REVISA "+CRLF
+	_cSql += "  INNER JOIN "+RetSqlName("SU5")+" SU5 ON SU5.D_E_L_E_T_ = ' ' AND  U5_FILIAL = '"+xFilial("SU5")+"' AND AD9_CODCON = U5_CODCONT "+CRLF
+	_cSql += "WHERE "+CRLF
+	_cSql += "  CN9.D_E_L_E_T_ = ' ' "+CRLF
+	_cSql += "  AND CN9_FILIAL = '"+ _cFilCtr +"' "+CRLF
+	_cSql += "  AND CN9_NUMERO = '"+ _cCtrNr +"' "+CRLF
+	_cSql += "  AND CN9_REVISA = '"+ _cCtrNrRev +"' "+CRLF
+	_cSql += "  AND AD9_XREPRE = '1' "+CRLF			//Somente contatos do tipo Representante (1=Sim)
+	
+	TCQUERY _cSql NEW ALIAS "TRA"	
+		
+	DbSelectArea('TRA')
+	TRA->(DbGoTop())
+	
+	_nCont := 0
+	While .Not. TRA->( EOF() )
+		
+		_nCont++
+		
+		If _nCont == 1
+			_cRespNom1 := AllTrim(TRA->U5_CONTAT)
+			_cRespCrg1 := AllTrim(Posicione("SUM",1,xFilial("SUM") + TRA->U5_FUNCAO,"UM_DESC"))
+			_cRespRG1  := AllTrim(TRA->U5_RG)
+			_cRespCPF1 := Transform(AllTrim(TRA->U5_CPF),Iif(Len(AllTrim(TRA->U5_CPF))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+			If .Not. Empty(TRA->U5_FONE)
+				_cRespTel  := Transform(AllTrim(TRA->U5_DDD) + AllTrim(TRA->U5_FONE), "@R (999) 9999-9999")
+			Else
+				_cRespTel  := Transform(AllTrim(TRA->U5_DDD) + AllTrim(TRA->U5_FCOM1), "@R (999) 9999-9999")
+			EndIf
+		Else
+			_cRespNom2 := AllTrim(TRA->U5_CONTAT)
+			_cRespCrg2 := AllTrim(Posicione("SUM",1,xFilial("SUM") + TRA->U5_FUNCAO,"UM_DESC"))
+			_cRespRG2  := AllTrim(TRA->U5_RG)
+			_cRespCPF2 := Transform(AllTrim(TRA->U5_CPF),Iif(Len(AllTrim(TRA->U5_CPF))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+		EndIf
+
+		jReprCli['representante'+cValToChar(_nCont)] := JsonObject():New()
+		jReprCli['representante'+cValToChar(_nCont)]['nome'] := AllTrim(TRA->U5_CONTAT)
+		jReprCli['representante'+cValToChar(_nCont)]['cargo'] := AllTrim(Posicione("SUM", 1, xFilial("SUM")+TRA->U5_FUNCAO, "UM_DESC"))
+		jReprCli['representante'+cValToChar(_nCont)]['rg'] := AllTrim(TRA->U5_RG)
+		jReprCli['representante'+cValToChar(_nCont)]['cpf'] := Transform(AllTrim(TRA->U5_CPF), "@R 999.999.999-99")
+		
+		TRA->( DbSkip() )
+	End
+	
+	TRA->(DbCloseArea())
+	
+	If _nCont == 0
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o responsavel Legal, Favor Verificar!",{"OK"})
+		Return
+	EndIf
+	
+	If Select("TRA") > 0
+		DbSelectArea("TRA")
+		TRA->(DbCloseArea())
+	EndIf
+	
+	//Dados da proposta
+	_cSql := "SELECT ADY_FILIAL, ADY_OPORTU, ADY_REVISA, ADY_PROPOS, ADY_PREVIS, "+CRLF
+	_cSql += " ADY_XRALIM, ADY_XRAPOS, ADY_XRCERT, ADY_XRDHOS, ADY_XRDVPH, ADY_XRESTF, ADY_XROUTR, ADY_XRRAVI, "+CRLF
+	_cSql += " ADY_XFORPG "+CRLF
+	_cSql += "FROM "+RetSqlName("ADY")+" ADY "+CRLF
+	_cSql += "WHERE "+CRLF
+	_cSql += "ADY_FILIAL    			= '"+ _cFilCtr  +"'	"+CRLF
+	_cSql += "AND ADY_OPORTU  		= '"+ _cNroOpor +"'	"+CRLF
+	_cSql += "AND ADY_REVISA			= '"+ _cRevOpor +"'	"+CRLF
+	_cSql += "AND ADY_STATUS 		= 'E'	"+CRLF
+	_cSql += "AND ADY.D_E_L_E_T_	<> '*'	"+CRLF
+	
+	TCQUERY _cSql NEW ALIAS "TRA"	
+	
+	DbSelectArea('TRA')
+	TRA->(DbGoTop())
+	
+	_cPropNr := AllTrim(TRA->ADY_PROPOS)
+	_cPropRv := AllTrim(TRA->ADY_PREVIS)
+	_cRAlim  := AllTrim(TRA->ADY_XRALIM)
+	_cRApos  := AllTrim(TRA->ADY_XRAPOS)
+	_cRCert  := AllTrim(TRA->ADY_XRCERT)
+	_cRHosp  := AllTrim(TRA->ADY_XRDHOS)
+	_cRVPH   := AllTrim(TRA->ADY_XRDVPH)
+	_cREstF  := AllTrim(TRA->ADY_XRESTF)
+	_cROutr  := AllTrim(TRA->ADY_XROUTR)
+	_cRAdVi  := AllTrim(TRA->ADY_XRRAVI)
+	cDForPag := AllTrim(POSICIONE("SX5", 1, XFILIAL("SX5")+"ZC"+TRA->ADY_XFORPG,"X5_DESCRI"))
+	_cDespesa := "Alimentação, Apostila, Certificado, Viagem, Passagem e Hospedagem, Estrutura Física, Recursos Audiovisuais, e Outros"
+	_cRespDe := "CONTRATANTE"
+	/*
+	If _cRAlim $ 'C/S'
+		_cDespesa += " Alimentação"
+	EndIf
+	
+	If _cRApos $ 'C/S'
+		_cDespesa += " Apostila"
+	EndIf
+	
+	If _cRCert $ 'C/S'
+		_cDespesa += " Certificado"
+	EndIf
+	
+	If _cRHosp $ 'C/S'
+		_cDespesa += " Hospedagem"
+	EndIf
+	
+	If _cRVPH $ 'C/S'
+		_cDespesa += " Viagem, Passagem e Hospedagem"
+	EndIf
+	
+	If _cREstF $ 'C/S'
+		_cDespesa += " Estrutura Física"
+	EndIf
+	
+	If _cROutr $ 'C/S'
+		_cDespesa += " Outros"
+	EndIf
+	
+	If _cRAdVi $ 'C/S'
+		_cDespesa += " Recursos Audiovisuais"
+	EndIf
+	*/
+	If _cDirImg == "S"
+		If "3001" $ _cArqDOT
+			_cDirImg := "6.2   DO DIREITO DE IMAGEM -  O CONTRATANTE  AUTORIZA  o uso da sua logomarca, para ser utilizada pelo CONTRATADO, em qualquer material de divulgação da instituição e de suas finalidades institucionais, em território nacional e internacional.  A presente autorização é concedida a título gratuito, abrangendo o uso da imagem acima mencionada por todos os meios de divulgação, inclusive, mas não limitadamente, pela mídia impressa ou por transmissão eletrônica de dados (online), em folders de apresentação da entidade, folhetos, malas diretas, bem como no website, através dos quais todo e qualquer terceiro, cliente e/ou visitante, poderá ter acesso às mencionadas informações e imagem, cuja divulgação pública ora se autoriza."
+		ElseIf "3002" $ _cArqDOT
+			_cDirImg := "9.2   DO DIREITO DE IMAGEM -  O CONTRATANTE  AUTORIZA  o uso da sua logomarca, para ser utilizada pelo CONTRATADO, em qualquer material de divulgação da instituição e de suas finalidades institucionais, em território nacional e internacional.  A presente autorização é concedida a título gratuito, abrangendo o uso da imagem acima mencionada por todos os meios de divulgação, inclusive, mas não limitadamente, pela mídia impressa ou por transmissão eletrônica de dados (online), em folders de apresentação da entidade, folhetos, malas diretas, bem como no website, através dos quais todo e qualquer terceiro, cliente e/ou visitante, poderá ter acesso às mencionadas informações e imagem, cuja divulgação pública ora se autoriza."
+		Else
+			_cDirImg := ""
+		EndIf
+	Else
+		_cDirImg := " "
+	EndIf
+	
+	TRA->(DbCloseArea())
+	
+	If Empty(_cPropNr)
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar a Proposta Comercial, Favor Verificar!",{"OK"})
+		Return
+	EndIf
+	
+	//Habilitacao Tecnica
+	If "3001" $ _cArqDOT
+	
+		If Select("TRA") > 0
+			DbSelectArea("TRA")
+			TRA->(DbCloseArea())
+		EndIf
+		
+		_cSql := "SELECT  		"+CRLF
+		_cSql += "ADZ_FILIAL,	"+CRLF
+		_cSql += "ADZ_PROPOS,	"+CRLF
+		_cSql += "ADZ_REVISA,	"+CRLF
+		_cSql += "ADZ_PRODUT,	"+CRLF
+		_cSql += "ADZ_DESCRI,	"+CRLF
+		_cSql += "ADZ_XTURMA,	"+CRLF
+		_cSql += "ADZ_XMODUL,	"+CRLF
+		_cSql += "ADZ_XDTINI,	"+CRLF
+		_cSql += "ADZ_XDTFIM,	"+CRLF
+		_cSql += "ADZ_QTDVEN	"+CRLF
+		_cSql += "FROM "+RetSqlName("ADZ")+" ADZ "+CRLF
+		_cSql += "WHERE "+CRLF
+		_cSql += "ADZ_FILIAL    		= '"+ _cFilCtr +"'	"+CRLF
+		_cSql += "AND ADZ_PROPOS  		= '"+ _cPropNr +"'	"+CRLF
+		_cSql += "AND ADZ_REVISA		= '"+ _cPropRv +"'	"+CRLF
+		_cSql += "AND ADZ.D_E_L_E_T_	<> '*' 				"+CRLF
+		
+		TCQUERY _cSql NEW ALIAS "TRA"	
+		
+		DbSelectArea('TRA')
+		TRA->(DbGoTop())
+		
+		_cCodPrd	:= AllTrim(Posicione("SB1",1,xFilial("SB1") + TRA->ADZ_PRODUT,"B1_XPRDSGE"))
+		_cTurma		:= AllTrim(TRA->ADZ_XTURMA)
+		_cModulo	:= AllTrim(TRA->ADZ_XMODUL)
+		_cQtdBenf	:= cValToChar(TRA->ADZ_QTDVEN)
+		_dDtIniT	:= StoD(TRA->ADZ_XDTINI)
+		_dDtIniF	:= StoD(TRA->ADZ_XDTFIM)
+			
+		TRA->(DbCloseArea())
+		
+		If Empty(_cCodPrd)
+			Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o Produto da Proposta Comercial, Favor Verificar!",{"OK"})
+			Return
+		EndIf
+		
+		If Select("TRA") > 0
+			DbSelectArea("TRA")
+			TRA->(DbCloseArea())
+		EndIf
+		
+		_cSql := "SELECT * FROM RM.VISAO_CRM_TURMA" + _cAliasRM + CRLF
+		_cSql += "WHERE CODIGO_UNIDADE_OPERACIONAL = '"+ _cFilCtr +"' "+CRLF
+		_cSql += "AND CODIGO_CURSO 	= '"+ _cCodPrd +"'	"+CRLF
+		_cSql += "AND TURMA 		= '"+ _cTurma  +"'	"+CRLF
+		_cSql += "AND COD_MODULO 	= '"+ _cModulo +"'	"+CRLF
+		
+		If .Not. Empty(_dDtIniT) .And. .Not. Empty(_dDtIniF)
+			_cSql += "AND DATA_INICIAL  = TO_DATE('"+ DtoC(_dDtIniT) +"', 'dd/mm/yy') "+CRLF
+			_cSql += "AND DATA_FINAL    = TO_DATE('"+ DtoC(_dDtIniF) +"', 'dd/mm/yy') "+CRLF
+		EndIf
+		
+		TCQUERY _cSql NEW ALIAS "TRA"	
+		
+		DbSelectArea('TRA')
+		TRA->(DbGoTop())
+		
+		_cCurso  := Upper(FwNoAccent(AllTrim(TRA->CURSO)))
+		_cModal  := Upper(FwNoAccent(AllTrim(TRA->MODALIDADE)))
+		_cTurma  := AllTrim(TRA->TURMA)
+		_cModulo := Upper(FwNoAccent(AllTrim(TRA->MODULO)))
+		_cCargaH := AllTrim(cValToChar(TRA->CH))
+		_cTurno  := AllTrim(TRA->TURNO)
+		_cDtInic := DtoC(TRA->DATA_INICIAL)
+		_cDtFinl := DtoC(TRA->DATA_FINAL)
+		
+		TRA->(DbCloseArea())
+		
+		If Empty(_cCodPrd)
+			Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o Produto da Proposta Comercial, Favor Verificar!",{"OK"})
+			Return
+		EndIf
+	EndIf
+	
+	// Termo de adesão STI
+	If "3004" $ _cArqDOT
+		DbSelectArea("CNB")
+	    CNB->(DbSetOrder(1))
+	    if !CNB->(DbSeek(_cFilCtr + _cCtrNr) )
+			Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o Produto na tabela [CNB]. Favor Verificar!",{"OK"})
+			Return
+		EndIf
+		
+		_cObjeto := IF( Empty(CNB->CNB_DESCRI) , "*** CAMPO CNB_DESCRI NÃO PREENCHIDO ***" , CNB->CNB_DESCRI )
+		
+		_cIniVige := DtoC(CN9->CN9_DTINIC)	
+		_cFimVige := DtoC(CN9->CN9_DTFIM)
+		_cIniExec := DtoC(CN9->CN9_XDTINI)
+		_cFimExec := DtoC(CN9->CN9_XDTFIM)
+	EndIf
+	
+	//Abre integracao com Word
+	OLE_NewFile(_hWord, _cPathREP + _cArqDOT)
+	
+	//+--------------------------------------------------------------------+
+	//| Dados do Contrato                                                  |
+	//+--------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_ContratoNr"	, _cNrCtrVen)
+	OLE_SetDocumentVar(_hWord,"Doc_cDtFim"		, _cDtFim)
+	
+	//+--------------------------------------------------------------------+
+	//| Dados da Contratada                                                |
+	//+--------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"M0_NOMECOM"		, cM0NomeCom)
+	OLE_SetDocumentVar(_hWord,"Doc_EmpNome"		, _cEmpNome)
+	OLE_SetDocumentVar(_hWord,"Doc_EmpCNPJ"		, _cEmpCNPJ)
+	OLE_SetDocumentVar(_hWord,"Doc_EmpTel"		, _cEmpTel)
+	OLE_SetDocumentVar(_hWord,"Doc_EmpEnd"		, _cEmpEnd)
+	OLE_SetDocumentVar(_hWord,"Doc_EmpCEP"		, _cEmpCEP)
+	OLE_SetDocumentVar(_hWord,"Doc_EmpBair"		, _cEmpBair)
+	OLE_SetDocumentVar(_hWord,"Doc_EmpMun"		, _cEmpMun)
+	OLE_SetDocumentVar(_hWord,"Doc_EmpUF"		, _cEmpUF)
+	
+	//+--------------------------------------------------------------------+
+	//| Dados do Contratante                                               |
+	//+--------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_CliRazSoial"	, _cCliNome)
+	OLE_SetDocumentVar(_hWord,"Doc_CliFantasia"	, _cCliFant)
+	OLE_SetDocumentVar(_hWord,"Doc_CliCNPJ"		, _cCliCNPJ)
+	OLE_SetDocumentVar(_hWord,"Doc_CliIE"		, _cCliIE)
+	OLE_SetDocumentVar(_hWord,"Doc_CliEnd"		, _cCliEnd)
+	OLE_SetDocumentVar(_hWord,"Doc_CliBair"		, _cCliBair)
+	OLE_SetDocumentVar(_hWord,"Doc_CliCep"		, _cCliCep)
+	OLE_SetDocumentVar(_hWord,"Doc_CliMun"		, _cCliMun)
+	OLE_SetDocumentVar(_hWord,"Doc_CliEst"		, _cCliEst)
+	OLE_SetDocumentVar(_hWord,"Doc_CliTel"		, _cCliTel)
+	OLE_SetDocumentVar(_hWord,"Doc_CliEMail"	, _cCliEMl)
+	
+	//+--------------------------------------------------------------------+
+	//| Dados do Responsavel Legal                                         |
+	//+--------------------------------------------------------------------+
+	if aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("RespCliente")}) > 0
+		for nRepr := 1 to Len(jReprCli:GetNames())
+			OLE_SetDocumentVar(_hWord, "RespCliente"+CValToChar(nRepr)+"nome", jReprCli['representante'+cValToChar(nRepr)]['nome'])
+			OLE_SetDocumentVar(_hWord, "RespCliente"+CValToChar(nRepr)+"cargo", jReprCli['representante'+cValToChar(nRepr)]['cargo'])
+			OLE_SetDocumentVar(_hWord, "RespCliente"+CValToChar(nRepr)+"rg", jReprCli['representante'+cValToChar(nRepr)]['rg'])
+			OLE_SetDocumentVar(_hWord, "RespCliente"+CValToChar(nRepr)+"cpf", jReprCli['representante'+cValToChar(nRepr)]['cpf'])
+			nTotalRepr++
+		next nRepr
+		OLE_SetDocumentVar(_hWord, "TotalRespCliente", nTotalRepr)
+		OLE_ExecuteMacro(_hWord, "RespCliente")
+	else
+		OLE_SetDocumentVar(_hWord,"Doc_RespNome1"	, _cRespNom1)
+		OLE_SetDocumentVar(_hWord,"Doc_RespCrg1"	, _cRespCrg1)
+		OLE_SetDocumentVar(_hWord,"Doc_RespRG1"		, _cRespRG1)
+		OLE_SetDocumentVar(_hWord,"Doc_RespCPF1"	, _cRespCPF1)
+		OLE_SetDocumentVar(_hWord,"Doc_RespTel"		, _cRespTel)
+		
+		If .Not. Empty(_cRespNom2)
+			_cRespLeg2 := _cRespNom2 + "                             Cargo: "+ _cRespCrg2 + "	        CPF: "+ _cRespCPF2 + "                        RG: " + _cRespRG2
+		EndIf
+		
+		OLE_SetDocumentVar(_hWord,"Doc_cRespLeg2"	, _cRespLeg2)
+		OLE_SetDocumentVar(_hWord,"Doc_RespCrg2"	, _cRespCrg2)
+		OLE_SetDocumentVar(_hWord,"Doc_RespNome2"	, _cRespNom2)
+		OLE_SetDocumentVar(_hWord,"Doc_RespRG2"		, _cRespRG2)
+		OLE_SetDocumentVar(_hWord,"Doc_RespCPF2"	, _cRespCPF2)
+			
+	endif
+	
+	//+--------------------------------------------------------------------+
+	//| Dados do cronograma de atividade - Habilitacao Tecnica             |
+	//+--------------------------------------------------------------------+
+	If "3001" $ _cArqDOT 
+		OLE_SetDocumentVar(_hWord,"Doc_cCurso"		, _cCurso)
+		OLE_SetDocumentVar(_hWord,"Doc_cModal"		, _cModal)
+		OLE_SetDocumentVar(_hWord,"Doc_cTurma"		, _cTurma)
+		OLE_SetDocumentVar(_hWord,"Doc_cModulo"		, _cModulo)
+		OLE_SetDocumentVar(_hWord,"Doc_cCargaH"		, _cCargaH)
+		OLE_SetDocumentVar(_hWord,"Doc_cTurno"		, _cTurno)
+		OLE_SetDocumentVar(_hWord,"Doc_cDtInic"		, _cDtInic)
+		OLE_SetDocumentVar(_hWord,"Doc_cDtFinl"		, _cDtFinl)
+		OLE_SetDocumentVar(_hWord,"Doc_cQtdBenf"	, _cQtdBenf)
+	EndIf
+	
+	//+--------------------------------------------------------------------+
+	//| Dados da Descricao dos Servicos - STI                              |
+	//+--------------------------------------------------------------------+
+	If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("VariaveisServicosSTI")}) > 0
+		If Select("TRA") > 0
+			DbSelectArea("TRA")
+			TRA->(DbCloseArea())
+		EndIf
+		
+		_cSql := "SELECT  		"+CRLF
+		_cSql += "ADZ_FILIAL,	"+CRLF
+		_cSql += "ADZ_PROPOS,	"+CRLF
+		_cSql += "ADZ_REVISA,	"+CRLF
+		_cSql += "ADZ_PRODUT,	"+CRLF
+		_cSql += "ADZ_DESCRI,	"+CRLF
+		_cSql += "ADZ_QTDVEN,	"+CRLF
+		_cSql += "ADZ_PRCVEN,	"+CRLF
+		_cSql += "ADZ_TOTAL	"+CRLF
+		_cSql += "FROM "+RetSqlName("ADZ")+" ADZ "+CRLF
+		_cSql += "WHERE "+CRLF
+		_cSql += "ADZ_FILIAL    			= '"+ _cFilCtr +"'	"+CRLF
+		_cSql += "AND ADZ_PROPOS  		= '"+ _cPropNr +"'	"+CRLF
+		_cSql += "AND ADZ_REVISA			= '"+ _cPropRv +"'	"+CRLF
+		_cSql += "AND ADZ.D_E_L_E_T_	<> '*'	 				"+CRLF
+		
+		TCQUERY _cSql NEW ALIAS "TRA"	
+		
+		DbSelectArea('TRA')
+		TRA->(DbGoTop())
+		
+		_aServicos := {}
+		
+		While .Not. TRA->(EOF())
+			
+			_cTipoPrd := AllTrim(Posicione("SB1",1,xFilial("SB1") + TRA->ADZ_PRODUT, "B1_TIPO")) 
+			
+			aAdd(_aServicos,{AllTrim(TRA->ADZ_DESCRI),TRA->ADZ_TOTAL})
+			
+			If !AllTrim(TRA->ADZ_PRODUT) $ _cPrdDesp
+				If _cTipoPrd <> "DL"
+					_cCodPrd := AllTrim(TRA->ADZ_PRODUT)
+					_cDscPrd := AllTrim(TRA->ADZ_DESCRI)
+					_cCargaH := cValToChar(TRA->ADZ_QTDVEN)
+					_cObsAdc := AllTrim(Posicione("AD1",1,xFilial("AD1") + _cNroOpor + _cRevOpor,"AD1_OBSPRO"))
+					_cDtInic := DtoC(CN9->CN9_XDTINI)
+					_cDtFinl := DtoC(CN9->CN9_XDTFIM)
+				EndIf
+			EndIf
+			
+			TRA->(DbSkip())
+		End
+		TRA->(DbCloseArea())
+		
+		If Empty(_cCodPrd)
+			Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o Produto da Proposta Comercial, Favor Verificar!",{"OK"})
+			Return
+		EndIf
+		
+		OLE_SetDocumentVar(_hWord,"Doc_cServico"	, _cDscPrd)
+		OLE_SetDocumentVar(_hWord,"Doc_cCargaH"		, _cCargaH)
+		OLE_SetDocumentVar(_hWord,"Doc_cDtInic"		, _cDtInic)
+		OLE_SetDocumentVar(_hWord,"Doc_cDtFinl"		, _cDtFinl)
+		OLE_SetDocumentVar(_hWord,"Doc_cObsAdc"		, _cObsAdc)
+		OLE_SetDocumentVar(_hWord,"Doc_cDespVi"		, _cDespesa)
+		OLE_SetDocumentVar(_hWord,"Doc_cRespVi"		, _cRespDe)
+		OLE_SetDocumentVar(_hWord,"Doc_cExecCntdo"	, _cExcCntdo)
+		OLE_SetDocumentVar(_hWord,"Doc_cExecCntte"	, _cExcCntte)
+	EndIf
+	
+	//+--------------------------------------------------------------------+
+	//| Dados do termo de adesão STI 									   |
+	//+--------------------------------------------------------------------+
+	If "3004" $ _cArqDOT
+		OLE_SetDocumentVar(_hWord,"Doc_Objeto"   	, _cObjeto)
+		OLE_SetDocumentVar(_hWord,"Doc_IniVige"   	, _cIniVige)
+		OLE_SetDocumentVar(_hWord,"Doc_FimVige"   	, _cFimVige)
+		OLE_SetDocumentVar(_hWord,"Doc_IniExec"   	, _cIniExec)
+		OLE_SetDocumentVar(_hWord,"Doc_FimExec"   	, _cFimExec)
+	EndIf
+	
+	//+--------------------------------------------------------------------+
+	//| Dados da Proposta Comercial                                        |
+	//+--------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_PropNr"		, _cPropNr)
+	OLE_SetDocumentVar(_hWord, "DescricaoFormaDePagamento", cDForPag)
+	
+	//+--------------------------------------------------------------------+
+	//| Dados da Proposta Comercial - Do Pagamento                         |
+	//+--------------------------------------------------------------------+
+	
+	//Se nao tem valor no contrato, pega da proposta comercial.
+	If Len(_aCondPg) == 0
+		If Select("TRA") > 0
+			DbSelectArea("TRA")
+			TRA->(DbCloseArea())
+		EndIf
+
+		BEGINSQL ALIAS "TRA"
+			SELECT 
+				SUM(ADZ.ADZ_TOTAL) ADZ_TOTAL
+			FROM 
+				%Table:ADZ% ADZ
+			INNER JOIN	
+				%Table:SF4% SF4
+			ON
+				SF4.F4_FILIAL = %xFilial:SF4%
+				AND SF4.F4_CODIGO = ADZ.ADZ_TES
+				AND SF4.%NotDel%
+				AND SF4.F4_DUPLIC = 'S'
+			WHERE
+				ADZ.ADZ_FILIAL = %Exp:_cFilCtr%
+				AND ADZ.ADZ_PROPOS = %Exp:_cPropNr%
+				AND ADZ.ADZ_REVISA = %Exp:_cPropRv%
+				AND ADZ.%NotDel%
+		ENDSQL
+			
+		_aCondPg := Condicao(TRA->ADZ_TOTAL, CN9->CN9_CONDPG, ,CN9->CN9_DTULST)
+		_nValorIn := TRA->ADZ_TOTAL
+		_cValorIn := Extenso(_nValorIn)
+			
+		TRA->(DbCloseArea())
+		
+	EndIf
+	
+	OLE_SetDocumentVar(_hWord,"Doc_VlrIni"		, AllTrim(Transform(_nValorIn,"@E 999,999,999.99")))
+	OLE_SetDocumentVar(_hWord,"Doc_VlrExt"		, _cValorIn)
+	
+	If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TbParcelas")}) > 0
+		If Len(_aCondPg) > 0
+			_nLinha := 0
+			While Len(_aCondPg) > _nLinha
+				_nLinha++
+				// Insere o campo Numero de Parcela(s)
+				OLE_SetDocumentVar(_hWord,"TbParcelas_Numero"+Alltrim(str(_nLinha)), AllTrim(str(_nLinha))	)
+				// Insere o campo Valor da Parcela
+				OLE_SetDocumentVar(_hWord,"TbParcelas_Valor"+Alltrim(str(_nLinha)), "R$ "+Alltrim(Transform(_aCondPg[_nLinha,2],"@E 999,999,999.99"))	)
+				// Insere o campo Data Vencimento da Parcela
+				OLE_SetDocumentVar(_hWord,"TbParcelas_DtVencto"+Alltrim(str(_nLinha)), DtoC(_aCondPg[_nLinha,1])	)
+			EndDo
+			OLE_SetDocumentVar(_hWord,"TbParcelas_QtdItens", _nLinha)	//Implementa o Contador de Itens da Macro
+			If _nLinha > 0
+				OLE_ExecuteMacro(_hWord,"TbParcelas")					//Efetua CARGA da Macros
+			EndIf
+		EndIf
+	EndIf
+	
+	//+--------------------------------------------------------------------+
+	//| Dados da Disposicoes Financeiras dos Servicos - STI                |
+	//+--------------------------------------------------------------------+
+	If "3003" $ _cArqDOT
+		If aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("TbServicos")}) > 0
+			If Len(_aServicos) > 0
+				_nLinha := 0
+				While Len(_aServicos) > _nLinha
+					_nLinha++
+					// Insere o campo Servico
+					OLE_SetDocumentVar(_hWord,"TbServicos_Servico"+ Alltrim(str(_nLinha)), AllTrim(_aServicos[_nLinha,1]))
+					// Insere o campo Valor
+					OLE_SetDocumentVar(_hWord,"TbServicos_Total"+ Alltrim(str(_nLinha)), "R$ "+ Alltrim(Transform(_aServicos[_nLinha,2],"@E 999,999,999.99")))
+				EndDo
+				OLE_SetDocumentVar(_hWord,"TbServicos_QtdItens", _nLinha)	//Implementa o Contador de Itens da Macro
+				If _nLinha > 0
+					OLE_ExecuteMacro(_hWord,"TbServicos")							//Efetua CARGA da Macros
+				EndIf
+			EndIf
+		EndIf
+	EndIf
+	
+	//+--------------------------------------------------------------------+
+	//| Dados das Disposicoes Gerais - Direitos de Imagens                 |
+	//+--------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_cDirImg"	, _cDirImg)
+	
+	//+--------------------------------------------------------------------+
+	//| Dados do Foro Judicial                                             |
+	//+--------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_cForo"		, _cEmpMun)
+	
+	//+--------------------------------------------------------------------+
+	//| Dados da cidade - dia / mes / ano                                  |
+	//+--------------------------------------------------------------------+
+	OLE_SetDocumentVar(_hWord,"Doc_cCidade"	, _cEmpMun)
+	OLE_SetDocumentVar(_hWord,"Doc_cDiaEmis"	, Day(dDataBase))
+	OLE_SetDocumentVar(_hWord,"Doc_cMesEmis"	, fMes(Month(dDataBase)))
+	OLE_SetDocumentVar(_hWord,"Doc_cAnoEmis"	, Year(dDataBase))
+	
+	//+--------------------------------------------------------------------+
+	//| Dados das assinaturas                                              |
+	//+--------------------------------------------------------------------+
+	If !fGerFil()
+		Aviso(FunName()+"/"+ProcName(),"Integração ABORTADA, não foi possivel localizar o Representante da Contratada!",{"OK"})
+		
+		OLE_CloseFile(_hWord)
+		OLE_CloseLink(_hWord)
+
+		If File(_cPathREP + _cArqDOT)
+			FErase(_cPathREP + _cArqDOT)
+		Endif
+
+		Return
+	Else
+		OLE_SetDocumentVar(_hWord,"Doc_GerenteNome"	, _cGerNome)
+		OLE_SetDocumentVar(_hWord,"Doc_GerenteRG"	, _cGerRG	)
+		OLE_SetDocumentVar(_hWord,"Doc_GerenteCPF"	, _cGerCPF)
+		/*OLE_SetDocumentVar(_hWord,"Doc_GerenteFnc"	, _cGerFunc)
+		OLE_SetDocumentVar(_hWord,"Doc_GerenteOEx"	, _cGerOrEx)*/
+	EndIf
+
+	//Macro ClausulaNaoPagamento, utilizada para impressão de texto de não pagamento
+	//que varia quando há desconto
+	if aScan(_aMacroExc,{|x| Upper(AllTrim(x)) == Upper("ClausulaNaoPagamento")}) > 0
+		BEGINSQL alias 'TRA'
+			SELECT 
+				SUM(ADZ.ADZ_DESCON) ADZ_DESCON
+			FROM 
+				%Table:ADY% ADY
+			INNER JOIN
+				%Table:ADZ% ADZ
+			ON	
+				ADZ.ADZ_FILIAL = ADY_FILIAL
+				AND ADZ.ADZ_PROPOS = ADY_PROPOS
+				AND ADZ.ADZ_REVISA = ADY_PREVIS
+				AND ADZ.%NotDel%
+			WHERE
+				ADY.ADY_FILIAL = %Exp:_cFilCtr%
+				AND ADY.ADY_OPORTU = %Exp:_cNroOpor%
+				AND ADY.ADY_REVISA = %Exp:_cRevOpor%
+				AND ADY.ADY_STATUS = 'E'
+				AND ADY.%NotDel%
+		ENDSQL
+		DbSelectArea('TRA')
+		TRA->(DbGoTop())
+		if TRA->ADZ_DESCON > 0
+			lTemDesc := .T.
+		else
+			lTemDesc := .F.
+		endif
+		TRA->(DbCloseArea())
+		OLE_SetDocumentVar(_hWord, "TemDesconto", lTemDesc)
+		OLE_ExecuteMacro(_hWord, "ClausulaNaoPagamento")
+	endif
+	
+	//+---------------------------------------------------------------------+
+	//| Atualizando as variaveis do documento do Word                       |
+	//+---------------------------------------------------------------------+
+	OLE_UpdateFields(_hWord)
+	
+	//+---------------------------------------------------------------------+
+	//| Verifica se o arquivo a ser gerado ja existe no repositorio, se     |
+	//| existir apaga                                                       |
+	//+---------------------------------------------------------------------+
+	If File(_cPathREP + _cArqNome)
+		FErase(_cPathREP + _cArqNome)
+	Endif
+	
+	//+---------------------------------------------------------------------+
+	//| Salva no repositorio LOCAL o arquivo gerado                         |
+	//+---------------------------------------------------------------------+
+	OLE_SaveAsFile(_hWord, _cPathREP + _cArqNome +".pdf", '', '', .F., oleWdFormatPDF)
+	
+	//+---------------------------------------------------------------------+
+	//| Fecha o TEMPLATE utilizado para Gerar o Arquivos de Remessa         |
+	//+---------------------------------------------------------------------+
+	OLE_CloseFile(_hWord)
+	
+	//+---------------------------------------------------------------------+
+	//| Fecha o Link com Arquivo de Remessa "Impressao"                     |
+	//+---------------------------------------------------------------------+
+	OLE_CloseLink(_hWord)
+	
+	//+---------------------------------------------------------------------+
+	//| Apaga na unidade LOCAL o TEMPLATE utilizado para gerar o documento. |
+	//+---------------------------------------------------------------------+
+	If File(_cPathREP + _cArqDOT)
+		FErase(_cPathREP + _cArqDOT)
+	Endif
+	
+	If MsgNoYes("Contrato gerado com sucesso. Deseja visualizar o arquivo gerado?", "Contrato Gerado")
+		ShellExecute( "open", _cPathREP+_cArqNome+".pdf", "", "", 1 )
+    EndIf
+
+Return
+
+
+/*/{Protheus.doc} fRetMinuta
+Objetivo; Garantir o relacionamento entre a minuta informada no Tipo de Contrato [CN1]
+			  e Família de Produto [ZG1] ligado ao Produto [B1_XCODFAM], sendo assim o
+			  contrato só será impresso se todos os produtos em suas respectivas Famílias
+			  tiver a mesma minuta informada no Tipo de Contrato!
+Relacionamento;
+			  01 - Um Produto pode ter 0 ou 1 Família
+			  02 - Uma Família pode ter 0 ou N Minutas
+			  03 - Um Tipo de Contrato deve conter 1 Minuta
+			  
+@type 		function
+@author 	Jose Leite de barros neto
+@since 	28/09/2016
+@version 	1.0
+@return 	character, Caracter, Nome do arquivo Dot a ser utilizado
+/*/
+Static Function fRetMinuta()
+
+	Local _cArqDOT		:= ""
+	Local _cMsgErro		:= ""
+	Local _cSql			:= ""
+	Local _cAlias		:= GetNextAlias()
+	Local _aProdOK		:= {}
+
+	dbSelectArea("CNA")
+	CNA->(dbSetOrder(3))
+	If CNA->(dbSeek(xFilial("CNA") + _cCtrNr + _cCtrNrRev))
+		//busca na planilha
+		_cSql := "SELECT DISTINCT "+CRLF
+		_cSql += "  CASE WHEN B1_XCODFAM = ' ' THEN ' ' ELSE ZG3_CODMIN       END ZG3_CODMIN, "+CRLF
+		_cSql += "  CASE WHEN B1_XCODFAM = ' ' THEN ' ' ELSE Trim(ZG3_DESCRI) END ZG3_DESCRI, "+CRLF
+		_cSql += "  CASE WHEN B1_XCODFAM = ' ' THEN ' ' ELSE Trim(ZG3_ARQUIV) END ZG3_ARQUIV, "+CRLF
+		_cSql += "  CASE WHEN B1_XCODFAM = ' ' THEN ' ' ELSE Trim(ZG3_MACROS) END ZG3_MACROS, "+CRLF
+		_cSql += "  ZG3_STATUS, B1_COD, B1_XCODFAM, B1_XCODMSG "+CRLF
+		_cSql += "FROM "+CRLF
+		_cSql += "  "+RetSqlName("CN9")+" CN9 "+CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("CNA")+" CNA ON CNA.D_E_L_E_T_ = ' ' AND CN9_FILIAL = CNA_FILIAL AND CN9_NUMERO = CNA_CONTRA AND CN9_REVISA = CNA_REVISA "+CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("CNB")+" CNB ON CNB.D_E_L_E_T_ = ' ' AND CNA_FILIAL = CNB_FILIAL AND CNA_CONTRA = CNB_CONTRA AND CNA_REVISA = CNB_REVISA "+CRLF
+		_cSql += "  INNER JOIN "+RetSqlName("SB1")+" SB1 ON SB1.D_E_L_E_T_ = ' ' AND B1_FILIAL = '"+xFilial("SB1")+"' AND CNB_PRODUT = B1_COD "+CRLF
+		_cSql += "  LEFT  JOIN "+RetSqlName("ZG2")+" ZG2 ON ZG2.D_E_L_E_T_ = ' ' AND ZG2_FILIAL = '"+xFilial("ZG2")+"' AND ZG2_CODFAM = B1_XCODFAM "+CRLF
+		_cSql += "  LEFT  JOIN "+RetSqlName("ZG3")+" ZG3 ON ZG3.D_E_L_E_T_ = ' ' AND ZG3_FILIAL = '"+xFilial("ZG3")+"' "+CRLF
+		_cSql += "WHERE "+CRLF
+		_cSql += "  CN9.D_E_L_E_T_ = ' ' "+CRLF
+		_cSql += "  AND CN9_NUMERO = '"+_cCtrNr+"' "+CRLF
+		_cSql += "  AND CN9_FILIAL = '"+_cFilCtr+"' "+CRLF
+		_cSql += "  AND CN9_REVISA = '"+_cCtrNrRev+"' "+CRLF
+		_cSql += "  ORDER BY B1_COD "+CRLF
+		MemoWrite("C:\temp\fRetMinutaPlan.txt", _cSql)
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+	Else
+		//busca na oportunidade
+		_cSql := "SELECT DISTINCT "+CRLF
+		_cSql += "  CASE WHEN B1_XCODFAM = ' ' THEN ' ' ELSE ZG3_CODMIN END ZG3_CODMIN, "+CRLF
+		_cSql += "  CASE WHEN B1_XCODFAM = ' ' THEN ' ' ELSE Trim(ZG3_DESCRI) END ZG3_DESCRI, "+CRLF
+		_cSql += "  CASE WHEN B1_XCODFAM = ' ' THEN ' ' ELSE Trim(ZG3_ARQUIV) END ZG3_ARQUIV, "+CRLF
+		_cSql += "  CASE WHEN B1_XCODFAM = ' ' THEN ' ' ELSE Trim(ZG3_MACROS) END ZG3_MACROS, "+CRLF
+		_cSql += "  ZG3_STATUS, B1_COD, B1_XCODFAM, B1_XCODMSG "+CRLF
+		_cSql += "FROM "+CRLF
+		_cSql += "  "+RetSqlName("CN9")+" CN9 "+CRLF
+		_cSql += "	INNER JOIN "+RetSqlName("AD1")+" AD1 ON AD1.D_E_L_E_T_ = ' ' AND CN9_FILIAL = AD1_FILIAL AND CN9_XOPORT = AD1_NROPOR"
+		_cSql += "  INNER JOIN "+RetSqlName("ADY")+" ADY ON ADY.D_E_L_E_T_ = ' ' AND AD1_FILIAL = ADY_FILIAL AND AD1_NROPOR = ADY_OPORTU "+CRLF
+		_cSql += "				AND AD1_REVISA = ADY_REVISA "+CRLF
+		_cSql += "	INNER JOIN "+RetSqlName("ADZ")+" ADZ ON ADZ.D_E_L_E_T_ = ' ' AND ADY_FILIAL = ADZ_FILIAL AND ADY_PROPOS = ADZ_PROPOS AND ADY_PREVIS = ADZ_REVISA"
+		_cSql += "  INNER JOIN "+RetSqlName("SB1")+" SB1 ON SB1.D_E_L_E_T_ = ' ' AND B1_FILIAL  = '"+xFilial("SB1")+"' AND ADZ_PRODUT = B1_COD "+CRLF
+		_cSql += "  LEFT  JOIN "+RetSqlName("ZG2")+" ZG2 ON ZG2.D_E_L_E_T_ = ' ' AND ZG2_FILIAL = '"+xFilial("ZG2")+"' AND ZG2_CODFAM = B1_XCODFAM "+CRLF
+		_cSql += "  LEFT  JOIN "+RetSqlName("ZG3")+" ZG3 ON ZG3.D_E_L_E_T_ = ' ' AND ZG3_FILIAL = '"+xFilial("ZG3")+"' "+CRLF
+		_cSql += "WHERE "+CRLF
+		_cSql += "  CN9.D_E_L_E_T_ = ' ' "+CRLF
+		_cSql += "  AND CN9_NUMERO = '"+_cCtrNr+"' "+CRLF
+		_cSql += "  AND CN9_FILIAL = '"+_cFilCtr+"' "+CRLF
+		_cSql += "  AND CN9_REVISA = '"+_cCtrNrRev+"' "+CRLF
+		_cSql += "  AND ADY_STATUS = 'E' "+CRLF
+		_cSql += "  ORDER BY B1_COD "+CRLF
+		MemoWrite("C:\temp\fRetMinutaOpor.txt", _cSql)
+		dbUseArea(.T.,'TOPCONN',TcGenQry(,,ChangeQuery(_cSql)), _cAlias,.F.,.F.)
+	EndIf
+	
+	DbSelectArea(_cAlias)
+	(_cAlias)->(dbGoTop())
+	
+	If .Not. (_cAlias)->( EOF() )
+		dbSelectArea("CN1")
+		CN1->(dbSetOrder(1))
+		If CN1->(dbSeek(xFilial("CN1")+CN9->CN9_TPCTO))
+			While !(_cAlias)->(EOF())
+				//Realiza a validação se o produto nao existir no array
+				If aScan(_aProdOK, {|x| AllTrim(x[1]) == AllTrim((_cAlias)->B1_COD)}) == 0
+					If !Empty(AllTrim((_cAlias)->B1_XCODFAM))
+						If CN1->CN1_XMINUT == (_cAlias)->ZG3_CODMIN
+							If (_cAlias)->ZG3_STATUS == '1'
+								_cArqDOT	:= AllTrim((_cAlias)->ZG3_ARQUIV)
+								_aMacroExc	:= StrTokArr( AllTrim((_cAlias)->ZG3_MACROS) ,";")	//AllTrim((_cAlias)->ZG3_MACROS)
+								aadd(_aProdOK, {(_cAlias)->B1_COD})
+								_cMsgErro	:= ""
+							Else
+								_cMsgErro := 'Minuta ['+(_cAlias)->ZG3_CODMIN+'] não está ativa!'+CRLF+'Verifique o Cadastro de Minutas.'
+								Exit
+							EndIf
+						Else
+							_cMsgErro := 'Família ['+(_cAlias)->B1_XCODFAM+'] não contém a Minuta ['+CN1->CN1_XMINUT+']!'+CRLF
+						EndIf
+					Else
+						_cMsgErro := "Produto(s) ["+(_cAlias)->B1_COD+"] sem definição de Família:"+CRLF
+						_cArqDOT  := ""
+						Exit
+					EndIf
+				EndIf
+
+				(_cAlias)->(dbSkip())
+			EndDo
+		EndIf
+	Else
+		_cMsgErro := "Produtos sem Família ou não existe Minuta associada a Família dos Produtos adicionados no Contrato."+CRLF+"Verifique o Cadastro de Produtos vs Família."
+	EndIf
+
+	If !Empty(_cMsgErro)
+		Aviso(FunName()+"/"+ProcName(), _cMsgErro, {"OK"})
+	EndIf
+
+
+	(_cAlias)->(dbCloseArea())
+
+Return _cArqDOT
+
+
+/*/{Protheus.doc} fCompEmp
+	Função para identificar e retornar complemento do nome comercial, cadastrado
+	na tabela genérica Z1
+@type function
+@author Franklin de Brito de Oliveira
+@since 19/01/2016
+@version 1.00
+
+@return character, Complemento do nome da empresa
+/*/
+Static Function fCompEmp()
+	
+	Local cCompEmp	:= ""
+	Local cEmpres	:= FWCodEmp('SX5')
+	Local cUnidad	:= FWUnitBusiness('SX5')
+	Local cFilCod	:= FWFilial()
+
+	cEmpUni := PadR( cEmpres + cUnidad , FWSizeFilial() )
+	SX5->( dbSetOrder(1) )
+	If( SX5->( dbSeek( cEmpUni + 'Z1' + cFilCod ) ) )
+		cCompEmp  := SX5->X5_DESCRI
+	EndIf
+
+Return cCompEmp
+
+
+/*/{Protheus.doc} fMes
+	Função para identificar e retornar complemento do mes passado por parametro
+@type function	
+@author 	Jose Leite de Barros Neto
+@since 	19/01/2016
+@version 	1.00
+
+@return character, Retorna o mes completo
+/*/
+Static Function fMes( p_cMes )
+	
+	Local _cMes := ""
+	
+	Do Case
+	
+		Case p_cMes == 1
+			_cMes := "Janeiro"
+		Case p_cMes == 2
+			_cMes := "Fevereiro"
+		Case p_cMes == 3
+			_cMes := "Março"
+		Case p_cMes == 4
+			_cMes := "Abril"
+		Case p_cMes == 5
+			_cMes := "Maio"
+		Case p_cMes == 6
+			_cMes := "Junho"
+		Case p_cMes == 7
+			_cMes := "Julho"
+		Case p_cMes == 8
+			_cMes := "Agosto"
+		Case p_cMes == 9
+			_cMes := "Setembro"
+		Case p_cMes == 10
+			_cMes := "Outubro"
+		Case p_cMes == 11
+			_cMes := "Novembro"
+		Case p_cMes == 12
+			_cMes := "Dezembro"
+	
+	End Case
+	
+Return( _cMes )
+
+
+/*/{Protheus.doc} fGerFil
+Funcao para selecionar o gerente da unidade
+@type Function
+@author Jose Leite de Barros Neto
+@since 28/09/2016
+@version 11.0
+@return logical, negativo se não encontrar o cadastro da filial na SX5 ou do gerente na SRA.
+@history 27/03/2018, Franklin B. Oliveira, removido validação da Filial na tabela de funcionários (SRA). Conforme solicitação no suporte 264548.
+@history 13/03/2019, Alan Teles de Oliveira, adicionado a clausula where validações para desconsiderar funcionários autônomos e alterado estrutura da função.
+@history 31/07/2020, Franklin B. Oliveira, Incluido consulta a tabela ZCO - Dados complementares da minuta de venda.
+/*/
+Static Function fGerFil()
+
+	Local cEmpUni	:= ''
+	Local cDados	:= ''
+	Local cEmpres	:= FWCodEmp('SX5')
+	Local cUnidad	:= FWUnitBusiness('SX5')
+	Local cFilCod	:= FWFilial()
+	Local cAlTMP	:= GetNextAlias()
+	Local cAliZCO	:= GetNextAlias()
+	Local cCPF		:= ""
+	Local lRet		:= .T.
+	Local aArea		:= GetArea()
+	Local aGerInf 	:= {}
+	
+	BeginSql Alias cAliZCO
+		SELECT Trim(ZCO.ZCO_NOMREP) AS ZCO_NOMREP, 
+			Trim(ZCO.ZCO_CPFREP) AS ZCO_CPFREP,
+			Trim(ZCO.ZCO_RGREPR) AS ZCO_RGREPR,
+			Trim(ZCO.ZCO_OREREP) AS ZCO_OREREP
+		FROM %Table:ZCO% ZCO
+		WHERE ZCO.%NOTDEL%
+			AND ZCO.ZCO_FILIAL = %Exp:xFilial("ZCO")%
+	EndSql
+	If !(cAliZCO)->( EoF() )
+		_cGerNome	:= AllTrim( (cAliZCO)->ZCO_NOMREP )
+		_cGerCPF	:= Transform( (cAliZCO)->ZCO_CPFREP, Iif( Len( AllTrim( (cAliZCO)->ZCO_CPFREP ) ) == 11, "@R 999.999.999-99", "@R 99.999.999/9999-99" ) )
+		_cGerRG		:= AllTrim( (cAliZCO)->ZCO_RGREPR )
+		_cGerOrEx	:= AllTrim( (cAliZCO)->ZCO_OREREP )
+	Else
+		cEmpUni := PadR( cEmpres + cUnidad , FWSizeFilial() )
+		SX5->( dbSetOrder(1) )
+		If( SX5->( dbSeek( cEmpUni + 'Z5' + cFilCod ) ) )
+			cDados  := SX5->X5_DESCRI
+			cDados  := StrTran(cDados, ",", "|")
+			cDados  := StrTran(cDados, ";", "|")
+			aGerInf := StrTokArr(cDados, '|')
+			cCPF := AllTrim(StrTran(StrTran(aGerInf[2], ".", ""), "-", ""))
+		Else
+			lRet := .F.
+		EndIf
+		If lRet
+			If Select(cAlTMP) > 0
+				(cAlTMP)->(dbCloseArea())
+			EndIf
+			BeginSQL Alias cAlTMP
+				SELECT 
+					TRIM(SRA.RA_NOMECMP) 							AS RA_NOME,
+					TRIM(SRA.RA_RG) 								AS RA_RG,
+					TRIM(SRA.RA_RGORG) || '/' || TRIM(SRA.RA_RGUF)	AS RA_RGEXP,
+					SRA.RA_CIC,
+					SRA.RA_CODFUNC,
+					SRA.RA_COMPLRG
+				FROM %Table:SRA% SRA
+				WHERE
+					TRIM(SRA.RA_NOMECMP)	IS NOT NULL AND
+					SRA.RA_MAT 				< '900000' AND
+					SRA.RA_CIC 				= %Exp:cCPF% AND
+					SRA.RA_SITFOLH 			NOT IN ('D', 'T') AND
+					SRA.%NotDel%
+			EndSQL
+			(cAlTMP)->(dbGotop())
+			If .not. (cAlTMP)->(Eof()) .and. .not. (cAlTMP)->(Bof())
+				_cGerNome	:= AllTrim((cAlTMP)->RA_NOME)
+				_cGerCPF	:= Transform((cAlTMP)->RA_CIC, Iif(Len(AllTrim((cAlTMP)->RA_CIC)) == 11, "@R 999.999.999-99", "@R 99.999.999/9999-99"))
+				_cGerRG		:= AllTrim((cAlTMP)->RA_RG) + IIf(Empty(AllTrim((cAlTMP)->RA_RGEXP)), "", " " + AllTrim((cAlTMP)->RA_RGEXP))
+				_cGerOrEx	:= AllTrim((cAlTMP)->RA_COMPLRG)
+				_cGerFunc	:= AllTrim(Posicione("SRJ", 1, xFilial("SRJ") + (cAlTMP)->RA_CODFUNC, "RJ_DESC"))
+			Else
+				lRet := .F.
+			EndIf
+			(cAlTMP)->(dbCloseArea())	
+		EndIf
+	EndIf
+	(cAliZCO)->(dbCloseArea())
+	RestArea(aArea)
+Return lRet

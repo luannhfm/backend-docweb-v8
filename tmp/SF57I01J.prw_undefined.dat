@@ -1,0 +1,292 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "rwmake.CH"
+#INCLUDE "Topconn.CH"
+#INCLUDE "fileio.ch"
+
+/*/{Protheus.doc} SF57I01J
+Função para realizar importação de orçamento para ZDA
+			     	
+@author 	Jose Leite de Barros Neto
+@since 	15/09/2014
+@version 	1.0		
+
+@return Nil, Nulo
+
+/*/
+User Function SF57I01J( pPATHIMP03 )
+
+	Local 	_lRet	:= .F.
+
+	Private _aEstrut	:= {}
+	Private _cArqTxt	:= Space(50)
+	Private _cMemo  	:= ""
+	
+	If MsgYesNo("Deseja importar dados da planilha?")
+		//Verifica chamada se a rotina é automatica
+		If !Empty( pPATHIMP03 )
+			_cArqTxt := pPATHIMP03
+		Else
+			_cArqTxt:= U_SFXX01J('Importa ZDA','Arquivos csv (*.csv) |*.csv|')
+		EndIf
+		
+		//Abre o Arquivo
+		nHdl    := fOpen(_cArqTxt,68)
+	
+		If nHdl == -1
+			MsgAlert("O arquivo de nome "+_cArqTxt+" nao pode ser aberto! Verifique os parametros.","Atencao!")
+			Return
+		Endif
+		
+		Processa({ |lEnd| _aEstrut := ZDACSV(_cArqTxt) },"LENDO ARQUIVO CSV DE ORCAMENTO")
+		Processa({ |lEnd| _lRet := IMPZDA(_aEstrut) },"GERANDO REGISTROS")
+	EndIf
+	
+	If _lRet
+		MemoWrite( "C:\plog\csv\zda_"+cFilAnt+".TXT", _cMemo ) 
+		MsgBox("FIM DA IMPORTACAO")
+	EndIf
+
+Return( _lRet )
+
+/** {Protheus.doc} ZDACSV
+Funcao que realiza a importacao do orcamento
+
+@param: 	_aEstrut, Array com a estrutura dos campos
+@author: 	Jose Leite de Barros Neto
+@since: 	15/09/2014
+@Uso: 		SFIEMT
+*/
+Static Function IMPZDA(_aEstrut)
+	
+	Local _lRet 			:= .F.
+	Local _nContador 	:= 0
+	Local _cFilial 		:= ""
+	Local _cCodigo		:= ""
+	Local _cVersao		:= ""
+	Local _cTipo			:= ""
+	Local _cCusto		:= ""
+	Local _cItemC		:= ""
+	Local _cConta		:= ""
+	Local _cFunc			:= ""
+	Local _cVerba		:= ""
+	Local _cDscVba		:= ""
+	Local _cDscFun		:= ""
+	Local _cPeriod		:= ""
+	Local _dData			:= ""
+	Local _nValor		:= 0
+	Local _cKeyFun		:= ""
+	Local _cPrevD		:= ""
+	Local _cRateio		:= ""
+	Local _nPrcRat		:= 0
+	Local _aErro			:= {}
+	Local cTexto			:= ""
+	
+	For i := 2 to Len(_aEstrut)
+		
+		//ZDA_FILIAL
+		_cFilial 	:= _aEstrut[i][1]
+		
+		//ZDA_CODIGO
+		_cCodigo	:=	'201400000001'
+		
+		//ZDA_VERSAO
+		_cVersao	:= StrZero(Val(_aEstrut[i][3]),4)
+		
+		//ZDA_TIPO
+		_cTipo		:= _aEstrut[i][4]
+		
+		//ZDA_CTCUST
+		_cCusto	:= _aEstrut[i][5]
+			
+		//ZDA_ITCONT
+		_cItemC	:= _aEstrut[i][6]
+			
+		//ZDA_CONTA
+		_cConta	:= _aEstrut[i][7]
+			
+		//ZDA_PERIOD	
+		_cPeriod	:= _aEstrut[i][8]
+		
+		//ZDA_DATA	
+		_dData		:= _aEstrut[i][9]
+		
+		//ZDA_VALOR	
+		_nValor	:= Val(_aEstrut[i][10])
+		
+		DbSelectArea("ZD9")
+		ZD9->(dbSetOrder(1)) //ZD9_FILIAL, ZD9_CODIGO, ZD9_VERSAO,	ZD9_TIPO, ZD9_CUSTO, ZD9_ITCTB
+		ZD9->(dbGotop())
+		If ZD9->(DbSeek( _cFilial + _cCodigo + _cVersao + _cTipo + Padr(_cCusto	,TamSx3("ZD9_CUSTO")[1]) + Padr(_cItemC	,TamSx3("ZD9_ITCTB")[1]) ))
+		
+			DbSelectArea("ZDA")
+			ZDA->(dbSetOrder(1)) //ZDA_FILIAL, ZDA_CODIGO, ZDA_VERSAO, ZDA_TIPO, ZDA_CTCUST, ZDA_ITCONT, ZDA_CONTA, ZDA_DATA
+			ZDA->(dbGotop())
+			If .Not. ZDA->(DbSeek( _cFilial + _cCodigo + _cVersao + _cTipo + Padr(_cCusto	,TamSx3("ZDA_CTCUST")[1]) + Padr(_cItemC	,TamSx3("ZDA_ITCONT")[1]) + Padr(_cConta	,TamSx3("ZDA_CONTA")[1]) + _dData))
+				Begin Transaction
+						
+					If RecLock("ZDA",.T.)
+						ZDA->ZDA_FILIAL	:=	_cFilial
+						ZDA->ZDA_CODIGO	:= _cCodigo
+						ZDA->ZDA_VERSAO	:= 	_cVersao
+						ZDA->ZDA_TIPO	:= _cTipo
+						ZDA->ZDA_CTCUST	:= _cCusto
+						ZDA->ZDA_ITCONT	:=	_cItemC
+						ZDA->ZDA_CONTA	:=	_cConta
+						//ZDA->ZDA_CVERBA	:=	'999'
+						//ZDA->ZDA_DVERBA	:=	'teste'
+						ZDA->ZDA_PERIOD	:=	_cPeriod
+						ZDA->ZDA_DATA	:=	StoD(_dData)
+						ZDA->ZDA_VALOR	:=	_nValor
+						ZDA->(msUnlock())
+					EndIf
+						
+				End Transaction
+			Else
+				aAdd(_aErro,{'ZDA',_cFilial,_cCodigo,_cVersao,_cTipo,_cCusto,_cItemC,_cConta,'999','EXISTE',_cPeriod,_dData, cValtoChar(_nValor)} )
+			EndIf
+			
+		Else
+		
+			aAdd(_aErro,{'ZD9',_cFilial,_cCodigo,_cVersao,_cTipo,_cCusto,_cItemC,_cConta,'999','NEXISTE',_cPeriod,_dData, cValtoChar(_nValor)} )
+			
+		EndIf
+				
+		_nContador++
+		
+	Next
+	
+	If Len(_aErro) > 0
+		
+		nArquivo := FCREATE("C:\Util\Erro_imp_PCO_"+Dtos(Date())+"_"+StrTran(_cHora,":","")+".TXT",FC_NORMAL)
+		
+		If nArquivo == -1
+			MsgStop('Erro ao criar o Arquivo.')
+		Else
+			FSeek(nArquivo, 0, FS_END) // Posiciona no fim do arquivo
+		Endif
+				
+		For j := 1 to Len(_aErro)
+			
+			For k := 1 to Len(_aErro[j]) 
+				cTexto += _aErro[j][k] + '|'
+			Next
+			
+			cTexto += ''+CRLF
+			
+			FWrite(nArquivo, cTexto) // Insere texto no arquivo
+			cTexto := ""		   
+			
+		Next
+		
+		FClose(nArquivo) // Fecha arquivo
+	
+	EndIf
+
+	If _nContador > 0
+		_lRet := .T.
+	EndIf
+	
+Return( _lRet )
+
+/** {Protheus.doc} ZDACSV
+Funcao que realiza a Leitura do arquivo CSV
+
+@param: 	cArquivo, Caminho do arquivo que sera lido
+@author: 	Jose Leite de Barros Neto
+@since: 	15/09/2014
+@Uso: 		SFIEMT
+*/
+Static Function ZDACSV(cArquivo)
+	
+	Local cBuffer     := ""
+	Local cAux        := ""
+	Local cString     := ""
+	Local cSeparador  := ""  //Verifica o tipo de separador do arquivo texto
+	Local aTmp        := {}
+	Local aEstrutura  := {}
+	Local nCont       := 0
+	Local cEof        := Chr(10)+ Chr(13)
+	Local nRec        := 0
+	Local lAspa       := .F.
+
+	//Leitura da quantidade de Registros do Arquivo
+	FT_FUSE(cArquivo)
+	FT_FGOTOP()
+	
+	While !FT_FEOF()
+		nRec++
+		FT_FSKIP()
+	End
+
+	ProcRegua(nRec)
+
+	//Leitura do arquivo e verificacao do ultimo caracter da linha lida para  consistencia da pesquisa
+	FT_FGOTOP()
+
+	While !FT_FEOF()
+	
+		cBuffer:= AllTrim(FT_FREADLN())
+	
+		If At(";",cBuffer) > 0
+			cSeparador:= ";" 
+		Else //linha de arquivo incorreta.
+			IncProc()
+			FT_FSKIP()
+			Loop
+		Endif
+	
+		If (SubStr(cBuffer,Len(cBuffer),1)<>cSeparador)
+			cBuffer += cSeparador + cEof + cSeparador
+		Else
+			cBuffer += cEof + cSeparador
+		Endif
+	
+		//Incrementa a regua
+		IncProc()
+	
+		//Carrega o array aEstrutura com o resultado da Importacao
+		cLinha:= fTAcento(cBuffer)
+		lAspa := .F.
+
+		For nCont := 1 To Len(cBuffer)
+		
+			cAux   := SubStr(cLinha,1,1)
+			cLinha := SubStr(cLinha,2)
+			
+			If (cAux == cEof)
+				Exit
+			Endif
+		
+			//Sao verificadas as marcacoes feitas pelo Excel para concatenacao de strings
+			Do Case
+			
+				Case cAux == '"'
+					lAspa := !lAspa
+					
+				Case cAux == cSeparador .And. !lAspa
+					aAdd(aTmp,cString)
+					cString := ""
+					
+				OtherWise
+					cString += cAux
+					
+			EndCase
+		
+		Next nCont
+	
+		For nCont := Len(aTmp)+1 To 11
+			aAdd(aTmp,"")
+		Next nCont
+	
+		//Validacao para nao salvar registros sem entidades
+		If !Empty(aTmp[1]) .OR. !Empty(aTmp[2])
+			aAdd(aEstrutura,aTmp)
+			aTmp := {}
+		Endif
+		
+		FT_FSKIP()
+	End
+
+	FT_FUSE()
+
+Return( aEstrutura )

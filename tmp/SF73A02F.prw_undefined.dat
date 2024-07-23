@@ -1,0 +1,427 @@
+#include 'protheus.ch'
+
+/*/{Protheus.doc} SF73A02F
+Função para evoluir prospect para cliente no cadastro de prospect.
+@author Franklin de Brito de Oliveira
+@since 13/07/2020
+@type Function
+/*/
+User Function SF73A02F(cProsp, cLoja)
+Local aArea	:= GetArea()
+Local lRet 	:= .T.
+	If MsgNoYes( "Confirma a atualização do Prospect para Cliente?", "Prospect x Cliente" )
+		If !Empty(SUS->US_CODCLI) .And. !Empty(SUS->US_LOJACLI)
+		   Help( NIL,;
+		   		NIL, ;
+		   		'Prospect com cliente relacionado', ;
+		   		NIL, ;
+		   		'O PROSPECT nao pode ter nenhum cliente relacionado.', ;
+		   		1, ;
+		   		0, ;
+		   		NIL, ;
+		   		NIL, ;
+		   		NIL, ;
+		   		NIL, ;
+		   		NIL, ;
+		   		{"Verifique o cliente de código: " + SUS->US_CODCLI + "e loja: " + SUS->US_LOJACLI + "."} ;
+		   	)
+		   lRet := .F.
+		ElseIf SUS->US_STATUS == "5" 
+			//Help(NIL, NIL, "Texto do Help", NIL, "Texto do Problema", 1, 0, NIL, NIL, NIL, NIL, NIL, {"Texto da Solução"})
+			Help( NIL, ;
+				NIL, ;
+				'Status Inválido', ;
+				NIL, ;
+				'O registro selecionado foi desqualificado.', ;
+				1, ;
+				0, ;
+				NIL, ;
+				NIL, ;
+				NIL, ;
+				NIL, ;
+				NIL, ;
+				{"Reative o registro através da opção: Outras Ações / Reativar."} ;
+			)
+			lRet := .F.
+		EndIf
+		If lRet
+			MsgRun("Atualizando registros", "Aguarde", {||lRet := fIncCli()})
+			If lRet
+				MsgInfo( "Cliente incluido com sucesso.", "Info" )
+			EndIf
+		EndIf
+	EndIf
+	RestArea( aArea )
+Return Nil
+
+/*/{Protheus.doc} fIncCli
+Função pra incluir cliente e atualizar prospect por rotina automática.
+Utiliza Novo Fonte de Cadastro de Clientes em MVC (https://tdn.totvs.com/display/public/PROT/DT+Novo+Fonte+de+Cadastro+de+Clientes+em+MVC)
+@author Franklin Brito Oliveira
+@since 14/07/2020
+@return logical, Indica se houve sucesso na inclusão do novo cliente.
+@type function
+@history 21/08/2020, Franklin de Brito de Oliveira, Substituição de uso do campo US_XCODMUN para US_COD_MUN. 
+/*/
+Static Function fIncCli()
+Local aSA1Auto  := {}
+Local aSUSAuto  := {}
+Local aAI0Auto  := {}
+local aRecnos := {}
+local cAliADY 	:= GetNextAlias()
+local cAliSCJ 	:= GetNextAlias()
+local cCodPros := SUS->US_COD
+local cLojPros := SUS->US_LOJA 
+Local nOpcAuto  := 3
+local nX := 0
+Local lRet      := .T.
+Local aAreaX3	:= SX3->(GetArea())
+Local aAreaCC2  := CC2->(Getarea())
+Local aAreaSUS  := SUS->(Getarea())
+Local cCampo := ""
+
+Private lMsErroAuto := .F.
+    cTipo		:= Padr( AllTrim( SUS->US_TIPO ), TamSX3( 'A1_TIPO' )[1], Space( TamSX3( 'A1_TIPO' )[1] ) )
+	cPessoa		:= IIf( Len( Trim( SUS->US_CGC ) ) < 14, 'F', 'J')
+	cCGC		:= Padr( AllTrim( SUS->US_CGC ), TamSX3( 'A1_CGC' )[1], Space( TamSX3( 'A1_CGC' )[1] ) )
+	cCodCli		:= Padr( AllTrim( SUS->US_CGC ), TamSX3( 'A1_COD' )[1]-1, Space( TamSX3( 'A1_COD' )[1]-1 ) )
+	cLojCli 		:= Padr( SubStr( SUS->US_CGC, 9, 4), TamSX3( 'A1_LOJA' )[1], Space( TamSX3( 'A1_LOJA' )[1] ) )
+	cNome		:= Padr( AllTrim( SUS->US_NOME ), TamSX3( 'A1_NOME' )[1], Space( TamSX3( 'A1_NOME')[1] ) )
+	cNReduz		:= Padr( AllTrim( SUS->US_NREDUZ ), TamSX3( 'A1_NREDUZ' )[1], Space( TamSX3( 'A1_NREDUZ' )[1] ) )
+	cEnd		:= Padr( AllTrim( SUS->US_END ), TamSX3( 'A1_END' )[1], Space( TamSX3( 'A1_END')[1] ) )
+	cCodMun		:= Padr( AllTrim( SUS->US_COD_MUN ), TamSX3( 'A1_COD_MUN' )[1], Space( TamSX3( 'A1_COD_MUN' )[1] ) )
+	cMun 		:= Padr( AllTrim( SUS->US_MUN ), TamSX3( 'A1_MUN' )[1], Space( TamSX3( 'A1_MUN' )[1] ) )
+	cBairro 	:= Padr( AllTrim( SUS->US_BAIRRO), TamSX3( 'US_BAIRRO' )[1], Space( TamSX3( 'US_BAIRRO' )[1] ) )
+	cCep 		:= Padr( AllTrim( SUS->US_CEP), TamSX3( 'A1_CEP' )[1], Space( TamSX3( 'A1_CEP' )[1] ) )
+	cEst		:= Padr( AllTrim( SUS->US_EST), TamSX3( 'A1_EST' )[1], Space( TamSX3( 'A1_EST' )[1] ) )
+	cEmail		:= Padr( AllTrim( SUS->US_EMAIL ), TamSX3( 'A1_EMAIL' )[1], Space( TamSX3( 'A1_EMAIL' )[1] ) )
+	cContaC		:= Padr( '11030101001', TamSX3( 'A1_CONTA' )[1], Space( TamSX3( 'A1_CONTA' )[1] ) )
+	cDesSind	:= AllTrim(Posicione( "ZCA", 1, xFilial("ZCA") + SUS->US_XCODSIN, "ZCA_NOME" ) )
+	If cPessoa == "J"
+		cClvl := Padr( AllTrim( "CJ" + AllTrim( cCodCli ) ), TamSX3( 'A1_CLVL' )[1], Space( TamSX3( 'A1_CLVL' )[1] ) )
+	Else
+		cClvl := Padr( AllTrim( "CF" + AllTrim( cCodCli ) ), TamSX3( 'A1_CLVL' )[1], Space( TamSX3( 'A1_CLVL' )[1] ) )
+	EndIf
+    // Dados do Cliente
+    aAdd( aSA1Auto, { "A1_TIPO"		, cTipo						, Nil } )	// Tipo
+	aAdd( aSA1Auto, { "A1_PESSOA"	, cPessoa					, Nil } )	// Pessoa
+	aAdd( aSA1Auto, { "A1_CGC"		, cCGC						, Nil } )	// CGC
+	aAdd( aSA1Auto, { "A1_NOME"		, cNome						, Nil } )	// Nome
+	aAdd( aSA1Auto, { "A1_NREDUZ"	, cNReduz					, Nil } )	// Nome reduz.
+	aAdd( aSA1Auto, { "A1_END"		, cEnd						, Nil } ) 	// Endereco
+	aAdd( aSA1Auto, { "A1_EST"		, cEst						, Nil } )	// Estado
+	aAdd( aSA1Auto, { "A1_COD_MUN"	, cCodMun					, Nil } ) 	// Endereco
+	aAdd( aSA1Auto, { "A1_MUN"		, cMun						, Nil } ) 	// Cidade
+	aAdd( aSA1Auto, { "A1_XNUMEND"	, SUS->US_XNUMEND			, Nil } )	// Numero
+	aAdd( aSA1Auto, { "A1_BAIRRO"	, cBairro					, Nil } )	// Bairro
+	aAdd( aSA1Auto, { "A1_CEP"		, cCep						, Nil } )	// CEP
+	aAdd( aSA1Auto, { "A1_REGIAO"	, AllTrim( SUS->US_REGIAO )	, Nil } ) 	//Regiao do Cliente
+	aAdd( aSA1Auto, { "A1_DSCREG"	, AllTrim( SUS->US_DSCREG )	, Nil } ) 	//Descrição da Região
+	aAdd( aSA1Auto, { "A1_EMAIL"	, cEmail					, Nil } ) 	// Email
+	aAdd( aSA1Auto, { "A1_ENDCOB"	, cEnd						, Nil } ) 	// Endereco Cob.
+	aAdd( aSA1Auto, { "A1_MUNC"		, cMun						, Nil } ) 	// Cidade Cob.
+	aAdd( aSA1Auto, { "A1_BAIRROC"	, cBairro					, Nil } ) 	// Bairro Cob.
+	aAdd( aSA1Auto, { "A1_CEPC"		, cCep						, Nil } ) 	// CEP Cob.
+	aAdd( aSA1Auto, { "A1_ESTC"		, cEst						, Nil } ) 	// Estado Cob.
+	aAdd( aSA1Auto, { "A1_CONTA"	, cContaC					, Nil } ) 	// Conta Contabil
+	aAdd( aSA1Auto, { "A1_TPESSOA"	, AllTrim(SUS->US_TPESSOA)	, Nil } ) 	//Classificação natureza jurídica
+	aAdd( aSA1Auto, { "A1_XPORTE"	, AllTrim(SUS->US_XPORTE)	, Nil } ) 	//Porte
+	aAdd( aSA1Auto, { "A1_XSITREC"	, AllTrim(SUS->US_XSITREC)	, Nil } ) 	//Situação Cadastral
+	aAdd( aSA1Auto, { "A1_DTNASC"	, SUS->US_XDATNAS			, Nil } ) 	//Data abertura
+	aAdd( aSA1Auto, { "A1_CNAE"		, AllTrim(SUS->US_CNAE)		, Nil } ) 	//Data abertura
+	aAdd( aSA1Auto, { "A1_XCNAE2"	, AllTrim(SUS->US_XCNAE2)	, Nil } ) 	//CNAE Secundário
+	aAdd( aSA1Auto, { "A1_COMPLEM"	, AllTrim(SUS->US_XCOMPLE)	, Nil } ) 	//Complemento
+	aAdd( aSA1Auto, { "A1_XREGINT"	, AllTrim(SUS->US_XREGINT)	, Nil } ) 	//Região Intermediária
+	aAdd( aSA1Auto, { "A1_XCAPSOC"	, SUS->US_XCAPSOC			, Nil } ) 	//Capital Social
+	aAdd( aSA1Auto, { "A1_XQTEMP"	, SUS->US_XQTEMP			, Nil } ) 	//Quantidade de funcionários
+	aAdd( aSA1Auto, { "A1_XFATEST"	, AllTrim(SUS->US_XFATEST)	, Nil } ) 	//Faturamento Estimado
+	aAdd( aSA1Auto, { "A1_SIMPLES"	, AllTrim(SUS->US_XSIMPLE)	, Nil } ) 	//Simples Nacional
+	aAdd( aSA1Auto, { "A1_XSIASSO"	, AllTrim(SUS->US_XSIASSO)	, Nil } ) 	//Associado Socio Indústria
+	aAdd( aSA1Auto, { "A1_XSICATE"	, AllTrim(SUS->US_XSICATE)	, Nil } ) 	//Categoria Socio Indústria
+	If Empty(SUS->US_XASSSIN)
+		cCampo := Strtran(GetSX3Cache("US_XASSSIN", "X3_RELACAO"), '"')  //Inicializador padrao
+	Else 
+		cCampo := SUS->US_XASSSIN
+	Endif
+	aAdd( aSA1Auto, { "A1_XASSSIN"	, AllTrim(cCampo)			, Nil } ) 	//Associado ao Sindicato?
+	aAdd( aSA1Auto, { "A1_DDD"		, AllTrim(SUS->US_DDD)		, Nil } ) 	//DDD
+	aAdd( aSA1Auto, { "A1_DDI"		, SUS->US_DDI				, Nil } ) 	//Codigo do DDI
+	aAdd( aSA1Auto, { "A1_TEL"		, AllTrim(SUS->US_TEL)		, Nil } ) 	//Numero de telefone
+	aAdd( aSA1Auto, { "A1_FAX"		, SUS->US_FAX				, Nil } ) 	//Numero do FAX do cliente
+	aAdd( aSA1Auto, { "A1_HPAGE"	, SUS->US_URL				, Nil } ) 	//Home-Page
+	aAdd( aSA1Auto, { "A1_ULTVIS"	, SUS->US_ULTVIS			, Nil } ) 	//Data da ultima Visita
+	aAdd( aSA1Auto, { "A1_INSCR"	, SUS->US_INSCR				, Nil } ) 	//Inscricao Estadual
+	aAdd( aSA1Auto, { "A1_XCODSIN"	, AllTrim(SUS->US_XCODSIN)	, Nil } ) 	//Sindicato
+	aAdd( aSA1Auto, { "A1_XDSCSIN"	, cDesSind					, Nil } ) 	//Desc. Sindicato
+	aAdd( aSA1Auto, { "A1_MSBLQL"	, '1'						, Nil } ) 	//Bloqueio de Tela = Sim
+	aAdd( aSA1Auto, { "A1_ALIQIR"	, SUS->US_ALIQIR			, Nil } ) 	//Aliquota IRRF
+	aAdd( aSA1Auto, { "A1_GRPTRIB"	, SUS->US_GRPTRIB			, Nil } ) 	//Grupo de Clientes
+	aAdd( aSA1Auto, { "A1_NATUREZ"	, SUS->US_NATUREZ			, Nil } ) 	//Codigo da Nat Financeira
+	aAdd( aSA1Auto, { "A1_SUFRAMA"	, SUS->US_SUFRAMA			, Nil } ) 	//Codigo na SUFRAMA
+	aAdd( aSA1Auto, { "A1_DTCAD"	, Date()					, Nil } ) 	//Data de Cadastro
+	aAdd( aSA1Auto, { "A1_HRCAD"	, SubStr( Time(), 1, 5)		, Nil } ) 	//Hora de Cadastro
+	aAdd( aSA1Auto, { "A1_HRTRANS"	, SUS->US_TRASLA			, Nil } ) 	//Translado
+	aAdd( aSA1Auto, { "A1_LC"		, SUS->US_LC				, Nil } ) 	//Limite de Cred.do cliente
+	aAdd( aSA1Auto, { "A1_VENCLC"	, SUS->US_VENCLC			, Nil } ) 	//Vencimento do Lim. Credit
+	aAdd( aSA1Auto, { "A1_MOEDALC"	, SUS->US_MOEDALC			, Nil } ) 	//Moeda do Limite de credit
+	aAdd( aSA1Auto, { "A1_CODSEG"	, SUS->US_CODSEG			, Nil } ) 	//Código do Segmento
+	//Gravacao dos campos para mapear a origem do Cliente
+   	aAdd( aSA1Auto, { "A1_ORIGCT"	, SUS->US_ORIGEM			, Nil } ) 	//Origem do Cliente
+   	//aAdd( aSA1Auto, { "A1_ENTORI"	, SUS->US_ENTORI			, Nil } ) 	//Entidade de Origem
+	If !Empty(SUS->US_RECCOFI)
+		aAdd( aSA1Auto, { "A1_RECCOFI"	, SUS->US_RECCOFI			, Nil } ) 	//Recolhe COFINS  ?
+	EndIf
+	If !Empty(SUS->US_RECCSLL)
+		aAdd( aSA1Auto, { "A1_RECCSLL"	, SUS->US_RECCSLL			, Nil } ) 	//Recolhe CSLL ?
+	EndIf
+	If !Empty(SUS->US_RECISS)
+		aAdd( aSA1Auto, { "A1_RECISS"	, SUS->US_RECISS			, Nil } ) 	//Recolhe ISS             ?
+	EndIf
+	If !Empty(SUS->US_RECINSS)
+		aAdd( aSA1Auto, { "A1_RECINSS"	, SUS->US_RECINSS			, Nil } ) 	//Recolhe INSS <S/N> ?
+	EndIf
+	If !Empty(SUS->US_RECPIS)
+		aAdd( aSA1Auto, { "A1_RECPIS"	, SUS->US_RECPIS			, Nil } ) 	//Recolhe PIS ?
+	EndIf
+	//Complemento de clientes
+	aAdd(aAI0Auto, {"AI0_SETPUB", IIF(!Empty(SUS->US_SETPUBL), SUS->US_SETPUBL, "2"), Nil})	//1=Sim; 2=Não
+
+	aAdd( aSUSAuto, { "US_COD", SUS->US_COD, Nil } )
+	aAdd( aSUSAuto, { "US_LOJA", SUS->US_LOJA, Nil } )
+	aAdd( aSUSAuto, { "US_STATUS", "6", Nil } )
+	aAdd( aSUSAuto, { "US_CODCLI", cCodCli, Nil } )
+	aAdd( aSUSAuto, { "US_LOJACLI", cLojCli, Nil } )
+	aAdd( aSUSAuto, { "US_DTCONV", Date(), Nil } )
+	aAdd( aSUSAuto, { "US_HRCONV", Time(), Nil } )
+
+	RestArea(aAreaX3)
+	RestArea(aAreaCC2)
+	RestArea(aAreaSUS)
+	
+	Begin Transaction
+		//Inclusão do client por rotina automática
+		MSExecAuto({|a,b,c| CRMA980(a,b,c)}, aSA1Auto, nOpcAuto, aAI0Auto)
+		If lMsErroAuto 
+			If IsInCallStack("U_SF06A66X") // Integracao Socio Industria
+				lRet := ErroSA1()
+			Else
+				DisarmTransaction()
+				MostraErro()
+				lRet := .F.
+			EndIf
+		Else
+			//Atualiza o STATUS do prospect
+			dbSelectArea("SUS")
+			dbSetOrder(1)
+
+			if dbSeek(xFilial("SUS")+cCodPros+cLojPros)
+				Reclock("SUS", .F.)
+					Replace US_STATUS With "6"
+					Replace US_CODCLI With cCodCli
+					Replace US_LOJACLI With cLojCli
+					Replace US_DTCONV With Date()
+					Replace US_HRCONV With Time()					
+				MsUnlock()
+				DbCommit()   
+				
+				//Altera os relacionamentos de contatos para a nova entidade - CLIENTES
+				dbSelectArea("AC8")
+				dbSetOrder(2) 		//AC8_FILIAL+AC8_ENTIDA+AC8_FILENT+AC8_CODENT+AC8_CODCON
+
+				While dbSeek(xFilial("AC8")+"SUS"+xFilial("SUS")+SUS->US_COD+SUS->US_LOJA)	
+					Reclock("AC8",.F.)
+						Replace AC8_FILIAL With xFilial("AC8")
+						Replace AC8_ENTIDA With "SA1"
+						Replace AC8_FILENT With xFilial("SA1")
+						Replace AC8_CODENT With PadR(cCodCli, TamSX3('A1_COD')[1])+PadR(cLojCli, TamSX3('A1_LOJA')[1])
+					MsUnlock()
+					DbCommit()               
+				EndDo
+
+				//Altera os relacionamentos de Banco de Conhecimento para a nova entidade - CLIENTES
+				DbSelectArea("AC9")
+				DbSetOrder(2) 		//AC9_FILIAL+AC9_ENTIDA+AC9_FILENT+AC9_CODENT+AC9_CODOBJ
+				While dbSeek(xFilial("AC9")+"SUS"+xFilial("SUS")+(SUS->US_COD+SUS->US_LOJA))
+					Reclock("AC9",.F.)
+						Replace AC9_FILIAL With xFilial("AC9")
+						Replace AC9_ENTIDA With "SA1"
+						Replace AC9_FILENT With xFilial("SA1")
+						Replace AC9_CODENT With PadR(cCodCli, TamSX3('A1_COD')[1])+PadR(cLojCli, TamSX3('A1_LOJA')[1])
+					MsUnlock()
+					DbCommit()               
+				EndDo
+
+				//Atualiza a tabela ADL com o novo codigo da entidade, apos conversao
+				dbSelectArea("ADL")
+				dbSetOrder(1)	//ADL_FILIAL+ADL_ENTIDA+ADL_FILENT+ADL_CODENT+ADL_LOJENT+ADL_VEND
+				while ADL->(dbSeek(xFilial('ADL')+'SUS'+xFilial('SUS')+SUS->US_COD+SUS->US_LOJA))
+					RecLock("ADL",.F.)       
+						Replace ADL_FILENT With xFilial('SA1')
+						Replace ADL_ENTIDA	With 'SA1'
+						Replace ADL_CODENT	With cCodCli
+						Replace ADL_LOJENT	With cLojCli
+					MsUnLock()
+					DbCommit()
+				endDo
+
+				//Atualiza Oportunidades de Venda e Registros relacionados apos uma conversao de entidade
+				dbSelectArea("AD1")
+				dbSetOrder(4)	//AD1_FILIAL+AD1_PROSPE+AD1_LOJPRO
+				while AD1->(dbSeek(xFilial("AD1")+SUS->US_COD+SUS->US_LOJA))
+					RecLock("AD1",.F.)       
+						Replace AD1_PROSPE With ""
+						Replace AD1_LOJPRO	With ""
+						Replace AD1_CODCLI	With cCodCli
+						Replace AD1_LOJCLI	With cLojCli
+					MsUnLock()
+					DbCommit()
+				endDo
+
+				//Atualiza as propostas vinculadas ao Prospect
+				BEGINSQL Alias cAliADY
+					SELECT 
+						ADY.R_E_C_N_O_ NUMREC 
+					FROM 
+						%Table:ADY% ADY
+					WHERE 
+						ADY.%NotDel% AND
+						ADY.ADY_FILIAL = %xFilial:ADY% AND
+						ADY.ADY_ENTIDA = '2' AND
+						ADY.ADY_CODIGO = %Exp:SUS->US_COD% AND
+						ADY.ADY_LOJA = %Exp:SUS->US_LOJA% 
+				ENDSQL
+
+				aRecnos := {}
+				While (cAliADY)->(!Eof())
+					aAdd(aRecnos, (cAliADY)->NUMREC)
+					(cAliADY)->(DbSkip())
+				End
+				(cAliADY)->(DbCloseArea())
+				DbSelectArea("ADY")
+				ADY->(DbSetOrder(1))			//ADY_FILIAL+ADY_PROPOS
+
+				For nX := 1 to Len(aRecnos)
+					ADY->(DbGoTo(aRecnos[nX]))
+					RecLock("ADY",.F.)
+						Replace ADY_ENTIDA	With "1"
+						Replace ADY_CODIGO	With cCodCli
+						Replace ADY_LOJA	With cLojCli
+					MsUnLock()
+				Next nX
+
+				//Atualiza orçamentos
+				BEGINSQL Alias cAliSCJ
+					SELECT
+						R_E_C_N_O_ NUMREC 
+					FROM
+						%Table:SCJ%
+					WHERE
+						%NotDel% AND
+						CJ_FILIAL = %xFilial:SCJ% AND
+						CJ_PROSPE = %Exp:SUS->US_COD% AND
+						CJ_LOJPRO =  %Exp:SUS->US_LOJA% AND
+						CJ_CLIENTE <>  %Exp:cCodCli% AND
+						CJ_LOJA <>  %Exp:cLojCli%
+				ENDSQL
+				
+				aRecnos := {}
+				while (cAliSCJ)->(!Eof())
+					Aadd(aRecnos, (cAliSCJ)->NUMREC)
+					(cAliSCJ)->(dbSkip())
+				end
+				
+				(cAliSCJ)->(dbCloseArea())
+				
+				DbSelectArea("SCK")
+				SCK->(DbSetOrder(1))	////CK_FILIAL+CK_NUM+CK_ITEM+CK_PRODUTO
+
+				DbSelectArea("SCJ")
+				SCJ->(DbSetOrder(1))	//CJ_FILIAL+CJ_NUM+CJ_CLIENTE+CJ_LOJA 
+
+				For nX := 1 to Len(aRecnos)
+					SCJ->(DbGoTo(aRecnos[nX]))
+					RecLock("SCJ",.F.)
+						Replace CJ_CLIENTE With cCodCli
+						Replace CJ_LOJA With cLojCli
+						Replace CJ_CLIENT With cCodCli
+						Replace CJ_LOJAENT With cLojCli
+					MsUnLock()
+
+					If SCK->(DbSeek(SCJ->CJ_FILIAL+SCJ->CJ_NUM))
+						While	SCK->(!Eof()) .AND.SCK->CK_FILIAL == xFilial("SCK") .AND.;
+								SCK->CK_NUM == SCJ->CJ_NUM
+							RecLock("SCK",.F.)
+								SCK->CK_CLIENTE	:= cCodCli
+								SCK->CK_LOJA := cLojCli
+							MsUnLock()                       
+							SCK->(DbSkip())		
+						End
+					EndIf
+				Next nX
+			else
+				lRet := .F.
+			endif
+		EndIf
+	End Transaction
+Return lRet
+
+ /*/{Protheus.doc} nomeFunction
+	(long_description)
+	@type  Function
+	@author Jorge Elias Tavares
+	@since 08/06/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+	/*/
+Static Function ErroSA1
+
+Local lRet := .T.	
+Local cMsg := ""
+
+If lMsErroAuto
+	aAdd(aLog ,MostraErro("/dirdoc", "error.log"))
+	RollbackSx8()
+	lRet := .F.
+	DisarmTransaction()
+
+else
+	cMsg := MostraErro("/dirdoc", "error.log")
+	If Empty(cMsg)
+		aAdd(aLog ,"Cliente com CNPJ " + Alltrim(ACH->ACH_CGC) + " incluido com sucesso!")
+		lRet := .T.
+	else
+		aAdd(aLog ,Alltrim(cMsg))
+		lRet := .F.
+		DisarmTransaction()
+	EndIf
+EndIf
+
+Return lRet
+
+/*/{Protheus.doc} fUpdPros
+Atualiza dados do prospect
+@type  Static Function
+@author Franklin de Brito de Oliveira
+@since 25/07/2022
+@version version
+@param aSUSAuto, array, dados para alteração do prospect
+@return logical, Indica se o prospect foi atualizado
+/*/
+Static Function fUpdPros(aSUSAuto)
+local lReturn := .T.
+
+lMsErroAuto := .F.
+
+	MSExecAuto({|x, y| TMKA260(x, y)}, aSUSAuto, 4) //3- Inclusão, 4- Alteração, 5- Exclusão
+
+	If lMsErroAuto
+		DisarmTransaction()
+		MostraErro()
+		lReturn := .F.
+	Endif
+
+Return lReturn

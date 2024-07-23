@@ -1,0 +1,1265 @@
+#include "rwmake.ch"
+#include "fileio.ch"
+#include "protheus.ch"
+
+
+/*/{Protheus.doc} GP070FIM
+Ponto de Entrada para ajuste do calculo de provisão
+
+@author    William
+@version   1.0l
+@since     17/07/2015
+/*/
+User Function GP070FIM()
+	
+Local _cCC		:= ''
+Local _cItem	:= ''
+Local _cCCOLD	:= ''
+Local _cItemOLD	:= ''
+Local _cFilOLD	:= ''
+Local _cClVl	:= "                    "
+Local _Salario	:= 0.00
+Local _dDtBse	:= ctod('//')
+Local _nFer		:= 0.0
+Local _cDtCal	:= DTOS(MV_PAR02)
+Local _aArea	:= GETArea()
+Local _nVal915	:= 0	//Baixa Ferias Resc
+Local _nVal916	:= 0	//Baixa Ad Fer Resc
+Local _nVal876	:= 0	//Media de Ferias 
+Local _nVal875	:= 0	//Ferias
+Local _nVal905	:= 0	//Baixa Ferias
+Local _nVal906	:= 0	//Baixa Med Ferias
+Local _nVal907	:= 0	//Baixa 1/3 Ferias
+Local _nVal881	:= 0	//13º
+Local _nVal882	:= 0	//13°
+Local _nVal933	:= 0 
+Local _nVal934	:= 0	//13º
+Local _nVal902	:= 0	//Baixa Ferias na Transferencial
+Local _nVal928	:= 0	//Baixa 13° na Transferencia
+Local _nVal910	:= 0	//Baixa Ferias Medias Transferencia
+Local _nVal929	:= 0	//Baixa 13° Medias transferencia
+Local _nValPLUS	:= 0 	// 1/3 de ferias
+Local _nValAux	:= 0
+Local _nAuxMedia:= 0	//Totaliza verbas de media do calculo de ferias
+Local _nPos		:= 0
+Local _nPos1	:= 0
+Local _nPosAux	:= 0
+Local aArea		:= {}
+Local _SitFol	:= ''
+Local _Demissao	:= CTOD('//')
+Local _CatFunc	:= ''
+Local _DtGeraD	:= CTOD('//')
+Local _DtHomD	:= CTOD('//')
+Local _lAux		:= .F. //Controla se deve gravar as informações de database na verba de media de ferias.
+Local _Dissidio	:= ''
+Local _nHDL		:= 0
+Local cTxt		:= ''
+Local cTxtCab	:= 'PONTO ENTRADA - GP070FIM'+CRLF
+Local cArqTxt 	:= '\LOG_PROVISAO - '+STRZERO(DAY(DDATABASE),2)+'_'+STRZERO(MONTH(DDATABASE),2)+'_'+STRZERO(YEAR(DDATABASE),4)+'.TXT'   
+
+//--------Variaveis para gravar informações de registros que serão apagados ------------
+
+Local _vDTBas   := CTOD('//')  //Data Base
+Local _vDFERVEN := 0
+Local _vDFERPRO := 0
+Local _vDFERANT := 0
+Local _vDFALVEN := 0
+Local _vDFALPRO := 0
+Local _vTIPMOVI := 0
+Local _vRTSAL   := 0
+Local _vAVOS13  := 0
+//---------------------------------------------------------------------------------------
+
+Public _cFilial	:= ''
+Public _cMat	:= ''
+Public _dDtFin1	:= MV_PAR02
+Public _dDtIni1	:= FIRSTDAY(MV_PAR02)
+Public aProvMes	:= {}
+Public aCalcRes	:= {}
+Public aTransfer:= {}
+Public aCalcFer	:= {}
+Public aCalc13	:= {}
+Public aPerFer	:= {}
+Public aFuncProc:= {}
+Public aProvTran 	:= {} //provisão da transferencia
+Public lTransferido	:= .F.
+Public cTpAfast		:= '' //Irá controlar se está afastado pelo motivo P, para apagar provisão
+Public _aVb13Sal	:= {}
+Public _aPrvNegMes	:= {}
+Public _aVrbEstorno	:= {}
+Public _cVerba		:= '' //verba normal
+Public _cVerbaEst	:= '' //verba de estorno
+Public _cTipProv	:= '' //Tipo Provisão
+Public _nValEst		:= 0.00
+
+	AADD(_aVrbEstorno,{'881','945'}) //13 SALARIO
+	AADD(_aVrbEstorno,{'882','946'}) //MEDIA 13 SALARIO
+	AADD(_aVrbEstorno,{'884','947'}) //INSS
+	AADD(_aVrbEstorno,{'885','948'}) //FGTS
+	AADD(_aVrbEstorno,{'887','949'}) //PIS
+	
+	AADD(_aVrbEstorno,{'875','951'}) //FERIAS
+	AADD(_aVrbEstorno,{'876','952'}) //MEDIA FERIAS
+	AADD(_aVrbEstorno,{'877','953'}) //1/3 FERIAS
+	AADD(_aVrbEstorno,{'878','954'}) //INSS
+	AADD(_aVrbEstorno,{'879','955'}) //FGTS
+	AADD(_aVrbEstorno,{'886','956'}) //PIS
+
+	//Alert("Entrou GP070FIM ")
+
+	BuscaFunc()	//Monta a lista de funcionários a executar, segundo parametro da rotina.
+	ResComp()	//Acrescenta a lista de funcionários os funcionários que tiveram rescisão complementar calculada.
+	AADD(_aVb13Sal,{'881'})
+	AADD(_aVb13Sal,{'882'})
+	AADD(_aVb13Sal,{'883'})
+	AADD(_aVb13Sal,{'884'})
+	AADD(_aVb13Sal,{'885'})
+	AADD(_aVb13Sal,{'887'})
+
+For nY := 1 to Len(aFuncProc)
+
+	_cFilial	:= AllTrim(aFuncProc[nY][1])
+	_cMat		:= AllTrim(aFuncProc[nY][2])
+	_cSitFol	:= aFuncProc[nY][3]
+	_cCC		:= aFuncProc[nY][4]
+	_cItem		:= aFuncProc[nY][5]
+	_Demissao	:= aFuncProc[nY][6]
+	_cCatFunc	:= aFuncProc[nY][7]
+	_cClVl		:= aFuncProc[nY][8]
+	_DtGeraD	:= aFuncProc[nY][9]
+	_DtHomD		:= aFuncProc[nY][10]
+	_Dessidio	:= aFuncProc[nY][11]
+	_Salario	:= aFuncProc[nY][14]
+	_dDtBse		:= ctod(substr(afuncproc[nY][15],7,2)+'/'+substr(afuncproc[nY][15],5,2)+'/'+substr(afuncproc[nY][15],1,4))
+	_nFer		:= aFuncProc[nY][16]
+	_lAux		:= .F.
+	_nValPLUS	:= 0
+	_cItemOLD   := '15'+ SubStr(_cItem,3,20) 
+	aCalcFer	:= {}
+	aProvMes	:= {}
+	aCalculo	:= {}
+	aCalcRes	:= {}
+	aProvTran	:= {}
+	aPerFer		:= {}
+	aTransfer	:= {}
+
+
+//*************************************************
+//Verificar se o Item Contabil é 15 ou 16
+//************************************************
+	/*	DBSELECTAREA("SRT")
+		DBSETORDER(4)
+		DBGOTOP()
+	
+		IF DBSEEK(_cFilial+_cMat+_cCC+_cItemOLD+_cClVl+_cDtCal+'3'+'881') //RETIRA VERBA DE BAIXA DE PROV FERIAS
+				_cItem := _cItemOLD
+		ENDIF
+		
+		DBCLOSEAREA('SRT') */
+			
+//criar arquivo de controle de execução
+	cTxt	:= _cFilial+" - "+_cMat+CRLF    
+		
+	nArq := FOPEN(cArqTxt, 2) 
+
+ 	IF FERROR() == 161 .AND. nArq == -1  //ARQUIVO NÃO EXISTE.ADMIN 
+ 		nHDL := fCreate(cArqTxt)
+   		fWrite(nHDL,cTxtCab,Len(cTxtCab)) 
+   		FSEEK(nHDL,0,2) 
+    	fWrite(nHDL,cTxt,Len(cTxt))
+    	fClose(nHdl)
+	ELSE
+		nHDL := FOPEN(cArqTxt, 2)  
+		FSEEK(nHDL,0,2)
+		fWrite(nHDL,cTxt,Len(cTxt)) 
+		fClose(nHdl)
+	ENDIF
+	
+	
+	_nVal915	:= 0	//Baixa Ferias Resc
+	_nVal916	:= 0	//Baixa Ad Fer Resc
+	_nVal876	:= 0	//Media de Ferias 
+	_nVal875	:= 0	//Ferias
+	_nVal905	:= 0	//Baixa Ferias
+	_nVal906	:= 0	//Baixa Med Ferias
+	_nVal907	:= 0	//Baixa 1/3 Ferias
+	_nVal881	:= 0	//13º
+	_nVal882	:= 0	//13°
+	_nVal933	:= 0 
+	_nVal934	:= 0	//13º
+	_nVal902	:= 0	//Baixa Ferias na Transferencia
+	_nVal928	:= 0	//Baixa 13° na Transferencia
+	_nVal910	:= 0	//Baixa Ferias Medias Transferencia
+	_nVal929	:= 0	//Baixa 13° Medias transferencia
+	_nValPLUS	:= 0 	// 1/3 de ferias
+	_nValAux	:= 0
+	_nAuxMedia	:= 0
+
+
+	ChkTransf()//Verifica se houve transferencia no mes
+	cTpAfast := ChkAfast(_cFilial,_cMat)//Verifica se há afastamento e o tipo
+	
+	If _cSitFol = 'F' //Carrega os valores pagos nas férias.
+		ChkFer()
+	EndIF
+	
+	/*If cTpAfast $ ('P,O')//Irá apagar as verbas de provisão 13o. Salário se foram geradas para afastados tipo 'P'
+	
+		For nX := 1 to LEN(_aVb13Sal)
+	
+			DBSELECTAREA("SRT")
+			DBSETORDER(4)
+			DBGOTOP()
+			
+			IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+'3'+_aVb13Sal[nX][1]) //RETIRA VERBA DE BAIXA DE PROV FERIAS
+				If cTpAfast = 'P' 
+					RecLock("SRT",.F.)
+						DBDELETE()
+					MsUnLock()
+				EndIf
+				If (cTpAfast = 'O' .AND. _aVb13Sal[nX][1] <> '885') 
+					RecLock("SRT",.F.)
+						DBDELETE()
+					MsUnLock()
+				EndIf
+				If (cTpAfast = 'O' .AND. _aVb13Sal[nX][1] = '885') 
+					RecLock("SRT",.F.)
+						SRT->RT_DATABAS := DDTBASFER
+					MsUnLock()
+				EndIf
+			ENDIF
+			
+		Next nX
+		
+		LOOP // salta o restante do calculo.
+	
+	EndIf */
+	
+	//PROFESSORES - Apagar verba 915
+	//IF SRA->RA_CATFUNC = 'J'
+		DBSELECTAREA("SRT")
+		DBSETORDER(4)
+		DBGOTOP()
+	
+		IF _cCatFunc = 'J'
+			IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+'2'+'915') //RETIRA VERBA DE BAIXA DE PROV FERIAS
+				RecLock("SRT",.F.)
+					DBDELETE()
+				MsUnLock()
+			ENDIF
+			
+			IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+'3'+'933') //RETIRA VERBA DE BAIXA DE PROV 13 SALARIO
+				RecLock("SRT",.F.)
+					DBDELETE()
+				MsUnLock()
+			ENDIF
+			
+			IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+'2'+'875')//RETIRA VERBA DE PROVISAO DE FERIAS PROPORCIONAL
+							
+				IF !empty(SRT->RT_DATABAS)
+					_vDTBas   := SRT->RT_DATABAS
+					_vDFERVEN := SRT->RT_DFERVEN
+					_vDFERPRO := SRT->RT_DFERPRO
+					_vDFERANT := SRT->RT_DFERANT
+					_vDFALVEN := SRT->RT_DFALVEN
+					_vDFALPRO := SRT->RT_DFALPRO
+					_vTIPMOVI := SRT->RT_TIPMOVI
+					_vRTSAL   := SRT->RT_SALARIO
+					_vAVOS13  := SRT->RT_AVOS13S
+				EndIf
+				
+				RecLock("SRT",.F.)
+					DBDELETE()
+				MsUnLock()
+				
+				IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+'2'+'876')
+					If!empty(_vDTBas)
+					RecLock("SRT",.F.)
+					 SRT->RT_DATABAS := _vDTBas
+					 SRT->RT_DFERVEN := _vDFERVEN
+					 SRT->RT_DFERPRO := _vDFERPRO
+					 SRT->RT_DFERANT := _vDFERANT
+					 SRT->RT_DFALVEN := _vDFALVEN 
+					 SRT->RT_DFALPRO := _vDFALPRO
+					 SRT->RT_TIPMOVI := _vTIPMOVI
+					 SRT->RT_SALARIO := _vRTSAL  
+					 SRT->RT_AVOS13S := _vAVOS13 
+					MsUnLock()
+					
+					_vDTBas := ' '
+					EndIf
+				
+				ENDIf
+								
+			ENDIF
+			
+			IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+'1'+'875')//RETIRA VERBA DE PROVISAO DE FERIAS VENCIDAS
+				IF !empty(SRT->RT_DATABAS)
+					_vDTBas   := SRT->RT_DATABAS
+					_vDFERVEN := SRT->RT_DFERVEN
+					_vDFERPRO := SRT->RT_DFERPRO
+					_vDFERANT := SRT->RT_DFERANT
+					_vDFALVEN := SRT->RT_DFALVEN
+					_vDFALPRO := SRT->RT_DFALPRO
+					_vTIPMOVI := SRT->RT_TIPMOVI
+					_vRTSAL   := SRT->RT_SALARIO
+					_vAVOS13  := SRT->RT_AVOS13S
+				EndIf
+			
+				RecLock("SRT",.F.)
+					DBDELETE()
+				MsUnLock()
+				
+				IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+'1'+'876')
+					If!empty(_vDTBas)
+					RecLock("SRT",.F.)
+					 SRT->RT_DATABAS := _vDTBas
+					 SRT->RT_DFERVEN := _vDFERVEN
+					 SRT->RT_DFERPRO := _vDFERPRO
+					 SRT->RT_DFERANT := _vDFERANT
+					 SRT->RT_DFALVEN := _vDFALVEN 
+					 SRT->RT_DFALPRO := _vDFALPRO
+					 SRT->RT_TIPMOVI := _vTIPMOVI
+					 SRT->RT_SALARIO := _vRTSAL  
+					 SRT->RT_AVOS13S := _vAVOS13 
+					MsUnLock()
+					
+					_vDTBas := ' '
+					EndIf
+				ENDIf
+			ENDIF	
+			
+			IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+'3'+'881')//RETIRA VERBA DE PROVISAO DE 13°
+				IF !empty(SRT->RT_DATABAS)
+					_vDTBas   := SRT->RT_DATABAS
+					_vDFERVEN := SRT->RT_DFERVEN
+					_vDFERPRO := SRT->RT_DFERPRO
+					_vDFERANT := SRT->RT_DFERANT
+					_vDFALVEN := SRT->RT_DFALVEN
+					_vDFALPRO := SRT->RT_DFALPRO
+					_vTIPMOVI := SRT->RT_TIPMOVI
+					_vRTSAL   := SRT->RT_SALARIO
+					_vAVOS13  := SRT->RT_AVOS13S
+				EndIf
+				
+				RecLock("SRT",.F.)
+					DBDELETE()
+				MsUnLock()
+				
+				IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+'3'+'882')
+					If!empty(_vDTBas)
+					RecLock("SRT",.F.)
+					 SRT->RT_DATABAS := _vDTBas
+					 SRT->RT_DFERVEN := _vDFERVEN
+					 SRT->RT_DFERPRO := _vDFERPRO
+					 SRT->RT_DFERANT := _vDFERANT
+					 SRT->RT_DFALVEN := _vDFALVEN 
+					 SRT->RT_DFALPRO := _vDFALPRO
+					 SRT->RT_TIPMOVI := _vTIPMOVI
+					 SRT->RT_SALARIO := _vRTSAL  
+					 SRT->RT_AVOS13S := _vAVOS13 
+					MsUnLock()
+					
+					_vDTBas := ' '
+					EndIf
+				ENDIf
+				
+			ENDIF
+			
+		ENDIF
+		
+		IF LEN(aTransfer) = 0
+			IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+'2'+'915')
+				_nVal915 := SRT->RT_VALOR		
+			ENDIF
+				
+			IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+'2'+'916')
+				_nVal916 := SRT->RT_VALOR		
+			ENDIF
+				
+			IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+'3'+'933')
+				_nVal933 := SRT->RT_VALOR		
+			ENDIF
+				
+			IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+'3'+'934')
+				_nVal934 := SRT->RT_VALOR		
+			ENDIF
+			
+			//BUSCA VALORES DO CALCULO NORMAL
+			IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+'1'+'905')
+				_nVal905 := SRT->RT_VALOR		
+			ENDIF
+			
+			IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+'1'+'906')
+				_nVal906 := SRT->RT_VALOR		
+			ENDIF
+			
+			IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+'1'+'907')
+				_nVal907 := SRT->RT_VALOR		
+			ENDIF
+			
+		ELSE //quando houver 
+			_cCCOLD		:= aTransfer[1][3]
+			_cIemOLD	:= aTransfer[1][4]
+			_cFilOLD	:= AllTrim(aTransfer[1][1])
+			
+			IF _cFilial+_cCC+_cItem <> _cFilOLD+_cCCOLD+_cIemOLD //Para que o registro transferido não tome os valores para gerar diferença
+			
+				IF DBSEEK(_cFilOLD+_cMat+_cCCOLD+_cIemOLD+_cClVl+_cDtCal+'2'+'902')
+					_nVal902 := SRT->RT_VALOR		
+				ENDIF
+				
+				IF DBSEEK(_cFilOLD+_cMat+_cCCOLD+_cIemOLD+_cClVl+_cDtCal+'2'+'910')
+					_nVal910 := SRT->RT_VALOR		
+				ENDIF
+				
+				IF DBSEEK(_cFilOLD+_cMat+_cCCOLD+_cIemOLD+_cClVl+_cDtCal+'3'+'928')
+					_nVal928 := SRT->RT_VALOR		
+				ENDIF
+							
+				IF DBSEEK(_cFilOLD+_cMat+_cCCOLD+_cIemOLD+_cClVl+_cDtCal+'3'+'929')
+					_nVal929 := SRT->RT_VALOR		
+				ENDIF
+				
+			EndIf
+			
+		ENDIF
+
+	
+		IF (_cSitFol = 'D' .AND. ((_Demissao >= DTOS(_dDtIni1) .AND. _Demissao <= DTOS(_dDtFin1)) .OR. _Dessidio <> "0" )) .OR. (_cSitFol = " " .AND. lTransferido = .T.) 
+		//(_cSitFol = 'D' .AND. (_Demissao >= DTOS(_dDtIni1) .AND. _Demissao <= DTOS(_dDtFin1)))
+			
+			IF (_cSitFol = 'D')
+				//PROFESSORES - Gera verbas de provisão do mes quando rescisão.
+				aArea := GETAREA()
+				RetValRes()//Busca valores de Ferias e 13 Pagos na rescisao
+				RestArea(aArea)
+				aProvMes := {}
+				aCalculo := ACLONE(aCalcRes)
+			ELSE
+				aArea := GETAREA()
+				BuscaPRV(_cFilial,_cMat,_cCC,_cItem)
+				RestArea(aArea)
+				aProvMes := {}
+				aCalculo := ACLONE(aProvTran)
+			EndIF
+
+		
+			IF (LEN(aCalculo) > 0 .AND. _Dessidio == "0") 
+			
+					IF _cCatFunc = 'J' //Tratamento para professores
+						//FERIAS-------------------------------------------------------------------
+						IF lTransferido
+							_nPos 			:= Ascan( aCalculo, { |x| x[1] == '248' .OR. x[1] == '876' } )
+							_nVal876		:= IIF(_nPos > 0,aCalculo[_nPos][2] - _nVal910, 0)
+							_nValPLUS		:= _nVal876/3
+							//RETIRADO PORQUE SERA FEITO A REVERSAO DA PROVISAO
+							//_nVal876		:= IIF(_nVal876 > 0,_nVal876,0)
+							//_nValPLUS		:= IIF(_nValPLUS > 0,_nValPLUS,0)
+						ELSE
+							_nPos 			:= Ascan( aCalculo, { |x| x[1] == '248' } )
+							_nVal876		:= IIF(_nPos > 0,aCalculo[_nPos][2] - _nVal916,0)
+							_nValPLUS		:= _nVal876/3	
+							//RETIRADO PORQUE SERA FEITA A REVERSAO DA PROVISAO
+							//_nVal876		:= IIF(_nVal876 > 0,_nVal876,0)
+							//_nValPLUS		:= IIF(_nValPLUS > 0,_nValPLUS,0)					
+						ENDIF
+						If _nVal876 > 0
+							AADD(aProvMes,{'876',_nVal876,'916','2'})	
+							AADD(aProvMes,{'877',_nValPLUS,'917','2'})
+							AADD(aProvMes,{'879',(_nVal876+_nValPlus) * nPercFGTS, '919','2'})
+							AADD(aProvMes,{'886',(_nVal876+_nValPlus) * nPercPIS,'940','2'})
+							AADD(aProvMes,{'878',(_nVal876+_nValPlus) * (nPercAcTrab+nPercEmp),'918','2'})
+						Else
+							_nValPLUS	:= (_nValPLUS * -1)
+							_nVal876	:= (_nVal876 *-1)
+							//AADD(aProvMes,{'952',_nVal876,'915','2'})
+							//AADD(aProvMes,{'953',_nValPLUS,'917','2'})
+							//AADD(aProvMes,{'955',(_nVal876+_nValPlus) * nPercFGTS, '919','2'})
+							//AADD(aProvMes,{'956',(_nVal876+_nValPlus) * nPercPIS,'940','2'})
+							//AADD(aProvMes,{'954',(_nVal876+_nValPlus) * (nPercAcTrab+nPercEmp),'918','2'})
+						EndIf
+						
+						
+						//13º SALARIO---------------------------------------------------------------
+						IF lTransferido
+							_nPos 			:= Ascan( aCalculo, { |x| x[1] == '261' .OR.  x[1] == '882'} )
+							_nVal882		:= IIF(_nPos > 0,aCalculo[_nPos][2] - _nVal929,0)
+							//RETIRADO PORQUE SERA FEITA A REVERSAO DA PROVISAO
+							//_nVal882		:= IIF(_nVal882 > 0,_nVal882,0)
+						ELSE
+							_nPos 			:= Ascan( aCalculo, { |x| x[1] == '261' } )
+							_nVal882		:= IIF(_nPos >0,aCalculo[_nPos][2] - _nVal934,0)
+							//RETIRADO PORQUE SERA FEITA A REVERSAO DA PROVISAO	
+							//_nVal882		:= IIF(_nVal882 > 0,_nVal882,0)												
+						ENDIF
+						
+						IF _nVal882 > 0
+							AADD(aProvMes,{'882',_nVal882,'934','3'})	
+							AADD(aProvMes,{'885',_nVal882 * nPercFGTS, '936','3'})
+							AADD(aProvMes,{'887',_nVal882 * nPercPIS,'944','3'})
+							AADD(aProvMes,{'884',_nVal882 * (nPercAcTrab+nPercEmp),'935','3'})
+						ELSE
+							_nVal882	:= (_nVal882 * -1)
+							AADD(aProvMes,{'946',_nVal882,'934','3'})		
+//						AADD(aProvMes,{'948',(_nVal882) * nPercFGTS, '936','3'})
+//							AADD(aProvMes,{'949',(_nVal882) * nPercPIS,'944','3'})
+//							AADD(aProvMes,{'947',(_nVal882) * (nPercAcTrab+nPercEmp),'935','3'})
+						ENDIF
+					ENDIF
+					
+					IF _cCatFunc = 'M' //Tratamento para mensalistas
+						//FERIAS-------------------------------------------------------------------						
+						IF lTransferido
+							_nPos 			:= Ascan( aCalculo, { |x| x[1] == '247' .OR. x[1] == '875' } )
+							_nVal875		:= IIF(_nPos > 0, aCalculo[_nPos][2] - _nVal902, 0)
+							_nPos 			:= Ascan( aCalculo, { |x| x[1] == '248' .OR. x[1] == '876' } )
+							_nVal876		:= IIF(_nPos > 0, aCalculo[_nPos][2] - _nVal910, 0)
+							_nValPLUS		:= (_nVal875+_nVal876)/3
+							//RETIRADO PORQUE SERA FEITA A REVERSAO DA PROVISAO
+							//_nVal875		:= IIF(_nVal875 > 0,_nVal875,0)
+							//_nVal876		:= IIF(_nVal876 > 0,_nVal876,0)
+							//_nValPLUS		:= IIF(_nValPLUS > 0,_nValPLUS,0)
+						ELSE		
+							_nPos 			:= Ascan( aCalculo, { |x| x[1] == '247' } )				
+							_nVal875		:= IIF(_nPos > 0, aCalculo[_nPos][2] - _nVal915, 0)
+							_nPos 			:= Ascan( aCalculo, { |x| x[1] == '248' } )
+							_nVal876		:= IIF(_nPos > 0, aCalculo[_nPos][2] - _nVal916, 0)
+							_nValPLUS		:= (_nVal875+_nVal876)/3
+							//RETIRADO PORQUE SERA FEITA A REVERSAO DA PROVISAO
+							//_nVal875		:= IIF(_nVal875 > 0,_nVal875,0)
+							//_nVal876		:= IIF(_nVal876 > 0,_nVal876,0)
+							//_nValPLUS		:= IIF(_nValPLUS > 0,_nValPLUS,0)							
+						ENDIF
+						IF _nVal875 > 0
+							AADD(aProvMes,{'875',_nVal875,'915','2'})
+							AADD(aProvMes,{'877',_nValPLUS,'917','2'})
+							AADD(aProvMes,{'879',(_nVal875+_nVal876+_nValPlus) * nPercFGTS, '919','2'})
+							AADD(aProvMes,{'886',(_nVal875+_nVal876+_nValPlus) * nPercPIS,'940','2'})
+							AADD(aProvMes,{'878',(_nVal875+_nVal876+_nValPlus) * (nPercAcTrab+nPercEmp),'918','2'})
+							If _nVal876 > 0
+								AADD(aProvMes,{'876',_nVal876,'916','2'})
+							EndIf
+						Else
+							_nVal875 	:= (_nVal875 * -1)
+							_nValPLUS	:= (_nValPLUS * -1)
+							_nVal876	:= (_nVal876 *-1)
+							AADD(aProvMes,{'951',_nVal875,'915','2'})
+							//AADD(aProvMes,{'953',_nValPLUS,'917','2'})
+							//AADD(aProvMes,{'955',(_nVal875+_nVal876+_nValPlus) * nPercFGTS, '919','2'})
+							//AADD(aProvMes,{'956',(_nVal875+_nVal876+_nValPlus) * nPercPIS,'940','2'})
+							//AADD(aProvMes,{'954',(_nVal875+_nVal876+_nValPlus) * (nPercAcTrab+nPercEmp),'918','2'})
+							If _nVal876 > 0
+								//(aProvMes,{'952',_nVal876,'916','2'})
+							EndIf
+						EndIf
+						//13º SALARIO---------------------------------------------------------------
+						IF lTransferido
+							_nPos 			:= Ascan( aCalculo, { |x| x[1] == '260' .OR. x[1] == '881'} )
+							_nVal881		:= IIF(_nPos > 0,aCalculo[_nPos][2] - _nVal928,0)
+							_nPos 			:= Ascan( aCalculo, { |x| x[1] == '261' .OR. x[1] == '882'} )
+							_nVal882		:= IIF(_nPos > 0,aCalculo[_nPos][2] - _nVal929,0)
+							//RETIRADO PORQUE SERA FEITA A REVERSAO DA PROVISAO
+							//_nVal881		:= IIF(_nVal881 > 0,_nVal881,0)
+							//_nVal882		:= IIF(_nVal882 > 0,_nVal882,0)						
+						ELSE
+							_nPos 			:= Ascan( aCalculo, { |x| x[1] == '260' } )
+							_nVal881		:= IIF(_nPos > 0,aCalculo[_nPos][2] - _nVal933,0)
+							_nPos 			:= Ascan( aCalculo, { |x| x[1] == '261' } )
+							_nVal882		:= IIF(_nPos > 0,aCalculo[_nPos][2] - _nVal934,0)
+							//RETIRADO PORQUE SERA FEITA A REVERSAO DA PROVISAO
+							//_nVal881		:= IIF(_nVal881 > 0,_nVal881,0)
+							//_nVal882		:= IIF(_nVal882 > 0,_nVal882,0)	
+						ENDIF
+						IF _nVal881 > 0
+							AADD(aProvMes,{'881',_nVal881,'933','3'})	
+							AADD(aProvMes,{'885',(_nVal881+_nVal882) * nPercFGTS, '936','3'})
+							AADD(aProvMes,{'887',(_nVal881+_nVal882) * nPercPIS,'944','3'})
+							AADD(aProvMes,{'884',(_nVal881+_nVal882) * (nPercAcTrab+nPercEmp),'935','3'})
+							If _nVal882 > 0
+								AADD(aProvMes,{'882',_nVal882,'934','3'})
+							EndIf
+						ELSE
+							_nVal881 	:= (_nVal881 * -1)
+							_nVal882	:= (_nVal882 * -1)
+							//AADD(aProvMes,{'945',_nVal881,'933','3'})	
+							//AADD(aProvMes,{'948',(_nVal881+_nVal882) * nPercFGTS, '936','3'})
+							//AADD(aProvMes,{'949',(_nVal881+_nVal882) * nPercPIS,'944','3'})
+							//AADD(aProvMes,{'947',(_nVal881+_nVal882) * (nPercAcTrab+nPercEmp),'935','3'})
+							If _nVal882 > 0
+								//AADD(aProvMes,{'946',_nVal882,'934','3'})
+							EndIf
+						ENDIF
+					ENDIF
+					
+					IF 	!(_cSitFol = " " .AND. lTransferido = .T.)	
+						For nX := 1 to len(aProvMes) //ADICIONA AS VERBAS DE PROVISAO DO  MES
+							//Alert('STOP 01: '+_cMat)
+							IF !DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+aProvMes[nX][4]+aProvMes[nX][1])
+								RecLock("SRT",.T.)
+									SRT->RT_FILIAL 	:= _cFilial
+									SRT->RT_MAT		:= _cMat
+									SRT->RT_CC		:= _cCC
+									SRT->RT_DATACAL	:= MV_PAR02
+									SRT->RT_TIPPROV	:= aProvMes[nX][4]
+									SRT->RT_VERBA	:= aProvMes[nX][1]
+									SRT->RT_VALOR	:= aProvMes[nX][2]
+									SRT->RT_ITEM	:= _cItem
+									SRT->RT_XVALMES	:= aProvMes[nX][2]
+									If (aProvMes[nX][1] == '875' .OR. aProvMes[nX][1] == '951')
+										_lAux			:= .T. 
+										SRT->RT_DATABAS := _dDtBse
+										SRT->RT_DFERPRO	:= _nFer
+										SRT->RT_SALARIO	:= _salario
+									EndIf
+									If (aProvMes[nX][1] == '876' .OR. aProvMes[nX][1] == '876') .AND. _lAux <> .T.
+										SRT->RT_DATABAS := _dDtBse
+										SRT->RT_DFERPRO	:= _nFer
+										SRT->RT_SALARIO	:= _salario
+									EndIf
+								MsUnlock()
+							ENDIF
+							
+						Next nX
+					EndIf
+					
+					For nX := 1 to len(aProvMes) //ATUALIZA VERBAS DE BAIXA COM VALOR DA PROVISAO DO MES
+					
+						IF 	!(_cSitFol = " " .AND. lTransferido = .T.)
+							IF (DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+aProvMes[nX][4]+aProvMes[nX][3]) .AND. aProvMes[nX][2] > 0)
+								
+								//Alert('STOP 02: '+_cMat)
+								
+								_nValAux := (SRT->RT_VALOR + aProvMes[nX][2])
+								RecLock("SRT",.F.)
+									SRT->RT_VALOR 	:= _nValAux
+									SRT->RT_XVALMES := _nValAux
+								MsUnLock()
+					
+							ENDIF
+							
+							IF !DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+aProvMes[nX][4]+aProvMes[nX][3]) //GERA FGTS 13° QUANDO NÃO GEROU DEVIDO ANTICIPACAO
+								//Alert('STOP 03: '+_cMat)
+								IF aProvMes[nX][3] = '936'
+									RecLock("SRT",.T.)
+										SRT->RT_FILIAL 	:= _cFilial
+										SRT->RT_MAT		:= _cMat
+										SRT->RT_CC		:= _cCC
+										SRT->RT_DATACAL	:= MV_PAR02
+										SRT->RT_TIPPROV	:= aProvMes[nX][4]
+										SRT->RT_VERBA	:= aProvMes[nX][3]
+										SRT->RT_VALOR	:= aProvMes[nX][2]
+										SRT->RT_ITEM	:= _cItem
+										SRT->RT_XVALMES	:= aProvMes[nX][2]
+									MsUnlock()
+								ENDIF						
+							ENDiF
+						ELSE
+						
+							IF (DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+aProvMes[nX][4]+aProvMes[nX][1]) .AND. aProvMes[nX][2] > 0)
+								
+								//Alert('STOP 06: '+_cMat)
+								
+								RecLock("SRT",.F.)
+
+									SRT->RT_XVALMES := aProvMes[nX][2]
+
+								MsUnLock()
+					
+							ENDIF
+						
+						ENDIF
+						
+					Next nX
+			EndIF
+			
+		EndIf
+
+		
+		IF _Dessidio <> "0" //TRATAMENTO PARA RESCISÕES COM DISSIDIO
+			
+			_nPos1	 := ASCAN(aFuncProc ,{|x| X[1] == _cFilial .AND. X[2] == _cMat})
+			_nVal875 := aFuncProc[_nPos1][12]
+			_nVal881 := aFuncProc[_nPos1][13]
+			
+			
+			AADD(aProvMes,{'881',_nVal881,'933','3'}) //13º
+			AADD(aProvMes,{'875',_nVal875,'915','2'}) //FERIAS
+			//Alert('Dissidio: '+_cMat+' Valor 875: '+STR(_nVal875)+' Valor 881: '+STR(_nVal881))
+			//ADICIONA AS VERBAS DE PROVISAO DO  MES
+			//Executa 4 iterações, sendo as duas primeiras PROVISÃO DO MES as duas últimas BAIXA DA PROVISÃO
+			For nX := 1 to 2 
+				//Alert('STOP 04: '+_cMat)
+				IF !(DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+aProvMes[nX][4]+aProvMes[nX][1]))
+					RecLock("SRT",.T.)
+						SRT->RT_FILIAL 	:= _cFilial
+						SRT->RT_MAT		:= _cMat
+						SRT->RT_CC		:= _cCC
+						SRT->RT_DATACAL	:= MV_PAR02
+						SRT->RT_TIPPROV	:= aProvMes[nX][4]
+						SRT->RT_VERBA	:= aProvMes[nX][1]
+						SRT->RT_VALOR	:= aProvMes[nX][2]
+						SRT->RT_ITEM	:= _cItem
+						SRT->RT_XVALMES	:= aProvMes[nX][2]
+						If aProvMes[nX][1] == '875'
+							_lAux			:= .T. 
+							SRT->RT_DATABAS := _dDtBse
+							SRT->RT_DFERPRO	:= _nFer
+							SRT->RT_SALARIO	:= _salario
+						EndIf
+						If aProvMes[nX][1] == '876' .AND. _lAux <> .T.
+							SRT->RT_DATABAS := _dDtBse
+							SRT->RT_DFERPRO	:= _nFer
+							SRT->RT_SALARIO	:= _salario
+						EndIf
+						MsUnlock()
+				ENDIF
+				IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+aProvMes[nX][4]+aProvMes[nX][1])
+					RecLock("SRT",.F.)
+					SRT->RT_VALOR	:= aProvMes[nX][2]
+					SRT->RT_XVALMES	:= aProvMes[nX][2]
+					MsUnlock()
+				Endif
+					
+
+				IF !(DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+aProvMes[nX][4]+aProvMes[nX][3]))
+					RecLock("SRT",.T.) //Grava Baixa
+						SRT->RT_FILIAL 	:= _cFilial
+						SRT->RT_MAT		:= _cMat
+						SRT->RT_CC		:= _cCC
+						SRT->RT_DATACAL	:= MV_PAR02
+						SRT->RT_TIPPROV	:= aProvMes[nX][4]
+						SRT->RT_VERBA	:= aProvMes[nX][3]
+						SRT->RT_VALOR	:= aProvMes[nX][2]
+						SRT->RT_ITEM	:= _cItem
+						SRT->RT_XVALMES	:= aProvMes[nX][2]
+						If aProvMes[nX][1] == '875'
+							_lAux			:= .T. 
+							SRT->RT_DATABAS := _dDtBse
+							SRT->RT_DFERPRO	:= _nFer
+							SRT->RT_SALARIO	:= _salario
+						EndIf
+						If aProvMes[nX][1] == '876' .AND. _lAux <> .T.
+							SRT->RT_DATABAS := _dDtBse
+							SRT->RT_DFERPRO	:= _nFer
+							SRT->RT_SALARIO	:= _salario
+						EndIf
+					MsUnlock()
+				EndIf
+				
+				IF (DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+aProvMes[nX][4]+aProvMes[nX][3]))
+					RecLock("SRT",.F.)
+						SRT->RT_VALOR	:= aProvMes[nX][2]
+						SRT->RT_XVALMES	:= aProvMes[nX][2]
+					MsUnlock()
+				EndIf		
+				
+			Next nX
+
+		EndIf
+
+		//CONTROLE DAS BAIXAS DE PROVISÃO POR FÉRIAS
+		IF _cSitFol = 'F' .AND.  LEN(aCalcFer) > 0
+		
+			aArea := GetArea()
+			PerFer() // Busca periodo das férias
+			RestArea(aArea)
+			
+			_nPos 			:= Ascan( aCalcFer, { |x| x[1] == '211' } )
+			_nAuxMedia		+= IIF(_nPos > 0,aCalcFer[_nPos][2],0)
+			
+			_nPos 			:= Ascan( aCalcFer, { |x| x[1] == '224' } )
+			_nAuxMedia		+= IIF(_nPos > 0,aCalcFer[_nPos][2],0)
+			
+			//-------------------------------------------------------------
+			//A verba 233 só é tomada  dentro do mes inicial das férias
+			//evitando que seja considerada para baixa no mes seguinte
+			//porque o valor dela já foi baixado no primeiro mes
+			//-------------------------------------------------------------
+			IF LEN(aPerFer) > 0 .AND. (aPerFer[1][1] > dtos(_dDtIni1) .AND. aPerFer[1][1] < dtos(_dDtFin1))
+			
+				_nPos 			:= Ascan( aCalcFer, { |x| x[1] == '209' } )
+				_nVal875		:= IIF(_nPos > 0,aCalcFer[_nPos][2] - _nVal905,0)
+						
+				_nPos 			:= Ascan( aCalcFer, { |x| x[1] == '210' } )
+				_nAuxMedia		:= IIF(_nPos > 0,aCalcFer[_nPos][2],0)
+			
+				_nPos 			:= Ascan( aCalcFer, { |x| x[1] == '233' } )
+				_nAuxMedia		+= IIF(_nPos > 0,aCalcFer[_nPos][2],0)
+				
+			ENDIF
+			
+			_nPos 			:= Ascan( aCalcFer, { |x| x[1] == '234' } )
+			_nAuxMedia		+= IIF(_nPos > 0,aCalcFer[_nPos][2],0)
+			
+			_nVal876		:= IIF(_nAuxMedia > 0,_nAuxMedia,0)
+			
+			_nValPLUS		:= _nVal875 + _nVal876
+			_nValPLUS		:= _nValPLUS/3	
+			
+			//GARANTE QUE NÃO IRÁ GRAVAR VALOR NEGATIVO, NO CASO DO CALCULADO SER MAIOR QUE O PROVISIONADO
+			_nVal875		:= IIF(_nVal875 > 0,_nVal875,0)
+			_nVal876		:= IIF(_nVal876 > 0,_nVal876,0)
+			_nValPLUS		:= IIF(_nValPLUS > 0,_nValPLUS,0)
+			
+			If _nValPLUS > 0
+			
+				AADD(aProvMes,{'875',_nVal875,'905','1','',''})
+				AADD(aProvMes,{'877',_nValPLUS,'907','1','',''})
+				AADD(aProvMes,{'879',(_nVal875+_nVal876+_nValPlus) * nPercFGTS, '908','1','',''})
+				AADD(aProvMes,{'886',(_nVal875+_nVal876+_nValPlus) * nPercPIS,'938','1','',''})
+				AADD(aProvMes,{'878',(_nVal875+_nVal876+_nValPlus) * (nPercAcTrab+nPercEmp),'909','1','',''})
+				If _nVal876 > 0
+					AADD(aProvMes,{'876',_nVal876,'906','1',ddtbasfer,_dFerPro})
+				EndIf
+				
+				For nX := 1 to len(aProvMes) //ADICIONA AS VERBAS DE PROVISAO DO  MES
+					//Alert('STOP 05: '+_cMat)
+					IF aProvMes[nX][2] > 0
+						IF !(DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+aProvMes[nX][4]+aProvMes[nX][1]))
+							RecLock("SRT",.T.)
+								SRT->RT_FILIAL 	:= _cFilial
+								SRT->RT_MAT		:= _cMat
+								SRT->RT_CC		:= _cCC
+								SRT->RT_DATACAL	:= MV_PAR02
+								SRT->RT_TIPPROV	:= aProvMes[nX][4]
+								SRT->RT_VERBA	:= aProvMes[nX][1]
+								SRT->RT_VALOR	:= aProvMes[nX][2]
+								If aProvMes[nX][1] = '876' 
+									SRT->RT_DATABAS	:= aProvMes[nX][5]
+									SRT->RT_DFERPRO	:= aProvMes[nX][6]
+								EndIf
+								SRT->RT_ITEM	:= _cItem
+								SRT->RT_XVALMES	:= aProvMes[nX][2]
+							MsUnlock()
+						EndIf
+						IF (DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+aProvMes[nX][4]+aProvMes[nX][3]))
+							RecLock("SRT",.F.)
+								SRT->RT_VALOR	:= aProvMes[nX][2]
+								SRT->RT_XVALMES	:= aProvMes[nX][2]
+							MsUnlock()	
+						EndIf
+					EndIf
+				Next nX
+				
+				For nX := 1 to len(aProvMes) //ATUALIZA VERBAS DE BAIXA COM VALOR DA PROVISAO DO MES
+					
+					IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+aProvMes[nX][4]+aProvMes[nX][3])
+						
+					_nValAux := (SRT->RT_VALOR + aProvMes[nX][2])
+					RecLock("SRT",.F.)
+						SRT->RT_VALOR 	:= _nValAux
+						SRT->RT_XVALMES := _nValAux
+					MsUnLock()
+				
+					ENDIF
+				
+				Next nX
+				
+			ENDIF // --> IF DA GRAVAÇÃO
+		
+		ENDIF //-->IF GERAL SIT FERIAS
+		
+		
+		//ESTORNO QUANDO O VALOR DO MES FOR NEGATIVO
+		
+		//_aPrvNegMes := PRVNeg()
+		
+		IF LEN(_aPrvNegMes) > 0
+		
+			For nX := 1 to LEN(_aPrvNegMEs)
+			
+				_cVerba 	:= _aPrvNegMes[nX][1] //pega verba de pago do mes
+				_nPos 		:= Ascan( _aVrbEstorno, { |x| x[1] == _cVerba } )
+				//_cVerbaEst 	:= _aVrbEstorno[_nPos][2] //atualiza pra verba de estorno
+				_cVerbaEst 	:= _aVrbEstorno[_nPos][2] //atualiza pra verba de estorno
+				_cTipProv	:= _aPrvNegMes[nX][3]
+				_nValEst	:= (_aPrvNegMes[nX][2] * -1)
+				
+				aArea := GetArea()
+				DBSELECTAREA("SRT")
+				DBSETORDER(4)
+				DBGOTOP()
+			
+				IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+_cTipProv+_cVErba) //RETIRA VERBA DE BAIXA DE PROV FERIAS
+					//Zera valor mes que está em negativo
+					RecLock("SRT",.F.)
+						SRT->RT_XVALMES := 0
+					MsUnlock()
+				ENDIF
+				
+				IF DBSEEK(_cFilial+_cMat+_cCC+_cItem+_cClVl+_cDtCal+_cTipProv+_cVerbaEst) //RETIRA VERBA DE BAIXA DE PROV FERIAS
+					//Insere verba de estorno
+					RecLock("SRT",.F.)
+						SRT->RT_VALOR	:= _nValEst
+						SRT->RT_XVALMES	:= _nValEst
+					MsUnlock()
+				ELSE
+					RecLock("SRT",.T.)
+						SRT->RT_FILIAL 	:= _cFilial
+						SRT->RT_MAT		:= _cMat
+						SRT->RT_CC		:= _cCC
+						SRT->RT_DATACAL	:= MV_PAR02
+						SRT->RT_TIPPROV	:= _cTipProv
+						SRT->RT_VERBA	:= _cVerbaEst
+						SRT->RT_VALOR	:= _nValEst
+						SRT->RT_ITEM	:= _cItem
+						SRT->RT_XVALMES	:= _nValEst
+					MsUnlock()
+				
+				ENDIF
+							
+				RestArea(aArea)
+				
+			Next nX
+		EndIf
+
+			
+Next nY
+
+RETURN
+
+
+Static Function RetValRes()
+
+Local _cMat1	:= _cMat
+Local _cFil1	:= _cFilial
+Local _cDtIni	:= DTOS(FirstDay(MV_PAR02))
+Local _cDtFin	:= DTOS(MV_PAR02)
+
+aCalcRes := {}//limpa variável
+
+cQuery	:= "SELECT RG_FILIAL,RG_MAT,RR_PD PD,RR_VALOR VALOR FROM "+RetSqlName('SRG') +" RG INNER JOIN "+RetSqlName('SRR')+" RR ON RG_FILIAL = RR_FILIAL AND RG_MAT = RR_MAT "
+cQuery  += "WHERE RG.D_E_L_E_T_ <> '*' "
+cQuery	+= "AND RR.D_E_L_E_T_ <> '*' "
+cQuery  += "AND RG_DATADEM >= '"+_cDtIni+"' "
+cQuery	+= "AND RG_DATADEM <= '"+_cDtFin+"' "
+cQuery	+= "AND RG_FILIAL = '"+_cFIL1+"' "
+cQuery	+= "AND RG_MAT = '"+_cMat1+"' "
+cQuery	+= "AND RR_PD IN ('247','248','260','261')"
+
+cQuery := ChangeQuery( cQuery )
+dbUseArea( .T., "TOPCONN", TCGenQry(,,cQuery), "TRB", .T., .T. )   
+
+While TRB->(!EOF())
+	Aadd(aCalcRes, {TRB->PD,TRB->VALOR} )
+	TRB->(DbSkip())
+EndDo
+TRB->(DbCloseArea())
+
+Return
+
+
+//CHECA SE EXISTE TRANSFERENCIA
+Static Function ChkTransf()
+
+Local _cDtTRF1	:= DTOS(FirstDay(MV_PAR02))
+Local _cDtTRF2	:= DTOS(MV_PAR02)
+
+aTransfer		:= {}
+lTransferido 	:= .F.
+
+cQuery	:= "SELECT * FROM "+RetSqlName("SRE")+" "
+cQuery	+= "WHERE D_E_L_E_T_ <> '*' "
+//cQuery	+= "AND RE_FILIALD = '"+_cFilial+"' " -- retirado para poder buscar o funcionário no periodo.
+cQuery	+= "AND RE_MATD	= '"+_cMat+"' "
+cQuery	+= "AND RE_DATA >= '"+_cDtTRF1+"' "
+cQuery	+= "AND RE_DATA <= '"+_cDtTRF2+"' "
+cQuery	+= "AND RE_FILIALD <> RE_FILIALP "
+cQuery	+= "ORDER BY RE_DATA DESC"
+
+cQuery := ChangeQuery( cQuery )
+dbUseArea( .T., "TOPCONN", TCGenQry(,,cQuery), "TRB1", .T., .T. )  
+
+While TRB1->(!EOF())
+	lTransferido	:= .T.
+	Aadd(aTransfer, {TRB1->RE_FILIALD,TRB1->RE_MATD,TRB1->RE_CCD,TRB1->RE_ITEMD} )
+	TRB1->(DbSkip())
+	EXIT
+EndDo
+TRB1->(DbCloseArea())
+
+
+Return
+
+
+//RETORNA VALORES DE FÉRIAS
+Static Function ChkFer()
+
+Local _cMat1	:= _cMat
+Local _cFil1	:= _cFilial
+Local _cDtIni	:= DTOS(FirstDay(MV_PAR02))
+Local _cDtFin	:= DTOS(MV_PAR02)
+
+aCalcFer := {}
+
+cQuery	:= "SELECT RC_FILIAL,RC_MAT,RC_PD PD,RC_VALOR VALOR FROM "+RetSqlName('SRC')
+cQuery  += "WHERE D_E_L_E_T_ <> '*' "
+cQuery	+= "AND RC_FILIAL = '"+_cFIL1+"' "
+cQuery	+= "AND RC_MAT = '"+_cMat1+"' "
+cQuery	+= "AND RC_PD IN ('209','210','216','211','233','234','224')"
+
+cQuery := ChangeQuery( cQuery )
+dbUseArea( .T., "TOPCONN", TCGenQry(,,cQuery), "TRB", .T., .T. )   
+
+While TRB->(!EOF())
+	Aadd(aCalcFer, {TRB->PD,TRB->VALOR} )
+	TRB->(DbSkip())
+EndDo
+TRB->(DbCloseArea())
+
+
+Return
+
+
+//RETORNA PERÍODOS DE FÉRIAS
+//PARA IDENTIFICAR SE EXISTE FERIAS NO MES E MES SEGUINTE
+Static Function PerFer()
+
+Local _cMat1	:= _cMat
+Local _cFil1	:= _cFilial
+Local _cDtIni	:= DTOS(FirstDay(MV_PAR02))
+Local _cDtFin	:= DTOS(MV_PAR02)
+Local _lAdtDias	:= .F.
+
+aPerFer := {}
+
+cQuery	:= "SELECT RH_FILIAL,RH_MAT,RH_DATABAS,RH_DATAINI,RH_DATAFIM,RH_DFERVEN,RH_DFERIAS FROM "+RetSqlName("SRH")+" "
+cQuery	+= "WHERE D_E_L_E_T_ <> '*' "
+cQuery	+= "AND RH_MAT = '"+_cMat1+"' "
+cQuery	+= "AND RH_FILIAL = '"+_cFil1+"' "
+cQuery	+= "AND ((RH_DATAINI >= '"+_cDtIni+"' AND RH_DATAFIM > '"+_cDtFin+"') OR (RH_DATAINI < '"+_cDtIni+"' AND RH_DATAFIM > '"+_cDtIni+"'))"
+
+ccQuery := ChangeQuery( cQuery )
+dbUseArea( .T., "TOPCONN", TCGenQry(,,cQuery), "TRB", .T., .T. )   
+
+While TRB->(!EOF())
+	_lAdtDias := IIF(RH_DFERVEN < RH_DFERIAS,.T.,.F.)
+	Aadd(aPerFer, {TRB->RH_DATAINI, TRB->RH_DATAFIM} )
+	TRB->(DbSkip())
+EndDo
+TRB->(DbCloseArea())
+
+
+Return
+
+
+//Monta lista de funcionários a processar
+Static Function BuscaFunc()
+
+Local _cMatD	:= MV_PAR08
+Local _cMatP	:= MV_PAR09
+Local _cFilD	:= MV_PAR04
+Local _cFilP	:= MV_PAR05
+
+cQuery	:= "SELECT RA_FILIAL,RA_MAT,RA_SITFOLH,RA_CC,RA_ITEM,RA_DEMISSA,RA_CATFUNC,RA_CLVL,RA_SALARIO,RF_DATABAS,RF_DFERAAT FROM "+RetSqlName("SRA")+" RA INNER JOIN "+RetSqlName("SRF")+" ON RA_FILIAL = RF_FILIAL "
+cQuery	+= "AND RA_MAT = RF_MAT "
+cQuery	+= "WHERE RA.D_E_L_E_T_ <> '*' "
+cQuery	+= "AND (RA_MAT >= '"+_cMatD+"' "
+cQuery	+= "AND RA_MAT <= '"+_cMatP+"') "
+cQuery	+= "AND (RA_FILIAL >= '"+_cFilD+"' "
+cQuery	+= "AND RA_FILIAL <= '"+_cFilP+"') "
+cQuery	+= "AND (RA_SITFOLH <> 'D' OR (RA_SITFOLH = 'D' AND (RA_DEMISSA >= '"+DTOS(_dDtIni1)+"' AND RA_DEMISSA <= '"+DTOS(MV_PAR02)+"'))) "
+cQuery	+= "ORDER BY RA_FILIAL,RA_MAT"
+
+cQuery := ChangeQuery( cQuery )
+dbUseArea( .T., "TOPCONN", TCGenQry(,,cQuery), "RATMP", .T., .T. ) 
+
+WHILE RATMP->(!EOF())
+	
+	AADD(aFuncProc,{RATMP->RA_FILIAL,;
+					RATMP->RA_MAT,;
+					RATMP->RA_SITFOLH,;
+					RATMP->RA_CC,;
+					RATMP->RA_ITEM,;
+					RATMP->RA_DEMISSA,;
+					RATMP->RA_CATFUNC,;
+					RATMP->RA_CLVL,;
+					CTOD('//'),;
+					CTOD('//'),;
+					"0",;
+					0.00,;
+					0.00,;
+					RATMP->RA_SALARIO,;
+					RATMP->RF_DATABAS,;
+					RATMP->RF_DFERAAT})
+					
+	RATMP->(Dbskip())
+EndDo
+
+RATMP->(DbCloseArea())
+
+Return
+
+
+//Busca funcionários com rescisão complementar.
+Static Function ResComp()
+
+Local _cMatD	:= MV_PAR08
+Local _cMatP	:= MV_PAR09
+Local _cFilD	:= MV_PAR04
+Local _cFilP	:= MV_PAR05
+Local _cMatComp	:= ''
+Local _nPos		:= 0
+
+cQuery	:= "SELECT RA_FILIAL,RA_MAT,RA_SITFOLH,RA_CC,RA_ITEM,RA_DEMISSA,RA_CATFUNC,RA_CLVL,RA_SALARIO,RG_DTGERAR,RG_DATAHOM, RG_RESCDIS,RF_DATABAS,RF_DFERAAT FROM "+RetSqlName("SRG")+" RG "
+cQuery	+= "INNER JOIN "+RetSqlName("SRA")+" ON RG_FILIAL = RA_FILIAL AND RG_MAT = RA_MAT INNER JOIN "+RetSqlName("SRF")+" ON RG_FILIAL = RF_FILIAL AND RG_MAT = RF_MAT "
+cQuery	+= "WHERE RG.D_E_L_E_T_ <> '*' "
+cQuery	+= "AND (RG_MAT >= '"+_cMatD+"' "
+cQuery	+= "AND RG_MAT <= '"+_cMatP+"') "
+cQuery	+= "AND (RG_FILIAL >= '"+_cFilD+"' "
+cQuery	+= "AND RG_FILIAL <= '"+_cFilP+"') "
+cQuery  += "AND RG_RESCDIS <> 0 "
+cQuery	+= "AND (RG_DTGERAR >= '"+DTOS(_dDtIni1)+"' AND RG_DTGERAR <= '"+DTOS(_dDtFin1)+"') "
+cQuery	+= "ORDER BY RG_FILIAL,RG_MAT"
+
+cQuery := ChangeQuery( cQuery )
+dbUseArea( .T., "TOPCONN", TCGenQry(,,cQuery), "RGTMP", .T., .T. ) 
+
+WHILE RGTMP->(!EOF())
+	
+	AADD(aFuncProc,{RGTMP->RA_FILIAL,;
+					RGTMP->RA_MAT,;
+					RGTMP->RA_SITFOLH,;
+					RGTMP->RA_CC,;
+					RGTMP->RA_ITEM,;
+					RGTMP->RA_DEMISSA,;
+					RGTMP->RA_CATFUNC,;
+					RGTMP->RA_CLVL,;
+					RGTMP->RG_DTGERAR,;
+					RGTMP->RG_DATAHOM,;
+					RGTMP->RG_RESCDIS,;
+					0.00,;
+					0.00,;
+					RGTMP->RA_SALARIO,;
+					RGTMP->RF_DATABAS,;
+					RGTMP->RF_DFERAAT})
+	
+	_cMatComp += "'"+RGTMP->RA_MAT+"',"
+					
+	RGTMP->(Dbskip())
+EndDo
+
+RGTMP->(DbCloseArea())
+
+If _cMatComp <> ''
+	_cMatComp := " ("+SUBSTR(_cMatComp,1,LEN(_cMatComp)-1)+")"
+EndIf
+
+IF _cMatComp <> ''
+
+	cQuery	:= "SELECT RR_FILIAL, RR_MAT, RV_XCTADEB, SUM(RR_VALOR) TOTAL FROM "+RetSqlName("SRR")+" RR INNER JOIN "+RetSqlName("SRV")+" ON  RR_PD = RV_COD "
+	cQuery	+= "WHERE RR.D_E_L_E_T_ <> '*' "
+	cQuery	+= "AND RR_MAT IN "+_cMatComp+" "
+	cQuery	+= "AND (RR_FILIAL >= '"+_cFilD+"' "
+	cQuery	+= "AND RR_FILIAL <= '"+_cFilP+"') "
+	cQuery  += "AND RR_TIPO3 = 'R' "
+	cQuery	+= "AND (RR_DATA >= '"+DTOS(_dDtIni1)+"' AND RR_DATA <= '"+DTOS(_dDtFin1)+"') "
+	cQuery	+= "AND (SUBSTR(RV_XCTADEB,1,11) = '21010501001' OR SUBSTR(RV_XCTADEB,1,11) = '21010502001') "
+	cQuery	+= "GROUP BY RR_FILIAL,RR_MAT,RV_XCTADEB "
+	cQuery	+= "ORDER BY RR_FILIAL,RR_MAT"
+	
+	cQuery := ChangeQuery( cQuery )
+	dbUseArea( .T., "TOPCONN", TCGenQry(,,cQuery), "RRTMP", .T., .T. ) 
+	
+	WHILE RRTMP->(!EOF())
+		_nPos := ASCAN(aFuncProc ,{|x| X[1] == RRTMP->RR_FILIAL .AND. X[2] == RRTMP->RR_MAT})
+		If RV_XCTADEB = '21010501001         ' //ferias
+			aFuncProc[_nPos][12] := RRTMP->TOTAL
+		ELSE
+			aFuncProc[_nPos][13] := RRTMP->TOTAL
+		ENDIF
+		
+		RRTMP->(Dbskip())
+	EndDo
+	RRTMP->(DbCloseArea())
+ENDIF
+
+Return
+
+
+//RETORNA CALCULO DE PROVISÃO PARA AJUSTE, DO FUNCIONÁRIO TRANSFERIDO
+Static Function BuscaPRV(_cFil,_cMat,_cCC,_cItem)
+
+aProvTran := {}
+
+cQuery	:= "SELECT RT_FILIAL,RT_MAT,RT_VERBA,RT_CC,RT_ITEM,RT_VALOR,RT_DATACAL FROM "+RetSqlName("SRT")+" "
+cQuery	+= "WHERE D_E_L_E_T_ <> '*' "
+cQuery	+= "AND RT_FILIAL = '"+_cFil+"' "
+cQuery	+= "AND RT_MAT = '"+_cMat+"' "
+cQuery	+= "AND RT_CC = '"+_cCC+"' "
+cQuery	+= "AND RT_ITEM = '"+_cItem+"' "
+cQuery	+= "AND RT_DATACAL = '"+DTOS(MV_PAR02)+"' "
+cQuery	+= "ORDER BY RT_VERBA "
+
+cQuery := ChangeQuery( cQuery )
+dbUseArea( .T., "TOPCONN", TCGenQry(,,cQuery), "RTTRF", .T., .T. )
+
+	While RTTRF->(!EOF())
+		AADD(aProvTran,{RTTRF->RT_VERBA,RTTRF->RT_VALOR,RTTRF->RT_FILIAL,RTTRF->RT_MAT,RTTRF->RT_CC,RTTRF->RT_ITEM})
+	RTTRF->(DbSkip())
+	EndDo 
+
+RTTRF->(DbCloseArea())
+
+Return
+
+
+Static Function ChkAfast(_cFil,_cMat)
+Local cRet := ''
+
+
+cQuery := "SELECT R8_TIPO FROM "+RetSqlName("SR8")+" "
+cQuery += "WHERE D_E_L_E_T_ <> '*' "
+cQuery += "AND R8_TIPO IN ('P','O') "
+cQuery += "AND (R8_DATAFIM > '"+ DTOS(_dDtFin1)+"' OR R8_DATAFIM = '        ') "
+cQuery += "AND R8_DATAINI <= '"+ DTOS(_dDtFin1) + "' "
+cQuery += "AND R8_MAT = '"+_cMat+"' "
+cQuery += "AND R8_FILIAL = '"+_cFil+"' "
+
+cQuery := ChangeQuery( cQuery )
+dbUseArea( .T., "TOPCONN", TCGenQry(,,cQuery), "R8TMP", .T., .T. )
+
+	While R8TMP->(!EOF())
+		cRet := R8TMP->R8_TIPO
+	R8TMP->(DbSkip())
+	EndDo 
+R8TMP->(DbCloseArea())
+
+Return cRet
+
+
+/*##############################################################
+| 19/05/16														|
+| PRVNeg - Provisão negativa no mes								|
+| Utilizado para retornar a provisão do mes, e verificar		|
+| se há valor negativo no mes para reverter dentro do mes		|
+|																|
+###############################################################*/
+
+Static Function PRVNeg()
+Local aRet := {}
+
+cQuery := "SELECT rt_filial,rt_mat,rt_datacal,rt_tipprov,rt_verba,rt_xvalmes from "+RetSqlName("SRT")+" "
+cQuery += "WHERE D_E_L_E_T_ <> '*' "
+cQuery += "AND RT_MAT = '"+_cMat+"' "
+cQuery += "AND RT_FILIAL = '"+_cFilial+"' "
+cQuery += "AND RT_TIPPROV IN ('2','3') "
+cQuery += "AND RT_DATACAL = '"+DTOS(_dDtFin1)+"' "
+cQuery += "AND RT_XVALMES < 0 "
+cQuery += "AND RT_VERBA <> '902' AND RT_VERBA <> '903' AND RT_VERBA <> '904' AND RT_VERBA <> '911' AND RT_VERBA <> '939' "
+cQuery += "AND RT_VERBA <> '953' AND RT_VERBA <> '954' AND RT_VERBA <> '955' AND RT_VERBA <> '956' AND RT_VERBA = '1000' "  //Alterado para não Calcular Reversão
+cQuery += "ORDER BY RT_TIPPROV,RT_VERBA "
+
+cQuery := ChangeQuery( cQuery )
+dbUseArea( .T., "TOPCONN", TCGenQry(,,cQuery), "TMP", .T., .T. )
+
+	While TMP->(!EOF())
+		AADD(aRet,{TMP->RT_VERBA,TMP->RT_XVALMES,TMP->RT_TIPPROV}) 
+		TMP->(DbSkip())  
+	EndDo
+	TMP->(DbCloseArea())
+
+Return aRet
+
+//--< fim de arquivo >----------------------------------------------------------------------

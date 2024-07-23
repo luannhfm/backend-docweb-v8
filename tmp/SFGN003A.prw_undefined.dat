@@ -1,0 +1,365 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "FWMVCDEF.CH" 
+
+/*/{Protheus.doc} SFGN003A
+@description Rotina de cadastro das regras de acesso do usuário por modulo definindo a quantidade de dias que o usuário pode retornar por modulo.
+@type  Function
+@author Alan Teles de Oliveira
+@since 15/11/2018
+@version 11.8
+/*/
+User Function SFGN003A()
+
+    Local aArea := GetArea()
+    Local oBrowse := Nil
+
+    Private aRotina :=  MenuDef()
+    Private _aModulos := {}
+
+    oBrowse := FWMBrowse():New()
+    
+    oBrowse:SetAlias('ZUS')
+    oBrowse:SetTotalDefault('ZUS_CODUSR', 'COUNT', 'Total de Registros')
+    oBrowse:SetDescription('Regra de Acesso por Usuário')
+    oBrowse:SetMenuDef('SFGN003A')
+    oBrowse:SetmainProc('SFGN003A')
+    oBrowse:DisableDetails()
+    oBrowse:Activate()
+
+    RestArea(aArea)
+
+Return 
+
+
+/*/{Protheus.doc} MenuDef
+@description Criação das opções de menu.
+@type  Static Function
+@author Alan Teles de Oliveira
+@since 15/11/2018
+@version 11.8
+@return aRet, array, opções do menu do formulário 
+/*/
+Static Function MenuDef()
+
+    Local aRet := {}
+
+    ADD OPTION aRet TITLE 'Visualizar'  ACTION "VIEWDEF.SFGN003A" OPERATION 2 ACCESS 0
+    ADD OPTION aRet TITLE 'Incluir'     ACTION "VIEWDEF.SFGN003A" OPERATION 3 ACCESS 0
+    ADD OPTION aRet TITLE 'Alterar'     ACTION "VIEWDEF.SFGN003A" OPERATION 4 ACCESS 0
+    ADD OPTION aRet TITLE 'Excluir'     ACTION "VIEWDEF.SFGN003A" OPERATION 5 ACCESS 0
+    ADD OPTION aRet TITLE 'Copiar'      ACTION "VIEWDEF.SFGN003A" OPERATION 9 ACCESS 0
+
+Return aRet
+
+
+/*/{Protheus.doc} ModelDef
+@description Criação do modelo de dados da rotina.
+@type  Static Function
+@author Alan Teles de Oliveira
+@since 15/11/2018
+@version 11.8
+@return oModel, object, modelo de dados 
+/*/
+Static Function ModelDef()
+
+    Local oModel    := Nil
+    Local oStrUSR   := FWFormStruct(1, 'ZUS', {|x| (AllTrim(x) $ 'ZUS_CODUSR|ZUS_NMUSR')})
+    Local oStrMdo   := FWFormStruct(1, 'ZUS', {|x| .not. (AllTrim(x) $ 'ZUS_CODUSR|ZUS_NMUSR')})
+    Local bPost     := {|| .T.}
+    Local bLinePre  := {|oModel, nLine, cAction, cField| GN006LinePre(oModel, nLine, cAction, cField)}
+    Local bLinePost := {|oModel, nLine| GN006LineOK(oModel, nLine)}
+
+    oStrUSR:AddTrigger('ZUS_CODUSR', 'ZUS_NMUSR', {|| .T.}, {|| UsrRetName(FWFldGet('ZUS_CODUSR'))}) 
+	oStrMdo:AddTrigger('ZUS_CODMOD', 'ZUS_SIGMOD', {|| .T.}, {|| fModName('1', FWFldGet('ZUS_CODMOD'), .F., 2)}) 
+    oStrMdo:AddTrigger('ZUS_CODMOD', 'ZUS_NMEMDO', {|| .T.}, {|| fModName('1', FWFldGet('ZUS_CODMOD'), .F., 3)}) 
+
+    oModel	:= MPFormModel():New('GN006A01', /*<bPre>*/, bPost, /*<bCommit>*/, /*<bCancel>*/)
+
+    oModel:AddFields('ZUSMASTER', /*<cOwner>*/, oStrUSR, /*<bPre>*/, /*<bPost>*/, /*<bLoad>*/)
+    oModel:AddGrid('ZUSDETAIL', 'ZUSMASTER', oStrMdo, bLinePre, bLinePost, /*<bPreVal>*/, /*<bPosVldLin>*/, /*<bLoadGrid>*/)
+    oModel:GetModel('ZUSMASTER'):SetDescription('Usuário')
+    oModel:GetModel('ZUSDETAIL'):SetDescription('Modulos')
+    oModel:SetRelation('ZUSDETAIL', {{'ZUS_FILIAL','xFilial("ZUS")'}, {"ZUS_CODUSR","ZUS_CODUSR"}}, ZUS->(IndexKey(1)))
+    oModel:AddCalc('CALC', 'ZUSMASTER', 'ZUSDETAIL', 'ZUS_CODMOD', 'ZUS__TOTMDO', 'COUNT', /*<bCond>*/, /*bInitValue*/, 'Total Geral de Modulos', /*<bFormula>*/, /*nTamanho*/, /*nDecimal*/)
+    oModel:GetModel("ZUSDETAIL"):SetOptional(.T.)
+    oModel:SetPrimaryKey({"ZUS_FILIAL", "ZUS_CODUSR", "ZUS_CODMOD"})	
+
+Return oModel
+
+
+/*/{Protheus.doc} ViewDef
+@description visão geral da rotina.
+@type  Static Function
+@author Alan Teles de Oliveira
+@since 15/11/2018
+@version 11.8
+@return oView, object, visão da rotina
+/*/
+Static Function ViewDef()
+
+    Local oView     := Nil
+    Local oModel    := FwLoadModel('SFGN003A')
+    Local oStrUSR   := FWFormStruct(2, 'ZUS', {|x| (AllTrim(x) $ 'ZUS_CODUSR|ZUS_NMUSR')})
+    Local oStrMdo   := FWFormStruct(2, 'ZUS', {|x| .not. (AllTrim(x) $ 'ZUS_CODUSR|ZUS_NMUSR')})
+
+    oView := FWFormView():New()
+    
+    oView:SetModel(oModel)
+    oView:AddField('Usuar', oStrUSR, 'ZUSMASTER')
+    oView:AddGrid('Modul',  oStrMdo, 'ZUSDETAIL')
+    oStrMdo:RemoveField('R_E_C_N_O_')
+    oView:CreateHorizontalBox('HEADER',   25)
+    oView:CreateHorizontalBox('GRID',     75)
+    oView:SetOwnerView('Usuar', 'HEADER')
+    oView:SetOwnerView('Modul', 'GRID')
+    oView:SetCloseOnOk({|| .T.})
+
+Return oView
+
+
+/*/{Protheus.doc} GN006LinePre
+@description Rotina chamada no bloco de código bLinePre de pré-edição da linha do grid.
+@obs  Utilizado para evitar erro de chave única na gravação dos dados.
+@type  Static Function
+@author Alan Teles de Oliveira
+@since 15/11/2018
+@version 11.8
+@param p_oFild, object, modelo de dados do grid
+@param p_nLine, numeric, linha posicionada 
+@param p_cAction, characters, ação do usuário
+@param p_cField, characters, campo posicionado
+@return lRet, logico, verdadeiro se não for uma duplicidade
+/*/
+Static Function GN006LinePre(p_oFild, p_nLine, p_cAction, p_cField)
+
+    Local aArea     := GetArea()
+    Local lRet      := .T.    
+    Local oModel    := Nil
+    Local oStrMdo   := Nil
+
+    If p_cAction == 'SETVALUE' .and. p_cField == 'ZUS_CODMOD'
+
+        dbSelectArea('ZUS')
+        dbSetOrder(1)
+        If dbSeek(xFilial('ZUS') + FwFldGet('ZUS_CODUSR') + FwFldGet(p_cField))
+            
+            lRet := .F.
+            
+            fModName('1', FwFldGet(p_cField), .F., 1)
+            
+            Help(,, 'Atenção',, 'Já existe um vinculo entre o usuario ' + AllTrim(FwFldGet('ZUS_NMUSR')) + ' e o modulo ' + _aModulos[1][2] + '-' + _aModulos[1][3] + '.', 1, 0)
+
+            oModel  := FwModelActive()
+            oStrMdo := oModel:GetModel('ZUSDETAIL')
+
+            oStrMdo:LoadValue('ZUS_SIGMOD', ' ')
+            oStrMdo:LoadValue('ZUS_NMEMDO', ' ')
+
+        EndIf
+
+    EndIf
+
+    RestArea(aArea)
+
+Return lRet
+
+
+/*/{Protheus.doc} GN006LineOK
+@description Rotina chamada no bloco de código bLinePost de pós-validação da da linha do grid, equivale ao LinhaOk.
+@obs Utilizado para evitar a gravação de registro vazio.
+@type  Static Function
+@author Alan Teles de Oliveira
+@since 15/11/2018
+@version 11.8
+@param p_oFild, object, modelo de dados do grid
+@param p_nLine, numeric, linha posicionada 
+@return lRet, logico, verdadeiro sempre
+/*/
+Static Function GN006LineOK(p_oFild, p_nLine)
+
+    Local lRet      := .T.   
+
+    If Empty(FwFldGet('ZUS_CODMOD'))
+        If .not. p_oFild:IsDeleted()
+            p_oFild:DeleteLine()
+        EndIf        
+    EndIf
+
+Return lRet
+
+
+/*/{Protheus.doc} SFGNF36A
+@description Fonte utilizado na pesquisa específica dos modulos disponiveis do sistema.
+@type  Function
+@author Alan Teles de Oliveira
+@since 15/11/2018
+@version 11.8
+/*/
+User Function SFGNF36A()
+
+    Local aArea     := GetArea()
+	Local cVarPos  	:= &(ReadVar())
+    
+	VAR_IXB := cVarPos
+
+	fTelaMod(@cVarPos)
+	
+	RestArea(aArea)
+
+Return .T.
+
+
+/*/{Protheus.doc} fTelaMod
+@description Monta tela da pesquisa especifica
+@type  Static Function
+@author Alan Teles de Oliveira
+@since 15/11/2018
+@version 11.8
+@param p_cVarPos, characters, conteúdo do campo posicionado
+/*/
+Static Function fTelaMod(p_cVarPos)
+
+    Local cPesq	 	:= p_cVarPos + Space(50 - Len(p_cVarPos))    
+    Local cTipo 	:= SPACE(1)
+    Local nPosList  := 0
+    Local oDlg      := Nil
+    Local oPanel    := Nil
+    Local oLstBx    := Nil
+    Local bRet		:= {|| If(.not. Empty(oLstBx:aArray[oLstBx:nAt]), (VAR_IXB := oLstBx:aArray[oLstBx:nAt][1], oDlg:DeActivate()), MsgInfo('Nenhum modulo foi encontrado, favor verificar o Filtro!', 'Atenção'))}
+
+    Private _aModulos	:= {}
+
+    fModName()
+
+	If Len(_aModulos) == 0
+		aAdd(_aModulos,{Nil,Nil,Nil})
+	EndIf
+
+	oDlg := FWDialogModal():New()
+
+	oDlg:SetBackground(.F.)     
+	oDlg:SetTitle('Consulta Modulos')
+	oDlg:SetEscClose(.T.)       
+	oDlg:SetSize(210,270)       
+	oDlg:EnableFormBar(.T.)
+
+	oDlg:CreateDialog()         
+	oPanel := oDlg:getPanelMain()
+
+	oDlg:CreateFormBar()        
+
+	oDlg:AddButton('Cancelar',{|| oDlg:Deactivate()}, 'Cancelar', , .T., .F., .T., )
+	oDlg:AddButton('Ok',{|| Eval(bRet)}, 'Ok', , .T., .F., .T., )
+	
+    @ 003,005 Say 'Campo' PIXEL Size 030, 009 OF oPanel
+	@ 012,005 MsComboBox oGet1 VAR cTipo ITEMS{"1=Código", "2=Sigla", "3=Descrição"} SIZE 052, 010 OF oPanel COLORS 0, 16777215 PIXEL
+    @ 003,070 Say 'Consulta' PIXEL Size 040, 009 OF oPanel
+	@ 012,070 MsGet oPesq Var cPesq Size 150, 009 COLOR CLR_BLACK PIXEL OF oPanel
+	@ 012,230 Button 'Pesquisar' Size 037,012 PIXEL OF oPanel ACTION MsgRun("Aguarde, selecionando informações...",, {|| fModName(cTipo, cPesq,,, @oLstBx)}) 
+    @ 026,03 LISTBOX oLstBx FIELDS HEADER "Código", "Sigla", "Descrição" SIZE 264,139 OF oPanel PIXEL
+	
+    oLstBx:bLDblClick := bRet
+    oLstBx:SetArray(_aModulos)
+
+    If .not. Empty(p_cVarPos) .and. (nPosList := aScan(_aModulos, {|x| x[1] == AllTrim(p_cVarPos)})) > 0			
+        oLstBx:nAt := nPosList
+    EndIf	
+
+	oLstBx:bLine 	:= {|| {_aModulos[oLstBx:nAt, 1], _aModulos[oLstBx:nAt, 2], _aModulos[oLstBx:nAt, 3]}}
+	oDlg:Activate()
+
+Return 
+
+
+/*/{Protheus.doc} fModName
+@description responsavel por retornar informações do modulo selecionado ou informado nos parametros.
+@type  Static Function
+@author Alan Teles de Oliveira
+@since 15/11/2018
+@version 11.8
+@param p_cTipo, characters, tipo da consulta 1=Código, 2=Sigla ou 3=Descrição
+@param p_cFiltro, characters, valor a ser consultado
+@param p_lF3, logical, se chamado pela função fTelaMod deve ser verdadeiro
+@param p_nPos, numeric, caso deseje retornar informações de um registro especifico
+@param p_oListBox, object, box da função que recebera os registros localizados
+/*/
+Static Function fModName(p_cTipo, p_cFiltro, p_lF3, p_nPos, p_oListBox)
+
+    Local nX        := 0
+    Local aModNew   := {}
+
+   	Local oModel	:= Nil
+	Local oStrMdo	:= Nil
+
+    Default p_cTipo     := ''
+    Default p_cFiltro   := ''
+    Default p_lF3       := .T.
+    Default p_nPos      := 0
+    Default p_oListBox  := Nil
+
+    _aModulos := RetModName()
+
+    If .not. p_lF3 
+        If Empty(p_cFiltro) .and. Type('VAR_IXB') == 'C'
+            p_cFiltro := VAR_IXB
+        EndIf
+    EndIf
+
+    If Len(_aModulos) = 0
+        _aModulos := {'', '', ''}
+    Else
+        For nX := 1 to Len(_aModulos)
+            _aModulos[nX][1] := StrZero(_aModulos[nX][1], 2)
+        Next
+        nX := 0
+    EndIf
+  
+    If .not. Empty(p_cTipo)
+
+        For nX := 1 To Len(_aModulos)
+
+            If Empty(p_cFiltro)
+                aModNew := _aModulos
+                Exit
+            ElseIf AllTrim(p_cFiltro) $ _aModulos[nX][Val(p_cTipo)]
+                aAdd(aModNew, _aModulos[nX])
+            EndIf
+
+        Next
+
+        _aModulos := aModNew
+
+    EndIf
+
+    If Len(_aModulos) = 0
+
+        aAdd(_aModulos, {'', '', ''})
+        Alert("Nenhum modulo foi encontrado, favor verificar o Filtro!")
+
+    EndIf
+
+    If p_lF3
+        
+        If .not. Empty(p_cTipo) 
+
+            p_oListBox:SetArray(_aModulos)
+            p_oListBox:bLine := {||{_aModulos[p_oListBox:nAt,1], _aModulos[p_oListBox:nAt,2], _aModulos[p_oListBox:nAt,3]}}
+
+        EndIf
+    Else
+
+        If Len(_aModulos) = 1
+
+            oModel	:= FwModelActive()
+            oStrMdo	:= oModel:GetModel("ZUSDETAIL")
+            
+            oStrMdo:LoadValue("ZUS_SIGMOD", _aModulos[1][2])
+            oStrMdo:LoadValue("ZUS_NMEMDO", _aModulos[1][3])
+
+            Return _aModulos[1][p_nPos]
+        
+        EndIf
+
+    EndIf
+
+Return 

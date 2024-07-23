@@ -1,0 +1,204 @@
+#INCLUDE "TOTVS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "tbiconn.CH"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ CWKFA005 º Autor ³ TOTVS              º Data ³ 25/11/10    º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDescricao ³ Envio de e-mail do Pedido de Compra ao Fornecedor          º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function CWKFA005(_cNumPC,_lEnvMail)
+
+Local _cWfDir    := Alltrim(GetNewPar("MV_WFDIRWF","\workflow") )
+Local _nSubTot   := 0
+Local _nFrete    := 0
+Local _nTotal    := 0
+Local oHTML
+Local _cQuery    := ""
+Local cCodFilial := Substr(cFilant,1,4)+"0001"
+//Local _cUrlFor   := SuperGetMv("SI_URLFOR", .F., "Consulte o departamento de Compras", cCodFilial) // Endereco URL do Portal do Fornecedor por Empresa (Casa)
+Local _cUrlFor   := SuperGetMv("SI_URLFOR",.f.,cCodFilial)
+Local cxLogin    := ""
+Local cxSenha    := ""
+Local cxDataHr   := ""
+Local cDescProd  := ""
+Local _cArqTRB   := CriaTrab(nil,.f.)
+Local aAreaSM0   := {}
+Local lAchouFil  := .F.
+
+SC7->(dbSetOrder(1))
+SC7->(dbSeek(XFilial("SCR")+_cNumPC))
+
+SC1->(dbSetOrder(1))
+SC1->(dbSeek(xFilial("SC1")+SC7->(C7_NUMSC+C7_ITEMSC)))
+
+SA2->(dbSetOrder(1))
+SA2->(dbSeek(xFilial("SA2")+SC7->(C7_FORNECE+C7_LOJA)))
+
+SE4->(dbSetOrder(1))
+SE4->(dbSeek(xFilial("SE4")+SC7->C7_COND))
+
+SY1->(dbSetOrder(1))
+SY1->(dbSeek(xFilial("SY1")+SC1->C1_XCODCOM))
+
+U_CONSOLE("Inicio do envio do e-mail da filial/pedido "+SC7->C7_FILIAL + SC7->C7_NUM+".","CWKFA005")
+	
+//Abre o HTML
+oProcess := TWFProcess():New( "PEDIDO", "Pedido de Compras" )
+oProcess:NewTask( "000001", _cWfDir+"\Pedido.htm" )
+oProcess:cSubject := "Pedido de Compra Nr. " +SC7->C7_NUM
+oProcess:UserSiga := SC7->C7_USER
+oProcess:NewVersion(.T.)
+oHTML   := oProcess:oHTML
+
+oHtml:ValByName( "URL" , _cUrlFor )
+
+oHtml:ValByName( "NUMPC"      , SC7->C7_NUM )
+oHtml:ValByName( "c7_emissao" , Dtoc(SC7->C7_EMISSAO) )
+oHtml:ValByName( "a2_nome"    , SA2->A2_NOME )
+oHtml:ValByName( "a2_end"     , SA2->A2_END	)
+oHtml:ValByName( "a2_bairro"  , SA2->A2_BAIRRO )
+oHtml:ValByName( "a2_mun"     , SA2->A2_MUN )
+oHtml:ValByName( "a2_est"     , SA2->A2_EST )
+oHtml:ValByName( "c7_user"    , Iif(Empty(SY1->Y1_USER),UsrFullName(SC7->C7_USER),UsrFullName(SY1->Y1_USER)) )
+oHtml:ValByName( "email_compr", RTrim(UsrRetMail(SY1->Y1_USER)) )
+oHtml:ValByName( "tel_compr"  , SY1->Y1_TEL )
+oHtml:ValByName( "e4_descri"  , SE4->E4_DESCRI )
+
+aAreaSM0   := SM0->(GetArea())
+DbSelectArea("SM0")
+SM0->(DbGoTop())
+While SM0->(!EOF())
+	If SM0->(RTrim(M0_CODIGO)+RTrim(M0_CODFIL)) == RTrim(cEmpAnt)+RTrim(SC7->C7_FILIAL)
+		lAchouFil := .T.
+		Exit
+	EndIf
+	SM0->(DbSkip())
+End
+
+oHtml:ValByName( "M0_NOMECOM2", SM0->M0_NOMECOM )
+oHtml:ValByName( "M0_FILIAL2" , SM0->M0_FILIAL )
+oHtml:ValByName( "M0_NOME2"   , SM0->M0_NOME )
+oHtml:ValByName( "M0_CODFIL2" , SM0->M0_CODFIL )
+oHtml:ValByName( "M0_ENDENT2" , SM0->M0_ENDENT )
+oHtml:ValByName( "M0_CIDENT2" , SM0->M0_CIDENT )
+oHtml:ValByName( "M0_CEPENT2" , Transform( SM0->M0_CEPENT, "@R 99999-999" ) )
+oHtml:ValByName( "M0_ESTENT2" , SM0->M0_ESTENT )
+oHtml:ValByName( "M0_CGC2"    , Iif(Len(Alltrim(SM0->M0_CGC))>11,Transform(SM0->M0_CGC,"@R 99.999.999/9999-99"),Transform(SM0->M0_CGC,"@E 999.999.999-99")) )
+
+If lAchouFil
+	RestArea(aAreaSM0)
+	lAchouFil := .F.
+EndIf
+
+
+If !Empty(SC7->C7_FILENT)
+	aAreaSM0   := SM0->(GetArea())
+	DbSelectArea("SM0")
+	SM0->(DbGoTop())
+	While SM0->(!EOF())
+		If SM0->(RTrim(M0_CODIGO)+RTrim(M0_CODFIL)) == RTrim(cEmpAnt)+RTrim(SC7->C7_FILENT)
+			lAchouFil := .T.
+			Exit
+		EndIf
+		SM0->(DbSkip())
+	End
+EndIf
+
+oHtml:ValByName( "M0_NOMECOM" , SM0->M0_NOMECOM )
+oHtml:ValByName( "M0_FILIAL"  , SM0->M0_FILIAL )
+oHtml:ValByName( "M0_NOME"    , SM0->M0_NOME )
+oHtml:ValByName( "M0_CODFIL"  , SM0->M0_CODFIL )
+oHtml:ValByName( "M0_ENDENT"  , SM0->M0_ENDENT )
+oHtml:ValByName( "M0_CIDENT"  , SM0->M0_CIDENT )
+oHtml:ValByName( "M0_CEPENT"  , Transform( SM0->M0_CEPENT, "@R 99999-999" ) )
+oHtml:ValByName( "M0_ESTENT"  , SM0->M0_ESTENT )
+oHtml:ValByName( "M0_CGC"     , Iif(Len(Alltrim(SM0->M0_CGC))>11,Transform(SM0->M0_CGC,"@R 99.999.999/9999-99"),Transform(SM0->M0_CGC,"@E 999.999.999-99")) )
+
+If lAchouFil
+	RestArea(aAreaSM0)
+EndIf
+
+_cQuery := "SELECT * FROM "+RetSqlName("AI3")+" AI3 INNER JOIN "+RetSqlName("AI5")+" AI5 ON AI3_FILIAL = AI5_FILIAL AND AI3_CODUSU = AI5_CODUSU "
+_cQuery += "WHERE AI3.D_E_L_E_T_ = ' ' AND AI5.D_E_L_E_T_ = ' ' AND AI3_FILIAL = '"+XFilial("AI3")+"' "
+_cQuery += "AND AI5_CODFOR = '"+SC7->C7_FORNECE+"'  AND AI5_LOJFOR = '"+SC7->C7_LOJA+"'"
+_cQuery := ChangeQuery(_cQuery)
+
+dbUseArea( .T., "TOPCONN", TCGENQRY(,,_cQuery),_cArqTRB, .F., .T.)
+
+If (_cArqTRB)->(!Eof())
+	oHtml:ValByName( "Login" , (_cArqTRB)->AI3_LOGIN)
+	oHtml:ValByName( "Senha" , (_cArqTRB)->AI3_PSW)
+EndIf
+
+While SC7->(!Eof()) .and. SC7->C7_FILIAL == XFilial("SC7") .and. SC7->C7_NUM == _cNumPC
+	
+	SB1->(dbSetOrder(1))
+	SB1->(dbSeek(XFilial("SB1")+SC7->C7_PRODUTO))
+	
+	cDescProd  := Posicione("SB5",1,xFilial("SB5")+SB1->B1_COD,"B5_CEME")
+	DbSelectArea("SB1")
+	
+	AAdd( (oHtml:ValByName( "prod.cItem"    )),SC7->C7_ITEM )
+	AAdd( (oHtml:ValByName( "prod.cCod"     )),SC7->C7_PRODUTO )
+	AAdd( (oHtml:ValByName( "prod.cDesc"    )),Iif(Empty(cDescProd),RTrim(SB1->B1_DESC),RTrim(SB1->B1_DESC) + " - " + RTrim(cDescProd)) ) // Cfme Solic.p/ Lucas Uchasky - Kley 20Mar2013
+	AAdd( (oHtml:ValByName( "prod.cUM"      )),SC7->C7_UM )
+	AAdd( (oHtml:ValByName( "prod.nQuant"   )),TRANSFORM( SC7->C7_QUANT,'@E 999,999,999.99' ) )
+	AAdd( (oHtml:ValByName( "prod.nVrUnit"  )),TRANSFORM( SC7->C7_PRECO,'@E 999,999,999.99' ) )
+	AAdd( (oHtml:ValByName( "prod.nVrTotal" )),TRANSFORM( SC7->C7_TOTAL,'@E 999,999,999.99' ) )
+	AAdd( (oHtml:ValByName( "prod.dEntrega" )),Dtoc(SC7->C7_DATPRF) )
+	AAdd( (oHtml:ValByName( "prod.cObs" )),SC7->C7_OBS )
+	WFSalvaID('SC7','SC7->C7_WFE_FOR', .T.)
+	
+	WFSalvaID('SC7','SC7->C7_XSTATUS', '')			//Status = Emitido
+	WFSalvaID('SC7','SC7->C7_DTRECPT', '')
+	WFSalvaID('SC7','SC7->C7_DTCONPT', '')
+	
+	cxDataHr := DTOC(dDatabase)+" - "+Time()
+	
+	WFSalvaID('SC7','SC7->C7_DTEMIPT', cxDataHr)	//Grava data e hora da emissão
+	
+	_nSubTot += SC7->C7_TOTAL
+	_nFrete  += SC7->C7_VALFRE
+	_nTotal  += SC7->(C7_TOTAL+C7_VALFRE)
+	
+	SC7->(dbSkip())
+Enddo
+
+oHtml:ValByName( "vlrtotal" , TRANSFORM( _nSubTot,'@E 999,999,999.99' ) )
+oHtml:ValByName( "vlrfrete" , TRANSFORM( _nFrete ,'@E 999,999,999.99' ) )
+oHtml:ValByName( "totgeral" , TRANSFORM( _nTotal ,'@E 999,999,999.99' ) )
+
+IF _lEnvMail // e-mail para fornecedor
+	If !Empty(SA2->A2_EMAIL)
+		U_CONSOLE("Envio da filial/pedido "+SC7->C7_FILIAL + SC7->C7_NUM+" para o e-mail "+Alltrim(SA2->A2_EMAIL)+".","CWKFA005")
+		oProcess:cTo := Alltrim(SA2->A2_EMAIL)
+		oProcess:Start()
+	Endif
+ELSE
+	cAttach  := GetTempPath()+"pedido_"+Alltrim(_cNumPC)+".htm"
+	oHtml:SaveFile( cAttach )   // Salva Arquivo Html
+	IF File("C:\Program Files\Internet Explorer\iexplore.exe")
+		WinExec("C:\Program Files\Internet Explorer\iexplore.exe "+cAttach)
+	Else
+		WinExec("C:\Arquivos de programas\Internet Explorer\iexplore.exe "+cAttach)
+	Endif
+ENDIF
+
+U_CONSOLE("Saída da filial/pedido "+SC7->C7_FILIAL + SC7->C7_NUM+".","CWKFA005")
+
+SC7->(dbCloseArea())
+(_cArqTRB)->(dbCloseArea())
+FErase(_cArqTRB+GetDBExtension())
+FErase(_cArqTRB+OrdBagExt())
+
+Return()

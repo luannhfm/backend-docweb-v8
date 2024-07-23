@@ -1,0 +1,254 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "TOTVS.CH"
+#INCLUDE "PARMTYPE.CH"
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <SS7320X>
+    Atente ao Processo de Integração do CRM x GCT; Ao finalizar o contrato 
+    Situação Modificada para [05-Vigente], envia mensagem de E-mail para
+    Contato indicados no PARAMETRO [MV_XMAILCT - Contatos para E-mail 
+    Ativacao de Contrato (CRM)].
+    
+    Rotina sera chamado pelo Ponto de Entrada [CN100SIT()]  
+
+@author<Antonio Dantas>
+@since<08/05/2015>
+@version<1.00>
+@return<Nil>,<>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function SS7320X()
+Local _aEmails	:= {}   
+Local _cAviso		:= ""
+//+------------------------------------------------------------------+
+//|  ATENÇÃO: A duplicação da linha neste caso é PROPOSITAL.         |
+//|           não modifique.                                         |
+//+------------------------------------------------------------------+
+_aEmails	:= &(GetMV('MV_XMAILCT'))   
+_aEmails	:= &(GetMV('MV_XMAILCT'))   
+//-- 
+If Valtype(_aEmails) != "A"
+	_cAviso :=  "ATENÇÃO!"+CRLF
+	_cAviso +=  " "+CRLF
+	_cAviso +=  "Não é possivel enviar e-mail de aviso ao operador do CRM "
+	_cAviso +=  "relativo a ATIVAÇÃO do contrato, uma vez que não foi informado "
+	_cAviso +=  "corretamente o codigo do usuário que deve receber esta informação "
+	_cAviso +=  "no parametro [ MV_XMAILCT - Contatos para E-mail Ativacao de "
+	_cAviso +=  "Contrato (CRM) ]. "+CRLF
+	_cAviso +=  " "+CRLF
+	_cAviso +=  "Para que isso não ocorra nas proximas Ativações de Contratos "
+	_cAviso +=  "Vinculados a Oportunidade de Venda verifique o parametro em questão!"
+	Aviso(FunName()+"/"+ProcName(),_cAviso,{"OK"},3)
+Else
+	If Len(_aEmails) > 0  
+		_nCtaA := 0 
+		For _nCtaA := 1 to Len(_aEmails)
+			_cNomeDest		:= UsrRetName(_aEmails[_nCtaA])  
+			_cMailDest		:= UsrRetMail(_aEmails[_nCtaA]) 			
+			FWMsgRun(, {|| u_fES7320X(_cNomeDest,_cMailDest) }, "E-mail ao Comercial ["+Alltrim(_cMailDest)+"]", "Aguarde..." )
+		Next _nCtaA  
+	Endif 
+Endif 
+Return  .t.  
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fES7320X>
+    Rotina de Formatação e remessa do E-mail
+@author<Antonio Dantas>
+@since<08/05/2015>
+@version<1.00>
+@receive
+<
+   _cNomeDest	(c) - Nome do Destinatario
+   _cMailDest (c) - E-mail do Destinario.
+>
+@return<.t.>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+/*
+Registro de Alterações:
+	01/02/2016 - Franklin B. oliveira
+		#001 -> Realizado tratamento para considerar os itens da proposta comercial,
+		caso não haja itens na planilha do contrato.
+*/
+User Function fES7320X(_cNomeDest,_cMailDest)
+Local _aSaveArea		:= GetArea()
+//Local _cDescAssu		:= "Ativação do contrato "+CN9->CN9_NUMERO+" da Oportunidade "+CNA->CNA_XOPORT+"/"+CNA->CNA_XREVOP+"."
+Local _cDescAssu		:= OemToAnsi("Ativação do contrato " + CN9->CN9_XNROCV + " da Oportunidade " + CN9->CN9_XOPORT + "/" + CN9->CN9_XREVOP + ".")
+Local _cMens			:= ""
+Local _cCliente 		:= ""
+Local _cProd			:= ""
+Local _cPropo			:= ""
+Local _cRProp			:= "" 
+
+//+------------------------------------------------------------------+
+//|  Posiciona no Cabecalho da Planilha Financeira                   |
+//+------------------------------------------------------------------+
+/* #001 -> Adicionado validação para considerar os itens da proposta, 
+		caso não exista planilha financeira. 
+
+dbSelectArea("CNA")
+CNA->(dbSetOrder(1))
+CNA->(dbSeek(FwxFilial("CNA")+CN9->CN9_NUMERO+CN9->CN9_REVISA))			//-- Nr Contrato + Revisao                                   
+*/
+dbSelectArea("CNA")
+CNA->(dbSetOrder(1))
+If CNA->(dbSeek(FwxFilial("CNA")+CN9->CN9_NUMERO+CN9->CN9_REVISA))			//-- Nr Contrato + Revisao
+	_cPropo	:= CNA->CNA_XPROPO
+	_cRProp	:= CNA->CNA_XPREVI
+	dbSelectArea("CNB")
+	CNB->(dbSetOrder(1))
+	CNB->(dbGoTop())
+	CNB->(dbSeek(FwxFilial("CNB")+CN9->CN9_NUMERO+CN9->CN9_REVISA+CNA->CNA_NUMERO))
+	
+	While .Not. CNB->(EOF()) .And. CNB->(CNB_CONTRA+CNB_REVISA+CNB_NUMERO) == CN9->CN9_NUMERO+CN9->CN9_REVISA+CNA->CNA_NUMERO
+		_cProd += '									<td>'+ AllTrim(CNB->CNB_PRODUT) +'</td>'+CRLF
+		_cProd += '									<td>'+ AllTrim(CNB->CNB_DESCRI) +'</td>'+CRLF
+		CNB->(DbSkip())
+	End
+Else	//Posiciona no Cabecalho da proposta comercial
+	dbSelectArea("ADY")
+	ADY->( dbSetOrder(2) )
+	If ADY->( dbSeek(FwxFilial("ADY") + CN9->CN9_XOPORT + CN9->CN9_XREVOP) )	//Posiciona nos itens da proposta comercial
+		While .Not. ADY->(EOF()) .And. ADY->(ADY_OPORTU + ADY_REVISA) == CN9->CN9_XOPORT + CN9->CN9_XREVOP
+			If ADY->ADY_STATUS $ "B"	//Considera apenas a proposta fechada (ADY_STATUS = "B")
+				_cPropo	:= ADY->ADY_PROPOS
+				_cRProp	:= ADY->ADY_PREVIS
+				dbSelectArea("ADZ")
+				ADZ->( dbSetOrder(3) )
+				If ADZ->( dbSeek(FwxFilial("ADZ") + ADY->ADY_PROPOS + ADY->ADY_PREVIS) )
+					While .Not. ADZ->(EOF()) .And. ADZ->(ADZ_PROPOS + ADZ_REVISA) == ADY->ADY_PROPOS + ADY->ADY_PREVIS
+						_cProd += '									<td>'+ AllTrim(ADZ->ADZ_PRODUT) +'</td>'+CRLF
+						_cProd += '									<td>'+ AllTrim(ADZ->ADZ_DESCRI) +'</td>'+CRLF
+						_cProd += '									<tr>'+CRLF
+						ADZ->(DbSkip())
+					EndDo
+				EndIf
+			EndIf
+			ADY->(DbSkip())
+		EndDo
+	EndIf
+EndIf                                   
+//+------------------------------------------------------------------+
+//|  Posiciona do Cadastro do Cliente                                |
+//+------------------------------------------------------------------+
+dbSelectArea("SA1")
+SA1->(dbSetOrder(1))
+SA1->(dbSeek(FwxFilial("SA1")+CN9->CN9_CLIENT+CN9->CN9_LOJACL))			//-- Cliente + Loja
+//-- 
+_cCliente := CN9->CN9_CLIENT+"/"+CN9->CN9_LOJACL+"-"+Alltrim(SA1->A1_NOME)
+//-- 
+
+/* #001 -> Este posicionameno passou a ocorrer apenas quando há planilha financeira.
+//+------------------------------------------------------------------+
+//|  Posiciona nos Itens da Planilha Financeira                      |
+//+------------------------------------------------------------------+
+dbSelectArea("CNB")
+CNB->(dbSetOrder(1))
+CNB->(dbGoTop())
+CNB->(dbSeek(FwxFilial("CNB")+CN9->CN9_NUMERO+CN9->CN9_REVISA+CNA->CNA_NUMERO))
+*/
+_cMens := '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">'+CRLF
+_cMens += '<html lang="pt-br">'+CRLF
+_cMens += '	<head>'+CRLF
+_cMens += '	  <meta content="text/html; charset=iso-8859-1" http-equiv="Content-Type" name="GENERATOR">'+CRLF
+_cMens += '	  <title>Ativação de Contrato</title>'+CRLF
+_cMens += '	</head>'+CRLF
+_cMens += '	<body bgproperties="fixed">'+CRLF
+_cMens += '		<p class="MsoNormal" style="text-align: left;" align="left">'+CRLF
+_cMens += '			<span style="font-family: &quot;Arial&quot;,&quot;sans-serif&quot;;">'+CRLF
+_cMens += '				<img id="_x0000_i1030" src="http://gps.totvs.com/workflow/titulo_wf_totvs.png" border="0" height="62" width="760">'+CRLF
+_cMens += '			</span>'+CRLF
+_cMens += '		</p>'+CRLF
+_cMens += '		<td style="padding: 0cm;">'+CRLF
+_cMens += '			<p class="MsoNormal" align="left">'+CRLF
+_cMens += '				<span style="font-size: 11pt; font-family:&quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(00,00,64);">'+CRLF 
+_cMens += '						<br>'+CRLF 
+_cMens += '						<br>'+CRLF 
+_cMens += '						Senhor(a): '+Alltrim(_cNomeDest)+'; '+CRLF 
+_cMens += '						<br>'+CRLF 
+_cMens += '						<br>'+CRLF 
+_cMens += '						Informamos a ATIVAÇÃO do Contrato conforme segue: <br>'+CRLF 
+_cMens += '						<table border=1> '+CRLF 
+_cMens += '							<td align="Right">Contrato numero:</td> <td>'+CN9->CN9_XNROCV+'</td>'+CRLF 
+_cMens += '							<tr>'+CRLF
+/*#001 -> Os dados da oportunidade irão vir do contrato (CN9) 
+	e os dados da proposta serão preenchidos pelas variáveis  _cPropo / _cRProp.
+_cMens += '							<td align="Right">Oportunidade numero:</td> <td>'+CNA->CNA_XOPORT+'/'+CNA->CNA_XREVOP+'</td>'+CRLF 
+_cMens += '							<tr>'+CRLF 
+_cMens += '							<td align="Right">Proposta numero:</td> <td>'+CNA->CNA_XPROPO+'</td>'+CRLF 
+*/ 
+_cMens += '							<td align="Right">Oportunidade numero:</td> <td>'+CN9->CN9_XOPORT+'/'+CN9->CN9_XREVOP+'</td>'+CRLF 
+_cMens += '							<tr>'+CRLF 
+_cMens += '							<td align="Right">Proposta numero:</td> <td>'+_cPropo+'/'+_cRProp+'</td>'+CRLF 
+_cMens += '							<tr>'+CRLF 
+_cMens += '							<td align="Right">Cliente:</td> <td>'+_cCliente+'</td>'+CRLF 
+_cMens += '							<tr>'+CRLF 
+_cMens += '							<td align="Right">Ativada em:</td> <td>'+dtoc(CN9->CN9_DTASSI)+'</td>'+CRLF 
+_cMens += '							<tr>'+CRLF 
+_cMens += '						</table>'+CRLF 
+
+/* 02-06-15 - Jose Leite - CSI
+	Melhoria para informar os produtos existentes no contrato
+*/
+//Inicio
+_cMens += '							<br>'+CRLF
+_cMens += '								<tr>'+CRLF
+_cMens += '									<th><b>Produto(os)</b></th>'+CRLF
+_cMens += '								</tr>'+CRLF
+_cMens += '								<table border=1>'+CRLF
+_cMens += '									<tr>'+CRLF
+
+/* #001 -> A tabela de produtos passou a ser montada em trecho acima.
+
+While .Not. CNB->(EOF()) .And. CNB->(CNB_CONTRA+CNB_REVISA+CNB_NUMERO) == CN9->CN9_NUMERO+CN9->CN9_REVISA+CNA->CNA_NUMERO
+	_cMens += '									<td>'+ AllTrim(CNB->CNB_PRODUT) +'</td>'+CRLF
+	_cMens += '									<td>'+ AllTrim(CNB->CNB_DESCRI) +'</td>'+CRLF
+	CNB->(DbSkip())
+End
+
+_cMens += '									</tr>'+CRLF
+*/
+
+_cMens += _cProd
+//Final
+
+_cMens += '							</table>'+CRLF
+
+//Fechamento
+_cMens += '				</span>'+CRLF
+_cMens += '			</p>'+CRLF
+_cMens += '		</td>'+CRLF
+_cMens += '	</body>'+CRLF
+_cMens += '</html>'
+
+//+------------------------------------------------------------------+
+//|   Executa a função de Remessa de E-mail                          | 
+//+------------------------------------------------------------------+
+
+/* 02/02/2016 - Franklin B. Oliveira:
+	Substituida a função ACSendMail pela SFEnvEmail.
+  
+ACSendMail(,,,,_cMailDest,_cDescAssu,_cMens)
+U_SFEnvEmail(de:, p_cTo, p_cCC, ccopiaoculta , p_cSubject, p_cBody, p_cAttach)
+
+*/
+U_SFEnvEmail( , _cMailDest, , , _cDescAssu, _cMens)
+
+RestArea(_aSaveArea)
+
+Return .T.
+
+

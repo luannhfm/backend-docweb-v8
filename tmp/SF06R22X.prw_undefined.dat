@@ -1,0 +1,104 @@
+#Include 'Protheus.ch'
+#Include 'TopConn.ch'
+
+//------------------------------------------------------------------
+/*/{Protheus.doc} fGetVal
+funcao que retorna VALOR de cada célula
+
+@author Walmir Junior
+@since 19/01/2018
+/*/
+//------------------------------------------------------------------
+User Function SF06R22X(_nYear, _nMonth, _cFil, _dDtIni, _dDtFim, _cClDe, _cClAt, p_aInfTit)
+
+	Local _nRet 	:= 0
+	Local _cSQL := ""
+	Local _cAlFil	:= GetNextAlias()
+	Local _nReg		:= 0
+	Default p_aInfTit := {}
+
+	_cSQL += "WITH  "+ CRLF
+	_cSQL += "  SE1_ORI As ( "+ CRLF
+	_cSQL += "    SELECT SE1.E1_FILIAL, SE1.E1_PREFIXO, SE1.E1_NUM, SE1.E1_PARCELA, SE1.E1_TIPO, SE5.E5_DATA, SE5.E5_VALOR "+ CRLF 
+	_cSQL += "		FROM "+ RetSQLName("SE5") +" SE5 INNER JOIN "+CRLF 
+	_cSQL += "		"+ RetSQLName("SE1") +" SE1 ON SE1.D_E_L_E_T_ = ' ' AND SE1.E1_TIPO Not In ('CC', 'CD') AND "+CRLF
+	//Walmir Junior 27/09/2019 -- Melhoria para relatório bater entre analítico e sintético.
+	_cSQL += "  	SE1.E1_BAIXA BETWEEN '"+ GravaData(_dDtIni,.F.,8) +"' AND '"+ GravaData(_dDtFim,.F.,8) +"' AND "+CRLF 
+	_cSQL += "   	SE1.E1_VENCREA BETWEEN '" + dToS(mv_par08) + "' AND '" + dToS(mv_par09) + "' AND "+ CRLF
+	_cSQL += "  	SE1.E1_FILIAL = SE5.E5_FILIAL AND SE1.E1_PREFIXO = SE5.E5_PREFIXO AND SE1.E1_NUM = SE5.E5_NUMERO AND  "+CRLF
+	_cSQL += "  	SE1.E1_PARCELA = SE5.E5_PARCELA AND SE1.E1_TIPO = SE5.E5_TIPO AND SE1.E1_CLIENTE = SE5.E5_CLIFOR "+CRLF
+	_cSQL += "		WHERE	SE5.D_E_L_E_T_ = ' ' AND SE5.E5_TIPODOC = 'BA' AND SE5.E5_MOTBX IN ('VIS', 'MAS', 'CRT') AND SE5.E5_RECPAG = 'R' "+CRLF
+	_cSQL += "				AND SE5.E5_MOTBX    NOT IN ('CAN') "+CRLF 					//('FAT','LIQ','CMP','CAN','CCO'            )
+	//Walmir Junior 27/09/2019 -- Melhoria para relatório bater entre analítico e sintético.
+	_cSQL += "  			AND SE5.E5_DATA BETWEEN '"+ GravaData(_dDtIni,.F.,8) +"' AND '"+ GravaData(_dDtFim,.F.,8) +"' "+CRLF
+	_cSQL += "  			AND SE5.E5_DATA <= '"+ GravaData(mv_par10,.F.,8) +"' "+CRLF 
+	_cSql += "  			AND E1_EMISSAO <= '"+ GravaData(mv_par10,.F.,8) +"' "+CRLF                                                                                            + CRLF
+	_cSQL += "				AND SE5.E5_SITUACA  NOT IN ('C')  "+CRLF					//('C'  , 'E' ,'X'                          )
+	_cSQL += "   			AND SE5.E5_FILIAL = '" + _cFil + "' "+ CRLF
+	If Len(p_aInfTit) > 0
+		_cSQL += "   			AND SE5.E5_PREFIXO = '" + p_aInfTit[1] + "' "+ CRLF
+		_cSQL += "   			AND SE5.E5_NUMERO = '" + p_aInfTit[2] + "' "+ CRLF
+		_cSQL += "   			AND SE5.E5_PARCELA = '" + p_aInfTit[3] + "' "+ CRLF
+		_cSQL += "   			AND SE5.E5_CLIFOR = '" + p_aInfTit[4] + "' "+ CRLF
+	EndIf
+	If !Empty(_cClDe) .And. !Empty(_cClAt) .And. _cClDe == _cClAt
+		_cSQL += " AND SE5.E5_CLIFOR = '" + _cClDe + "' "
+	ElseIf !Empty(_cClAt) .And. ( AllTrim(_cClDe) != '' .And. AllTrim(_cClAt) != Replicate("Z",TAMSX3("E5_CLIFOR")[1]) )
+		_cSQL += " AND SE5.E5_CLIFOR BETWEEN '" + _cClDe + "' AND '" + _cClAt + "' "
+	EndIf
+		//Joao Tavares  09/12/2020 -- Melhoria para relatório considerar recebimento cartao  do loja.
+_cSQL += " Union All "+ CRLF
+	_cSQL += "    SELECT SE1.E1_FILIAL, SE1.E1_PREFIXO, SE1.E1_NUM, SE1.E1_PARCELA, SE1.E1_TIPO, SE1.E1_EMISSAO, SE5.E5_VALOR "+ CRLF 
+	_cSQL += "		FROM "+ RetSQLName("SE5") +" SE5 INNER JOIN "+CRLF 
+	_cSQL += "		"+ RetSQLName("SE1") +" SE1 ON SE1.D_E_L_E_T_ = ' ' AND SE1.E1_TIPO In ('CC', 'CD')  AND E1_ORIGEM = 'LOJA701' AND "+CRLF
+	_cSQL += "  	SE1.E1_EMISSAO BETWEEN '"+ GravaData(_dDtIni,.F.,8) +"' AND '"+ GravaData(_dDtFim,.F.,8) +"' AND "+CRLF 
+	_cSQL += "  	SE1.E1_FILIAL = SE5.E5_FILIAL AND SE1.E1_PREFIXO = SE5.E5_PREFIXO AND SE1.E1_NUM = SE5.E5_NUMERO AND  "+CRLF
+	_cSQL += "  	SE1.E1_PARCELA = SE5.E5_PARCELA AND SE1.E1_TIPO = SE5.E5_TIPO AND SE1.E1_CLIENTE = SE5.E5_CLIFOR "+CRLF
+	_cSQL += "		WHERE	SE5.D_E_L_E_T_ = ' ' AND SE5.E5_TIPODOC  IN ('BA' ,'ES','VL')  AND SE5.E5_MOTBX IN ('VIS', 'MAS', 'CCO') AND SE5.E5_RECPAG = 'R' "+CRLF
+	_cSQL += "			AND	 E5_DTCANBX  = ' ' "+CRLF 					//('FAT','LIQ','CMP','CAN','CCO'            )
+	//Walmir Junior 27/09/2019 -- Melhoria para relatório bater entre analítico e sintético.
+                                                                                     
+	_cSQL += "				AND SE5.E5_SITUACA  NOT IN ('C')  "+CRLF					//('C'  , 'E' ,'X'                          )
+	_cSQL += "   			AND SE5.E5_FILIAL = '" + _cFil + "' "+ CRLF
+	If Len(p_aInfTit) > 0
+		_cSQL += "   			AND SE5.E5_PREFIXO = '" + p_aInfTit[1] + "' "+ CRLF
+		_cSQL += "   			AND SE5.E5_NUMERO = '" + p_aInfTit[2] + "' "+ CRLF
+		_cSQL += "   			AND SE5.E5_PARCELA = '" + p_aInfTit[3] + "' "+ CRLF
+		_cSQL += "   			AND SE5.E5_CLIFOR = '" + p_aInfTit[4] + "' "+ CRLF
+	EndIf
+	If !Empty(_cClDe) .And. !Empty(_cClAt) .And. _cClDe == _cClAt
+		_cSQL += " AND SE5.E5_CLIFOR = '" + _cClDe + "' "
+	ElseIf !Empty(_cClAt) .And. ( AllTrim(_cClDe) != '' .And. AllTrim(_cClAt) != Replicate("Z",TAMSX3("E5_CLIFOR")[1]) )
+		_cSQL += " AND SE5.E5_CLIFOR BETWEEN '" + _cClDe + "' AND '" + _cClAt + "' "
+	EndIf
+	_cSQL += "  ) "+ CRLF
+
+	_cSQL += "SELECT  "+ CRLF
+	_cSQL += "		SUM(E5_VALOR) As VALOR "
+	_cSQL += "FROM SE1_ORI SE1 "+ CRLF
+	If Len(p_aInfTit) = 0
+		_cSQL += "WHERE  "+ CRLF
+		_cSQL += "	EXTRACT( MONTH FROM TO_DATE(SE1.E5_DATA, 'yyyymmdd')) = " + Str(_nMonth) + " AND "
+		_cSQL += "	EXTRACT( YEAR FROM TO_DATE(SE1.E5_DATA, 'yyyymmdd')) = " + Str(_nYear) + " "+CRLF
+	EndIf
+
+	MemoWrite("c:\temp\" + ProcName() + "_" + FunName() + ".txt", _cSQL )
+
+	If Select( _cAlFil ) > 0
+		(_cAlFil)->(DbCloseArea())
+	EndIf
+
+	TCQUERY _cSQL NEW ALIAS (_cAlFil)
+
+	If (TCSQLExec(_cSQL) < 0)
+		Alert("Não foi possível executar a consulta [ERRO SQL].")
+		Return 0
+	EndIf
+
+	If !(_cAlFil)->(Eof())
+		_nRet := (_cAlFil)->VALOR
+	EndIf
+
+	(_cAlFil)->(dbCloseArea())
+
+Return(_nRet)

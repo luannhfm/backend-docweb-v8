@@ -1,0 +1,358 @@
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TBICONN.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "TBICODE.CH"
+#INCLUDE "AP5MAIL.CH"   
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <SS7323X>
+  23 - Sinalizador para Contratos Proximo ao Vencimento: SINALIZADOR 
+  [Schedule] para Contratos próximos ao Vencimento: Rotina vare os contratos 
+  com vencimento no período de hoje até o limite informado por parâmetros. 
+  Envia e-mail aos vendedores responsáveis suas respectivas carteiras, 
+  alerta relativos aos vencimentos dos mesmos. Considera os siguinte 
+  parametros:
+	MV_XCRMV01 - Periodo a Considerar Ctr Prox Venc [Em Dias]  CRM
+    MV_XCRMV02 - Caminho do Arquivo de Remessa Ctr Prox Venc  CRM
+    MV_XCRMV03 - E-mail p/copia do Arq. de Rem. Ctr Prox Venc  CRM 
+
+@author<Antonio Dantas>
+@since<22/05/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function SS7323X(_aParams)
+//+-----------------------------------------------------------------------+
+//|  Trata a execução via SCHEDULE ou CHAMADA via menu.                   |
+//+-----------------------------------------------------------------------+
+If Valtype(_aParams) != "U"
+	
+	ConOut(" ")
+  	ConOut(Replicate("=",80))
+  	ConOut('SS7323X: Sinalizador para Contratos Proximo ao Vencimento')
+  	
+	//+-----------------------------------------------------------------------+
+	//| Se for SCHEDULE prepara o ambiente e Ecoa mensagem no console         |
+	//+-----------------------------------------------------------------------+
+	RpcClearEnv()
+	RpcSetType(3)
+	RpcSetEnv(_aParams[1],_aParams[2],"job.imp","abcd1234","GCT",GetEnvServer(),)
+	
+	If _aParams != Nil
+		ConOut("SS7323X: Empresa: "+ _aParams[1])   
+		ConOut("SS7323X: Filial: "+ _aParams[2])
+	EndIf
+	
+	fSMaiCTR()
+	
+	ConOut('SS7323X: Finalizando Sinalizador para Contratos Proximo ao Vencimento')
+	ConOut(Replicate("=",80))
+	ConOut(" ")
+	
+	RESET ENVIRONMENT  
+	
+Else
+	FWMsgRun(, {|| fSMaiCTR() }, "Processando Vendedores", "Aguarde..." )
+	Aviso(FunName()+"/"+ProcName(),"E-mail's Contratos Proximo ao Vencimento.",{"OK"})
+Endif    
+
+If Valtype( _aParams ) != "U"
+	RpcClearEnv()
+	Conout("SS69J01J: Finalizou Ambiente")
+EndIf
+ 
+Return 
+
+
+/* 
+-------------------------------------------------------------------------------
+{Protheus.doc}<fSMaiCTR>
+
+@Parametros<Nil> 
+@author<Antonio Dantas> 
+@since<18/05/2015> 
+@version<Nil> 
+@receive <Nil> 
+@return <Nil> 
+@example<Nil> 
+@see<Nil> 
+-------------------------------------------------------------------------------
+*/
+Static Function fSMaiCTR()
+Local _nDias 			:= GetMV('MV_XCRMV01')		//-- Periodo a Considerar Ctr Prox Venc [Em Dias]  CRM
+Local _dDataINI			:= Ctod(" /  /  ") 
+Local _dDataFIM			:= Ctod(" /  /  ") 
+Local _lNewVend			:= .t.
+//-- 
+Local _cCNPJ				:= ""
+//-- 
+Private _cPathRoot 	:= GetMV('MV_XCRMV02')		//-- Caminho do Arquivo de Remessa Ctr Prox Venc  CRM
+Private _cMailSUPE 	:= GetMV('MV_XCRMV03')		//-- E-mail p/copia do Arq. de Rem. Ctr Prox Venc  CRM 
+
+Private _nCtaA 			:= 0  
+Private _cFileLog		:= ""
+Private _nHdl_log		:= ""  
+Private _cTextMail 	:= "" 
+Private _cMensagem		:= ""  
+//-- 
+If _nDias <= 0
+	ConOut("SS7323X: Variavel _nDias <= 0, favor verificar.")
+	Return 
+Endif 
+If Empty(Alltrim(_cPathRoot))
+	ConOut("SS7323X: Variavel _cPathRoot nao preenchida, favor verificar.")
+	Return 
+EndIf
+If Empty(Alltrim(_cMailSUPE))
+	ConOut("SS7323X: Variavel _cMailSUPE nao preenchida, favor verificar.")
+	Return 
+EndIf 
+//+---------------------------------------------------------------------+
+//|  Monta a Data Inicio para considera o atendimento                   |
+//+---------------------------------------------------------------------+
+_dDataINI	:= dDataBase 
+_dDataFIM	:= dDataBase + _nDias 
+//-- 
+ConOut("SS7323X: Selecionando Dados.")
+fLerCN9(_dDataINI,_dDataFIM)
+//--
+TMPCTR->(dbgotop())  
+_cVendATU 	:= TMPCTR->ADY_VEND
+//--
+//+---------------------------------------------------------------------+
+//| Inicia Laco para impressao do Relatorio                             |
+//+---------------------------------------------------------------------+
+Do While TMPCTR->(!eof())   
+	_nCtaA++
+	_cCNPJ		:= Transform(TMPCTR->A1_CGC,Iif(Len(AllTrim(TMPCTR->A1_CGC))==11,"@R 999.999.999-99","@R 99.999.999/9999-99"))
+	If _lNewVend
+		fCriaCab(_cVendATU)			
+		_cEmailVen 	:= Posicione("SA3",1,FwxFilial("SA3")+TMPCTR->ADY_VEND,"A3_EMAIL")
+		_lNewVend 		:= .f.	
+	Endif 
+	//+---------------------------------------------------------------------+
+	//|  Imprime as lihas do Apontamento                                    |
+	//+---------------------------------------------------------------------+
+	_cTextMail :=		PadR(TMPCTR->CN9_DTFIM 	,TamSX3("CN9_DTFIM")[1]		)+Space(3)+; 
+						PadR(TMPCTR->CN9_FILIAL 	,TamSX3("CN9_FILIAL")[1]		)+Space(3)+; 
+						PadR(TMPCTR->CN9_NUMERO	,TamSX3("CN9_NUMERO")[1]		)+Space(3)+;
+						PadR(TMPCTR->CN9_REVISA	,TamSX3("CN9_REVISA")[1]		)+Space(3)+;
+						PadR(_cCNPJ				,20								)+Space(3)+;    
+						PadR(TMPCTR->CN9_CLIENT 	,TamSX3("CN9_CLIENT")[1]		)+Space(3)+;
+						PadR(TMPCTR->CN9_LOJACL 	,TamSX3("CN9_LOJACL")[1]		)+Space(3)+; 
+						PadR(TMPCTR->A1_NOME 	,TamSX3("A1_NOME")[1]		)+Space(3)+; 
+						PadR(TMPCTR->A1_MUN  	,TamSX3("A1_MUN")[1]			)+Space(3)+;
+						PadR(TMPCTR->A1_CONTATO 	,TamSX3("A1_CONTATO")[1]		)+Space(3)+; 
+						PadR(TMPCTR->ADZ_ITEM 	,TamSX3("ADZ_ITEM")[1]		)+Space(3)+;
+						PadR(TMPCTR->ADZ_PRODUT 	,TamSX3("ADZ_PRODUT")[1]		)+Space(3)+; 
+						PadR(TMPCTR->ADZ_DESCRI 	,TamSX3("ADZ_DESCRI")[1]		)+Space(3)+;
+						PadR(TMPCTR->CN9_DTINIC 	,TamSX3("CN9_DTINIC")[1]		)+Space(3)+;
+						PadR(TMPCTR->AD1_DTASSI 	,TamSX3("AD1_DTASSI")[1]		)+Space(3)+; 
+						PadR(TMPCTR->CN9_DTASSI 	,TamSX3("CN9_DTASSI")[1]		)+CHR(13)+CRLF						
+	//-- 
+	fWrite(_nHdl_Log,_cTextMail,Len(_cTextMail)) != Len(_cTextMail)
+	//+---------------------------------------------------------------------+
+	//|    Vai para o Proximo Registro da ZCA                               |
+	//+---------------------------------------------------------------------+
+	TMPCTR->(dbskip()) 	    
+	If TMPCTR->ADY_VEND != _cVendATU 
+		ConOut("SS7323X: Enviando e-mail para o vendedor: "+ AllTrim(Posicione("SA3",1,FwxFilial("SA3")+TMPCTR->ADY_VEND,"A3_NREDUZ")))
+		fEnvMail(_cVendATU,_dDataINI,_dDataFIM)
+		_nCtaA		:= 0
+		_cVendATU		:= TMPCTR->ADY_VEND
+		_lNewVend 		:= .t.	
+	Endif 
+Enddo    
+//+---------------------------------------------------------------------+
+//|  Fecha tabela temporaria criada pela consulta SQL na função fLerCN9 |
+//+---------------------------------------------------------------------+
+TMPCTR->(DbCloseArea())
+//+---------------------------------------------------------------------+
+//|    Apaga o Arquivo de LOG                                           |
+//+---------------------------------------------------------------------+
+Return
+
+
+/* 
+-------------------------------------------------------------------------------
+{Protheus.doc}<fLerCN9>
+   Monta consulta SQL que devolve arquivo temporario com as informaçõs dos
+   contratos com Vencimento dentro de operiodo informado como parametro.
+
+@Parametros<Nil> 
+@author<Antonio Dantas> 
+@since<22/05/2015> 
+@version<Nil> 
+@receive 
+<
+   _dDataINI (d) - Data Inicio do Periodo
+   _dDataFIM (d) - Data Final do Periodo
+> 
+@return <Nil> 
+@example<Nil> 
+@see<Nil> 
+-------------------------------------------------------------------------------
+*/
+Static Function fLerCN9(_dDataINI,_dDataFIM)
+Local _cQuery		:= "" 
+_cQuery := "Select ADY.ADY_VEND, CN9.CN9_DTFIM, CN9.CN9_FILIAL, CN9.CN9_REVISA, CN9.CN9_NUMERO, "+CRLF
+_cQuery += "       SA1.A1_CGC, CN9.CN9_CLIENT, CN9.CN9_LOJACL, SA1.A1_NOME, SA1.A1_MUN, "+CRLF
+_cQuery += "       SA1.A1_CONTATO, ADZ.ADZ_ITEM, ADZ.ADZ_PRODUT, ADZ.ADZ_DESCRI, CN9.CN9_DTINIC, "+CRLF 
+_cQuery += "       AD1.AD1_DTASSI, CN9.CN9_DTASSI "+CRLF
+_cQuery += "From "+RetSqlName("CN9")+" CN9 "+CRLF
+_cQuery += "Inner Join "+RetSqlName("SA1")+" SA1 On SA1.A1_FILIAL = '"+FwxFilial("SA1")+"' "+CRLF
+_cQuery += "                      And SA1.A1_COD = CN9.CN9_CLIENT  "+CRLF
+_cQuery += "                      And SA1.A1_LOJA = CN9.CN9_LOJACL  "+CRLF
+_cQuery += "Inner Join "+RetSqlName("CN1")+" CN1 On CN1.CN1_FILIAL = '"+FwxFilial("CN1")+"' "+CRLF
+_cQuery += "                      And CN1.CN1_CODIGO = CN9.CN9_TPCTO  "+CRLF
+_cQuery += "                      And CN1.CN1_ESPCTR = '2' "+CRLF
+_cQuery += "Inner Join "+RetSqlName("ADY")+" ADY On ADY.ADY_FILIAL = CN9.CN9_FILIAL  "+CRLF
+_cQuery += "                      And ADY.ADY_XCONTR = CN9.CN9_NUMERO  "+CRLF
+_cQuery += "                      And ADY.ADY_XREVCT = CN9.CN9_REVISA "+CRLF
+_cQuery += "Inner Join "+RetSqlName("ADZ")+" ADZ ON ADZ.ADZ_FILIAL = ADY.ADY_FILIAL  "+CRLF
+_cQuery += "                      And ADZ.ADZ_PROPOS = ADY.ADY_PROPOS  "+CRLF
+_cQuery += "                      And ADZ.ADZ_REVISA = ADY.ADY_PREVIS "+CRLF
+_cQuery += "Inner Join "+RetSqlName("AD1")+" AD1 ON AD1.AD1_FILIAL = CN9.CN9_FILIAL  "+CRLF
+_cQuery += "                      And AD1.AD1_XCONTR = CN9.CN9_NUMERO  "+CRLF
+_cQuery += "                      And AD1.AD1_XREVCT = CN9.CN9_REVISA "+CRLF
+_cQuery += "Where SubStr(CN9.CN9_FILIAL,1,4) = '"+ SubStr(cFilAnt,1,4) +"' "+CRLF
+_cQuery += "And CN9.D_E_L_E_T_ <> '*' "+CRLF
+_cQuery += "And CN9.CN9_SITUAC = '05' "+CRLF
+_cQuery += "And CN9.CN9_DTFIM Between '"+Dtos(_dDataINI)+"' And '"+Dtos(_dDataFIM)+"' "+CRLF
+_cQuery += "Order by CN9.CN9_FILIAL, ADY.ADY_VEND, CN9.CN9_DTFIM, CN9.CN9_FILIAL, CN9.CN9_NUMERO, ADZ.ADZ_ITEM "+CRLF
+If Select("TMPCTR")>0
+	TMPCTR->(DbCloseArea())
+Endif
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPCTR",.t.,.t.)
+//--
+TCSETFIELD( "TMPCTR", "CN9_DTFIM"	,"D",8,0 )
+TCSETFIELD( "TMPCTR", "CN9_DTINIC"	,"D",8,0 )
+TCSETFIELD( "TMPCTR", "AD1_DTASSI"	,"D",8,0 )
+TCSETFIELD( "TMPCTR", "CN9_DTASSI"	,"D",8,0 )
+Return 
+
+
+/* 
+-------------------------------------------------------------------------------
+{Protheus.doc}<fCriaCab>
+ Monta o CABEÇALHO do arquivo TEXTO que sera enviado anexo e-mail ao 
+ vendedores com informações dos contratos vencidos e a vencer no peridodo.  
+
+@Parametros<Nil> 
+@author<Antonio Dantas> 
+@since<22/05/2015> 
+@version<Nil> 
+@receive 
+<
+   _cCodVend (c) - Codigo do Vendedor 
+> 
+@return <Nil> 
+@example<Nil> 
+@see<Nil> 
+-------------------------------------------------------------------------------
+*/
+Static Function fCriaCab(_cCodVend)
+_cFileLog		:= "CTR"+Alltrim(_cCodVend)+dtos(dDataBase)+StrTran(Time(),":","")+".TXT"
+_nHdl_log		:= fCreate(_cPathRoot+_cFileLog)  
+_cTextMail 	:= "" 
+//+--------------------------------------------------------------------+
+//|    Gera o Cabecalho do Relatorio de LOG                            |
+//+--------------------------------------------------------------------+
+_cTextMail :=	PadR("Dt Final"			,TamSX3("CN9_DTFIM")[1]		)+Space(3)+;
+					PadR("Filial"			,TamSX3("CN9_FILIAL")[1]		)+Space(3)+;
+					PadR("Contrato"			,TamSX3("CN9_NUMERO")[1]		)+Space(3)+;
+					PadR("Revisão"			,TamSX3("CN9_REVISA")[1]		)+Space(3)+;
+					PadR("CGC/CPF"			,TamSX3("A1_CGC")[1]			)+Space(3)+;    
+					PadR("Codigo"			,TamSX3("CN9_CLIENT")[1]		)+Space(3)+;
+					PadR("Loja"				,TamSX3("CN9_LOJACL")[1]		)+Space(3)+;
+					PadR("Nome"				,TamSX3("A1_NOME")[1]			)+Space(3)+; 
+					PadR("Cidade"			,TamSX3("A1_MUN")[1]			)+Space(3)+;
+					PadR("Contato"			,TamSX3("A1_CONTATO")[1]		)+Space(3)+;
+					PadR("Item"				,TamSX3("ADZ_ITEM")[1]		)+Space(3)+;
+					PadR("Produto"			,TamSX3("ADZ_PRODUT")[1]		)+Space(3)+;
+					PadR("Descrição"		,TamSX3("ADZ_DESCRI")[1]		)+Space(3)+;
+					PadR("Dt Inicial"		,TamSX3("CN9_DTINIC")[1]		)+Space(3)+;
+					PadR("Dt Ass Pro"		,TamSX3("AD1_DTASSI")[1]		)+Space(3)+;
+					PadR("Dt Ass Ctr"		,TamSX3("CN9_DTASSI")[1]		)+CRLF
+//-- 
+fWrite(_nHdl_Log,_cTextMail,Len(_cTextMail)) != Len(_cTextMail)
+//+--------------------------------------------------------------------+
+//|    Gera Linha de seracao do Cabecalho                              |
+//+--------------------------------------------------------------------+
+_cTextMail :=	PadR(Replicate("-",TamSX3("CN9_DTFIM")[1]	),TamSX3("CN9_DTFIM")[1]		)+Space(3)+;
+					PadR(Replicate("-",TamSX3("CN9_FILIAL")[1]	),TamSX3("CN9_FILIAL")[1]	)+Space(3)+;
+					PadR(Replicate("-",TamSX3("CN9_NUMERO")[1]	),TamSX3("CN9_NUMERO")[1]	)+Space(3)+;
+					PadR(Replicate("-",TamSX3("CN9_REVISA")[1]	),TamSX3("CN9_REVISA")[1]	)+Space(3)+;
+					PadR(Replicate("-",20								),20								)+Space(3)+;    
+					PadR(Replicate("-",TamSX3("CN9_CLIENT")[1]	),TamSX3("CN9_CLIENT")[1]	)+Space(3)+;
+					PadR(Replicate("-",TamSX3("CN9_LOJACL")[1]	),TamSX3("CN9_LOJACL")[1]	)+Space(3)+;
+					PadR(Replicate("-",TamSX3("A1_NOME")[1]		),TamSX3("A1_NOME")[1]		)+Space(3)+; 
+					PadR(Replicate("-",TamSX3("A1_MUN")[1]		),TamSX3("A1_MUN")[1]			)+Space(3)+;
+					PadR(Replicate("-",TamSX3("A1_CONTATO")[1]	),TamSX3("A1_CONTATO")[1]	)+Space(3)+;
+					PadR(Replicate("-",TamSX3("ADZ_ITEM")[1]		),TamSX3("ADZ_ITEM")[1]		)+Space(3)+;
+					PadR(Replicate("-",TamSX3("ADZ_PRODUT")[1]	),TamSX3("ADZ_PRODUT")[1]	)+Space(3)+;
+					PadR(Replicate("-",TamSX3("ADZ_DESCRI")[1]	),TamSX3("ADZ_DESCRI")[1]	)+Space(3)+;
+					PadR(Replicate("-",TamSX3("CN9_DTINIC")[1]	),TamSX3("CN9_DTINIC")[1]	)+Space(3)+;
+					PadR(Replicate("-",TamSX3("AD1_DTASSI")[1]	),TamSX3("AD1_DTASSI")[1]	)+Space(3)+;
+					PadR(Replicate("-",TamSX3("CN9_DTASSI")[1]	),TamSX3("CN9_DTASSI")[1]	)+CRLF
+//-- 
+fWrite(_nHdl_Log,_cTextMail,Len(_cTextMail)) != Len(_cTextMail)
+Return .t.
+
+
+/* 
+-------------------------------------------------------------------------------
+{Protheus.doc}<fEnvMail>
+   Prepara o texto informativo do corpo do e-mail que sera enviado ao 
+   vendedor relativos aos contratos a vencer. Executa a rotina para 
+   remessa do e-mail.   
+
+@Parametros<Nil> 
+@author<Antonio Dantas> 
+@since<22/05/2015> 
+@version<Nil> 
+@receive 
+<
+	_cVendATU (c) - Codigo do Vendedor
+	_dDataINI (d) - Data Inicial do Periodo considerado.
+	_dDataFIM (d) - Data Final do Periodo considerao.
+> 
+@return <Nil> 
+@example<Nil> 
+@see<Nil> 
+-------------------------------------------------------------------------------
+*/
+Static Function fEnvMail(_cVendATU,_dDataINI,_dDataFIM)
+
+	Local _cVendedor := Posicione("SA3",1,FwxFilial("SA3")+_cVendATU,"A3_NOME")
+
+	//Monta a mensagem do Corpo do E-mail
+	_cMensagem	:= " "+ CHR(13) + CHR(10)
+	_cMensagem	+= "Contrato da Carteira do Representante, "+Alltrim(Transform(_nCtaA,"@E 9,999,999"))+" "  
+	_cMensagem	+= "contratos a Vencer no periodo de : "+ DtoC(_dDataINI)+" ate "+ DtoC(_dDataFIM) + CHR(13) + CHR(10)
+
+	//Fecha o Arquivo de Log
+	fClose(_nHdl_Log) 
+
+	//_cEmailVen := "rafael.karc@j2aconsultoria.com.br"
+	//_cMailSUPE := "rafael.karc@j2aconsultoria.com.br"
+	//Executa a funcao de Geracao e remessa do E-mail
+	//ACSendMail(,,,,_cEmailVen,"Contratos a Vencer até ["+ DtoC(_dDataFIM) +"]",_cMensagem,_cPathRoot + _cFileLog)
+	U_SFEnvEmail( , _cEmailVen, , , "Contratos a Vencer até ["+ DtoC(_dDataFIM) +"]", _cMensagem, _cPathRoot + _cFileLog )
+	
+	//Copia da Remessa ao SUPERVIDOR de Vendas
+	If .Not. Empty(Alltrim(_cMailSUPE))
+		_cMensagem := "Contratos Vencidos "+ _cVendATU +"-"+ Alltrim(_cVendedor) +" e a vencer até ["+ DtoC(_dDataFIM) +"] " + _cMensagem
+		Aviso(FunName()+"/"+ProcName(),_cMensagem,{"OK"})
+		/* Rafael Karczevski - 16/09/2019 - Troca de função ACSendMail  */
+		//ACSendMail(,,,,_cMailSUPE,"Contratos Vencidos e a Vencer até ["+ DtoC(_dDataFIM) +"]",_cMensagem,_cPathRoot+_cFileLog)
+		U_SFEnvEmail( , _cMailSUPE, , , "Contratos Vencidos e a Vencer até ["+ DtoC(_dDataFIM) +"]", _cMensagem, _cPathRoot + _cFileLog)
+	EndIf 
+	FErase(_cPathRoot + _cFileLog)	
+
+Return .t.

@@ -1,0 +1,315 @@
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE 'RWMAKE.CH'
+
+#DEFINE TAG_NEGRITO_INI	'<b>'		//inicia texto em negrito
+#DEFINE TAG_NEGRITO_FIM	'</b>'
+#DEFINE TAG_CENTER_INI	'<ce>'		//centralizado
+#DEFINE TAG_CENTER_FIM	'</ce>'
+#DEFINE TAG_EXPAN_INI 	'<e>'		//expandido
+#DEFINE TAG_EXPAN_FIM	'</e>'
+#DEFINE TAG_CONDEN_INI	'<c>'		//condensado
+#DEFINE TAG_CONDEN_FIM	'</c>'
+#DEFINE TAG_GUIL_INI	'<gui>'		//ativa guilhotina
+#DEFINE TAG_GUIL_FIM	'</gui>'
+#DEFINE TAG_COD128_INI	'<code128>' //codigo de barras CODE128
+#DEFINE TAG_COD128_FIM	'</code128>'
+
+/*/{Protheus.doc} SF06A50X
+//TODO Imprime o contrato de negociacao e as parcelas
+@author Fabrício Rosa
+@since 28/10/2019
+@param _aContrato, array, informação do contrato e parcelas
+@param _cOrc, character, código do orçamento
+@type function
+/*/
+User Function SF06A50X( _aContrato, _cOrc )
+
+	Local cTexto      := ''
+	Local cImpressora := LJGetStation( 'IMPFISC' )
+	Local cPorta 	  := 'AUTO'
+	Local _ni		  := 0
+	Local nHdlECF     := 0
+	Local lObrigaImp  := .T.
+	Local lContinua   := .T.
+	Local aMensagem	  := {}
+	Local aAreaZAM := ZAM->( GetArea() )
+	
+	Private cCrLf	   := Chr(10)
+	Private cLinha 	   := Replicate( '-', 48 )
+	Private cUnderLine := Replicate( '_', 48 )
+	Private nSaltoLn   := SuperGetMV( 'MV_FTTEFLI',, 1 ) // Linha pula entre comprovante
+	Private lGuil	   := SuperGetMV( 'MV_FTTEFGU',, .T. )	// Ativa guilhotina
+
+	Default	_aContrato := {}
+	Default _cOrc	   := ''
+	
+	/*
+	1 - Codigo Cliente + Loja do Cliente
+	2 - DtCompra
+	3 - VlrCompr
+	4 - VlrFinanciado
+	5 - Entrada
+	6 - VlrParcelado
+	7 - NumContrato
+	8 - Array Parcelas - sendo
+		1 - Prefixo
+		2 - Num Titulo
+		3 - Parcela
+		4 - Tipo Titulo
+		5 - Valor Titulo
+		6 - Vencimento
+	*/
+	
+	If !IsBlind()
+		LjMsgRun( 'Aguarde. Abrindo a Impressora Não Fiscal...',, { || nHdlECF := INFAbrir( cImpressora, cPorta ) } )
+	Else
+		ConOut( 'Aguarde. Abrindo a Impressora...' )
+		nHdlECF := INFAbrir( cImpressora, cPorta )
+	EndIf
+	
+	//Verifica se houve comunicacao com a impressora
+	If nHdlECF == -1
+		If !IsBlind()
+			If ExistFunc( 'INFCon' ) //LOJXECF.PRX
+				//Se obrigar a impressão, verifica se a impressora está conectada
+				lObrigaImp := LjObgCpVen( @aMensagem )
+
+				If lObrigaImp
+					lContinua := INFCon( .T. )	//Testa comunicacao com ECNF
+
+					If !lContinua .And. len( aMensagem ) > 0
+						Aviso( aMensagem[1], aMensagem[2], { aMensagem[3] } )
+					EndIf
+				EndIf
+			EndIf
+		Else
+			ConOut( 'Não foi possível estabelecer comunicação com a Impressora:' + cImpressora )
+			//Não há necessidade de retornar erro quando houver erro de impressora
+		EndIf
+		
+		If !lContinua
+			//Aborta a impressao
+			Return
+		EndIf
+	EndIf
+	
+	cTexto += TAG_CENTER_INI + TAG_EXPAN_INI + cFilAnt + '-' + AllTrim( SM0->M0_NOME ) + TAG_EXPAN_FIM + TAG_CENTER_FIM + cCrLf
+	cTexto += TAG_CENTER_INI + TAG_NEGRITO_INI + 'TERMO DE CONFISSAO DE DIVIDA' + TAG_NEGRITO_FIM + TAG_CENTER_FIM + cCrLf
+	
+	cTexto += TAG_NEGRITO_INI + cUnderLine + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + Space( 46 ) + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + 'Pelo presente Termo  de Confissao  de Divida e' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + 'na melhor forma  de direito, confesso devedor-' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + '(a) de ' + PadC( AllTrim( SM0->M0_NOMECOM ) + ',' , 39) + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + 'no valor de R$ ' + PadC( AllTrim( Transform( _aContrato[3], '@E 99,999.99' ) ), 9 ) + ' atualizado ate a pre-' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + 'sente  data, sem  a incidencia  de encargos ou' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + 'juros pre-fixados, reputado  liquido  certo  e' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + 'exigivel, servindo  o presente  como titulo de' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + 'credito executivo para todos os fins e efeitos' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + 'legais.  Comprometo-me a pagar  o valor  acima' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + 'mencionado nas condicoes abaixo estabelecidas,' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + 'ficando  certo que  a falta ou atraso no paga-' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + 'mento de qualquer parcela implicara  no cance-' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + 'lamento  do acordo e vencimento antecipado das' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + 'demais e, neste  caso, responderei  a procedi-' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + 'mento judicial cabivel, em especial ao dispos-' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + 'to nos arts. 585 a 587 do CPC.                ' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + Replicate( '_', 46 ) + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += cCrLf
+	
+	cTexto += TAG_CENTER_INI + TAG_NEGRITO_INI + 'TITULOS NEGOCIADOS' + TAG_NEGRITO_FIM + TAG_CENTER_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + Replicate( '_', 48 ) + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + Space( 14 ) + '|' + Space( 10 ) + '|' + Space( 9 ) + '|' + Space( 10 ) + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + '    Titulo    ' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + '  Vencto. ';
+			+ TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + '  Valor  '      + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + ' V.Corrig ';
+			+ TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += TAG_NEGRITO_INI + '|' + Replicate( '-', 14 ) + '|' + Replicate( '-', 10 ) + '|' + Replicate( '-', 9 ) + '|' + Replicate( '-', 10 ) + '|' + TAG_NEGRITO_FIM + cCrLf
+	
+	dbSelectArea( 'ZAM' )
+	ZAM->( dbSetOrder(1) )
+	ZAM->( dbGoTop() )
+	If ZAM->( dbSeek( xFilial( 'ZAM' ) + _cOrc ) )
+ 		While ZAM->( !Eof() ) .And. ZAM->ZAM_CODNEG == _cOrc
+ 			If ZAM->ZAM_OPER == 'G'
+ 				ZAM->( DbSkip() )
+ 				Loop
+ 			EndIf
+ 			
+ 			cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + PadC( ZAM->ZAM_NUM + '/' + AllTrim( ZAM->ZAM_PARCEL ), 14 ) + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM;
+ 					+ PadC( DtoC( ZAM->ZAM_VENCTO ), 10) + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + PadC( AllTrim( Transform( ZAM->ZAM_VALOR, '@E 99,999.99' ) ), 9 ) + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM;
+ 					+ PadC( AllTrim( Transform( ZAM->ZAM_VALCOR, '@E 99,999.99' ) ), 10 ) + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+ 			
+			ZAM->( dbSkip() )
+		EndDo
+	EndIf
+	cTexto += TAG_NEGRITO_INI + '|' + Replicate( '_', 14 ) + '|' + Replicate( '_', 10 ) + '|' + Replicate( '_', 9 ) + '|' + Replicate( '_', 10 ) + '|' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += cCrLf
+	
+	cTexto += TAG_CENTER_INI + TAG_NEGRITO_INI + 'FORMA DE PAGAMENTO' + TAG_NEGRITO_FIM + TAG_CENTER_FIM + cCrLf
+	cTexto += TAG_CENTER_INI + TAG_NEGRITO_INI + Replicate( '_', 37 ) + TAG_NEGRITO_FIM + TAG_CENTER_FIM + cCrLf
+	cTexto += TAG_CENTER_INI + TAG_NEGRITO_INI + '|' + Space( 14 ) + '|' + Space( 10 ) + '|' + Space( 9 ) + '|' + TAG_NEGRITO_FIM + TAG_CENTER_FIM + cCrLf
+	cTexto += TAG_CENTER_INI + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + '   Parcela    ' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM;
+			+ '  Vencto. ' + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + '  Valor  '      + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + TAG_CENTER_FIM + cCrLf
+	cTexto += TAG_CENTER_INI + TAG_NEGRITO_INI + '|' + Replicate( '-', 14 ) + '|' + Replicate( '-', 10 ) + '|' + Replicate( '-', 9 ) + '|' + TAG_NEGRITO_FIM + TAG_CENTER_FIM + cCrLf
+	
+	ZAM->( dbGoTop() )
+	If ZAM->( dbSeek( xFilial( 'ZAM' ) + _cOrc ) )
+ 		While ZAM->( !Eof() ) .And. ZAM->ZAM_CODNEG == _cOrc
+ 			If ZAM->ZAM_OPER == 'B'
+ 				ZAM->( DbSkip() )
+ 				Loop
+ 			EndIf   
+ 			
+ 			cTexto += TAG_CENTER_INI + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + PadC( ZAM->ZAM_NUM + '/' + AllTrim( ZAM->ZAM_PARCEL ), 14 ) + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM;
+ 					+ PadC( DtoC( ZAM->ZAM_VENCTO ), 10) + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + PadC( AllTrim( Transform( ZAM->ZAM_VALOR, '@E 99,999.99' ) ), 9 );
+ 					+ TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + TAG_CENTER_FIM + cCrLf
+ 			
+			ZAM->( dbSkip() )
+		EndDo
+	EndIf
+	cTexto += TAG_CENTER_INI + TAG_NEGRITO_INI + '|' + Replicate( '_', 14 ) + '|' + Replicate( '_', 10 ) + '|' + Replicate( '_', 9 ) + '|' + TAG_NEGRITO_FIM + TAG_CENTER_FIM + cCrLf
+	cTexto += cCrLf + cCrLf
+	
+	cTexto += TAG_NEGRITO_INI + 'ASSINATURA:' + Replicate( '_', 36 ) + TAG_NEGRITO_FIM + cCrLf
+	cTexto += cCrLf
+	cTexto += 'CLIENTE: ' + TAG_NEGRITO_INI + AllTrim( _aContrato[1] ) + TAG_NEGRITO_FIM + cCrLf
+	cTexto += 'NOME:    ' + TAG_NEGRITO_INI + AllTrim( Posicione( 'SA1', 1, xFilial( 'SA1' ) + _aContrato[1], 'A1_NOME' ) ) + TAG_NEGRITO_FIM + cCrLf
+	cTexto += 'CPF:     ' + TAG_NEGRITO_INI + Transform( Posicione( 'SA1', 1, xFilial( 'SA1' ) + _aContrato[1], 'A1_CGC' ), '@R 999.999.999-99' ) + TAG_NEGRITO_FIM + cCrLf
+	cTexto += cCrLf
+	
+	cTexto += TAG_NEGRITO_INI + 'TESTEMUNHAS' + TAG_NEGRITO_FIM + cCrLf
+	cTexto += cCrLf
+	cTexto += '1:' + Replicate( '_', 46 ) + cCrLf
+	cTexto += cCrLf
+	cTexto += '2:' + Replicate( '_', 46 ) + cCrLf
+	cTexto += cCrLf
+	
+	For _ni := 1 To len( _aContrato[8] )
+		cTexto += PadR( TAG_NEGRITO_INI + _aContrato[8][_ni][3] + '-' + TAG_NEGRITO_FIM + DtoC( _aContrato[8][_ni][6] ), 20 );
+				+ PadL( Transform( _aContrato[8][_ni][5], '@E 999,999.99' ), 10 )
+				
+		If !( Mod( _ni, 2 ) == 0 )
+			cTexto += '|'
+		ElseIf _ni <> len( _aContrato[8] )
+			cTexto += cCrLf
+		EndIf
+	Next _ni
+	cTexto += cCrLf
+	
+	//Salta linha extra
+	For _ni := 1 to nSaltoLn
+		cTexto += cCrLf
+	Next _ni
+	
+	//Imprime o contrato
+	LjGrvLog( SL1->L1_NUM, 'Envia comando para a Impressora - Impressao do Contrato', cTexto )
+	INFTexto( cTexto )	//Envia comando para a Impressora
+	LjGrvLog( SL1->L1_NUM, 'Retorno da Impressao do Contrato' )
+
+	//Realiza o corte do papel, apos a impressao do contrato
+	If lGuil
+		cTexto := TAG_GUIL_INI + TAG_GUIL_FIM		//Corte de Papel
+
+		nRet := INFTexto( cTexto )	 //Envia comando para a Impressora
+		LjGrvLog( SL1->L1_NUM, 'Retorno do envio do comando de guilhotina para a impressora', nRet )
+	EndIf
+	
+	PrintParcs(_aContrato)
+	
+	RestArea( aAreaZAM )
+Return
+
+/*/{Protheus.doc} PrintParcs
+//TODO Imprime as parcelas do carne de pagamento
+@author Fabrício Rosa
+@since 28/10/2019
+@param _aContrato, array, informação do contrato e parcelas
+@type function
+/*/
+Static Function PrintParcs( _aContrato )
+
+	Local _ni := 0
+	Local _nx := 0
+	Local _na := 0
+	
+	Local cTexto := ''
+	
+	/* 1 - Codigo Cliente + Loja do Cliente
+	2 - DtCompra
+	3 - VlrCompr
+	4 - VlrFinanciado
+	5 - Entrada
+	6 - VlrParcelado
+	7 - NumContrato
+	8 - Array Parcelas:
+	   1 - Prefixo
+	   2 - Num Titulo
+	   3 - Parcela
+	   4 - Tipo Titulo
+	   5 - Valor Titulo
+	   6 - Vencto */
+	
+	//Imprime as parcelas
+	For _ni := 1 to ( len( _aContrato[8] ) * 2 )
+		If !( Mod( _ni, 2 ) = 0 )
+			_nx++
+		EndIf
+	
+		cTexto += TAG_NEGRITO_INI + Replicate( ' _', 24 ) + TAG_NEGRITO_FIM + cCrLf + cCrLf
+	
+		cTexto += TAG_CENTER_INI + TAG_EXPAN_INI + cFilAnt + '-' + AllTrim( SM0->M0_NOME ) + TAG_EXPAN_FIM + TAG_CENTER_FIM + cCrLf + cCrLf
+				
+		cTexto += 'NOME DO CLIENTE: ' + TAG_NEGRITO_INI + AllTrim( Posicione( 'SA1', 1, xFilial( 'SA1' ) + _aContrato[1], 'A1_NOME' ) ) + TAG_NEGRITO_FIM + cCrLf
+		
+		cTexto += TAG_CONDEN_INI
+		cTexto += TAG_NEGRITO_INI + '|' + Replicate( '-', 18 ) + '|' + Replicate( '-', 17 ) + '|' + Replicate( '-', 18 ) + '|' + TAG_NEGRITO_FIM + cCrLf
+		cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + PadC( 'COD CLIENTE', 18 ) + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + PadC( 'CONTRATO', 17 );
+				+ TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + PadC( 'DATA DA COMPRA', 18 ) + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+		cTexto += TAG_NEGRITO_INI + '|' + PadC( _aContrato[1], 18 ) + '|' + PadC( _aContrato[7], 17 ) + '|';
+				+ PadC( DtoC( _aContrato[2] ), 18 ) + '|' + TAG_NEGRITO_FIM + cCrLf
+		
+		cTexto += TAG_NEGRITO_INI + '|' +  Replicate( '-', 18 ) + '|' + Replicate( '-', 17 ) + '|' + Replicate( '-', 18 ) + '|' + TAG_NEGRITO_FIM + cCrLf
+		cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + PadC( 'PARCELA', 18 ) + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + PadC( 'VENCIMENTO', 17 );
+				+ TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + PadC( 'VALOR DA PARCELA', 18 ) + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+		cTexto += TAG_NEGRITO_INI + '|' + PadC( _aContrato[8][_nx][3], 18 ) + '|' + PadC( DtoC( _aContrato[8][_nx][6] ), 17 );
+				+ '|' + PadC( AllTrim( Transform( _aContrato[8][_nx][5], '@E 999,999.99' ) ), 18 ) + '|' + TAG_NEGRITO_FIM + cCrLf
+		
+		cTexto += TAG_NEGRITO_INI + '|' + Replicate( '-', 18 ) + '|' + Replicate( '-', 17 ) + '|' + Replicate( '-', 18 ) + '|' + TAG_NEGRITO_FIM + cCrLf
+		cTexto += TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + PadC( 'EMISSAO DO CARNE', 18 ) + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + PadC( 'ACRESCIMOS', 17 );
+				+ TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + PadC( 'VALOR TOTAL', 18 ) + TAG_NEGRITO_INI + '|' + TAG_NEGRITO_FIM + cCrLf
+		cTexto += TAG_NEGRITO_INI + '|' + PadC( DtoC( dDataBase ), 18 ) + '|' + Space( 17 ) + '|' + Space( 18 ) + '|' + TAG_NEGRITO_FIM + cCrLf
+		
+		cTexto += TAG_NEGRITO_INI + '|' +  Replicate( '-', 18 ) + '|' + Replicate( '-', 17 ) + '|' + Replicate( '-', 18 ) + '|' + TAG_NEGRITO_FIM + cCrLf
+		cTexto += TAG_CONDEN_FIM
+		
+		cTexto += TAG_CENTER_INI + TAG_CONDEN_INI + 'EVITE PAGAR JUROS. QUITE SUA PRESTACAO EM DIA' + TAG_CONDEN_FIM + TAG_CENTER_FIM + cCrLf
+		
+		If( Mod( _ni, 2 ) == 0 )
+			cTexto += TAG_NEGRITO_INI + cLinha + TAG_NEGRITO_FIM + cCrLf
+			cTexto += TAG_CENTER_INI + TAG_COD128_INI + '<h100><w3><txt>' + ( _aContrato[8][_nx][1] + _aContrato[8][_nx][2] + _aContrato[8][_nx][3] ) + '</txt></w3></h100>' + TAG_COD128_FIM + TAG_CENTER_FIM + cCrLf
+			cTexto += TAG_NEGRITO_INI + cLinha + TAG_NEGRITO_FIM + cCrLf
+		EndIf
+		
+		If ( Mod( _ni, 2 ) == 0 )
+			//Salta linha extra
+			For _na := 1 to nSaltoLn
+				cTexto += cCrLf
+			Next _na
+		
+			//Imprime o contrato
+			LjGrvLog( SL1->L1_NUM, 'Envia comando para a Impressora - Impressao das Parcelas', cTexto )
+			INFTexto( cTexto )	//Envia comando para a Impressora
+			LjGrvLog( SL1->L1_NUM, 'Retorno da Impressao das Parcelas' )
+			
+			//Realiza o corte do papel, apos a impressao das parcelas
+			If lGuil
+				cTexto := TAG_GUIL_INI + TAG_GUIL_FIM		//Corte de Papel
+		
+				nRet := INFTexto( cTexto )	 //Envia comando para a Impressora
+				LjGrvLog( SL1->L1_NUM, 'Retorno do envio do comando de guilhotina para a impressora', nRet )
+			EndIf
+			
+			cTexto := ''
+		EndIf
+	Next _ni
+Return

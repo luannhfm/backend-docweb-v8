@@ -1,0 +1,82 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} F040FCR
+Ponto de entrada para tratar dados antes de sair da rotina no final da inclusao
+@author j2a.caiolima
+@since 04/08/2017
+/*/
+User Function F040FCR()
+
+If SE1->E1_PREFIXO == "REN"
+	// não faz nada
+ElseIf SE1->E1_PREFIXO == "LIQ"
+	// não faz nada
+ElseIf (AllTrim(SE1->E1_TIPO) == "CC" .or. AllTrim(SE1->E1_TIPO) == "CD")  .AND. AllTrim(SE1->E1_PREFIXO) == "CRT"
+	// não faz nada
+Else
+	// valida a amarração centro x itemC
+	fVldCCI()
+EndIf
+
+Return
+
+/*/{Protheus.doc} fVldCCI
+Função que valida o centro de custo x o item contabil
+@author j2a.caiolima
+@since 04/08/2017
+/*/
+Static Function fVldCCI()
+	Local _aArea := GetArea()
+	Local _aAreaSE1 := SE1->(GetArea())
+	
+	Local _lOk := .T.
+	
+	If SE1->E1_MULTNAT == "1"
+		// se assume falso pois se nao existir SEZ para esse titulo já está errado
+		// TODAS AS NATUREZAS PRECISAM ESTAR RATIADAS POR CENTRO DE CUSTO E COM UMA AMARRACAO CORRETA COM O ITEM C.
+		_lOk := .F.
+		
+		dbSelectArea("SEV")
+		SEV->(dbSetOrder(1)) // EV_FILIAL+EV_PREFIXO+EV_NUM+EV_PARCELA+EV_TIPO+EV_CLIFOR+EV_LOJA+EV_NATUREZ
+		SEV->(dbGoTop())
+		If SEV->( dbSeek( SE1->(E1_FILIAL + E1_PREFIXO + E1_NUM + E1_PARCELA + E1_TIPO + E1_CLIENTE + E1_LOJA) ) )
+			while SEV->(!Eof()) .AND. ;
+					SE1->(E1_FILIAL + E1_PREFIXO + E1_NUM + E1_PARCELA + E1_TIPO + E1_CLIENTE + E1_LOJA)=;
+					SEV->(EV_FILIAL + EV_PREFIXO + EV_NUM + EV_PARCELA + EV_TIPO + EV_CLIFOR + EV_LOJA)
+				dbSelectArea("SEZ")
+				SEZ->(dbSetOrder(1)) // EZ_FILIAL+EZ_PREFIXO+EZ_NUM+EZ_PARCELA+EZ_TIPO+EZ_CLIFOR+EZ_LOJA+EZ_NATUREZ+EZ_CCUSTO
+				SEZ->(dbGoTop())
+				If SEZ->( dbSeek( SEV->(EV_FILIAL + EV_PREFIXO + EV_NUM + EV_PARCELA + EV_TIPO + EV_CLIFOR + EV_LOJA + EV_NATUREZ) ) )
+					while SEZ->(!Eof()) .AND.;
+							SEV->(EV_FILIAL + EV_PREFIXO + EV_NUM + EV_PARCELA + EV_TIPO + EV_CLIFOR + EV_LOJA + EV_NATUREZ)=;
+							SEZ->(EZ_FILIAL + EZ_PREFIXO + EZ_NUM + EZ_PARCELA + EZ_TIPO + EZ_CLIFOR + EZ_LOJA + EZ_NATUREZ)
+						
+						_lOk := U_ChkCCD(SEZ->EZ_CCUSTO, SEZ->EZ_ITEMCTA)
+						
+						If !_lOk
+							Exit
+						EndIf
+						
+						SEZ->(dbSkip())
+					End
+				Else
+					_lOk := .F.
+					Exit
+				EndIf
+				SEV->(dbSkip())
+			End
+		EndIf
+	Else
+		_lOk := U_ChkCCD(SE1->E1_CCC, SE1->E1_ITEMC)
+	EndIf
+	
+	If !_lOk
+		Alert("Foram encontradas divergências entre a amarração de Centro de custo X Item contabil" + CRLF + ;
+			"Registro não será gravado.")
+		DisarmTransaction()
+	Else
+		RestArea(_aAreaSE1)
+		RestArea(_aArea)
+	EndIf
+	
+Return

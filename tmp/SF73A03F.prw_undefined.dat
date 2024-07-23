@@ -1,0 +1,290 @@
+#Include 'Protheus.ch'
+#Include "FWMVCDef.ch"
+
+/*/{Protheus.doc} SF73A03F
+Classe responsavel por fazer a comunicacao, autenticacao e 
+retorno dos metodos do WebService Rest do Socio Indústria
+@type 		class
+@author 	Franklin de Brito de Oliveira
+@since 		11/12/2020
+/*/
+Class SF73A03F
+	
+	Data cCodigo
+	Data cUsuario
+	Data cAuthorization
+	Data cToken
+	Data cDataExpiracao
+	Data cResult
+	Data cErro
+	Data cHTTPCode
+	Data cUrl
+	
+	//Construtor
+	Method New() Constructor
+	
+	//Autentica
+	Method Autentica()
+	
+	//Gets
+	Method GetNvConDia()
+	Method GetCliente(cCnpj)
+	
+	//Post
+	Method PostCliente(cPostBody)
+	
+	//Put
+	Method PutCliente(cCnpj, cPostBody)
+
+EndClass
+
+
+/*/{Protheus.doc} Method New() Class SF73A03F
+Metodo New - Construtor
+
+@type 		method
+@author 	Franklin de Brito de Oliveira
+@since 		11/12/2020
+/*/
+Method New() Class SF73A03F
+Local aArea		:= GetArea()
+Local cDesFunc	:= "SOCIOINDUSTRIA"
+
+	DbSelectArea("ZDK")
+	DbSetOrder(2)	//ZDK_FILIAL+ZDK_INTEGR
+	If ZDK->( DbSeek(xFilial("ZDK") + cDesFunc) )
+		::cCodigo := AllTrim(ZDK->ZDK_CODIGO)
+		::cUsuario := AllTrim(ZDK->ZDK_USUARI)
+		::cAuthorization := AllTrim(ZDK->ZDK_SENHA)
+		::cUrl	:= Lower(AllTrim(ZDK->ZDK_URL))
+		::cToken := AllTrim(ZDK->ZDK_TOKEN)
+		::cDataExpiracao := AllTrim(ZDK->ZDK_DTEXPI)
+		::cResult := ""
+		::cErro	:= ""
+		::cHTTPCode := ""
+	EndIf
+	
+	RestArea(aArea)
+
+Return(Self)
+
+
+/*/{Protheus.doc} Method Autentica() Class SF73A03F
+Metodo responsável por gerar o token de acesso diário aos endpoints do Socio Industria. 
+Token Master e usuario serão passados para utilizar no momento de gerar o token diário.
+
+@type 		method
+@author 	Franklin de Brito de Oliveira
+@since 		11/12/2020
+/*/
+Method Autentica() Class SF73A03F
+Local aHeaders 		:= {}
+Local cDataUTC 		:= ""
+Local cPath 		:= "/autenticacao"
+Local cRet			:= ""	
+Local lRet			:= .T.
+Local oRestClient 	:= FWRest():New(::cUrl)
+Local oJson
+	cDataUTC := FWTimeStamp(6)	//6 - Formato UTC aaaa-mm-ddThh:mm:ssZ (Transforma a data atual em uma data e hora GMT 0)
+	If Empty(::cToken) .Or. cDataUTC > ::cDataExpiracao
+		aAdd( aHeaders, "Accept: application/json" )
+		aAdd( aHeaders, "usuario: " + ::cUsuario )
+		aAdd( aHeaders, "Authorization: " + ::cAuthorization )
+		oRestClient:setPath(cPath)
+		If oRestClient:Post(aHeaders)
+			oJson := JsonObject():New()
+			cRet := oJson:FromJson(oRestClient:GetResult())
+			If Empty(cRet)
+				::cToken := DecodeUtf8(oJson['data']['token'])
+				::cDataExpiracao := DecodeUtf8(oJson['data']['dataExpiracao'])
+				oMdlZDK := FWLoadModel("SF99A02F")
+				oMdlZDK:SetOperation(MODEL_OPERATION_UPDATE)
+				oMdlZDK:Activate()
+				oMdlZDK:SetValue("ZDKMASTER", "ZDK_FILIAL", xFilial("ZDK"))
+				oMdlZDK:SetValue("ZDKMASTER", "ZDK_CODIGO", ::cCodigo)
+				oMdlZDK:SetValue("ZDKMASTER", "ZDK_TOKEN", ::cToken)
+				oMdlZDK:SetValue("ZDKMASTER", "ZDK_DTEXPI", ::cDataExpiracao)
+				If (lRet := oMdlZDK:VldData())
+					oMdlZDK:CommitData()
+				EndIf
+				oMdlZDK:DeActivate()
+				FreeObj(oMdlZDK)
+			Else
+				Conout("Falha ao popular JsonObject. Erro: " + cRet)
+			EndIf
+			FreeObj(oJson)
+		Else
+			Conout(oRestClient:GetLastError())
+			lRet := .F.
+		EndIf
+	EndIf
+	FreeObj(oRestClient)
+Return ( lRet )
+
+/*/{Protheus.doc} GetCliente
+Rota para consultar os dados de faturamento, sindicato e situação da associação junto ao sindicato.
+@author Franklin de Brito de Oliveira
+@since 16/12/2020
+@return logical, Indica se conseguiu recuperar o cliente na API do Sócio Indústria.
+@param cCnpj, characters, CNPJ que será consultado.
+@param dDataIni, date, Data de inicio
+@param dDataFim, date, Data de fim
+@type method
+/*/
+Method GetCliente(cCnpj, dDataIni, dDataFim) Class SF73A03F
+Local aHeaders	:= {}
+Local cPath		:= "/fiemt/empresas-base"
+Local cDataIni	:= ""
+Local cDataFim	:= ""
+Local lRet		:= .F.
+Local oRestClient
+
+Default cCnpj := ""
+Default dDataIni := Ctod("  /  /    ")
+Default dDataFim := Ctod("  /  /    ")
+
+	::cResult := ""
+	::cErro	:= ""
+	::cHTTPCode := ""
+	oRestClient := FWRest():New(::cUrl)
+	If .Not. Empty(cCnpj)
+		//Consulta CNPJ específico
+		oRestClient:SetPath( cPath + "?cnpj=" + cCnpj )
+	ElseIf .Not. Empty(dDataIni) .And.  .Not. Empty(dDataFim)
+		//CNPJ's atualizados utilizando filtro de datas no formato yyyy-MM-dd
+		cDataIni := SubStr( FWTimeStamp( 5, dDataIni, "00:00:00" ), 1, 10 )
+		cDataFim := SubStr( FWTimeStamp( 5, dDataFim, "00:00:00" ), 1, 10 )
+		oRestClient:SetPath( cPath + "?dataInicio=" + cDataIni + "&dataFim=" + cDataFim )
+	Else
+		//CNPJ's atualizados no dia anterior
+		oRestClient:SetPath( cPath )
+	EndIf
+	aAdd( aHeaders, 'Authorization:' + ::cToken )
+	aAdd( aHeaders, "Accept: application/json" )
+	If oRestClient:Get(aHeaders)
+		::cResult := DecodeUTF8( oRestClient:GetResult() )
+		lRet := .T. 
+	Else
+		::cErro := DecodeUTF8( oRestClient:GetLastError() )
+	EndIf
+	::cHttpCode := oRestClient:GetHTTPCode()
+	FreeObj(oRestClient)
+	
+Return (lRet)
+
+/*/{Protheus.doc} PostCliente
+Rota para adicionar na base do SI um novo CNPJ cadastrado no sistema protheus.
+@author Franklin de Brito de Oliveira
+@since 20/01/2021
+@return logical, Indica se conseguiu adicionar o cliente na API do Sócio Indústria.
+@param cPostBody, characters, dados do CNPJ que será adicionado na base do SI.
+@type method
+/*/
+Method PostCliente(cPostBody) Class SF73A03F
+Local aHeaders	:= {}
+Local cPath		:= "/fiemt/adicionar-empresa-base"
+Local lRet		:= .F.
+Local oRestClient
+
+Default cPostBody := ""
+
+	::cResult := ""
+	::cErro	:= ""
+	::cHTTPCode := ""
+	If Empty(cPostBody)
+		::cErro := '{"error":{"message":"Parametros para criação de cliente não informado."}}'
+	Else
+		oRestClient := FWRest():New(::cUrl)
+		oRestClient:SetPath(cPath)
+		aAdd( aHeaders, 'Authorization:' + ::cToken )
+		aAdd( aHeaders, "Accept: application/json" )
+		aAdd( aHeaders, "Content-Type: application/json" )
+		//aAdd( aHeaders, "Content-Type: x-www-form-urlencoded" )
+		oRestClient:SetPostParams(cPostBody)
+		If oRestClient:Post(aHeaders)
+			::cResult := DecodeUTF8( AllTrim(oRestClient:GetResult()) )
+			lRet := .T. 
+		Else
+			::cResult := DecodeUTF8( AllTrim(oRestClient:GetResult()) )
+			::cErro := DecodeUTF8( AllTrim(oRestClient:GetLastError()) )
+		EndIf
+		::cHttpCode := oRestClient:GetHTTPCode()
+		FreeObj(oRestClient)
+	EndIf
+	
+Return (lRet)
+
+/*/{Protheus.doc} PutCliente
+Método para atualizar na base do SI um CNPJ já cadastrado.
+@author Franklin de Brito de Oliveira
+@since 20/01/2021
+@return logical, Indica se conseguiu atualizar o cliente na API do Sócio Indústria.
+@param cCnpj, characters, CNPJ que será consultado.
+@param cPostBody, characters, dados do CNPJ que será adicionado na base do SI.
+@type method
+/*/
+Method PutCliente(cCnpj, cPostBody) Class SF73A03F
+Local aHeaders	:= {}
+Local cPath		:= "/fiemt/atualizar-empresa-base"
+Local lRet		:= .F.
+Local oRestClient
+
+Default cCnpj := ""
+Default cPostBody := ""
+
+	::cResult := ""
+	::cErro	:= ""
+	::cHTTPCode := ""
+	If Empty(cCnpj)
+		::cErro := '{"error":{"message":"CNPJ para atualização de cliente não informado."}}'
+	ElseIf Empty(cPostBody)
+		::cErro := '{"error":{"message":"Parâmetros para atualização de cliente não informado."}}'
+	Else
+		oRestClient := FWRest():New(::cUrl)
+		oRestClient:SetPath(cPath + "/" + cCnpj)
+		aAdd( aHeaders, 'Authorization:' + ::cToken )
+		aAdd( aHeaders, "Accept: application/json" )
+		aAdd( aHeaders, "Content-Type: application/json" )
+		If oRestClient:Put(aHeaders, cPostBody)
+			::cResult := DecodeUTF8( oRestClient:GetResult() )
+			lRet := .T. 
+		Else
+			::cErro := DecodeUTF8( oRestClient:GetLastError() )
+		EndIf
+		::cHttpCode := oRestClient:GetHTTPCode()
+		FreeObj(oRestClient)
+	EndIf
+	
+Return (lRet)
+
+/*/{Protheus.doc} GetNvConDia
+Rota responsável por informar quais foram os novos CNPJ que 
+realizaram a associação ao programa sócio indústria.
+@author Franklin de Brito de Oliveira
+@since 20/01/2021
+@return logical, Indica se conseguiu recuperar os novos contratos do dia na API do Sócio Indústria.
+@type method
+/*/
+Method GetNvConDia()  Class SF73A03F
+Local aHeaders	:= {}
+Local cPath		:= "/fiemt/empresas-participantes"
+Local lRet		:= .F.
+Local oRestClient
+
+	::cResult := ""
+	::cErro	:= ""
+	::cHTTPCode := ""
+	oRestClient := FWRest():New(::cUrl)
+	oRestClient:SetPath(cPath)
+	aAdd( aHeaders, 'Authorization:' + ::cToken )
+	aAdd( aHeaders, "Accept: application/json" )
+	If oRestClient:Get(aHeaders)
+		::cResult := DecodeUTF8( oRestClient:GetResult() )
+		lRet := .T. 
+	Else
+		::cErro := DecodeUTF8( oRestClient:GetLastError() )
+	EndIf
+	::cHttpCode := oRestClient:GetHTTPCode()
+	FreeObj(oRestClient)
+	
+Return (lRet)

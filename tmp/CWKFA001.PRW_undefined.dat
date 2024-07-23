@@ -1,0 +1,777 @@
+#include "protheus.ch"
+#include "topconn.ch"
+#include "tbiconn.ch"
+
+/*/{Protheus.doc} CWKFA001
+Envio de Solicitação de Compras para aprovação 
+@author Microsiga
+@since 18/11/10
+@param aParam, array, parametros de schedule
+@param _cFil, character, Filial
+@param _cSC, character, numero da SC
+@type function
+@history 23/07/2020, Franklin de Brito de Oliveira, correção para realizar envio de e-mail para os compradores da CAQC na aprovação da SC.
+@history 18/02/2021, Franklin de Brito de Oliveira, Correção para registrar a hora de aprovação.
+/*/
+User Function CWKFA001(aParam,_cFil,_cSC)
+Local cCodEmp    := ""
+Local cCodFil    := ""
+Local cNumSC     := ""
+Local lContinua  := .F.
+Local lSchedule  := .F.
+Local nW         := 0
+Local cFunc  	 := "U_CWKFA001"
+
+SC1->(dbSetOrder(1))
+If SC1->(dbSeek(xFilial("SC1")+_cSC)) .and. SC1->C1_MSBLQL == '1'
+	MsgStop("Solicitacao de Compras Nro. "+_cSC+" foi cancelada, impossível enviar workflow.")
+	Return
+Endif						
+	
+
+ConOut("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] Inicializando o Envio de Solicitação de Compra para aprovacao")
+
+If ValType(aParam) == "A" .and. Len(aParam) >= 2			// Executado por Schedule
+	lSchedule := .T.
+	If ValType(aParam[1]) =="C" .and. ValType(aParam[2]) =="C"
+		cCodEmp   := aParam[1]
+		cCodFil   := aParam[2]      
+		_cFil     := cCodFil
+		_cSC      := Nil      
+		cNumSc    := Nil
+		//ConOut("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] Parametros Recebidos por Schedule => Empresa/Filial: "+cCodEmp+"/"+cCodFil)
+		U_Console("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] Parametros Recebidos por Schedule => Empresa/Filial: "+cCodEmp+"/"+cCodFil,cFunc)
+		lContinua := .T.
+	Else
+		//ConOut("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] ERRO Parametros recebidos por Schedule(Empresa/Filial)!")
+		U_Console("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] ERRO Parametros recebidos por Schedule(Empresa/Filial)!",cFunc)
+		//ConOut("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"]     Tipo esperado: A |    Tipo Recebido: " + ValType(aParam))   
+		U_Console("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] ERRO Parametros recebidos por Schedule(Empresa/Filial)!",cFunc)
+		//ConOut("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"]  Tamanho esperado: 2 | Tamanho Recebido: " + LTrim(Str(Len(aParam))))
+		U_Console("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] ERRO Parametros recebidos por Schedule(Empresa/Filial)!",cFunc)
+		If ValType(aParam) == "A"
+			For nW := 1 to Len(aParam)
+				//ConOut("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] Param["+LTrim(Str(nW))+"] -     Tipo Recebido: " + ValType(aParam[nW]))
+				U_Console("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] Param["+LTrim(Str(nW))+"] -     Tipo Recebido: " + ValType(aParam[nW]),cFunc)
+				//ConOut("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] Param["+LTrim(Str(nW))+"] -  Tamanho Recebido: " + LTrim(Str(Len(aParam[nW]))))
+				U_Console("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] Param["+LTrim(Str(nW))+"] -  Tamanho Recebido: " + LTrim(Str(Len(aParam[nW]))),cFunc)
+				If ValType(aParam[nW]) ==  "C"
+					//ConOut("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] Param["+LTrim(Str(nW))+"] - Conteudo Recebido: " + aParam[nW])
+					U_Console("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] Param["+LTrim(Str(nW))+"] - Conteudo Recebido: " + aParam[nW],cFunc)
+				EndIf
+			Next nW
+		EndIf
+		lContinua := .F.
+	EndIf
+ElseIf !Empty(_cFil) .and. !Empty(_cSC)				// Executado por Ponto de Entrada
+	//ConOut("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] Parametros Recebidos por Ponto de Entrada => Filial/NumSC: "+_cFil+"/"+_cSC)
+	U_Console("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] Parametros Recebidos por Ponto de Entrada => Filial/NumSC: "+_cFil+"/"+_cSC,cFunc)
+	cCodEmp   := _cFil
+	cNumSC    := _cSC
+	lSchedule := .F.
+	lContinua := .T.
+Else
+	lContinua := .F.
+EndIf
+
+If !lContinua
+	//ConOut("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] Erro ao receber Parametros. Envio do e-mail abortado!!")
+	U_Console("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] Erro ao receber Parametros. Envio do e-mail abortado!!",cFunc)
+	Return
+EndIf
+
+If lSchedule
+	//ConOut("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] Inicializacao do ambiente - Workflow SC Empresa/Filial: "+cCodEmp+"/"+cCodFil)
+	U_Console("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] Inicializacao do ambiente - Workflow SC Empresa/Filial: "+cCodEmp+"/"+cCodFil,cFunc)
+	WfPrepEnv(cCodEmp,cCodFil)
+EndIf
+
+U__WFSendSC(_cFil,cNumSC) // Envia Workflow da Solicitacao de Compra para Aprovacao
+
+If lSchedule
+	Reset Environment
+	//ConOut("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] Finalizacao do ambiente - Workflow SC Empresa/Filial: "+cCodEmp+"/"+cCodFil)
+	U_Console("["+DtoC(Date())+" "+Time()+"] ["+cFunc+"] Finalizacao do ambiente - Workflow SC Empresa/Filial: "+cCodEmp+"/"+cCodFil,cFunc)
+EndIf
+
+Return
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³_WFSendSC ºAutor  ³Microsiga           º Data ³  18/11/10   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Envio dos solicitações para aprovação                      º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ MP 11 - PROJETO CNI                                        º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function _WFSendSC(_cFil,_cSC)
+Local _nTotal    := 0
+Local _cWfDir    := Alltrim(GetNewPar("MV_WFDIRWF","\workflow") )
+Local i		     := 0
+Local cAlias     := GetNextAlias()
+Local cHtmlModel := ""
+Local cFunc  	 := "_WFSendSC"
+Local cWFHTTP    := Iif ( Right(RTrim(GetNewPar("MV_XWFHTTP","http://192.168.1.100:8089/workflow/")),1)=="/",;
+                          GetNewPar("MV_XWFHTTP","http://192.168.1.100:8089/workflow/"),;
+                          GetNewPar("MV_XWFHTTP","http://192.168.1.100:8089/workflow/") + "/" )
+Local aDirHtml   := {}
+Local cDirHtml   := "html\"
+Local cDirPasta  := "aprovsc\"
+Local cDescProd  := ""
+Local _aAreaSC1  := SC1->(GetArea())
+Local _aAreaSCR  := SCR->(GetArea())
+Local cUndNeg	 := FWUnitBusiness()
+Private oHTML
+Private cItem,cCod,cDesc,cUM,nQtde,nUprc,nTot,nToler,cUComp,dEnt,cCC,cCCDesc
+Private lProcesso := .f.
+
+If _cSC == Nil
+	U_Console("Envio da Solicitacao de Compra para Aprovacao via Schedule. Parametros => Filial: "+_cFil,cFunc)
+Else
+	U_Console("Envio da Solicitacao de Compra para Aprovacao via PE. Parametros => Filial/NumSC: "+_cFil+"/"+_cSC,cFunc)
+EndIf
+
+dbCloseArea()
+
+If Select(cAlias) > 0
+	TSC1->(dbCloseArea())
+Endif
+
+_cQrySC1:= " SELECT DISTINCT C1_FILIAL,C1_NUM "
+_cQrySC1+= " FROM "+RetSqlName("SC1")+" "
+_cQrySC1+= " WHERE C1_FILIAL = '"+XFILIAL("SC1")+"' "
+// condicao para identificar se trata-se de envio para primeiro ou proximo nivel
+//IF _cFil == nil // primeiro nivel
+If _cSC == Nil //Quando executado via workflow, sem numero de SC especifica
+	_cQrySC1+= "AND C1_WFE = 'F' "
+ELSE //Chamado pelo ponto de entrada COMA140 ao incluir a SC
+	_cQrySC1+= "AND C1_FILIAL = '"+_cFil+"' AND C1_NUM = '"+_cSC+"' " 
+//	_cQrySC1+= "AND C1_XWFSTAT = '2' " //Adic. por Edu (DOIT) em 04/03/14	
+ENDIF
+//_cQrySC1+= " AND D_E_L_E_T_ = ' ' AND C1_APROV = 'B' "
+_cQrySC1+= " AND D_E_L_E_T_ = ' ' AND C1_APROV  IN ('B','W') " //Adic. por Edu (DOIT) em 15/04/14
+_cQrySC1+= " AND C1_MSBLQL <> '1' " //Adic. por Joao Carlos (DOIT) em 16/04/14
+_cQrySC1+= " ORDER BY C1_NUM "
+
+_cQrySC1 := ChangeQuery(_cQrySC1)
+
+TCQUERY _cQrySC1 NEW ALIAS &(cAlias) //VIA "TOPCONN"
+
+(cAlias)->(dbGoTop())
+
+While (cAlias)->(!Eof())
+
+	lProcesso := .t.
+
+	SCR->(dbSetOrder(1))
+	SCR->(dbSeek(XFilial("SCR")+"SC"+(cAlias)->C1_NUM))
+
+	_aLogApr  := {}
+
+	While SCR->(!Eof()) .and. SCR->CR_FILIAL == XFilial("SCR") .and. Alltrim(SCR->CR_NUM) == Alltrim((cAlias)->C1_NUM) .and. SCR->CR_TIPO == "SC"
+
+		_cSituaca := ""
+		IF SCR->CR_STATUS == "01"
+			_cSituaca := OemToAnsi("Aguardando")
+		ELSEIF SCR->CR_STATUS == "02"
+			_cSituaca := OemToAnsi("Em Aprovacao")
+		ELSEIF SCR->CR_STATUS == "03"
+			_cSituaca := "Solicitação Aprovada"
+		ELSEIF SCR->CR_STATUS == "04"
+			_cSituaca := "Solicitação Bloqueada"
+		ELSEIF SCR->CR_STATUS == "05"
+			_cSituaca := OemToAnsi("Nivel Liberado ")
+		ENDIF
+
+		Aadd(_aLogApr,{SCR->CR_NIVEL,UsrFullName(SCR->CR_USER),_cSituaca,Dtoc(SCR->CR_DATALIB),SCR->CR_OBS})
+
+		SCR->(dbSkip())
+	Enddo
+
+	SCR->(dbSeek(XFilial("SCR")+"SC"+(cAlias)->C1_NUM))
+
+	While SCR->(!Eof()) .and. SCR->CR_FILIAL == XFilial("SCR") .and. Alltrim(SCR->CR_NUM) == Alltrim((cAlias)->C1_NUM) .and. SCR->CR_TIPO == "SC"
+
+// Comentado por Joao Carlos - Doit - 16/04/2014
+//		IF SCR->CR_STATUS <> "02" // nivel 02 indica proxima que recebe e-mail
+//			SCR->(dbSkip())
+//			Loop
+//		ENDIF
+
+		SC1->(dbSetOrder(1))
+		SC1->(dbSeek(xFilial("SC1")+Alltrim((cAlias)->C1_NUM)))
+
+		//Adic. por Joo Carlos - Doit - 16/04/14
+		lReenvWF := .F.
+		While !SC1->(Eof()) .and. SC1->C1_FILIAL == XFilial("SC1") .and. SC1->C1_NUM == Alltrim((cAlias)->C1_NUM)
+			If SC1->C1_APROV == 'W' 
+				RecLock("SC1", .F.)
+				SC1->C1_APROV   := 'B'
+				SC1->C1_XWFSTAT := '2'
+				SC1->(MsUnlock())     
+				lReenvWF := .T.
+			Endif
+			SC1->( DbSkip() )
+		End
+				
+		IF SCR->CR_STATUS <> "02" .and. !lReenvWF	// nivel 02 indica proxima que recebe e-mail
+			SCR->(dbSkip())
+			Loop
+		ENDIF
+		// --------------------------------------------------------------
+		
+		If Right(RTrim(_cWfDir),1) # "\"
+			_cWfDir := RTrim(_cWfDir) + "\"
+		EndIf
+
+		SC1->(dbSetOrder(1))
+		SC1->(dbSeek(xFilial("SC1")+Alltrim((cAlias)->C1_NUM)))
+
+
+		U_Console("Processando SC Filial/No.: "+SC1->C1_FILIAL+"/"+SC1->C1_NUM,cFunc)
+		//Abre o HTML
+		oProcess := TWFProcess():New( "SOLICIT", "Solicitação de Compras" )
+		oProcess:NewTask( "000001", _cWfDir+"AprovacaoSC.htm" )
+		oProcess:cSubject := "Aprovação da Solicitação de Compra " + (cAlias)->C1_NUM + " - " + retDesc("FILIAL", SC1->C1_FILIAL)
+		oProcess:bReturn  := "U__fWFRetSC()"
+		oProcess:UserSiga := SC1->C1_USER //- Alterado FSW
+		oProcess:NewVersion(.T.)
+		oHTML   := oProcess:oHTML
+
+		oHtml:ValByName( "FILIAL"    , SC1->C1_FILIAL )
+		oHtml:ValByName( "NUMSC"     , SC1->C1_NUM )
+		oHtml:ValByName( "CAPROV"    , SCR->CR_USER )
+		oHtml:ValByName( "APROVADOR" , UsrFullName(SCR->CR_USER)) //UsrRetname(SCR->CR_USER)  ) - Alterado FSW
+		oHtml:ValByName( "SOLICIT"   , SC1->C1_SOLICIT )
+
+		//Tratamento exclusivo para o HTML da FIRJAN que possui novos campos
+		If Upper( AllTrim( cUndNeg ) ) == 'RJ'
+			oHtml:ValByName( "DESCFIL"	  , retDesc("FILIAL", SC1->C1_FILIAL))
+			oHtml:ValByName( "NOMSOLICIT" , retDesc("SOLICIT", SC1->C1_SOLICIT) )
+			oHtml:ValByName( "CC"			  , SC1->C1_CC )
+			oHtml:ValByName( "DESCCC"	  , Posicione("CTT", 1, xFilial("CTT") + SC1->C1_CC, "CTT_DESC01") )
+			oHtml:ValByName( "JUSTIF"	  , SC1->C1_XJUSTIF )
+		Endif
+
+		While !SC1->(Eof()) .and. SC1->C1_FILIAL == XFilial("SC1") .and. SC1->C1_NUM == Alltrim((cAlias)->C1_NUM)
+
+			U_Console("Processando Item da SC Filial/No./Item: "+SC1->C1_FILIAL+"/"+SC1->C1_NUM+"/"+SC1->C1_ITEM,cFunc)
+			SB1->(dbSetOrder(1))
+			SB1->(dbSeek(XFilial("SB1")+SC1->C1_PRODUTO))
+						     
+			//06/08/2019 - Paulo Schwind - Conforme solicitação via Trello Walmir 
+			//cDescProd  := Posicione("SB5",1,xFilial("SB5")+SB1->B1_COD,"B5_CEME")
+			cDescProd    := ''
+			
+			DbSelectArea("SB1")
+
+			AAdd( (oHtml:ValByName( "prod.cItem"    )),SC1->C1_ITEM )
+			AAdd( (oHtml:ValByName( "prod.cCod"     )),SC1->C1_PRODUTO )
+			AAdd( (oHtml:ValByName( "prod.cDesc"    )),Iif(Empty(cDescProd),SB1->B1_DESC,cDescProd) ) //pesquisa Desc. 1o. pelo SB5 e depois no SB1
+			AAdd( (oHtml:ValByName( "prod.cUM"      )),SC1->C1_UM )
+			AAdd( (oHtml:ValByName( "prod.nQuant"   )),TRANSFORM( SC1->C1_QUANT,'@E 999,999,999.99' ) )
+			AAdd( (oHtml:ValByName( "prod.nVrUnit"  )),TRANSFORM( SC1->C1_VUNIT,'@E 999,999,999.99' ) )
+			AAdd( (oHtml:ValByName( "prod.nVrTotal" )),TRANSFORM( SC1->(C1_QUANT*C1_VUNIT),'@E 999,999,999.99' ) )
+			AAdd( (oHtml:ValByName( "prod.dEntrega" )),Dtoc(SC1->C1_DATPRF) )
+			AAdd( (oHtml:ValByName( "prod.cObs" )),SC1->C1_OBS )
+			WFSalvaID('SC1','SC1->C1_WFE', .T.)
+
+			SC1->(DbSkip())
+		Enddo
+
+		For i := 1 to Len(_aLogApr)
+			AAdd( (oHtml:ValByName( "proc.nivel"   )),_aLogApr[i,1] )
+			AAdd( (oHtml:ValByName( "proc.cApov"   )),_aLogApr[i,2] )
+			AAdd( (oHtml:ValByName( "proc.cSit"    )),_aLogApr[i,3] )
+			AAdd( (oHtml:ValByName( "proc.dDtLib"  )),_aLogApr[i,4] )
+			AAdd( (oHtml:ValByName( "proc.cObs"    )),_aLogApr[i,5] )
+		Next
+
+		oProcess:cTo := Nil
+
+		// Verifica e cria, se necessario, o diretorio para gravacao do HTML
+		aDirHtml   := Directory(_cWfDir+"emp"+cEmpAnt+"\*.*", "D",Nil,.T.)
+		If aScan( aDirHtml, {|aDir| aDir[1] == Upper( Iif(Right(cDirHtml,1)=="\", Left(cDirHtml,Len(cDirHtml)-1), cDirHtml) ) } ) == 0
+			If MakeDir(_cWfDir+"emp"+cEmpAnt+"\"+cDirHtml)	 == 0
+				U_Console("Diretorio dos HTML's criado com sucesso. -> "+_cWfDir+"emp"+cEmpAnt+"\"+cDirHtml,cFunc)
+			Else
+				U_Console("Erro na criacao do diretorio dos HTML's! -> "+_cWfDir+"emp"+cEmpAnt+"\"+cDirHtml,cFunc)
+				cDirHtml := "temp\"
+			EndIf
+		EndIf
+
+		// Verifica e cria, se necessario, a pasta especifica do Workflow para gravacao do HTML
+		aDirHtml   := Directory(_cWfDir+"emp"+cEmpAnt+"\"+cDirHtml+"*.*", "D",Nil,.T.)
+		If aScan( aDirHtml, {|aDir| aDir[1] == Upper(Iif(Right(cDirPasta,1)=="\", Left(cDirPasta,Len(cDirPasta)-1), cDirPasta) ) } ) == 0
+			If MakeDir(_cWfDir+"emp"+cEmpAnt+"\"+cDirHtml+cDirPasta) == 0
+				U_Console("Diretorio de Pasta dos HTML's criado com sucesso. -> "+_cWfDir+"emp"+cEmpAnt+"\"+cDirHtml+cDirPasta,cFunc)
+			Else
+				U_Console("Erro na criacao do diretorio dos HTML's! -> "+_cWfDir+"emp"+cEmpAnt+"\"+cDirHtml+cDirPasta,cFunc)
+				cDirPasta := ""
+			EndIf
+		EndIf
+
+		cDirHtml2  := "emp"+cEmpAnt+"\" + cDirHtml + cDirPasta
+		cMailID    := oProcess:Start(_cWfDir+cDirHtml2,.T.)
+
+		If File(_cWfDir+cDirHtml2+cMailID+".htm")
+			U_Console("Arquivo HTML copiado com sucesso: "+_cWfDir+cDirHtml2+cMailID+".htm",cFunc)    
+			
+			Reclock("SCR",.F.)
+			SCR->CR_WF		:= "1"  //--Enviado
+			SCR->CR_WFID	:= cMailID   //--Campo CR_WFID deve estar com tamanho 20
+			MSUnlock()
+		Else
+			U_Console("ATENCAO! Arquivo HTML NAO copiado: "+_cWfDir+cDirHtml2+cMailID+".htm",cFunc)
+		EndIf
+
+		//Tratamento exclusivo para Modelo HTML da FIERGS - Inserido por Carlos Queiroz em 11/03/2013
+		If SuperGetMv("MV_XWFLINK",.F.,.T.)		//Se MV_XWFLINK nao for encontrado retorna como .T.
+			cHtmlModel := _cWfDir+"LinkSC.htm"
+		Else
+			cHtmlModel := _cWfDir+"LinkSC2.htm"
+		EndIf
+
+		cAssunto   := "Solicitação de Compras Nr. " +(cAlias)->C1_NUM
+		//cAssunto   := oProcess:cSubject
+
+		oProcess:NewTask(cAssunto, cHtmlModel)
+		U_Console("(INICIO|WFLINK)Processo: " + oProcess:fProcessID + " / Task: " + oProcess:fTaskID,cFunc)   
+		oProcess:cSubject := cAssunto
+		oProcess:cTo := Alltrim(UsrRetMail(SCR->CR_USER))     
+		U_Console("(INICIO|WFLINK)Email: " + oProcess:cTo,cFunc)
+
+		oProcess:ohtml:ValByName("CAPROVADOR",UsrRetname(SCR->CR_USER))
+		//Adicionado após numero da SC a que filial a qual pertence. Por Walmir Junior em 14/11/2016.
+		_cFilX := cFilAnt
+		U_SF0205X(cEmpAnt,(cAlias)->C1_FILIAL)
+		oProcess:ohtml:ValByName("CSOLICIT",(cAlias)->C1_NUM + " | FILIAL: " + (cAlias)->C1_FILIAL + "-" + SM0->M0_FILIAL)
+		U_SF0205X(cEmpAnt,_cFilX)
+		
+		oProcess:ohtml:ValByName("proc_link",StrTran(cWFHTTP+cDirHtml2+cMailID+".htm","\","/"))
+		oProcess:Start()
+
+		_nTotal := 0 // zera variavel p/ próximos pedidos
+
+		SCR->(dbSkip())
+	Enddo
+	(cAlias)->(dbSkip())
+Enddo
+
+(cAlias)->(dbCloseArea())
+
+If !lProcesso
+	U_Console("Nao Houve Processamento: Envio de SC para Aprovacao.",cFunc)
+Else
+	U_Console("Processamento finalizado: Envio de SC para Aprovacao.",cFunc)
+EndIf
+
+RestArea(_aAreaSC1)
+RestArea(_aAreaSCR)
+Return()
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³_fWFRetSC ºAutor  ³Microsiga           º Data ³  18/11/10   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Retorno da Solicitação                                     º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ MP 11 - PROJETO CNI                                        º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function _fWFRetSC(oProcess)
+
+Local cFunc 	:= "_fWFRetSC"
+Local lLiberou 	:= .F.
+Local nRec		:= 0
+Local lAwaitApp	:= .F.
+
+_cFilial  := alltrim(oProcess:oHtml:RetByName("FILIAL"))
+_cFilial  := IIF(Alltrim(_cFilial)=="",Xfilial("SC1"),_cFilial)
+_cNumSC	  := alltrim(oProcess:oHtml:RetByName("NUMSC"))
+_cObs     := alltrim(oProcess:oHtml:RetByName("OBS"))
+_cAprov	  := alltrim(oProcess:oHtml:RetByName("CAPROV"))
+cOpc	  := alltrim(oProcess:oHtml:RetByName("OPC"))
+
+_cFilial := SubStr(Alltrim(_cFilial),1,8)
+
+U_Console("Retorno da Aprov SC: FILIAL/NUMSC/OPC: " + RTrim(_cFilial) + "/" + RTrim(_cNumSC) + "/" + RTrim(cOpc),cFunc)
+
+oProcess:Finish() // FINALIZA O PROCESSO
+
+SC1->(dbSetOrder(1))
+SC1->(dbSeek(_cFilial+_cNumSC)) // Verificar essa chave <>Gustavo 
+
+SCR->(dbSetOrder(2))
+IF SCR->(dbSeek(XFilial("SCR")+"SC"+_cNumSC+Space(TamSx3("CR_NUM")[1]-Len(_cNumSC))+_cAprov))
+	
+	If Empty(SCR->CR_DATALIB) .And. !(SCR->CR_STATUS $ "03#04#05")
+	
+		U_Console("Alcada Encontrada. CR_FILIAL/CR_TIPO/CR_NUM/CR_APROV: " +RTrim(SCR->CR_FILIAL)+"/"+RTrim(SCR->CR_TIPO)+"/"+RTrim(SCR->CR_NUM)+"/"+RTrim(SCR->CR_APROV),cFunc)
+		
+		Reclock("SCR",.F.)
+			SCR->CR_WF := "2"	//	Status 2 - respondido
+			SCR->CR_XHRALIB := Time()
+		MSUnlock()
+			
+		nRec := RecNo()
+	
+		If !(lLiberou := MaAlcDoc({SCR->CR_NUM,   SCR->CR_TIPO,   SCR->CR_TOTAL,   SCR->CR_APROV,   ,SC1->C1_APROV   , , , , , _cObs},dDataBase,IIF(cOpc == "APROVAR",4,6)))
+			//U_Console("SC nao liberada!!!",cFunc)
+			//Return()
+	
+			// Reposiciona e verifica se ja esta totalmente liberado.
+			SCR->(dbSetOrder(1))
+			While !SCR->(Eof()) .And. SCR->(CR_FILIAL+CR_TIPO+CR_NUM) == xFilial("SCR")+"SC"+_cNumSC+Space(TamSx3("CR_NUM")[1]-Len(_cNumSC))
+				If SCR->CR_STATUS != "03" .And. SCR->CR_STATUS != "05" .And. SCR->CR_STATUS != "04"
+					lAwaitApp := .T.
+				EndIf
+				SCR->(dbSkip())
+			EndDo
+			SCR->(dbSetOrder(2))
+			SCR->(dbGoto(nRec))
+			If lAwaitApp
+				U_Console("SC Aguardando Prox. Aprov. FILIAL/NUMSC: " + RTrim(_cFilial)+"/"+RTrim(_cNumSC),cFunc)		
+			Else
+				U_Console("SC Nao Liberada! FILIAL/NUMSC: " + RTrim(_cFilial)+"/"+RTrim(_cNumSC),cFunc)
+			EndIf
+		EndIf
+
+	Else
+	     
+		U_Console("Aprovacao/Reprovacao da SC "+_cNumSC+" ja efetuada anteriormente. Processo nao sera executado!")	
+		Return
+	
+	EndIf    
+
+	If cOpc == "APROVAR" .and. (lLiberou .or. lAwaitApp) 
+		SCR->(dbSetOrder(2))
+		// J2a -->  Gustavo Krebs 
+		// Incluido RecLock na SCR: Motivo de incluir o Reclock é que o ponto de entrada MaAlcDoc não realiza mais essa função 
+		IF SCR->(dbSeek(XFilial("SCR")+"SC"+_cNumSC+Space(TamSx3("CR_NUM")[1]-Len(_cNumSC))+_cAprov))
+			RecLock("SCR",.f.)
+			SCR->CR_DATALIB := dDataBase
+			SCR->CR_OBS     := "LIBERACAO VIA WORKFLOW"
+			SCR->CR_USERLIB := _cAprov
+			SCR->CR_STATUS  := "03"
+			MsUnLock()
+		Endif 
+		// FIm da alteração do dia 
+		_fVerifSC(_cFilial,_cNumSC,_cObs,,_cAprov)
+	Else
+		SC1->(dbSetOrder(1))
+		SC1->(dbSeek(_cFilial+_cNumSC))
+
+		U_NotifWF("R",_cNumSC,"Solicitação de Compra",SC1->C1_USER,_cObs)
+
+		While SC1->(!Eof()) .And. SC1->(C1_FILIAL+C1_NUM) == _cFilial+_cNumSC
+			RecLock("SC1",.F.)
+			SC1->C1_APROV := "R" // rejeitado
+			SC1->(msUnlock())
+			SC1->(dbSkip())
+		EndDo
+	EndIf
+
+ELSE
+	U_Console("Alcada NAO Encontrada! CR_FILIAL/CR_TIPO/CR_NUM/CR_TOTAL/CR_APROV: " + xFilial("SCR")+"/"+"SC"+"/"+_cNumSC+"/"+RTrim(_cAprov),cFunc)
+ENDIF
+
+Return()
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³_fVerifSC ºAutor  ³Microsiga           º Data ³  18/11/10   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Verifica liberação da solicitação                          º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ MP 11 - PROJETO CNI                                        º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function _fVerifSC(_cFil,_cSolicit,_cObs,_cNiv,_cAprov)
+
+Local _cQuery 	:= ""
+Local _cArqSCR 	:= CriaTrab(nil,.f.)
+Local cParam   	:= GetMv("SI_XMED", .F.)
+Local _cNome   	:= ""
+Local cTipo	  	:= "SC"
+Local nOpc     	:= 2
+Local _lLancSC 	:= PcoExistLc("000051","02","1") // Verifica se existe lançamento ativo
+Local _lBloqSC 	:= PcoExistLc("000051","02","2") // Verifica se existe bloqueio ativo
+Local _lGeraBlq	:= .f.
+Local cFunc		:= "_fVerifSC"
+Local cComCAQC	:= GetNewPar("MV_XCOMCAC", "051")
+Local lComCAQC 	:= .F.  
+
+Default _cAprov := "" //Caio.Santos - FSW - 10/02/2012 - Correcao na gravacao usuario workflow
+
+_cNome := UsrRetname(_cAprov)
+
+// verifica se o pedido foi totalmente liberado
+_cQuery := "SELECT * FROM "+RetSqlName("SCR")+" "
+_cQuery += "WHERE D_E_L_E_T_ = ' ' AND CR_FILIAL = '"+XFilial("SCR")+"' AND CR_NUM = '"+_cSolicit+"' AND CR_STATUS NOT IN ('03','05') AND CR_TIPO = 'SC' "
+_cQuery := ChangeQuery(_cQuery)
+
+dbUseArea(.T.,"TOPCONN",TCGenQry(,,_cQuery),_cArqSCR,.t.,.t.)
+
+IF (_cArqSCR)->(Eof())
+	U_Console("SC Aprovada.",cFunc)
+
+	SC1->(dbSetOrder(1))
+	SC1->(dbSeek(_cFil+_cSolicit))
+
+	U_NotifWF("A",_cNumSC,"Solicitação de Compra",SC1->C1_USER,_cObs)
+
+	// FSW - Alteração para o Gap087 - CNI
+	IF _lLancSC .and. _lBloqSC .and. U__fBloqSC(.f.,SC1->C1_NUM)
+		_lGeraBlq := .t.
+	ENDIF
+
+	While SC1->(!Eof()) .and. SC1->(C1_FILIAL+C1_NUM) == _cFil+_cSolicit
+
+		//Caio.Santos - 11/01/13 - Req.72
+		RSTSCLOG("APR",1,_cNome)
+		lComCAQC := SC1->C1_CODCOMP $ cComCAQC
+		// Atualiza status da SC
+		RecLock("SC1",.F.)
+		SC1->C1_APROV	:= IIF(_lLancSC .and. _lGeraBlq,"O","L")  
+		If SC1->C1_APROV == "B" .And. SC1->C1_WFE 
+			SC1->C1_WFE := .F.
+		EndIf
+		//SC1->C1_XSTTR := IIf(lComCAQC, 'N', 'A')
+		SC1->C1_XSTTR := 'A'
+		SC1->(msUnlock())
+
+		// Inclui os lançamentos realizados
+		IF _lLancSC .and. !_lGeraBlq
+			PcoIniLan('000051')
+			PcoDetLan('000051','02','MATA110')
+			PcoFinLan('000051')
+		ENDIF
+
+		SC1->(dbSkip())
+	EndDo
+	//envio de e-mail para os compradores da CAQC.
+	If lComCAQC
+		U_SF02E03F( _cFil, _cSolicit )
+	EndIf
+	// FSW - Alteração para o Gap097 - CNI
+	// Se parametro SI_XMED for igual a 1 deve fazer a medição na liberação da solicitação de compras
+	If (cParam == "1") .and. !_lGeraBlq
+		_aRecSC1 := SC1->(GetArea())
+		U_CNI109AL(_cSolicit, cTipo, nOpc,_cAprov)
+		RestArea(_aRecSC1)
+	EndIf
+
+ELSE
+	U_Console("SC Aguardando Aprovacao.",cFunc)
+	U__WFSendSC(_cFil,_cSolicit) // envia e-mail para o proximo aprovador
+ENDIF
+
+Return()
+
+
+/*=========================================================================
+  FONTES GENÉRICOS PARA USO DO WORKFLOW                                    
+  =========================================================================*/
+
+/*----------------------+--------------------------------+------------------+
+|   Programa: NotifWF   | Autor: Kley@TOTVS              | Data: 03/09/2013 |
++-----------------------+--------------------------------+------------------+
+|  Descricao:  Notificação genérica do Workflow de Compras para processos
+|              de: Solicitação, Cotação e Pedido de Compra.
++---------------------------------------------------------------------------+
+|    Projeto:  CNI e Federações                                             |
++---------------------------------------------------------------------------+
+| Parâmetros:  cStatus    = Status do Docto - (A)provado / (R)eprovado
+|              cNumDoc    = Número do Documento
+|              cDescTpDoc = Descrição do Tipo de Documento
+|              cUser      = Código do Usuário no Protheus
+|              cObs       = Observação do Aprovador
++----------------------------------------------------------------------------
+|    Exemplo:  U_NotifWF("A",SC1->C1_NUM,"Solicitação de Compra",SC1->C1_USER,_cObs)
++----------------------------------------------------------------------------
+|    Retorno:  Nulo                                                               
++--------------------------------------------------------------------------*/
+
+User Function NotifWF(cStatus,cNumDoc,cDescTpDoc,cUser,cObs)		//cStatus = (A)provada / (R)eprovada
+
+Local cFunc      := "U_NotifWF"
+Local _cWfDir    := Iif(Right(RTrim(GetNewPar("MV_WFDIRWF","\workflow")),1)#"\" , ;
+                     RTrim(GetNewPar("MV_WFDIRWF","\workflow")) + "\", ;
+                     RTrim(GetNewPar("MV_WFDIRWF","\workflow")))
+Local cEmpFilNom := RTrim(cFilAnt) + " - " + RTrim(Posicione("SM0",1,cEmpAnt+cFilAnt,"M0_FILIAL")) + " - " + ;
+                    RTrim(Posicione("SM0",1,cEmpAnt+cFilAnt,"M0_NOME"))
+Local cAssunArti := ""
+Local cAssunto   := ""
+
+//Private oHtml
+
+If Right(Left(AllTrim(cDescTpDoc),At(" ",AllTrim(cDescTpDoc))-1),3) $ ("ção|cao|ÇÃO|CAO")
+	cAssunArti := "a"
+ElseIf Right(Left(AllTrim(cDescTpDoc),At(" ",AllTrim(cDescTpDoc))-1),1) $ ("a|A")
+	cAssunArti := "a"
+Else
+	cAssunArti := "o"
+EndIf
+
+cAssunto   := "Status d"+ cAssunArti + " " + Capital(AllTrim(cDescTpDoc))
+
+U_Console("Processando envio da notificacao de " + cDescTpDoc + " Fil/NumDoc: "+cFilAnt+"/"+cNumDoc,cFunc)
+
+oProcess := TWFProcess():New( "NotifWF", "Notificação do Workflow" )
+oProcess:NewTask( "000110", _cWfDir+"NotifWF.htm" )
+oProcess:cSubject := cAssunto + " No. " +cNumDoc
+oProcess:cTo      := Alltrim(UsrRetMail(cUser))
+oProcess:UserSiga := cUser
+oProcess:NewVersion(.T.)        
+oHTML   := oProcess:oHTML
+
+oProcess:oHtml:ValByName("ASSUNTO",cAssunto)
+oProcess:oHtml:ValByName("SOLICITANTE",UsrRetName(cUser))
+oProcess:oHtml:ValByName("DESCTPDOC",cAssunArti + " " + Capital(AllTrim(cDescTpDoc)))
+oProcess:oHtml:ValByName("NUMDOC",cNumDoc)
+
+If cStatus == "A"		// (A)provada / (R)eprovada
+	cMsgStatus := '<span lang="pt-br" class="corpo" style="color: #0000FF; font-weight: bold;">Aprovad'+cAssunArti+'</span>'
+Else
+	cMsgStatus := '<span lang="pt-br" class="corpo" style="color: #FF0000; font-weight: bold;">Reprovad'+cAssunArti+'</span>'
+EndIf
+
+oProcess:oHtml:ValByName("MSGSTATUS",cMsgStatus)
+oProcess:oHtml:ValByName("FILIAL",cEmpFilNom)
+oProcess:oHtml:ValByName("OBS",cObs)
+
+oProcess:Start()
+
+Return
+
+/*----------------------+--------------------------------+------------------+
+|   Programa: AbreSM0   | Autor: Kley@TOTVS              | Data: 05/09/2013 |
++-----------------------+--------------------------------+------------------+
+|  Descricao:  Abre o arquivo de Empresas e Filiais no modo compartilhado (SM0).
++---------------------------------------------------------------------------+
+|    Projeto:  CNI e Federações                                             |
++---------------------------------------------------------------------------+
+| Parâmetros:  
++----------------------------------------------------------------------------
+|    Exemplo:  AbreSM0()
++----------------------------------------------------------------------------
+|    Retorno:  Lógico = .T. - Sucesso / .F. Erro                                                               
++--------------------------------------------------------------------------*/
+/*
+Static Function AbreSM0
+
+Local lAbriu := .F.
+Local nW     := 0
+
+For nW := 1 to 20
+	dbUseArea( .T., , "SIGAMAT.EMP", "SM0", .T., .F. )
+	If !Empty(Select("SM0"))
+		lAbriu := .T.
+		dbSetIndex("SIGAMAT.IND")
+		Exit
+	EndIf
+	Sleep(500)
+Next nW
+
+If !lAbriu
+	ConOut("["+DtoC(Date())+" "+Time()+"] [AbreSM0] Erro ao abrir o arquivo SIGAMAT.EMP (SM0) no modo compartilhado.")
+EndIf
+
+Return lAbriu
+
+//Processa Envio do PC para Aprovação - usado somente para testes via SmartClient
+User Function EnviaPC
+	If AbreSM0
+		While (SM0->(!Eof()))
+			If SM0->M0_CODIGO # "99"
+				SM0->(DbSkip())
+			Else
+				U_CWKFA003({SM0->M0_CODIGO,SM0->M0_CODFIL})
+				Exit			
+			EndIf
+		EndDo
+	EndIf
+Return
+
+//Processa Envio da CT para Fornecedor - usado somente para testes via SmartClient
+User Function EnviaCT
+	If AbreSM0
+		While (SM0->(!Eof()))
+			If SM0->M0_CODIGO # "99"
+				SM0->(DbSkip())
+			Else
+				U_SICOMA05({"01","01MT0001"})
+				Exit			
+			EndIf
+		EndDo
+	EndIf
+Return*/
+
+User Function XWKFA001()
+/*/f/
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+<Descricao>	 : Rotina para controle de versao
+<Data>		 : 23/01/2013
+<Parametros> : Nenhum
+<Retorno>	 : Nenhum
+<Processo>	 : Envio0 deWorkFlow de SC
+<Tipo> (Menu,Trigger,Validacao,Ponto de Entrada,Genericas,Especificas ) : W
+<Autor>		 : Doit Sistemas
+<Obs>		 : 
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+*/
+Return "20140415"
+                                             
+
+
+Static Function retDesc(cTipo, cCodigo)
+  Local cDesc := ""
+  Local aArea := {GetArea(), SM0->(GetArea())}
+  Local nRecSM0 := SM0->(Recno())
+  Local aUsuario := {}
+
+  If (cTipo == "FILIAL")
+    DbSelectArea("SM0")
+    SM0->(DbGoTop())
+    While (SM0->(!Eof()))
+      If (AllTrim(cCodigo) == AllTrim(SM0->M0_CODFIL))
+        cDesc := SM0->M0_NOME
+        xNomFil := SM0->M0_FILIAL //Adic. Fabrica Doit SP - 06/03/2014
+      Endif
+
+      SM0->(DbSkip())
+    Enddo
+
+    SM0->(DbGoTo(nRecSM0))
+  Elseif (cTipo == "SOLICIT")
+    PswOrder(2)
+    If PswSeek(cCodigo)
+	  aUsuario := PswRet()
+	  cDesc := PswRet(1)[1][4]
+    EndIf
+  Endif
+
+  aEval(aArea, {|x| RestArea(x)})
+Return(cDesc)
+
+

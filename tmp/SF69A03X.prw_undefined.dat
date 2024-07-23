@@ -1,0 +1,434 @@
+#include 'protheus.ch'
+#include 'fwmvcdef.ch'
+#INCLUDE "TOPCONN.CH"
+
+/*/{Protheus.doc} SF69A03X
+@description MVC da Tela de Aprovação do Docente
+
+@author  Daniel Castro - TOTVS
+@since   16/09/2020
+@version 1.0 
+/*/
+User Function SF69A03X()
+
+	Local oBrowse
+	Private aRotina    := MenuDef()
+
+	oBrowse := FWmBrowse():New()
+	oBrowse:SetAlias( 'ZBB' )
+	oBrowse:SetDescription( 'Aprovação de Docentes' )
+	oBrowse:AddLegend("ZBB_APROV == 'P' ", "QMT_COND" 	, "Pendente"	)
+	oBrowse:AddLegend("ZBB_APROV == 'A' ", "QMT_OK" 	, "Aprovada"	)
+	oBrowse:AddLegend("ZBB_APROV == 'R' ", "QMT_NO"		, "Reprovada"	)
+	oBrowse:AddLegend("ZBB_APROV == 'C' ", "BEND"       , "Cancelada"	)
+	oBrowse:SetUseFilter(.T.)
+	oBrowse:SetFilterDefault( ZZBFILTER( "ZBB_APROV == 'P' " ) )
+	oBrowse:DisableDetails()
+
+
+	oBrowse:Activate()
+
+Return NIL
+
+
+//-------------------------------------------------------------------
+
+Static Function MenuDef()
+	Local aRotina := {}
+
+	ADD OPTION aRotina Title 'Consultar' Action 'VIEWDEF.SF69A03X' OPERATION 2 ACCESS 0
+
+Return aRotina
+
+//===================================================================
+Static Function ModelDef()
+
+	Local oModel 	:= MPFormModel():New( 'SF69X03X' )
+	Local oStruZBB 	:= FWFormStruct( 1, 'ZBB' )
+	Local oStruZBC 	:= FWFormStruct( 1, 'ZBC' )
+	Local oStruZBH 	:= FWFormStruct( 1, 'ZBH' )
+	Local oStruZBJ 	:= FWFormStruct( 1, 'ZBJ' )
+
+	oStruZBB:SetProperty("ZBB_CONTRA", MODEL_FIELD_WHEN, {|| .F.})
+
+	oModel:AddFields( 'ZBBMASTER', , oStruZBB )
+	oModel:AddGrid('ZBCDETAIL','ZBBMASTER',oStruZBC)
+	oModel:AddGrid('ZBHDETAIL','ZBBMASTER',oStruZBH)
+	oModel:AddGrid('ZBJDETAIL','ZBBMASTER',oStruZBJ)
+	oModel:AddCalc( 'ZBCDETAILCALC', 'ZBBMASTER', 'ZBCDETAIL', 'ZBC_TOTAL', 'ZBC_TOT01', 'SUM', { | oFW | .T. },,'Total da Necessidade:' )
+	oModel:SetRelation('ZBCDETAIL',{{'ZBC_FILIAL','ZBB_FILIAL'}, {'ZBC_CODNEC','ZBB_CODIGO'}},ZBC->(IndexKey(1)))
+	oModel:SetRelation('ZBHDETAIL',{{'ZBH_FILIAL','ZBB_FILIAL'}, {'ZBH_CODNEC','ZBB_CODIGO'}},ZBH->(IndexKey(1)))
+	oModel:SetRelation('ZBJDETAIL',{{'ZBJ_FILIAL','ZBB_FILIAL'}, {'ZBJ_CODNEC','ZBB_CODIGO'}},ZBJ->(IndexKey(1)))
+	oModel:SetPrimaryKey( {'ZBB_FILIAL','ZBB_CODIGO'} )
+
+	// Adiciona a descricao do Modelo de Dados
+	oModel:SetDescription( 'Aprovação de Docente' )
+
+// Adiciona a descricao do Componente do Modelo de Dados
+	oModel:GetModel( 'ZBBMASTER' ):SetDescription( 'Dados do Docente' )
+	oModel:GetModel( 'ZBCDETAIL' ):SetDescription( 'Dados da Necessidade'  )
+	oModel:GetModel( 'ZBHDETAIL' ):SetDescription( 'Dados das Turmas'  )
+	oModel:GetModel( 'ZBJDETAIL' ):SetDescription( 'Ocorrencias'  )
+
+Return oModel
+
+
+//-------------------------------------------------------------------
+Static Function ViewDef()
+
+// Cria um objeto de Modelo de Dados baseado no ModelDef do fonte informado
+	Local oModel   := ModelDef()
+// Cria a estrutura a ser usada na View
+	Local oStruZBB := FWFormStruct( 2, 'ZBB' )
+	Local oStruZBC := FWFormStruct( 2, 'ZBC' )
+	Local oStruZBH := FWFormStruct( 2, 'ZBH' )
+	Local oStruZBJ := FWFormStruct( 2, 'ZBJ' )
+	Local oStrCalc := FWCalcStruct( oModel:GetModel('ZBCDETAILCALC') )
+
+	Local oView
+//	Local aTreeInfo:={}
+
+
+// Remove campos da estrutura
+	oStruZBC:RemoveField( 'ZBC_FILIAL' )
+	oStruZBC:RemoveField( 'ZBC_CODNEC' )
+	oStruZBC:RemoveField( 'ZBC_ITEM' )
+	oStruZBC:RemoveField( 'ZBC_PRODUT' )
+
+	oStruZBB:RemoveField( 'ZBB_GRPAPR')
+	oStruZBB:RemoveField( 'ZBB_OBS')
+	oStruZBB:RemoveField( 'ZBB_USER')
+	oStruZBB:RemoveField( 'ZBB_DTAPRO')
+	oStruZBB:RemoveField( 'ZBB_HRAPRO')
+
+
+// Cria o objeto de View
+	oView := FWFormView():New()
+
+// Define qual o Modelo de dados será utilizado
+	oView:SetModel( oModel )
+
+//Adiciona no nosso View um controle do tipo FormFields
+	oView:AddField( 'VIEW_ZBB', oStruZBB, 'ZBBMASTER' )
+	oView:AddGrid ( 'VIEW_ZBC', oStruZBC, 'ZBCDETAIL' )
+	oView:AddGrid ( 'VIEW_ZBH', oStruZBH, 'ZBHDETAIL' )
+	oView:AddGrid ( 'VIEW_ZBJ', oStruZBJ, 'ZBJDETAIL' )
+	oView:AddField( 'CALC', oStrCalc,'ZBCDETAILCALC')
+
+// Criar "box" horizontal para receber algum elemento da view
+	oView:CreateHorizontalBox( 'EMCIMA' , 30 )
+	oView:CreateHorizontalBox( 'EMBAIXO', 70 )
+
+	//Criando a folder dos produtos (filhos)
+	oView:CreateFolder('PASTA_FILHOS', 'EMBAIXO')
+	oView:AddSheet('PASTA_FILHOS', 'ABA_FILHO01', "Itens")
+	oView:AddSheet('PASTA_FILHOS', 'ABA_FILHO02', "Turmas")
+	oView:AddSheet('PASTA_FILHOS', 'ABA_FILHO03', "Ocorrencias")
+
+	//Criando os vinculos onde serão mostrado os dados
+	oView:CreateHorizontalBox('ITENS_FILHO01', 80,,, 'PASTA_FILHOS', 'ABA_FILHO01' )
+	oView:CreateHorizontalBox('ITENS_FILHO0T', 20,,, 'PASTA_FILHOS', 'ABA_FILHO01' )
+	oView:CreateHorizontalBox('ITENS_FILHO02', 100,,, 'PASTA_FILHOS', 'ABA_FILHO02' )
+	oView:CreateHorizontalBox('ITENS_FILHO03', 100,,, 'PASTA_FILHOS', 'ABA_FILHO03' )
+	
+	//Relaciona o ID da View com o "box" para exibicao
+	oView:SetOwnerView( 'VIEW_ZBB'   , 'EMCIMA'     )
+	oView:SetOwnerView( 'VIEW_ZBC'   , 'ITENS_FILHO01' )
+	oView:SetOwnerView( 'CALC'   	 , 'ITENS_FILHO0T' )
+	oView:SetOwnerView( 'VIEW_ZBH'   , 'ITENS_FILHO02' )
+	oView:SetOwnerView( 'VIEW_ZBJ'   , 'ITENS_FILHO03' )
+	oView:EnableTitleView( 'VIEW_ZBB' )
+	oView:EnableTitleView( 'VIEW_ZBC' , 'Itens da Necessidade de Docentes')
+	oView:EnableTitleView( 'VIEW_ZBJ' , 'Ocorrencias DR')
+	oView:SetCloseOnOk( {|| .t.} )
+
+// Adiciona um botao a rotina 
+	oView:AddUserButton( 'Vl Max.Hora/Aula', 'CLIPS', {|oView| U_SF69A17X() } )
+
+Return oView
+
+//-------------------------------------------------------------------
+Static Function Grava( cIdGrid, lStatus,oModel )
+
+	Local oModelGrv      	:= oModel:GetModel( cIdGrid )
+	Local cTit  		:= "Motivo"
+	Local oMultiGe1
+	Local cMsg 			:= Space(200)
+	Local oGroup1
+	Local oBtn
+	Local cQuery	:= ""
+	Local cGrpApr	:= oModelGrv:GetValue("ZBB_GRPAPR")
+
+	Static oDlg
+
+	cQuery := " SELECT * FROM " + RetSqlTab("ZBD")
+	cQuery += " WHERE ZBD_CODIGO = '" + cGrpApr + "' "
+	cQuery += " AND ZBD_FILIAL = '" + xFilial("ZBD") + "' "
+	cQuery += " AND ZBD.D_E_L_E_T_ = ' ' "
+
+	TCQuery cQuery New Alias "TMPZBD"
+
+	cQuery := "SELECT ZBE_USER FROM " + RetSqlTab("ZBD") + CRLF
+	cQuery += " INNER JOIN " + RetSqlTab("ZBE") + "ON ZBE.D_E_L_E_T_ = ' ' " + CRLF
+	cQuery += " AND ZBD_FILIAL = ZBE_FILIAL " + CRLF
+	cQuery += " AND ZBD_CODIGO = ZBE_GRUPO " + CRLF
+	cQuery += " AND ZBE_USER = '" + RetCodUsr() + "' " + CRLF
+	cQuery += " WHERE ZBD.D_E_L_E_T_ = ' '" + CRLF
+	cQuery += " AND ZBD_CODIGO = '" + cGrpApr + "' "
+	If TMPZBD->ZBD_DR <> "1"
+		cQuery += " AND ZBD_FILIAL = '" + xFilial("ZBD")+ "' " + CRLF
+	EndIf
+
+	TCQuery cQuery New Alias "TMP"
+
+	DbSelectArea("TMP")
+	TMP->(dbGotop())
+
+	If !EMPTY(TMP->ZBE_USER)
+
+		If oModelGrv:GetValue("ZBB_APROV") = "P"
+
+		If !lStatus
+
+			DEFINE MSDIALOG oDlg TITLE cTit FROM 000, 000  TO 200, 470 COLORS 0, 16777215 PIXEL
+
+			@ 004, 006 GROUP oGroup1 TO 094, 231 PROMPT "Descreva a Justificativa" OF oDlg COLOR 0, 16777215 PIXEL
+			@ 011, 009 GET oMultiGe1 VAR cMsg OF oDlg MULTILINE SIZE 219, 060 COLORS 0, 16777215 HSCROLL PIXEL VALID IIF(Empty(cMsg),;
+				MsgAlert("Favor Preencher o Motivo","ATENÇÃO"),.T.)
+			@ 076, 187 BUTTON oBtn PROMPT "Salvar" SIZE 037, 012 OF oDlg PIXEL ACTION oDlg:End()
+
+			ACTIVATE MSDIALOG oDlg CENTERED
+
+		EndIf
+
+			If lStatus
+				cMsg := "Aprovação efetuada por " + UsrRetName(RetCodUsr()) + " , em " + DtoC(dDataBase) + "." + CRLF + Alltrim(cMsg)
+			else
+				cMsg := "Reprovação efetuada por " + UsrRetName(RetCodUsr()) + " , em " + DtoC(dDataBase) + "." + CRLF + Alltrim(cMsg)
+			EndIf
+
+			Begin Transaction
+				RecLock("ZBB",.F.)
+
+				ZBB->ZBB_APROV	:= IIF(lStatus,"A","R")
+				ZBB->ZBB_OBS	:= cMsg
+				ZBB->ZBB_USER	:= UsrRetName(RetCodUsr())
+				ZBB->ZBB_DTAPRO	:= dDataBase
+				ZBB->ZBB_HRAPRO	:= TIME()
+
+				ZBB->(MsUnLock())
+			End Transaction
+
+			If lStatus
+				Aviso("[CONFIRMAÇÃO] " + FunName()+"/"+ProcName(),"Aprovação gravada com sucesso.",{"OK"},2)
+			Else
+				Aviso("[CONFIRMAÇÃO] " + FunName()+"/"+ProcName(),"Reprovação gravada com sucesso.",{"OK"},2)
+			EndIf
+
+		Else
+			Aviso("[ATENÇÃO] " + FunName()+"/"+ProcName(),"Não é possivel fazer alteração nesse registro.",{"OK"},2)
+		EndIf
+
+	Else
+		MsgAlert("Voce não faz parte do Grupo de Aprovação - " + ;
+			UPPER(Posicione("ZBD",1,xFilial("ZBD") + ZBB->ZBB_GRPAPR, "ZBD_DESCRI")))
+	EndIf
+
+	TMP->(dbCloseArea())
+	TMPZBD->(dbCloseArea())
+
+Return NIL
+
+//================================================================================================================
+
+/*/{Protheus.doc} SF69X03X
+@description Ponto de Entrada MVC
+@author  Daniel Castro
+@since   6/07/2021
+		
+@param PARAMIXB, Array, [Objeto][IdPonto][IdModel]
+
+@return uRet,  Retorno diversos do PE
+
+/*/
+User Function SF69X03X()
+
+	Local _lRet         := .T.
+	Local _aArea	    := GetArea()
+	Local oModel        := ParamIXB[1]
+	Local cIdPonto      := ParamIXB[2]
+//	Local cIdModel      := ParamIXB[3]
+
+	If cIdPonto == 'MODELPRE' /* Chamada antes da alteração de qualquer campo do modelo. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'MODELPOS' /* Chamada na validação total do modelo. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'FORMPRE' /* Chamada na antes da alteração de qualquer campo do formulário. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'FORMPOS' /* Chamada na validação total do formulário. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'FORMLINEPRE' /* Chamada na pre validação da linha do formulário. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'FORMLINEPOS' /* Chamada na validação da linha do formulário. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'MODELVLDACTIVE' /* Chamada na validação da ativação do Modelo. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'MODELCOMMITTTS' /* Chamada apos a gravação total do modelo e dentro da transação. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'MODELCOMMITNTTS' /* Chamada apos a gravação total do modelo e fora da transação. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'FORMCOMMITTTSPRE' /* Chamada antes da gravação da tabela do formulário. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'FORMCOMMITTTSPOS' /* Chamada apos a gravação da tabela do formulário. */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'MODELCANCEL' /* Cancela */
+		//Alert(cIdPonto)
+	ElseIf cIdPonto == 'BUTTONBAR' /* Usado para Criação de Botoes Estrutura: { {'Nome', 'Imagem Botap', { || bBlock } } } */
+		_lRet := { {'Aprovar', 'Imagem Botap', { || Grava( 'ZBBMASTER', .T.,oModel ) } },;
+					{'Reprovar','Imagem Botap', { || Grava( 'ZBBMASTER', .F.,oModel ) } } }
+	EndIf
+
+	RestArea(_aArea)
+
+Return _lRet
+
+ /*/{Protheus.doc} ZZBFILTER()
+	(Retorna a filial , grupo do aprovador  )
+	@type  Function
+	@author user
+	@since 19/07/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+	/*/
+Static Function ZZBFILTER( cRet )
+		
+	Local cGrupoaux := ""
+	Local lFilAprov := IIF(GetNewPar("ES_FILAPROV","N")== "S" ,.T.,.F.) // Filtro padrao (S), Filtro Novo (N)
+	Local aQuery	:= { 'COM-OCORRENCIAS' , 'SEM-OCORRENCIAS' }
+	Local nx 		:= 0
+	Local cCampos   := ""
+	Local cJoin01 	:= ""
+	Local cWhere 	:= ""
+
+	Static cAlias  := ""
+	
+	If lFilAprov
+		Return cRet // Retorna o Filtro padrao, caso falso retorna o filtro
+	EndIf 			// novo
+	
+	For nx := 1 to Len(aQuery)
+		cAlias  := GetNextAlias()
+		If aQuery[nx]  == 'COM-OCORRENCIAS'
+			cCampos := 	"ZBB_FILIAL, ZBB_CODIGO, ZBB_GRPAPR,
+			cCampos +=	"ZBD_FILIAL, ZBD_CODIGO, ZBD_DR,"
+			cCampos +=	"ZBE_FILIAL, ZBE_USER, ZBE_GRUPO"
+			cCampos += ",ZBJ_FILIAL, ZBJ_CODNEC, ZBJ_DESC, ZBJ_CODIGO "
+			cCampos := '%' + cCampos + '%'
+
+			cJoin01 := " INNER JOIN " + RetSqlTab("ZBD") /*GRUPO APROVACAO*/
+			cJoin01 += " ON  ZBD_FILIAL = ZBB_FILIAL "
+			cJoin01 += " AND ZBD_CODIGO = ZBB_GRPAPR "
+
+			cJoin01 += " INNER JOIN " + RetSqlTab("ZBE") /*ITEM DO GRUPO DE APROVACAO*/
+			cJoin01 += " ON ZBD_FILIAL = ZBE_FILIAL "
+			cJoin01 += " AND ZBD_CODIGO =  ZBE_GRUPO "  
+
+			cJoin01 += " INNER JOIN " + RetSqlTab("ZBJ") 
+			cJoin01 += " ON  ZBJ_FILIAL = ZBB_FILIAL AND ZBJ_CODNEC = ZBB_CODIGO " 
+			cJoin01 := '%'+ cJoin01 + '%' 
+
+			cWhere 	:= " ZBB_APROV = 'P' "
+			cWhere 	+= " AND ZBE_USER = " + "'" + RetCodUsr() + "' "  
+			cWhere  += " AND ZBJ_CODIGO <> ' ' AND ZBJ_DESC <> ' ' " 
+			cWhere  += " AND ZBJ.D_E_L_E_T_ = ' ' "
+			cWhere  := '%' + cWhere + '%'  
+		else
+			cCampos := 	"ZBB_FILIAL, ZBB_CODIGO, ZBB_GRPAPR,
+			cCampos +=	"ZBD_FILIAL, ZBD_CODIGO, ZBD_DR,"
+			cCampos +=	"ZBE_FILIAL, ZBE_USER, ZBE_GRUPO"
+			cCampos := '%' + cCampos + '%'
+
+			cJoin01 := " INNER JOIN " + RetSqlTab("ZBD") /*GRUPO APROVACAO*/
+			cJoin01 += " ON  ZBD_FILIAL = ZBB_FILIAL "
+			cJoin01 += " AND ZBD_CODIGO = ZBB_GRPAPR "
+
+			cJoin01 += " INNER JOIN " + RetSqlTab("ZBE") /*ITEM DO GRUPO DE APROVACAO*/
+			cJoin01 += " ON ZBD_FILIAL = ZBE_FILIAL "
+			cJoin01 += " AND ZBD_CODIGO =  ZBE_GRUPO "  
+			cJoin01 := '%'+ cJoin01 + '%' 
+
+			cWhere 	:= " ZBB_APROV = 'P' "
+			cWhere 	+= " AND ZBE_USER = " + "'" + RetCodUsr() + "' "  
+			cWhere 	:= '%'+ cWhere + '%' 
+
+		EndIf
+
+		BEGINSQL alias cAlias
+			SELECT      
+			%exp:cCampos%  /* campos da tabela */  
+
+			FROM %TABLE:ZBB%  ZBB /*APROVACAO DOCENTE*/
+
+			%exp:cJoin01%  
+
+			WHERE  
+			%exp:cWhere% /* CAMPOS  NO WHERE */
+			AND ZBB.%NOTDEL%
+			AND	ZBD.%NOTDEL%
+			AND	ZBE.%NOTDEL%
+
+			ORDER BY ZBB_FILIAL
+	
+		ENDSQL
+
+		Retfil( @cGrupoaux )
+
+	Next nx
+	
+	If Empty(cGrupoaux) 
+		cRet := " ZBB_FILIAL == 'XXXXXXXX' " // nao existe registros para o usuario logado. 
+	Else
+		cRet += ".AND.("
+		cRet += "ZBB_FILIAL+ZBB_GRPAPR $ " + '"' + cGrupoaux + '")' 
+	EndIf 
+
+Return cRet
+
+/*/{Protheus.doc} RetFil
+	(long_description)
+	@type  Function
+	@author user
+	@since 20/07/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+	/*/
+Static Function RetFil( cGrupoaux)
+	Local cGrupo := ""
+
+	Do While !(cAlias)->(Eof())
+		
+		cGrupo := (cAlias)->ZBB_FILIAL+(cAlias)->ZBB_GRPAPR
+		If !(cGrupo $ cGrupoaux) 
+			cGrupoaux +=   cGrupo   
+		EndIf 
+
+		(cAlias)->(DBSKIP())
+		If !(cAlias)->(Eof())
+			If right(cGrupoaux,1) <> "|"
+				cGrupoaux 	+=  '|'
+			EndIf
+		EndIf
+	EndDo
+	If right(cGrupoaux,1) == "|"
+		cGrupoaux := Subs(cGrupoaux,1, Len(cGrupoaux) -1 )
+	EndIf
+	(cAlias)->(DbClosearea())
+Return 

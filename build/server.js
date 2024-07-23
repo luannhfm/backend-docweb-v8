@@ -1565,9 +1565,6 @@ async function getAllReserv(request, reply) {
   reply.send(result);
 }
 
-// src/http/controllers/reserv/get-by-id.ts
-var import_zod16 = require("zod");
-
 // src/use-cases/reserv/get-reserv-by-source.ts
 var import_date_fns2 = require("date-fns");
 var GetReservByPrwAndIdUseCase = class {
@@ -1600,18 +1597,14 @@ function makeGetReservByPrwAndIdUseCase() {
 
 // src/http/controllers/reserv/get-by-id.ts
 async function getReservByPrwAndId(request, reply) {
-  const paramsSchema = import_zod16.z.object({
-    id: import_zod16.z.string(),
-    prw: import_zod16.z.string()
-  });
-  const { id, prw } = paramsSchema.parse(request.params);
+  const { id, prw } = request.params;
   const getReservByPrwAndIdUseCase = makeGetReservByPrwAndIdUseCase();
   const results = await getReservByPrwAndIdUseCase.handler(prw, id);
   reply.send(results);
 }
 
 // src/http/controllers/reserv/delete.ts
-var import_zod17 = require("zod");
+var import_zod16 = require("zod");
 
 // src/repositories/typeorm/source.repository.ts
 var SourceRepository = class {
@@ -1685,8 +1678,8 @@ function makeDeleteReservUseCase() {
 
 // src/http/controllers/reserv/delete.ts
 async function deleteReserv(request, reply) {
-  const querySchema = import_zod17.z.object({
-    id: import_zod17.z.string()
+  const querySchema = import_zod16.z.object({
+    id: import_zod16.z.string()
   });
   const { id } = querySchema.parse(request.query);
   const deleteReservUseCase = makeDeleteReservUseCase();
@@ -1700,7 +1693,7 @@ async function deleteReserv(request, reply) {
 }
 
 // src/http/controllers/reserv/validUpload.ts
-var import_zod18 = require("zod");
+var import_zod17 = require("zod");
 
 // src/use-cases/reserv/valid-upload.ts
 var ValidUploadUseCase = class {
@@ -1720,8 +1713,8 @@ function makeValidUploadUseCase() {
 
 // src/http/controllers/reserv/validUpload.ts
 async function validUpload(request, reply) {
-  const querySchema = import_zod18.z.object({
-    dev: import_zod18.z.string()
+  const querySchema = import_zod17.z.object({
+    dev: import_zod17.z.string()
   });
   const { dev } = querySchema.parse(request.query);
   const validUploadUseCase = makeValidUploadUseCase();
@@ -2205,10 +2198,10 @@ function makeGetAllSourcesUseCase() {
 }
 
 // src/http/controllers/source/get-all.ts
-var import_zod19 = require("zod");
+var import_zod18 = require("zod");
 async function getAllSources(request, reply) {
-  const querySchema = import_zod19.z.object({
-    search: import_zod19.z.string().optional()
+  const querySchema = import_zod18.z.object({
+    search: import_zod18.z.string().optional()
   });
   const { search } = querySchema.parse(request.query);
   const getAllSourcesUseCase = makeGetAllSourcesUseCase();
@@ -2256,10 +2249,10 @@ function makeGetSourceDetailUseCase() {
 }
 
 // src/http/controllers/source/get-detail.ts
-var import_zod20 = require("zod");
+var import_zod19 = require("zod");
 async function getSourceDetail(request, reply) {
-  const paramsSchema = import_zod20.z.object({
-    id: import_zod20.z.preprocess((val) => Number(val), import_zod20.z.number())
+  const paramsSchema = import_zod19.z.object({
+    id: import_zod19.z.preprocess((val) => Number(val), import_zod19.z.number())
   });
   const { id } = paramsSchema.parse(request.params);
   const getSourceDetailUseCase = makeGetSourceDetailUseCase();
@@ -2297,11 +2290,11 @@ function makeDeleteSourceUseCase() {
 }
 
 // src/http/controllers/source/delete.ts
-var import_zod21 = require("zod");
+var import_zod20 = require("zod");
 async function deleteSource(request, reply) {
-  const paramsSchema = import_zod21.z.object({
-    prw: import_zod21.z.string(),
-    user: import_zod21.z.string()
+  const paramsSchema = import_zod20.z.object({
+    prw: import_zod20.z.string(),
+    user: import_zod20.z.string()
   });
   const { prw, user } = paramsSchema.parse(request.params);
   const deleteSourceUseCase = makeDeleteSourceUseCase();
@@ -2374,12 +2367,12 @@ function makeReservSourceUseCase() {
 }
 
 // src/http/controllers/source/reserv.ts
-var import_zod22 = require("zod");
+var import_zod21 = require("zod");
 async function reservSource(request, reply) {
   console.log("API reserv");
-  const paramsSchema = import_zod22.z.object({
-    prw: import_zod22.z.string(),
-    user: import_zod22.z.string()
+  const paramsSchema = import_zod21.z.object({
+    prw: import_zod21.z.string(),
+    user: import_zod21.z.string()
   });
   const { prw, user } = paramsSchema.parse(request.params);
   try {
@@ -2409,11 +2402,11 @@ function makeUpdateSourceUseCase() {
 }
 
 // src/http/controllers/source/update.ts
-var import_zod23 = require("zod");
+var import_zod22 = require("zod");
 async function updateSource(request, reply) {
-  const paramsSchema = import_zod23.z.object({
-    prw: import_zod23.z.string(),
-    category: import_zod23.z.string()
+  const paramsSchema = import_zod22.z.object({
+    prw: import_zod22.z.string(),
+    category: import_zod22.z.string()
   });
   const { prw, category } = paramsSchema.parse(request.params);
   const updateSourceUseCase = makeUpdateSourceUseCase();
@@ -2452,7 +2445,7 @@ async function validateJwt(request, reply) {
 var import_jwt = __toESM(require("@fastify/jwt"));
 
 // src/http/controllers/analysis-process/create.ts
-var import_zod24 = require("zod");
+var import_zod23 = require("zod");
 
 // src/repositories/typeorm/analysis-result.repository.ts
 var AnalysisResultRepository = class {
@@ -2692,11 +2685,11 @@ function makeCreateAnalysisProcessUseCase() {
 
 // src/http/controllers/analysis-process/create.ts
 async function createAnalysisProcess(request, reply) {
-  const bodySchema = import_zod24.z.object({
-    id: import_zod24.z.string(),
-    fontes: import_zod24.z.array(import_zod24.z.string()),
-    categorys: import_zod24.z.array(import_zod24.z.string()),
-    analysisId: import_zod24.z.string()
+  const bodySchema = import_zod23.z.object({
+    id: import_zod23.z.string(),
+    fontes: import_zod23.z.array(import_zod23.z.string()),
+    categorys: import_zod23.z.array(import_zod23.z.string()),
+    analysisId: import_zod23.z.string()
   });
   const { id, fontes, categorys, analysisId } = bodySchema.parse(request.body);
   const createAnalysisProcessUseCase = makeCreateAnalysisProcessUseCase();
@@ -2705,7 +2698,7 @@ async function createAnalysisProcess(request, reply) {
 }
 
 // src/http/controllers/analysis-process/getAll.ts
-var import_zod25 = require("zod");
+var import_zod24 = require("zod");
 
 // src/use-cases/analysis-process/get-all-analysis-process.ts
 var GetAllAnalysisProcessUseCase = class {
@@ -2727,9 +2720,9 @@ function makeGetAllAnalysisProcessUseCase() {
 
 // src/http/controllers/analysis-process/getAll.ts
 async function getAllAnalysisProcess(request, reply) {
-  const querySchema = import_zod25.z.object({
-    page: import_zod25.z.string().optional(),
-    pageSize: import_zod25.z.string().optional()
+  const querySchema = import_zod24.z.object({
+    page: import_zod24.z.string().optional(),
+    pageSize: import_zod24.z.string().optional()
   });
   const { page, pageSize } = querySchema.parse(request.query);
   const pageNumber = parseInt(page || "1", 10);
@@ -2748,7 +2741,7 @@ async function getAllAnalysisProcess(request, reply) {
 }
 
 // src/http/controllers/analysis-process/getDetails.ts
-var import_zod26 = require("zod");
+var import_zod25 = require("zod");
 
 // src/use-cases/analysis-process/get-analysis-details.ts
 var GetAnalysisDetailsUseCase = class {
@@ -2806,8 +2799,8 @@ function makeGetAnalysisDetailsUseCase() {
 
 // src/http/controllers/analysis-process/getDetails.ts
 async function getAnalysisDetails(request, reply) {
-  const querySchema = import_zod26.z.object({
-    analysisId: import_zod26.z.string()
+  const querySchema = import_zod25.z.object({
+    analysisId: import_zod25.z.string()
   });
   const { analysisId } = querySchema.parse(request.query);
   const getAnalysisDetailsUseCase = makeGetAnalysisDetailsUseCase();
@@ -2816,7 +2809,7 @@ async function getAnalysisDetails(request, reply) {
 }
 
 // src/http/controllers/analysis-process/delete.ts
-var import_zod27 = require("zod");
+var import_zod26 = require("zod");
 
 // src/use-cases/analysis-process/delete-analysis-process.ts
 var DeleteAnalysisProcessUseCase = class {
@@ -2836,8 +2829,8 @@ function makeDeleteAnalysisProcessUseCase() {
 
 // src/http/controllers/analysis-process/delete.ts
 async function deleteAnalysisProcess(request, reply) {
-  const paramsSchema = import_zod27.z.object({
-    id: import_zod27.z.string()
+  const paramsSchema = import_zod26.z.object({
+    id: import_zod26.z.string()
   });
   const { id } = paramsSchema.parse(request.params);
   const deleteAnalysisProcessUseCase = makeDeleteAnalysisProcessUseCase();

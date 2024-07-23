@@ -1,0 +1,213 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} SF3401J
+Programa para gerar a classe valor para Fornecedor e Cliente
+
+@author 	Jose Leite de Barros Neto
+@since 		27/06/2014
+@version 	1.0
+@return 	Nil, Nulo
+
+/*/
+User Function SF3401J()
+	
+	Local _lOk			:= .F.
+	Local _cMensagem 	:= ""
+	
+	Private nCont		:= 0
+	Private nCont2	:= 0
+	Private cCrLf 	:= Chr(13) + Chr(10)
+	Private cCadastro	:= "Gerar Classe Valor - Cliente e Fornecedor"
+	Private aSays		:= {}
+	Private aButtons	:= {}
+	Private nOpca 	:= 0
+	
+	AADD(aSays,"Este programa irá realizar criação da Classe Valor para Clientes e Fornecedores" )
+	
+	AADD(aButtons, { 1,.T.,{|o| nOpca := 1, FechaBatch()}})
+	AADD(aButtons, { 2,.T.,{|o| FechaBatch() }} )
+
+	FormBatch( cCadastro, aSays, aButtons )
+
+	If nOpca == 1
+
+		If ApMsgYesNo("Confirma a execução ?","Confirmar")
+			Processa({|| _lOk := GeraClvl()})
+		EndIf
+	
+	EndIf
+	
+	If _lOk
+		_cMensagem := ""
+		_cMensagem += "Processo Concluído!" +cCrLf
+		_cMensagem += "Foram atualizados: "+cCrLf
+		_cMensagem += cValToChar(nCont)+" Cliente(es)."+cCrLf
+		_cMensagem += cValToChar(nCont2)+" Fornecedor(es)."
+		
+		MsgInfo(_cMensagem,"MsgInfo")
+	EndIf
+	
+Return( Nil )
+
+/** {Protheus.doc} GeraClvl
+Funcao Principal - gerar classe valor
+
+@param: 	<Nil>
+@author: 	Jose Leite de Barros Neto
+@since: 	27/06/2014
+@Uso: 		SFIEMT
+*/
+Static Function GeraClvl()
+
+	Local _lRet 		:= .F.
+	Local _cAlias		:= ""
+	Local _cAlias2	:= ""
+	Local _cClvl		:= ""
+	
+	//Busca dados da SA1
+	getSA1(@_cAlias)
+	
+	//Busca dados da SA2
+	getSA2(@_cAlias2)
+	
+	//Cadastro de Clientes
+	nCont := 0
+	
+	DbSelectArea(_cAlias)
+	DbGoTop()
+	While .Not. (_cAlias)->( EOF() )
+		
+		If (_cAlias)->(A1_PESSOA) == "F"
+			_cClvl := "CF"+(_cAlias)->(A1_COD)
+		Else
+			_cClvl := "CJ"+(_cAlias)->(A1_COD) 
+		EndIf
+		
+		DbSelectArea("SA1")
+		DbSetOrder(1) //A1_COD+A1_LOJA
+		If DbSeek(xFilial("SA1")+(_cAlias)->(A1_COD)+(_cAlias)->(A1_LOJA))
+		
+			If RecLock("SA1",.F.)
+				SA1->A1_CLVL := _cClvl
+				SA1->(MsUnlock())
+			EndIf
+			
+		EndIf
+			
+		DbSelectArea("CTH")
+		DbSetOrder(1) //CTH_FILIAL+CTH_CLVL
+		If .Not. DbSeek(xFilial("CTH")+_cClvl)
+		
+			If RecLock("CTH",.T.)
+				Replace CTH_FILIAL	WITH xFilial("CTH")
+				Replace CTH_CLVL 		WITH _cClvl 							//Codigo Classe de Valor
+				Replace CTH_CLASSE	WITH "2"								//Classe - 2= Analitico
+				Replace CTH_DESC01	WITH AllTrim((_cAlias)->(A1_NOME))	//Descricao - Nome do Cliente
+				Replace CTH_DTEXIS   WITH CTOD("01/01/80")				//Data Inicio Existencia
+				Replace CTH_BLOQ		WITH "2"
+				MsUnlock()
+			EndIf
+			nCont++	
+		EndIf
+		
+		(_cAlias)->(Dbskip())
+	End
+	
+	//Cadastro de Fornecedores
+	nCont2 := 0
+	
+	DbSelectArea(_cAlias2)
+	DbGoTop()
+	While .Not. (_cAlias2)->( EOF() )
+	
+		If (_cAlias2)->(A2_TIPO) == "F"
+			_cClvl := "FF"+(_cAlias2)->(A2_COD)
+		ElseIf (_cAlias2)->(A2_TIPO) == "J"
+			_cClvl := "FJ"+(_cAlias2)->(A2_COD)
+		Else
+			_cClvl := "FX"+(_cAlias2)->(A2_COD) 
+		EndIf
+		
+		DbSelectArea("SA2")
+		DbSetOrder(1) //A2_COD+A2_LOJA
+		If DbSeek(xFilial("SA2")+(_cAlias2)->(A2_COD)+(_cAlias2)->(A2_LOJA))
+		
+			If RecLock("SA2",.F.)
+				SA2->A2_CLVL := _cClvl
+				SA2->(MsUnlock())
+			EndIf
+			
+		EndIf
+		
+		DbSelectArea("CTH")
+		DbSetOrder(1) //CTH_FILIAL+CTH_CLVL
+		If .Not. DbSeek(xFilial("CTH")+_cClvl)
+			
+			If RecLock("CTH",.T.)
+				Replace CTH_FILIAL	WITH xFilial("CTH")
+				Replace CTH_CLVL 		WITH _cClvl 								//Codigo Classe de Valor
+				Replace CTH_CLASSE	WITH "2"									//Classe - 2= Analitico
+				Replace CTH_DESC01	WITH AllTrim((_cAlias2)->(A2_NOME))	//Descricao - Nome do Fornecedor
+				Replace CTH_DTEXIS   WITH CTOD("01/01/80")					//Data Inicio Existencia
+				Replace CTH_BLOQ		WITH "2"
+				MsUnlock()
+			EndIf
+			nCont2++	
+		EndIf
+		
+		(_cAlias2)->(Dbskip())
+	End
+	
+	If nCont > 0 .OR. nCont2 > 0
+		_lRet := .T.
+	EndIf
+
+Return( _lRet )
+
+/** {Protheus.doc} getSA1
+Funcao para buscar dados da SA1 - Cadastro de Clientes
+
+@param: 	<Nil>
+@author: 	Jose Leite de Barros Neto
+@since: 	27/06/2014
+@Uso: 		SFIEMT
+*/
+Static Function getSA1(_cAlias)
+
+	_cAlias := GetNextAlias()
+
+	BeginSql Alias _cAlias
+
+		SELECT A1_COD, A1_LOJA, A1_NOME, A1_PESSOA
+			FROM %Table:SA1% SA1
+		WHERE SA1.%NotDel%
+				
+	EndSql
+		
+	MemoWrite("c:/pLog/query_SA1_cth.sql",  GetLastQuery()[2])
+	
+Return( _cAlias )
+
+/** {Protheus.doc} getSA2
+Funcao para buscar dados da SA2 - Cadastro de Fornecedores
+
+@param: 	<Nil>
+@author: 	Jose Leite de Barros Neto
+@since: 	27/06/2014
+@Uso: 		SFIEMT
+*/
+Static Function getSA2(_cAlias2)
+
+	_cAlias2 := GetNextAlias()
+
+	BeginSql Alias _cAlias2
+
+		SELECT A2_COD, A2_LOJA, A2_NOME, A2_TIPO
+			FROM %Table:SA2% SA2
+		WHERE SA2.%NotDel%
+				
+	EndSql
+		
+	MemoWrite("c:/pLog/query_SA2_cth.sql",  GetLastQuery()[2])
+	
+Return( _cAlias2 )

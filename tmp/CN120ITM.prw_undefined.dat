@@ -1,0 +1,77 @@
+/*/
+=========================================================================
+Autor.................: Peder Munksgaard (Do.it Sistemas)
+-------------------------------------------------------------------------
+Data..................: 26/02/2014
+-------------------------------------------------------------------------
+Descrição.............: Ponto de entrada utilizado para manipulação dos
+                        arrays tanto cabeçalho como itens na geração dos
+                        pedidos de compra ou venda de acordo com o tipo
+                        do contrato. Solicitado pela usuária 
+                        Carla Barzsina, devido a uma necessidade de 
+                        realizar a medição de um contrato porém alterar 
+                        a filial de entrega no pedido de compras para uma
+                        outra.
+-------------------------------------------------------------------------
+Alteração.............: (dd/mm/yyyy) - Motivo
+-------------------------------------------------------------------------
+Partida...............: CNTA120()
+-------------------------------------------------------------------------
+Função................: u_CN120ITM()
+=========================================================================
+/*/
+
+User Function CN120ITM()
+
+Local _aArea    := GetArea()
+Local _aAreaCND := CND->(GetArea())
+Local _aCab     := PARAMIXB[1]
+Local _aItens   := PARAMIXB[2]
+Local _cAlias   := PARAMIXB[3]
+Local _nPos     := aScan(_aCab, {|x| Alltrim(x[1]) == "C7_FILENT" })
+Local _nLen		:= Len(_aItens)
+Local _n		:= Iif( _nLen > 0, aScan(_aItens[_nLen], {|x| Alltrim(x[1]) == "C7_DATPRF" }),0)
+Local _nCC		:= Iif( _nLen > 0, aScan(_aItens[_nLen], {|x| Alltrim(x[1]) == "C7_CC" }),0)
+Local _nIC		:= Iif( _nLen > 0, aScan(_aItens[_nLen], {|x| Alltrim(x[1]) == "C7_ITEMCTA" }),0)
+Local _nComp	:= Iif( _nLen > 0, aScan(_aItens[_nLen], {|x| Alltrim(x[1]) == "C7_COMPRA" }),0)
+   
+   If  _nPos > 0
+      _aCab[_nPos][2] := CND->CND_FILIAL
+   Endif
+   
+   //Walmir Junior 04/02/2016 - Alteração da data de entrega prevista para atender requisito da validação dDataBase +10  
+   If _n > 0   		
+   		 _aItens[_nLen][_n][2] := _aItens[_nLen][_n][2] + 30
+   EndIf
+   //Walmir Junior 12/02/2016 - Tratativa de campos específicos para o processo.
+   If !Empty(CNE->CNE_XFILSC) .And. !Empty(CNE->CNE_XSCOR) .And. !Empty(CNE->CNE_XSCITM)
+   		aAdd(aTail(_aItens), {"C7_FISCORI", CNE->CNE_XFILSC, NIL})
+   		aAdd(aTail(_aItens), {"C7_NUMSC"  , CNE->CNE_XSCOR , NIL})
+   		aAdd(aTail(_aItens), {"C7_ITEMSC" , CNE->CNE_XSCITM, NIL})
+   		
+   		DbSelectArea("SC1")
+		DBSetOrder(1)
+		
+		IF SC1->(DbSeek(CNE->CNE_XFILSC+CNE->CNE_XSCOR+CNE->CNE_XSCITM))
+			If _nCC > 0
+				_aItens[_nLen][_nCC][2] := SC1->C1_CC
+			Else
+				aAdd(aTail(_aItens), {"C7_CC"		, SC1->C1_CC		, NIL})
+			EndIf			   
+			If _nIC > 0
+				_aItens[_nLen][_nIC][2] := SC1->C1_ITEMCTA
+			Else
+				aAdd(aTail(_aItens), {"C7_ITEMCTA"  , SC1->C1_ITEMCTA	, NIL})
+			EndIf			
+			If _nComp > 0
+				_aItens[_nLen][_nComp][2] := SC1->C1_CODCOMP
+			Else
+				aAdd(aTail(_aItens), {"C7_COMPRA"	, SC1->C1_CODCOMP	, NIL})
+			EndIf   			
+		EndIf
+   EndIf
+      
+   RestArea(_aAreaCND)
+   RestArea(_aArea)
+   
+Return {_aCab,_aItens}                  

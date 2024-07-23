@@ -1,0 +1,307 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <FT300VLD>
+  Ponto-de-Entrada da rotina FATA300 - Cadastro das Oportunidades de Venda. 
+  Chamada apos clicar no botão OK, para finalizar o cadastro da oportunidade
+  -----------------------------------------------------------------------
+   Antonio Dantas                                             26/02/2015 
+   Incluido Chamada a Rotina fIncPOLO() - Grava na [AD1 - Oportunidades
+   de venda] o campo [AD1_XPOLO], codigo do polo, a partir do campo 
+   [A3_XPOLO - Codigo do Polo de Venda] do [SA3-Cadasto de Vendedor].
+  -----------------------------------------------------------------------
+@author<Antonio Dantas>
+@since<26/02/2015>
+@version<1.00>
+@receive<Nil>
+@return
+<   _lReturn (L) - (.t.) - Tudo OK
+                   (.f.) - Gravação não sera possivel.
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+/*/
+Franklin B. Oliveira - 08/05/2018
+	As validações existentes no ponto de entrada [FT300TDOK.prw] foram movidas para este
+	ponto de entrada.
+/*/
+User Function FT300VLD()
+Local _lReturn 	:= .t.
+Local oModel	:= ParamIXB[1]
+Local oModelAD1	:= oModel:GetModel('AD1MASTER')
+Local cCodCli	:= oModelAD1:GetValue( 'AD1_CODCLI' )
+Local cLojCli	:= oModelAD1:GetValue( 'AD1_LOJCLI' )
+
+//-- Chama a rotina de Grava o Codigo do Polo a partir do Codigo do vendedor
+_lReturn 	:= fIncPOLO()
+//+------------------------------------------------------------------+
+//| Antonio Dantas                                        11/12/2015 | 
+//| Implementa o controle de uso da Viabilidade por Oportunidade     |
+//|                                                                  |
+//| Jose Leite - CSI                                      01/07/2016 |
+//| Comentado devido a necessidade da Viabilidade passar a ser por   |
+//| Produto - SENAI VAI DEFINIR NOVA REGRA - MANTEM O QUE EXISTE     |
+//+------------------------------------------------------------------+
+If _lReturn
+	_lReturn	:= fVldViab()
+EndIf
+//+------------------------------------------------------------------+
+//| Jose Leite - CSI                                      28/06/2016 | 
+//| Validacao para uso de prospect x clientes na oportunidade        |
+//+------------------------------------------------------------------+
+If _lReturn
+	_lReturn := fVldProsp()
+EndIf
+
+/* Validacao de oportunidade x proposta */
+If _lReturn
+	_lReturn := ValidaProp()
+EndIf
+
+/* Valida Contatos da Oportunidade */
+If _lReturn
+	_lReturn := fVldContat(oModel)
+EndIf
+
+/* Validação de campos  */
+If _lReturn
+	_lReturn := fVldCpos(oModel)
+EndIf
+
+/* Tratamento para Contrato de Venda - Valida cliente na receita */
+If _lReturn
+	_lReturn := u_SF73E08J(M->AD1_CODCLI,M->AD1_LOJCLI)
+EndIf
+
+Return _lReturn
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fIncPOLO>
+ Incluido Chamada a Rotina fIncPOLO() - Grava na [AD1 - Oportunidades de venda]
+ o campo [AD1_XPOLO], codigo do polo, a partir do campo [A3_XPOLO - Codigo do 
+ Polo de Venda] do [SA3-Cadasto de Vendedor]. Chamado pelo Ponto-de-Entrada 
+ FT300VLD()
+
+@author<Antonio Dantas>
+@since<26/02/2015>
+@version<1.00>
+<   _lReturn (L) - (.t.) - Tudo OK
+                   (.f.) - Gravação não sera possivel.
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function fIncPOLO()
+Local _lReturn	:= .f.
+Local _aArea		:= GetArea()
+dbSelectArea("SA3")
+SA3->(dbSetOrder(1))
+If SA3->(dbSeek(FwxFilial("SA3")+M->AD1_VEND))
+	M->AD1_XPOLO := SA3->A3_XPOLO
+	_lReturn := .t.
+Endif 
+//-- Restaura a area
+RestArea(_aArea)
+Return _lReturn
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} fVldViab()
+  Implementa o controle de uso da Viabilidade.                     
+
+@author<Antonio Dantas>
+@since<11/12/2015>
+@version<1.00>
+@receive<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function fVldViab()
+	
+	Local _lReturn	:= .t.
+	Local _aArea	:= GetArea()
+	
+	If M->AD1_STATUS $ 'E/F'
+		If Substr(cFilAnt,1,4) == "03MT" .And. !(Empty(Alltrim(M->AD1_XVIABI)))
+			dbSelectArea("ZCG")
+			ZCG->(dbSetOrder(1))
+			If (ZCG->(dbSeek(FwxFilial("ZCG")+M->AD1_XVIABI)))
+				If ZCG->ZCG_STATUS != "3"
+					Aviso(FunName()+"/"+ProcName(),"Viabilidade informada NÃO ESTA APROVADA!",{"OK"})
+					_lReturn := .f.
+				Endif 
+			Else
+				Aviso(FunName()+"/"+ProcName(),"Codigo da Viabilidade informada, não foi localizada!",{"OK"})
+				_lReturn := .f.
+			Endif 
+		Endif
+	EndIf
+	//-- Restaura a area
+	RestArea(_aArea)
+
+Return _lReturn
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} fVldProsp()
+  Validacao para uso de prospect x clientes na oportunidade                    
+
+@author<Jose Leite de Barros Neto>
+@since<28/06/2016>
+@version<1.00>
+@receive<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function fVldProsp()
+	
+	Local _lReturn	:= .T.
+	Local _aArea		:= GetArea()
+	
+	If M->AD1_STATUS $ 'E/F'
+		
+		If .Not. Empty(M->AD1_PROSPE) .OR. .Not. Empty(M->AD1_LOJPRO)
+			Alert("Não é possivel Finalizar uma proposta de venda para um Prospect, favor verificar.")
+			_lReturn := .F.
+		ElseIf .Not. Empty(AD1->AD1_CODCLI) .And. .Not. Empty(AD1->AD1_LOJCLI)
+			
+			DbSelectArea('SA1')
+			SA1->(DbSetOrder(1)) //A1_FILIAL+A1_COD+A1_LOJA
+			SA1->(DbGoTop())
+			If SA1->(DbSeek( xFilial('SA1') + AD1->AD1_CODCLI + AD1->AD1_LOJCLI ))
+				If SA1->A1_MSBLQL == '1'
+					Alert("Cliente bloqueado para uso, favor verificar.")
+					_lReturn := .F.
+				EndIf
+			Else
+				Alert("Cliente não encontrado, favor verificar.")
+				_lReturn := .F.
+			EndIf
+			
+		EndIf
+		
+	EndIf
+	
+	RestArea(_aArea)
+	
+Return( _lReturn )
+
+/** {Protheus.doc} ValidaProp
+Funcao que realiza validacao de oportunidade x proposta
+
+Protheus V12:
+Franklin B. Oliveira - 08/05/2018
+Função criada no fonte [FT300TDOK.prw], porém o ponto de entrada deixou de existir. 
+
+@author: 	Jose Leite de Barros Neto
+@since: 	24/07/2015
+@Uso: 		SFIEMT
+*/
+Static Function ValidaProp()
+	
+	Local lRetorno := .T.
+	
+	If M->AD1_STATUS == 'E' .OR. M->AD1_STATUS == 'F'
+			
+		DbSelectArea('ADY')
+		ADY->( DbSetOrder(2) ) //ADY_FILIAL+ADY_OPORTU+ADY_REVISA+ADY_PROPOS
+		ADY->( DbGotop() )
+		If ADY->( DbSeek( AD1->AD1_FILIAL + AD1->AD1_NROPOR + AD1->AD1_REVISA ) )
+			lRetorno := .T.
+		Else
+			lRetorno := .F.
+			MsgInfo("Não existe proposta para essa oportunidade, logo, não pode ser finalizada como ganha. Favor Verificar!","Atenção")
+		EndIf
+		
+		ADY->( DbCloseArea() )
+		
+	EndIf
+	
+Return( lRetorno )
+
+/** {Protheus.doc} fVldContat
+Funcao que realiza validacao dos contatos do cliente como representante.
+	Deve ser informado pelo menos um Representante [AD9_XREPRE = '1']
+	
+Protheus V12:
+Franklin B. Oliveira - 08/05/2018
+Função criada no fonte [FT300TDOK.prw], porém o ponto de entrada deixou de existir. 
+
+@author: 	Jonas Nascimento
+@since: 	08/09/2015
+@Uso: 		SFIEMT
+*/
+Static Function fVldContat(oModel)
+	Local oMldAD9	:= oModel:GetModel( 'AD9DETAIL' )
+	Local _lRet 	:= .T.
+	Local aSaveLines := FWSaveRows()
+	Local _cMsgErro	:= "Representante do Cliente não definido!"+CRLF+CRLF
+		  _cMsgErro += "Defina pelo menos um Representante."
+		  _cMsgErro += " Na aba Contatos campo Representante, marque Sim para os representante(s) que irão assinar o Contrato."
+	
+	For nI := 1 To oMldAD9:Length()
+		oMldAD9:GoLine(nI)
+		
+		If oMldAD9:GetValue('AD9_XREPRE') == "1"
+			_lRet		:= .T.
+			_cMsgErro	:= ""
+			Exit
+		Else
+			_lRet := .F.
+		EndIf		
+	Next nI
+
+	If !_lRet
+		Aviso(FunName()+"/"+ProcName(), _cMsgErro, {"OK"})
+	EndIf
+
+Return _lRet
+
+/*/{Protheus.doc} fVldCpos
+	Função para validação específica de campos
+	
+Protheus V12:
+Franklin B. Oliveira - 08/05/2018
+Função criada no fonte [FT300TDOK.prw], porém o ponto de entrada deixou de existir. 
+
+@author Franklin Brito Oliveira
+@since 18/02/2016
+
+@return _lRet, Lógico, Se falso, não permite confirmar.
+/*/
+Static Function fVldCpos(oModel)
+
+Local oModelAD1	:= oModel:GetModel('AD1MASTER') 
+Local _lRet		:= .T.
+Local _cMsgErro	:= ""
+
+	//Validação do campo AD1_XDIAPG para entidade SESI
+	If Substr(cFilAnt,1,4) == '02MT'
+		If oModelAD1:GetValue('AD1_XDIAPG') == 0
+			_cMsgErro	:= "Dia de pagamento não informado"+CRLF+CRLF
+			_cMsgErro 	+= "Defina o dia de pagamento."
+			
+			Aviso(FunName()+"/"+ProcName(), _cMsgErro, {"OK"})
+			
+			_lRet	:= .F.
+		 ElseIf oModelAD1:GetValue('AD1_XDIAPG') < 0 .Or. oModelAD1:GetValue('AD1_XDIAPG') > 31
+			_cMsgErro	:= "Dia de pagamento informado é inválido"+CRLF+CRLF
+			_cMsgErro 	+= "Defina um dia de pagamento válido."
+			
+			Aviso(FunName()+"/"+ProcName(), _cMsgErro, {"OK"})
+			
+			_lRet	:= .F.
+		EndIf
+	EndIf
+
+Return _lRet

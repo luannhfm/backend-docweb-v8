@@ -1,0 +1,89 @@
+#INCLUDE 'PROTHEUS.CH'
+
+
+/*/{Protheus.doc} LJ7001
+@description Utilizado para validação no final da venda
+@type User Function
+@author Alan Teles de Oliveira
+@since 07/01/2019
+@version 11.8
+@param ExpN1, Numérico, Tipo da operação de acordo com as opções: 1 - Orçamento / 2 - Venda / 3 - Pedido
+@param ExpA2, Array of Record, Array com os dados da devolução de acordo com a estrutura: [1] - Série da NF de devolução / [2] - Número da NF de devolução / [3] - Código do cliente da devolução / [4] - Loja do cliente da devolução / [5] - Tipo de operação (1=Troca; 2=Devolução) Esse array é preenchido pela rotina LOJA720 quando se realiza uma operação de troca/devolução.
+@param ExpN3, Numérico, Tipo de documento impresso pela venda de acordo com as opções: 1 - Cupom fiscal / 2 - Nota fiscal
+@return lRet, logico, verdadeiro se liberado a finalização da venda
+@see http://tdn.totvs.com/pages/releaseview.action?pageId=6790877
+
+@history 10/09/2019, Helitom Silva, Adicionado no Projeto Venda Assistida
+@history 10/03/2020, Franklin B. Oliveira, Retirada validação para valor minimo de parcela no IEL.
+@history 14/04/2020, Franklin B. Oliveira, Alterada validação para numero de parcela em venda no CC.
+
+/*/
+User Function LJ7001()
+    
+    Local nTipoOper := ParamIXB[1]
+    Local aDocDev   := ParamIXB[2]
+    Local nTipoDoc  := ParamIXB[2]
+    Local lRet      := .T.
+    Local aArea 	:= GetArea()
+    
+    // Sesi Park (Venda de Day Use)
+    If lRet .and. ( cFilAnt = '02MT0012' )
+    
+	    If nTipoOper = 1 
+	        
+	        MsgInfo('Não será permitido gravar orçamento apenas vendas.', 'Atenção - LJ7001')
+	        
+	        lRet := .F.
+	
+	    EndIf
+	
+	    If lRet
+	
+		    lRet := U_FA701A01() 
+	
+	    EndIf
+	    
+	    If lRet
+	
+		    If aScan(aPgtosSint,  {|X| (AllTrim(X[1]) $ 'CC' .and. (X[2] > 1) )}) > 0
+				MsgAlert('A forma Pagamento [Cartão de Crédito] não pode exceder à 1 Parcela!')
+				lRet := .F.
+			EndIf
+		
+	    EndIf
+	
+	    /*If lRet
+	
+		    lRet := U_SF05A02A() 
+	
+	    EndIf*/
+	     
+    EndIf
+    
+    // IEL (Venda de Certificados)
+    If lRet .and. ( cFilAnt = '04MT0001' )
+    	
+    	// Validação da Formas de Pagamentos lançadas na Venda
+		If aScan(aPgtos,  {|X| (AllTrim(X[3]) $ 'BOL' .and. (X[1] - dDataBase) > 15)}) > 0
+			MsgAlert('A forma de Pagamento [Boleto] não pode ter prazo superior à 15 Dias!')
+			lRet := .F.
+		ElseIf aScan(aPgtosSint,  {|X| (AllTrim(X[1]) $ 'CC' .and. (X[2] > 6) )}) > 0
+			MsgAlert('A forma Pagamento [Cartão de Crédito] não pode exceder à 6 Parcelas!')
+			lRet := .F.						
+		EndIf
+		
+	    If lRet .and. Empty(AllTrim(M->LQ_MENNOTA))
+	    	MsgInfo('Por favor, preencha a Mensagem da Nota!', 'IEL')
+	    	lRet := .F.
+	    EndIf
+	    
+    EndIf
+
+	If lRet .and. ((Lj7T_TotPar(2)) < Lj7T_Total(2))
+		MsgAlert('Por favor, informe as formas de pagamento para o Saldo a Receber do Cliente!')
+		lRet := .F.				
+	EndIf
+	   
+    RestArea(aArea)
+
+Return lRet

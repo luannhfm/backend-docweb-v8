@@ -1,0 +1,212 @@
+#Include 'Protheus.ch'
+#Include 'Topconn.ch'
+#Include 'Tbiconn.ch'
+
+/*/{Protheus.doc} SF06M01J
+Funcao responsavel por realizar alteracoes de titulos referente a DIRF
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	05/02/2016
+@version 	1.0
+@return 	Nil, Nulo
+/*/
+User Function SF06M01J()
+	
+	Local _aArea	:= GetArea()
+
+	Private _aEstrut	:= {}
+	Private _cArqTxt	:= Space(50)
+	Private _cMemo  	:= ""
+	
+	Private lMsErroAuto := .F.
+
+	_cArqTxt := U_SFXX01J('Alteracao da Flag da DIRF - Titulos a Pagar (SE2)','Arquivos csv (*.csv) |*.csv|')
+	
+	//Abre o Arquivo
+	nHdl    := fOpen(_cArqTxt,68)
+
+	If nHdl == -1
+		MsgAlert("O arquivo de nome "+_cArqTxt+" nao pode ser aberto! Verifique os parametros.","Atencao!")
+		Return
+	Endif
+
+	Processa({ |lEnd| _aEstrut := SE2CSV(_cArqTxt) },"LENDO ARQUIVO CSV DE TITULOS A PAGAR")
+	Processa({ |lEnd| _lRet := IMPSE2(_aEstrut) },"GERANDO REGISTROS")
+
+	RestArea( _aArea )
+	
+Return
+
+/** {Protheus.doc} IMPSE2
+Funcao que realiza a importacao do produto
+
+@author: 	Jose Leite de Barros Neto
+@since: 	20/10/2015
+@Uso: 		SFIEMT
+*/
+Static Function IMPSE2()
+	
+	Local _lRet := .F.
+	Local _nContador := 0
+
+	For i := 2 To Len(_aEstrut)
+		
+		//E2_FILIAL
+		_cFilSE2 := PADR( AllTrim(_aEstrut[i][1]),TAMSX3("E2_FILIAL")[1])
+		
+		//E2_PREFIXO
+		_cPref := PADR(AllTrim(_aEstrut[i][2]),TAMSX3("E2_PREFIXO")[1])
+		
+		//E2_NUM
+		_cNum := PADR(AllTrim(_aEstrut[i][3]),TAMSX3("E2_NUM")[1])
+		
+		//E2_PARCELA
+		_cParc := PADR(AllTrim(_aEstrut[i][4]),TAMSX3("E2_PARCELA")[1])
+		
+		//E2_TIPO
+		_cTipo := PADR(AllTrim(_aEstrut[i][5]),TAMSX3("E2_TIPO")[1])
+		
+		//E2_FORNECE
+		_cForn := PADR(AllTrim(_aEstrut[i][6]),TAMSX3("E2_FORNECE")[1])
+		
+		//E2_LOJA
+		_cLoja := PADR(AllTrim(_aEstrut[i][7]),TAMSX3("E2_LOJA")[1])
+		
+		//E2_DIRF
+		_cDirf := PADR(AllTrim(_aEstrut[i][8]),TAMSX3("E2_DIRF")[1])
+		
+		//E2_CODRET
+		_cCodRet := PADR(AllTrim(_aEstrut[i][9]),TAMSX3("E2_CODRET")[1])
+		
+		//Msg de Alerta
+		_cMsg := _cFilSE2 + ' / ' + _cPref + ' / ' + _cNum + ' / ' + _cParc + ' / ' + _cTipo + ' / ' + _cForn + ' / ' + _cLoja
+		
+		DbSelectArea("SE2")
+		SE2->(DbSetOrder(1))
+		SE2->(DbGoTop())
+		
+		If SE2->( DbSeek( _cFilSE2 + _cPref + _cNum + _cParc + _cTipo + _cForn + _cLoja ) )
+			If RecLock('SE2',.F.)
+				SE2->E2_DIRF := _cDirf
+				SE2->E2_CODRET := _cCodRet
+			EndIf
+			SE2->( MsUnLock() )
+		Else
+			MsgAlert('Favor verificar a linha: '+ cValToChar(i) + ' - Titulo nao encontrado - ' + _cMsg)
+		EndIf
+		
+		SE2->( DbCloseArea() )
+		_nContador++
+		
+	Next
+	
+	If _nContador > 0
+		MsgAlert(cValToChar(_nContador) + ' registros foram atualizados.')
+	EndIf
+
+Return
+
+
+/** {Protheus.doc} SE2CSV
+Funcao que realiza a Leitura do arquivo CSV
+
+@param: 	cArquivo, Caminho do arquivo que sera lido
+@author: 	Jose Leite de Barros Neto
+@since: 	28/03/2014
+@Uso: 		SFIEMT
+*/
+Static Function SE2CSV(cArquivo)
+	
+	Local cBuffer     := ""
+	Local cAux        := ""
+	Local cString     := ""
+	Local cSeparador  := ""  //Verifica o tipo de separador do arquivo texto
+	Local aTmp        := {}
+	Local aEstrutura  := {}
+	Local nCont       := 0
+	Local cEof        := Chr(10)+ Chr(13)
+	Local nRec        := 0
+	Local lAspa       := .F.
+
+	//Leitura da quantidade de Registros do Arquivo
+	FT_FUSE(cArquivo)
+	FT_FGOTOP()
+	
+	While !FT_FEOF()
+		nRec++
+		FT_FSKIP()
+	End
+
+	ProcRegua(nRec)
+
+	//Leitura do arquivo e verificacao do ultimo caracter da linha lida para  consistencia da pesquisa
+	FT_FGOTOP()
+
+	While !FT_FEOF()
+	
+		cBuffer:= AllTrim(FT_FREADLN())
+	
+		If At(";",cBuffer) > 0
+			cSeparador:= ";" 
+		Else //linha de arquivo incorreta.
+			IncProc()
+			FT_FSKIP()
+			Loop
+		Endif
+	
+		If (SubStr(cBuffer,Len(cBuffer),1)<>cSeparador)
+			cBuffer += cSeparador + cEof + cSeparador
+		Else
+			cBuffer += cEof + cSeparador
+		Endif
+	
+		//Incrementa a regua
+		IncProc()
+	
+		//Carrega o array aEstrutura com o resultado da Importacao
+		cLinha:= fTAcento(cBuffer)
+		lAspa := .F.
+
+		For nCont := 1 To Len(cBuffer)
+		
+			cAux   := SubStr(cLinha,1,1)
+			cLinha := SubStr(cLinha,2)
+			
+			If (cAux == cEof)
+				Exit
+			Endif
+		
+			//Sao verificadas as marcacoes feitas pelo Excel para concatenacao de strings
+			Do Case
+			
+				Case cAux == '"'
+					lAspa := !lAspa
+					
+				Case cAux == cSeparador .And. !lAspa
+					aAdd(aTmp,cString)
+					cString := ""
+					
+				OtherWise
+					cString += cAux
+					
+			EndCase
+		
+		Next nCont
+	
+		For nCont := Len(aTmp)+1 To 11
+			aAdd(aTmp,"")
+		Next nCont
+	
+		//Validacao para nao salvar registros sem entidades
+		If !Empty(aTmp[1]) .OR. !Empty(aTmp[2])
+			aAdd(aEstrutura,aTmp)
+			aTmp := {}
+		Endif
+		
+		FT_FSKIP()
+	End
+
+	FT_FUSE()
+
+Return( aEstrutura )

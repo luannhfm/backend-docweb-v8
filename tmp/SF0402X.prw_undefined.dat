@@ -1,0 +1,611 @@
+#Include 'Protheus.ch'
+#Include 'TopConn.ch'
+#Include 'FWPrintSetup.ch'
+#Include 'RptDef.ch'
+
+/*/{Protheus.doc} SF0402X
+	Documento de saída de Vacinas baseado no relatório de movimentação dos produtos entre as unidades [SF0401F].
+
+@author	Walmir Gonçalves da Silva Junior
+@since	17/03/2016
+@version 1.0
+
+@return Nil
+
+/*/
+
+User Function SF0402X()
+Local aOrdem		:= {"Padrão"}															//Array com ordem de impressão do relatório
+Local aDevice		:= {"DISCO","SPOOL","EMAIL","EXCEL","HTML","PDF"}						//Array com dispositivos para impressão do relatório
+Local cDevice		:= ""																	//Dispositivo selecionado para impressão
+Local cPathDest		:= GetSrvProfString("StartPath","\system\")								//Caminho da pasta \system\
+Local cRelName		:= "SF0402X"															//Nome do relatório
+Local cSession		:= GetPrinterSession()													//Sessão do usuário logado
+Local lAdjust		:= .F.																	//Possibilita ajustes de impressão
+Local nFlags		:= PD_ISTOTVSPRINTER+PD_DISABLEORIENTATION+PD_DISABLEPAPERSIZE			//Opções para setup de impressão
+Local nLocal		:= 1																	//Local de impressão
+Local nOrdem		:= 1																	//Ordem de impressão	
+Local nOrient		:= 1																	//Orientação da impressão
+Local nPrintType	:= 6																	//Tipo da impressora
+Local oPrinter		:= Nil																	//Objeto de impressão			
+Local oSetup		:= Nil																	//Objeto de configuração da impressão
+
+Private nMaxLin		:= 800																	//Numero máximo de linhas
+Private nMaxCol		:= 600																	//Numero máximo de colunas
+Private cAliasPos	:= IIf(ProcName(7) == 'MATA241', "SD3", "SCP")							//Alias posicionado
+Private cCodDoc		:= SCP->CP_NUM															//Código do documento
+
+Private _cFilCN9	:= ""
+Private _cNumCN9	:= ""
+Private _cRevCN9	:= ""
+Private _cRazCli	:= ""
+Private _cCNPJ		:= ""
+
+	If cAliasPos == "SCP" .And. (Empty(SCP->CP_STATUS) .Or. SCP->CP_PREREQU != "S" .Or. (QtdComp(SCP->CP_QUANT) != QtdComp(SCP->CP_QUJE)))
+	
+		MsgStop("Pre-Requisicao não se encontra Baixada", "Pre-Requisicao em aberto")
+	
+	Else
+	
+		cSession	:= GetPrinterSession()
+		cDevice	:= If(Empty(fwGetProfString(cSession,"PRINTTYPE","SPOOL",.T.)),"PDF",fwGetProfString(cSession,"PRINTTYPE","SPOOL",.T.))
+		nLocal		:= If(fwGetProfString(cSession,"LOCAL","SERVER",.T.)=="SERVER",1,2 )
+		nPrintType	:= aScan(aDevice,{|x| x == cDevice })     
+	
+		oPrinter	:= FWMSPrinter():New(cRelName, nPrintType, lAdjust, /*cPathDest*/, .T.)
+		oSetup		:= FWPrintSetup():New (nFlags,cRelName)
+	
+		oSetup:SetPropert(PD_PRINTTYPE   	, nPrintType)
+		oSetup:SetPropert(PD_ORIENTATION 	, nOrient)
+		oSetup:SetPropert(PD_DESTINATION 	, nLocal)
+		oSetup:SetPropert(PD_MARGIN			, {0,0,0,0})
+		oSetup:SetPropert(PD_PAPERSIZE		, 2)
+		oSetup:SetOrderParms(aOrdem,@nOrdem)
+	
+		If oSetup:Activate() == PD_OK 
+	
+			oPrinter:lServer			:= oSetup:GetProperty(PD_DESTINATION) == AMB_SERVER	
+			oPrinter:SetDevice(oSetup:GetProperty(PD_PRINTTYPE))
+			oPrinter:SetPortrait()
+			oPrinter:SetPaperSize(oSetup:GetProperty(PD_PAPERSIZE))
+			oPrinter:setCopies(Val(oSetup:cQtdCopia))
+			
+			If oSetup:GetProperty(PD_PRINTTYPE) == IMP_SPOOL
+	
+				oPrinter:nDevice		:= IMP_SPOOL
+				oPrinter:cPrinter		:= oSetup:aOptions[PD_VALUETYPE]
+	
+			Else 
+	
+				oPrinter:nDevice		:= IMP_PDF
+				oPrinter:cPathPDF		:= oSetup:aOptions[PD_VALUETYPE]
+				oPrinter:SetViewPDF(.T.)
+	
+			Endif
+			
+			RptStatus({|lEnd| SF0101FImp(@lEnd,@oPrinter)},"Imprimindo Relatorio...")
+	
+		Else 
+	
+			MsgInfo("Relatório cancelado pelo usuário.")
+			oPrinter:Cancel()
+	
+		EndIf
+	
+		oSetup		:= Nil
+		oPrinter	:= Nil
+		
+	EndIf
+
+Return (Nil)
+
+/*/{Protheus.doc} SF0101FImp
+	Função para impressão do relatório.
+
+@author Franklin de Brito de Oliveira
+@since 26/06/2015
+@version 1.0
+@param lEnd, logico 
+@param oPrinter, objeto, Objeto de impressão
+
+@return Nil
+
+/*/
+//-------------------------------------------------------------------------
+/*
+Modificações:
+	14/10/2015 - Franklin B Oliveira:
+	->Adicionado tratamento para impressão quando o programa de origem for 
+	transferência multipla. 
+
+*/
+//--------------------------------------------------------------------------
+Static Function SF0101FImp(lEnd,oPrinter)
+
+Local nMaxLinha		:= 60												
+Local nLinCount		:= 0
+Local aArea			:= GetArea()
+Local cQuery		:= ""
+Local cCodDoc		:= ""
+
+Private cAliasTMP	:= GetNextAlias()
+Private dDataEmi	:= fGetDate()
+Private nMargDir	:= 15
+Private nMargEsq	:= 20
+Private nColPro		:= nMargEsq+30
+Private nColDes		:= nColPro+100
+Private nColQtd		:= nColDes+360
+Private nLiItm		:= 0
+Private nPag		:= 0
+Private nWidtLin	:= 0
+Private nNumItem	:= 0
+Private nColLeft	:= nMargDir
+Private nColCent	:= nColLeft+270
+Private nColRigh	:= nColCent
+Private oFontA7		:= TFont():New('Arial',,7,.T.)
+Private oFontA12	:= TFont():New('Arial',,12,.T.)
+Private oFontC8		:= TFont():New('Courier new',,8,.T.)
+Private li			:= 10
+Private _cB1Tp		:= ""
+		
+	cAliasTMP := SelectData()
+	
+	If _cB1Tp != "IM"
+		Aviso("Atenção!", "Este documento é exclusivo para produtos do tipo 'Imunização'.", {"Ok"})
+		Return (Nil)
+	EndIf
+	SetRegua((cAliasTMP)->(LastRec()))
+
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Inicia a impressao do relatorio ³   
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	While !(cAliasTMP)->(Eof())
+		
+		IncRegua()
+		nLiItm		:= 140
+		nLinCount	:= 0
+		nPag++
+		
+		oPrinter:StartPage()
+		CabPagina(@oPrinter)
+		CabItem(@oPrinter)
+		
+		
+		// Imprime os titulos das colunas dos itens
+		li := li + 30
+		CabItem2(@oPrinter)
+		
+		While !(cAliasTMP)->(Eof())
+		
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Inicia uma nova pagina caso nao estiver em EOF ³ 
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If nLinCount == nMaxLinha
+		
+				oPrinter:StartPage()
+				nPag++
+				CabPagina(@oPrinter)
+				nLiItm		:= li+50
+				nLinCount	:= 0
+		
+				// Imprime os titulos das colunas dos itens		
+				CabItem2(@oPrinter)
+		
+			EndIf	
+			
+			nWidtLin = MlCount( (cAliasTMP)->B1_DESC ) * 8
+			nNumItem++
+					
+			// Imprime os itens
+			ImpItem(@oPrinter) 
+
+			nLinCount++
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Finaliza a pagina quando atingir a quantidade maxima de itens ³ 
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ		
+		
+			If nLinCount == nMaxLinha
+		
+				oPrinter:Line(550,nMargDir, 550, nMaxCol-nMargEsq,, "-2")
+				oPrinter:EndPage()
+		
+			Else
+		
+				nLiItm += nWidtLin
+		
+			EndIf
+				
+			(cAliasTMP)->(dbSkip())
+		
+			Loop
+		
+		EndDo
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Finaliza a pagina se a quantidade de itens for diferente da quantidade ³ 
+		//³ maxima, para evitar que a pagina seja finalizada mais de uma vez.      ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		
+		If nLinCount <> nMaxLinha
+		
+			oPrinter:Line(750,nMargDir, 750, nMaxCol-nMargEsq,, "-2")
+			oPrinter:EndPage()
+		
+		EndIf
+	
+	EndDo
+
+	nLiItm += 10
+	
+	/* Impressão do rodapé - Observação */
+	/*oPrinter:Box(li+nLiItm, nMargDir, li+nLiItm+40, nMaxCol-nMargEsq)
+	oPrinter:SayAlign(li+nLiItm+5, nMargDir+5, "Observação:"									, oFontA7,  nMaxCol-nMargEsq, 200, 2, 0) 
+	
+	nLiItm += 60*/
+	
+	/* Impressão do rodapé - Assinatura */
+	oPrinter:Box(li+nLiItm, nColLeft, li+nLiItm+60, nColCent)
+	oPrinter:SayAlign(li+nLiItm+5	, nColLeft+1	, "Data: " + DToC( dDataEmi )								, oFontA7, 180, 10, , 0, 1) 
+	oPrinter:SayAlign(li+nLiItm+45	, nColLeft		, "Ass. e Cargo do Responsável pela entrega"					, oFontA7, 180, 10, , 2, 2) 
+	
+	/*oPrinter:Box(li+nLiItm, nColCent, li+nLiItm+60, nColRigh)
+	oPrinter:SayAlign(li+nLiItm+5	, nColCent+1	, "Data: __/__/__"											, oFontA7, 180, 10, , 0, 1) 
+	oPrinter:SayAlign(li+nLiItm+45	, nColCent		, "Ass./Carimbo Dir. Regional/Super./Gerencia/Coord."	, oFontA7, 180, 10, , 2, 2)  */
+	
+	oPrinter:Box(li+nLiItm, nColRigh, li+nLiItm+60, nMaxCol-nMargEsq)
+	oPrinter:SayAlign(li+nLiItm+5	, nColRigh+1	, "Data: __/__/__"											, oFontA7, 180, 10, , 0, 1) 	
+	oPrinter:SayAlign(li+nLiItm+45	, nColRigh		, "Ass. e Cargo do Responsável pelo recebimento"				, oFontA7, 180, 10, , 2, 2) 	
+	
+	(cAliasTMP)->(DBGoTop())
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Inicia a impressao do relatorio ³   
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	While !(cAliasTMP)->(Eof())
+		
+		IncRegua()
+		nLiItm		:= 140
+		nLinCount	:= 0
+		nPag++
+		li := li + 300
+		nNumItem := 0
+		//oPrinter:StartPage()
+		CabPagina(@oPrinter)
+		CabItem(@oPrinter)
+		
+		
+		// Imprime os titulos das colunas dos itens
+		li := li + 30
+		CabItem2(@oPrinter)
+		
+		While !(cAliasTMP)->(Eof())
+		
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Inicia uma nova pagina caso nao estiver em EOF ³ 
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If nLinCount == nMaxLinha
+		
+				oPrinter:StartPage()
+				nPag++
+				CabPagina(@oPrinter)
+				nLiItm		:= li+50
+				nLinCount	:= 0
+		
+				// Imprime os titulos das colunas dos itens		
+				CabItem2(@oPrinter)
+		
+			EndIf	
+			
+			nWidtLin = MlCount( (cAliasTMP)->B1_DESC ) * 8
+			nNumItem++
+					
+			// Imprime os itens
+			ImpItem(@oPrinter) 
+
+			nLinCount++
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Finaliza a pagina quando atingir a quantidade maxima de itens ³ 
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ		
+		
+			If nLinCount == nMaxLinha
+		
+				oPrinter:Line(550,nMargDir, 550, nMaxCol-nMargEsq,, "-2")
+				oPrinter:EndPage()
+		
+			Else
+		
+				nLiItm += nWidtLin
+		
+			EndIf
+				
+			(cAliasTMP)->(dbSkip())
+		
+			Loop
+		
+		EndDo
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Finaliza a pagina se a quantidade de itens for diferente da quantidade ³ 
+		//³ maxima, para evitar que a pagina seja finalizada mais de uma vez.      ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		
+		If nLinCount <> nMaxLinha
+		
+			oPrinter:Line(750,nMargDir, 750, nMaxCol-nMargEsq,, "-2")
+			oPrinter:EndPage()
+		
+		EndIf
+	
+	EndDo
+
+	nLiItm += 10
+	
+	/* Impressão do rodapé - Observação */
+	/*oPrinter:Box(li+nLiItm, nMargDir, li+nLiItm+40, nMaxCol-nMargEsq)
+	oPrinter:SayAlign(li+nLiItm+5, nMargDir+5, "Observação:"									, oFontA7,  nMaxCol-nMargEsq, 200, 2, 0) 
+	
+	nLiItm += 60*/
+	
+	/* Impressão do rodapé - Assinatura */
+	oPrinter:Box(li+nLiItm, nColLeft, li+nLiItm+60, nColCent)
+	oPrinter:SayAlign(li+nLiItm+5	, nColLeft+1	, "Data: " + DToC( dDataEmi )								, oFontA7, 180, 10, , 0, 1) 
+	oPrinter:SayAlign(li+nLiItm+45	, nColLeft		, "Ass. e Cargo do Responsável pela entrega"					, oFontA7, 180, 10, , 2, 2) 
+	
+	/*oPrinter:Box(li+nLiItm, nColCent, li+nLiItm+60, nColRigh)
+	oPrinter:SayAlign(li+nLiItm+5	, nColCent+1	, "Data: __/__/__"											, oFontA7, 180, 10, , 0, 1) 
+	oPrinter:SayAlign(li+nLiItm+45	, nColCent		, "Ass./Carimbo Dir. Regional/Super./Gerencia/Coord."	, oFontA7, 180, 10, , 2, 2)  */
+	
+	oPrinter:Box(li+nLiItm, nColRigh, li+nLiItm+60, nMaxCol-nMargEsq)
+	oPrinter:SayAlign(li+nLiItm+5	, nColRigh+1	, "Data: __/__/__"											, oFontA7, 180, 10, , 0, 1) 	
+	oPrinter:SayAlign(li+nLiItm+45	, nColRigh		, "Ass. e Cargo do Responsável pelo recebimento"				, oFontA7, 180, 10, , 2, 2) 	
+	
+	oPrinter:Print()
+
+	(cAliasTMP)->(dbCloseArea())
+	RestArea(aArea)
+
+Return (Nil)
+
+Static Function fGetDate()
+Local _dRet := dDataBase
+Local _aAreaSCQ := SCQ->(GetArea())  
+Local _aAreaSD3 := SD3->(GetArea())
+
+DBSelectArea("SCQ")
+SCQ->(DBSetOrder(1))
+If SCQ->(DBSeek(SCP->CP_FILIAL+SCP->CP_NUM+SCP->CP_ITEM))
+	DBSelectArea("SD3")
+	SD3->(DBSetOrder(4))
+	If SD3->(DBSeek(SCQ->CQ_FILIAL+SCQ->CQ_NUMREQ))
+		_dRet	:= SD3->D3_EMISSAO
+	EndIf
+EndIf
+
+RestArea(_aAreaSCQ)
+RestArea(_aAreaSD3)
+Return _dRet
+
+/*/{Protheus.doc} CabPagina
+	Função para impressão do cabeçalho da página
+
+@author Franklin de Brito de Oliveira
+@since 26/06/2015
+@version 1.0
+@param oPrinter, objeto, Objeto de impressão
+
+@return Nil
+
+/*/
+Static Function CabPagina(oPrinter)
+
+Private nCol1Dir	:= 498-nMargDir   
+Private nCol2Dir	:= 540-nMargDir
+
+oPrinter:Box(li+5, nMargDir, li+50, nMargDir+75)
+oPrinter:SayBitmap(li+6, nMargDir+1, "lgrl01.bmp", 70, 40 )
+
+oPrinter:Box(li+5, nMargDir+75, li+50, nCol1Dir-5)
+oPrinter:SayAlign(li+20, nMargDir+200, "Documento de Saída de Vacinas", oFontA12, nMaxCol-nMargEsq, 200, 2, 0)
+
+oPrinter:Box(li+5, nCol1Dir-5, li+50, nMaxCol-nMargEsq)
+oPrinter:SayAlign(li+10, nCol1Dir, "Numero SA.: "	, oFontA7, 200, 200, , 0)
+oPrinter:SayAlign(li+20, nCol1Dir, "Dt. Emissão: "	, oFontA7, 200, 200, , 0)
+oPrinter:SayAlign(li+30, nCol1Dir, "Emissor......: "	, oFontA7, 200, 200, , 0)
+oPrinter:SayAlign(li+40, nCol1Dir, "Folha..........: "	, oFontA7, 200, 200, , 0)
+
+oPrinter:SayAlign(li+10, nCol2Dir, (cAliasTMP)->DOC					, oFontA7, 200, 200, , 0)
+oPrinter:SayAlign(li+20, nCol2Dir, DToC( dDataEmi )					, oFontA7, 200, 200, , 0)
+oPrinter:SayAlign(li+30, nCol2Dir, UsrRetName( RetCodUsr() )		, oFontA7, 200, 200, , 0)
+oPrinter:SayAlign(li+40, nCol2Dir, AllTrim(STR(nPag))				, oFontA7, 200, 200, , 0)
+
+oPrinter:Line(li+50, nMargDir, li+50, nMaxCol-nMargEsq, , "-8")
+
+Return (Nil)
+
+/*/{Protheus.doc} CabItem
+	Função para impressão do cabeçalho dos itens
+
+@author Franklin de Brito de Oliveira
+@since 26/06/2015
+@version 1.0
+@param oPrinter, objeto, Objeto de impressão
+
+@return Nil
+
+/*/
+//-------------------------------------------------------------------------
+/*
+Modificações:
+	14/10/2015 - Franklin B Oliveira:
+	->Adicionado tratamento para impressão da Unidade Destino, quando o programa
+	de origem for transferência multipla.
+
+*/
+//--------------------------------------------------------------------------
+Static Function CabItem(oPrinter)
+
+Local cNomeUnd	:= FWFilialName(cEmpAnt, (cAliasTMP)->FILIAL, 2)
+Local _cNomDes	:= Posicione("CTT",1,xFilial("CTT")+(cAliasTMP)->CC,"CTT_DESC01")
+
+
+oPrinter:SayAlign(li+60, nMargDir	, "Unidade Cedente "			, oFontC8, 160, 200, , 0)
+oPrinter:SayAlign(li+70, nMargDir	, cNomeUnd						, oFontC8, 160, 200, , 0)
+
+oPrinter:SayAlign(li+60, nMargDir+300	, "Unidade Destino "		, oFontC8, 160, 200, , 0)
+oPrinter:SayAlign(li+70, nMargDir+300	, _cNomDes					, oFontC8, 160, 200, , 0)
+
+oPrinter:SayAlign(li+90, nMargDir	, "Armazém Cedente "			, oFontC8, 160, 200, , 0)
+oPrinter:SayAlign(li+100, nMargDir	,(cAliasTMP)->NNR_DESCRI		, oFontC8, 160, 200, , 0)
+
+oPrinter:SayAlign(li+120, nMargDir	, "Fil Ctr "					, oFontC8, 160, 200, , 0)
+oPrinter:SayAlign(li+130, nMargDir	,_cFilCN9						, oFontC8, 160, 200, , 0)
+
+oPrinter:SayAlign(li+120, nMargDir+50	, "Contrato "				, oFontC8, 160, 200, , 0)
+oPrinter:SayAlign(li+130, nMargDir+50	,_cNumCN9					, oFontC8, 160, 200, , 0)
+
+oPrinter:SayAlign(li+120, nMargDir+150	, "Rev "					, oFontC8, 160, 200, , 0)
+oPrinter:SayAlign(li+130, nMargDir+150	,_cRevCN9					, oFontC8, 160, 200, , 0)
+
+oPrinter:SayAlign(li+120, nMargDir+180	, "Cliente "				, oFontC8, 150, 20, , 0)
+oPrinter:SayAlign(li+130, nMargDir+180	,SubStr(_cRazCli,1,30)		, oFontC8, 150, 20, , 0)
+
+oPrinter:SayAlign(li+120, nMargDir+450	, "CNPJ "					, oFontC8, 160, 200, , 0)
+oPrinter:SayAlign(li+130, nMargDir+450	, Transform(_cCNPJ,X3PICTURE("A1_CGC")), oFontC8, 160, 200, , 0)
+	
+oPrinter:Line(li+140, nMargDir, li+140, nMaxCol-nMargEsq, , "-2")
+
+Return (Nil)
+
+/*/{Protheus.doc} function_method_class_name
+	Função para Seleção dos dados
+	
+@author Franklin de Brito de Oliveira
+@since 08/10/2015
+@version 1.00
+
+@return cAliasTMP, Alias com resultado da seleção dos dados
+
+/*/
+//-------------------------------------------------------------------------
+/*
+Modificações:
+	14/10/2015 - Franklin B Oliveira:
+	->Foram adicionadas as colunas D3_CUSTO1, (SD3.D3_QUANT * SD3.D3_CUSTO1) e 
+	CTT.CTT_DESC01, conforme documentado pelo usuário chave.
+
+*/
+//--------------------------------------------------------------------------
+Static Function SelectData()
+
+cQuery := " SELECT SCP.CP_FILIAL FILIAL,															" 	+ CRLF
+cQuery += "	SCP.CP_NUM DOC,																			" 	+ CRLF
+cQuery += "	SCP.CP_PRODUTO PROD,																	" 	+ CRLF
+//cQuery += "	SCP.CP_USUARIO USUARIO,																" 	+ CRLF
+cQuery += "	SCP.CP_QUANT QUANT,																		" 	+ CRLF
+cQuery += "	NNR.NNR_DESCRI,																			" 	+ CRLF
+cQuery += "	SB1.B1_DESC,																			" 	+ CRLF
+cQuery += "	SCP.CP_CC As CC,																		" 	+ CRLF
+cQuery += "	SCP.CP_XRAZCLI As CLIENT,																" 	+ CRLF
+cQuery += "	SCP.CP_XFILCN9 As FILCTR,																" 	+ CRLF
+cQuery += "	SCP.CP_XNUMCN9 As NUMCTR,																" 	+ CRLF
+cQuery += "	SCP.CP_XREVCN9 As REVCTR,																" 	+ CRLF
+cQuery += "	SCP.CP_XCLIENT As XCLIENT,																" 	+ CRLF
+cQuery += "	SCP.CP_XCLILJ  As XCLILJ,																" 	+ CRLF
+cQuery += "	SB1.B1_TIPO				  																" 	+ CRLF
+cQuery += " FROM "+ RetSqlName("SCP") +" SCP														" 	+ CRLF
+cQuery += " LEFT JOIN "+ RetSqlName("SB1") +" SB1 ON (SB1.B1_FILIAL = '"+ xFilial("SB1")	+"'		"	+ CRLF
+cQuery += " 	AND SB1.B1_COD = SCP.CP_PRODUTO														" 	+ CRLF
+cQuery += " 	AND SB1.D_E_L_E_T_ = ' ') 															" 	+ CRLF
+cQuery += " LEFT JOIN "+ RetSqlName("NNR") +" NNR ON (NNR.NNR_FILIAL = '"+ xFilial("NNR")	+"'		"	+ CRLF
+cQuery += " 	AND NNR.NNR_CODIGO = SCP.CP_LOCAL 													"	+ CRLF
+cQuery += " 	AND NNR.D_E_L_E_T_ = ' ') 															" 	+ CRLF
+cQuery += " WHERE SCP.CP_FILIAL = '"+ xFilial() +"'													" 	+ CRLF
+cQuery += "	AND SCP.CP_NUM = '"+ cCodDoc +"'														" 	+ CRLF
+cQuery += "	AND SB1.B1_TIPO = 'IM'																	" 	+ CRLF
+cQuery += "	AND SCP.D_E_L_E_T_ = ' '																"	+ CRLF
+	
+cQuery := ChangeQuery(cQuery)                  
+	
+DbUseArea(.T., "TOPCONN", TcGenQry(, , cQuery), cAliasTMP, .T., .T.)
+
+While !(cAliasTMP)->(Eof())
+	If	(cAliasTMP)->B1_TIPO == "IM"
+		If _cB1Tp != "IM"
+			_cB1Tp = (cAliasTMP)->B1_TIPO
+		EndIf
+		If !Empty((cAliasTMP)->NUMCTR)
+			_cFilCN9	:= (cAliasTMP)->FILCTR
+			_cNumCN9	:= (cAliasTMP)->NUMCTR
+			_cRevCN9	:= (cAliasTMP)->REVCTR
+			_cRazCli	:= (cAliasTMP)->CLIENT
+			_cCNPJ		:= POSICIONE("SA1",1,XFILIAL("SA1")+ (cAliasTMP)->XCLIENT+ (cAliasTMP)->XCLILJ, "A1_CGC")
+			Exit
+		EndIf
+		(cAliasTMP)->(DBSkip())
+	EndIf
+EndDo
+(cAliasTMP)->(DBGoTop())
+
+Return (cAliasTMP)
+
+/*/{Protheus.doc} CabItem2
+	Função para imprimir os cabeçalho de itens do relatório, na seguinte ordem:
+	->Caso seja impresso pela rotina de transferência multipla:
+	 *Item	*Produto	*Descrição	*Qtde.	*Valor Un.	*Valor Tot.
+	 
+	 ->Caso seja impresso pela rotina de baixa de SA:
+	 *Item	*Produto	*Descrição	*Qtde.
+	 
+@author Franklin de Brito de Oliveira
+@since 14/10/2015
+@version 1.00
+@param oPrinter, objeto de impressão instanciado
+
+@return Nil
+
+/*/
+Static Function CabItem2(oPrinter)
+
+oPrinter:SayAlign(li+120, nMargDir+5	, "Item"		, oFontC8, 200				, li, , 0)
+oPrinter:SayAlign(li+120, nColPro		, "Produto"		, oFontC8, 200				, li, , 0)
+oPrinter:SayAlign(li+120, nColDes		, "Descrição"	, oFontC8, nColQtd-nColDes	, li, , 0)
+oPrinter:SayAlign(li+120, nColQtd		, "Qtde."		, oFontC8, 200				, li, , 0)
+oPrinter:Line(li+135, nMargDir, li+135, nMaxCol-nMargEsq, , "-2")
+			
+Return (Nil)
+
+/*/{Protheus.doc} ImpItem
+	Função para imprimir os itens do relatório, na seguinte ordem:
+	 ->Caso seja impresso pela rotina de baixa de SA:
+	 *Item	*Produto	*Descrição	*Qtde.
+	 	
+@author Franklin de Brito de Oliveira
+@since 14/10/2015
+@version 1.00
+@param oPrinter, objeto de impressão instanciado
+
+@author Walmir Junior
+@since 22/03/2016
+@version 1.10
+@param oPrinter, objeto de impressão instanciado
+
+
+@return Nil
+
+/*/
+Static Function ImpItem(oPrinter)
+
+oPrinter:Box(li+nLiItm, nMargDir, li+nLiItm+nWidtLin	, nColPro)
+oPrinter:SayAlign(li+nLiItm, nMargDir+5	, StrZero(nNumItem, 3)													, oFontC8, 200					, nWidtLin, , 0, 2)
+
+oPrinter:Box(li+nLiItm, nColPro	, li+nLiItm+nWidtLin	, nColDes)
+oPrinter:SayAlign(li+nLiItm, nColPro		, (cAliasTMP)->PROD													, oFontC8, 200					, nWidtLin, , 0, 2)
+
+oPrinter:Box(li+nLiItm, nColDes	, li+nLiItm+nWidtLin	, nColQtd)
+oPrinter:SayAlign(li+nLiItm, nColDes		, (cAliasTMP)->B1_DESC												, oFontC8, nColQtd-nColDes-10	, nWidtLin, , 0, 2)
+
+oPrinter:Box(li+nLiItm, nColQtd	, li+nLiItm+nWidtLin	, nMaxCol-nMargEsq)
+oPrinter:SayAlign(li+nLiItm, nColQtd		, AllTrim(Transform( (cAliasTMP)->QUANT, PesqPict("SCP","CP_QUANT" ) ))	, oFontC8, 200					, nWidtLin, , 0, 2)
+
+Return (Nil)

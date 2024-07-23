@@ -1,0 +1,292 @@
+#include 'protheus.ch'
+#include 'parmtype.ch'
+
+/*/{Protheus.doc} SF01A01F
+	Função para importação de bens duráveis
+	
+@author franklin.oliveira
+@since 20/09/2016
+
+@type function
+/*/
+User Function SF01A01F()
+
+Local _aEstrut	:= {}
+Local _lRet		:= .F.
+
+Private _cArqTxt	:= Space(50)
+Private _cMemo  	:= ""
+	
+Private lMsErroAuto	:= .F.
+
+	_cArqTxt := U_SFXX01J('Importação Bens', 'Arquivos csv (*.csv) |*.csv|')
+			
+	//Abre o Arquivo
+	nHdl    := fOpen(_cArqTxt, 68)
+
+	If nHdl == -1
+	
+		MsgAlert("O arquivo de nome " + _cArqTxt + " nao pode ser aberto! Verifique os parametros.", "Atencao!")
+		Return
+		
+	EndIf
+
+	Processa({ |lEnd| _aEstrut	:= READCSV(_cArqTxt)}, "Lendo arquivo de importação..."	)
+	Processa({ |lEnd| _lRet		:= IMPZEA(_aEstrut)	}, "Gerando registros..."			)
+
+	If _lRet
+	
+		MemoWrite( "C:\plog\csv\SF0101AF_LOG.txt", _cMemo )
+		MsgAlert("Fim da Importação!")
+		
+	EndIf
+	
+Return (_lRet)
+
+
+/*/{Protheus.doc} READCSV
+Função para realizar leitura do arquivo .CSV
+(Baseado na função SA1CSV, Fonte SF73M06J)
+
+@author franklin.oliveira
+@since 06/08/2015
+@version 1.0
+@param cArquivo, character, Caminho do arquivo que será lido
+
+/*/
+Static Function READCSV(cArquivo)
+	
+Local cBuffer     := ""
+Local cAux        := ""
+Local cString     := ""
+Local cSeparador  := ""  //Verifica o tipo de separador do arquivo texto
+Local aTmp        := {}
+Local aEstrutura  := {}
+Local nCont       := 0
+Local cEof        := Chr(10)+ Chr(13)
+Local nRec        := 0
+Local lAspa       := .F.
+
+	//Leitura da quantidade de Registros do Arquivo
+	FT_FUSE(cArquivo)
+	FT_FGOTOP()
+	
+	While !FT_FEOF()
+	
+		nRec++
+		FT_FSKIP()
+		
+	End
+
+	ProcRegua(nRec)
+
+	//Leitura do arquivo e verificacao do ultimo caracter da linha lida para  consistencia da pesquisa
+	FT_FGOTOP()
+
+	While !FT_FEOF()
+	
+		cBuffer:= AllTrim(FT_FREADLN())
+	
+		If At(";",cBuffer) > 0
+		
+			cSeparador:= ";"
+			 
+		Else //linha de arquivo incorreta.
+		
+			IncProc()
+			FT_FSKIP()
+			Loop
+			
+		Endif
+	
+		If (SubStr(cBuffer,Len(cBuffer),1)<>cSeparador)
+		
+			cBuffer += cSeparador + cEof + cSeparador
+			
+		Else
+		
+			cBuffer += cEof + cSeparador
+			
+		Endif
+	
+		//Incrementa a regua
+		IncProc()
+	
+		//Carrega o array aEstrutura com o resultado da Importacao
+		cLinha:= fTAcento(cBuffer)
+		lAspa := .F.
+
+		For nCont := 1 To Len(cBuffer)
+		
+			cAux   := SubStr(cLinha,1,1)
+			cLinha := SubStr(cLinha,2)
+			
+			If (cAux == cEof)
+			
+				Exit
+				
+			Endif
+		
+			//Sao verificadas as marcacoes feitas pelo Excel para concatenacao de strings
+			Do Case
+			
+				Case cAux == '"'
+					lAspa := !lAspa
+					
+				Case cAux == cSeparador .And. !lAspa
+					aAdd(aTmp,cString)
+					cString := ""
+					
+				OtherWise
+					cString += cAux
+					
+			EndCase
+		
+		Next nCont
+	
+		For nCont := Len(aTmp)+1 To 11
+		
+			aAdd(aTmp,"")
+			
+		Next nCont
+	
+		//Validacao para nao salvar registros sem entidades
+		If !Empty(aTmp[1]) .OR. !Empty(aTmp[2])
+		
+			aAdd(aEstrutura,aTmp)
+			aTmp := {}
+			
+		Endif
+		
+		FT_FSKIP()
+		
+	End
+
+	FT_FUSE()
+
+Return( aEstrutura )
+
+/*/{Protheus.doc} IMPZEA
+	Função que importa os dados para a tabela ZEA
+	
+@author franklin.oliveira
+@since 20/09/2016
+@param _pEstrut, parâmetro, array com os dados a serem importados 
+
+@type function
+/*/
+Static Function IMPZEA(_pEstrut)
+
+Local oModel, oAux, oStruct
+Local lRet		:= .T.
+Local aCabBem	:= {}
+Local nI    	:= 0
+Local nPos  	:= 0
+Local lRet  	:= .T.
+Local aAux  	:= {}
+
+	dbSelectArea('ZEA')
+	dbSetOrder(1)
+
+	//Aqui ocorre o instanciamento do Modelo de dados (Model)
+	oModel := FWLoadModel('SF0102S')
+
+	//Instanciamos apenas referentes aos Dados
+	oAux :=oModel:GetModel('ZEA' + 'MASTER')
+
+	//Obtemos a estrutura de dados
+	oStruct := oAux:GetStruct()
+	aAux    := oStruct:GetFields()
+	
+	ProcRegua( Len(_pEstrut) )
+
+	For i := 2 To Len(_pEstrut)
+		aCabBem := {}
+	    nQtdBem	:= Val(_pEstrut[i][2])		    
+		aAdd(aCabBem, {'ZEA_DESC'  	, AllTrim(_pEstrut[i][01])		})
+		aAdd(aCabBem, {'ZEA_DTAQUI'	, Date()     					})
+		aAdd(aCabBem, {'ZEA_PRCAQS'	, Val(_pEstrut[i][03])			})
+		aAdd(aCabBem, {'ZEA_CODRES'	, AllTrim(_pEstrut[i][04])		})
+		aAdd(aCabBem, {'ZEA_FILORI'	, AllTrim(_pEstrut[i][05])		})
+		aAdd(aCabBem, {'ZEA_DFILOR'	, FWFilialName(cEmpAnt, AllTrim(_pEstrut[i][05]))	})
+		aAdd(aCabBem, {'ZEA_FILATU'	, AllTrim(_pEstrut[i][05])		})
+		aAdd(aCabBem, {'ZEA_DFILAT'	, FWFilialName(cEmpAnt, AllTrim(_pEstrut[i][05]))	})
+		aAdd(aCabBem, {'ZEA_CCORI' 	, AllTrim(_pEstrut[i][06])		})
+		aAdd(aCabBem, {'ZEA_CODPRO'	, PadL(AllTrim(_pEstrut[i][07]), 15, '0')				})
+		aAdd(aCabBem, {'ZEA_DOC' 	, AllTrim(_pEstrut[i][08])		})
+		aAdd(aCabBem, {'ZEA_SERIE' 	, AllTrim(_pEstrut[i][09])		})
+		aAdd(aCabBem, {'ZEA_ITEM' 	, AllTrim(_pEstrut[i][10])		})
+		aAdd(aCabBem, {'ZEA_FORNEC' , AllTrim(_pEstrut[i][11])		})
+		aAdd(aCabBem, {'ZEA_LOJA' 	, AllTrim(_pEstrut[i][12])		})
+		aAdd(aCabBem, {'ZEA_LOCAL' 	, AllTrim(_pEstrut[i][13])		})
+		aAdd(aCabBem, {'ZEA_SITBEM', 'A'     						})
+		
+		For nZ := 1 to nQtdBem
+			//U_IMPM01S('ZEA', aCabBem, 'SF0102S', 3)
+			
+			//Temos que definir qual a operação que sera executada: 3 - Inclusão / 4 - Alteração / 5 - Exclusao
+			oModel:SetOperation(3)
+			
+			//Antes de Atribuirmos os Valores dos Campos temos que Ativar o Modelo
+			oModel:Activate()
+			
+			For nI := 1 To Len(aCabBem)
+				//Verificar se os campos passados existem na estrutura do Modelo
+				//If (nPos := aScan(aAux,{|x| AllTrim(x[3] ) == Alltrim(aCabBem[nI][1])})) > 0
+				If ( nPos := aScan(aAux,{|x| AllTrim( x[3] )== AllTrim(aCabBem[nI][1]) } ) ) > 0
+		
+					// É feita a atribuição do dado ao campo do Model
+					If !(lAux := oModel:SetValue('ZEA' + 'MASTER', aCabBem[nI][1], aCabBem[nI][2]))
+						//Caso a atribuição não possa ser feita, por algum motivo (Validação, por exemplo)
+						//O método SetValue retorna .F.
+						lRet := .F.
+						Exit
+					EndIf
+				EndIf
+			Next nI
+			
+			If lRet
+				//Faz-se a validação dos dados, note que diferentemente das tradicionais "rotinas automaticas"
+				//Nesse momento os dados não são gravados, são somento validados.
+				If (lRet := oModel:VldData())
+					//Se os dados foram validados faz-se a gravação efetiva dos dados (commit)
+					oModel:CommitData()
+				EndIf
+			EndIf
+			
+			If !lRet
+			
+				//Se os dados não foram validados obtemos a descrição do erro para gerar LOG ou mensagem de aviso
+				aErro := oModel:GetErrorMessage()
+				//A estrutura do vetor com o erro é:
+				// [1] Identificador (ID) do formulario de origem
+				// [2] Identificador (ID) do campo de origem
+				// [3] Identificador (ID) do formulario de erro
+				// [4] Identificador (ID) do campo de erro
+				// [5] Identificador (ID) do erro
+				// [6] Mensagem do erro
+				// [7] Mensagem da solução
+				// [8] Valor Atribuido
+				// [9] Valor Anterior
+		
+				AutoGrLog("Id do Formulário de Origem:" + ' [' + AllToChar( aErro[1] ) + ']')
+				AutoGrLog("Id do Campo de Origem:     " + ' [' + AllToChar( aErro[2] ) + ']')
+				AutoGrLog("Id do Formulário de Erro:  " + ' [' + AllToChar( aErro[3] ) + ']')
+				AutoGrLog("Id do Campo de Erro:       " + ' [' + AllToChar( aErro[4] ) + ']')
+				AutoGrLog("Id do Erro:                " + ' [' + AllToChar( aErro[5] ) + ']')
+				AutoGrLog("Mensagem do Erro:          " + ' [' + AllToChar( aErro[6] ) + ']')
+				AutoGrLog("Mensagem da Solução:       " + ' [' + AllToChar( aErro[7] ) + ']')
+				AutoGrLog("Valor Atribuido:           " + ' [' + AllToChar( aErro[8] ) + ']')
+				AutoGrLog("Valor Anterior:            " + ' [' + AllToChar( aErro[9] ) + ']')
+		
+				MostraErro()
+			EndIf
+		
+			//Desativamos o Model
+			oModel:DeActivate()
+		Next nZ
+		
+		IncProc()	
+	Next
+
+Return lRet

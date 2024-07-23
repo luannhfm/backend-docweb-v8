@@ -1,0 +1,328 @@
+#include 'protheus.ch'
+#include 'parmtype.ch'
+#Include 'Topconn.ch'
+
+user function SF34A03S()
+
+    Local lSaveLog := .F.
+    Local lEnd  := .F.
+
+    oGrid := FWGridProcess():New( ;
+        "SF34A03S",;                            	//Nome da rotina de menu de processamento
+        "Contabiliza Folha de Pagamento",;          //Titulo da rotina de menu
+        "Rotina para Contabilizar, Folha de Pagamento, Provisao de Ferias e Provisao de 13",;	//Descrição completa da rotina
+        { |oGrid, lEnd| SF34P03S(oGrid, @lEnd)},; 	//Bloco de código de processamento. O bloco recebe a variavel que informa que a rotina foi cancelada
+        "SF34A03S",;								//Nome do grupo de perguntas do dicionário de dados
+        Nil,;										//Nome da função que será executada caso o processamento permita processamento em grid
+        lSaveLog;									//Indica se permite a gravação de Log sempre que chamar o método SaveLog()
+    )
+    
+	oGrid:SetMeters(1)
+	oGrid:Activate()
+	
+Return Nil
+
+/*/{Protheus.doc} nomeStaticFunction
+	(long_description)
+	@type  Static Function
+	@author user
+	@since 15/03/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+/*/
+
+Static Function SF34P03S(oGrid, lEnd)
+	Local _cQuery  := " "
+	Local _cEmpr   := SubStr(FWCodEmp(), 1, 2)
+	Local aDados   := {}
+	Local aItens   := {}
+	Local aCab     := {}
+	Local nX
+	Local _cFilial := " "
+	Local _Lote    := AllTrim(MV_PAR01)
+	Local nLinha 	:= '000'
+	Local _cTipo   := AllTrim(STR(MV_PAR02))
+	Local _cMesAno := AllTrim(MV_PAR03)
+	Local nTotal   := 5
+
+	PRIVATE lMsErroAuto
+
+	/*If(_cEmpr = '1')
+		_cFilial := '01MT    '
+	elseif(_cEmpr = '2')
+		_cFilial := '02MT    '
+	elseif(_cEmpr = '3')
+		_cFilial := '03MT    '
+	elseif(_cEmpr = '4')
+		_cFilial := '04MT    '
+	elseif(_cEmpr = '5')
+		_cFilial := '05MT    '
+	ENDIF*/
+
+		//--------------------------------
+	//Monta Historico
+	//--------------------------------
+	if(_cTipo == '1')
+		_cHist := 'FOLHA DE PAGAMENTO MES '+ UPPER(MesExtenso(SUBSTR(_cMesAno,5,2))) + '/' + SUBSTR(_cMesAno,1,4)
+
+	elseif (_cTipo == '3')
+		_cHist := 'PROVISAO 13 MES '+ UPPER(MesExtenso(SUBSTR(_cMesAno,5,2))) + '/' + SUBSTR(_cMesAno,1,4)
+	
+
+	elseif(_cTipo == '2')
+		_cHist := 'PROVISAO FERIAS MES '+ UPPER(MesExtenso(SUBSTR(_cMesAno,5,2))) + '/' + SUBSTR(_cMesAno,1,4)
+
+
+	EndIf
+
+	_cFilial := _cEmpr + "MT"
+
+	oGrid:SetMaxMeter(nTotal, 1, "Identificando registros que serão integrados")
+	oGrid:SetIncMeter(1, "Calculando Debito Integral " + StrZero( 1, 1) + " de " + StrZero( nTotal, 1) +  ".")
+
+//-----------------------------
+//Debito não Rateado
+//-----------------------------
+	_cQuery := " "
+	_cQuery += " SELECT ZD7_CTADEB,ZD7_TIPFOL, SUM(ZD7_VALRAT) VALTOT "
+	_cQuery += " FROM " + RetSqlName("ZD7") + " ZD7 "
+	_cQuery += " WHERE ZD7.D_E_L_E_T_ <> '*' "
+	_cQuery += " AND SUBSTR(ZD7_FILRAT,1,2) = '" + _cEmpr + "' "
+	_cQuery += " AND SUBSTR(ZD7_CTADEB,1,1) IN ('1','2') "
+	_cQuery += " AND ZD7_MESANO = '" + ALLTRIM(MV_PAR03) +"' "
+	_cQuery += " AND ZD7_TIPFOL = '" + _cTipo +"' "
+	_cQuery += " GROUP BY ZD7_CTADEB, ZD7_TIPFOL "
+	_cQuery += " ORDER BY ZD7_CTADEB, ZD7_TIPFOL "
+
+	TCQUERY _cQuery NEW ALIAS "TMPA"
+
+	DbSelectArea("TMPA")
+	TMPA->( DbGoTop() )
+
+	If .Not. TMPA->( Eof() )
+
+		While .Not. TMPA->( EOF() )
+
+			aAdd(aDados,{ _cFilial,;  //[1] Filial
+			"1",;					  //[2] 1 - Debito / 2 - Credito
+			TMPA->ZD7_CTADEB,;        //[3] Conta Debito
+			" ",;					  //[4] Conta Credito
+			TMPA->VALTOT,;            //[5] Valor
+			" ",;					  //[6] Centro de Custo Credito
+			" ",;					  //[7] Item Contabil Credito
+			" ",;					  //[8] Centro de Custo Debito
+			" ",;                     //[9] Item Contabil Debito
+			"MSEXECAUT",;			  //[10] Origem
+			TMPA->ZD7_TIPFOL})        //[11] Tipo Folha
+
+			TMPA->( DbSkip() )
+		ENDDO
+
+		TMPA->(DbCloseArea())
+	else
+		TMPA->(DbCloseArea())		
+	ENDIF
+
+//------------------------------
+//Debito Rateado
+//------------------------------
+	oGrid:SetIncMeter(1, "Calculando Debito Rateado " + StrZero( 2, 1) + " de " + StrZero( nTotal, 1) +  ".")
+
+	_cQuery := " "
+	_cQuery += " SELECT ZD7.ZD7_TIPFOL, ZD7_CTADEB, ZD7.ZD7_CC,ZD7.ZD7_ITEM, SUM(ZD7_VALRAT) VALTOT "
+	_cQuery += " FROM " + RetSqlName("ZD7") + " ZD7 "
+	_cQuery += " WHERE ZD7.D_E_L_E_T_ <> '*' "
+	_cQuery += " AND SUBSTR(ZD7_FILRAT,1,2) = '" + _cEmpr + "' "
+	_cQuery += " AND SUBSTR(ZD7_CTADEB,1,1) NOT IN ('1','2', ' ') "
+	_cQuery += " AND ZD7_MESANO = '" + ALLTRIM(MV_PAR03) +"' "
+	_cQuery += " AND ZD7_TIPFOL = '" + _cTipo +"' "
+	_cQuery += " GROUP BY ZD7.ZD7_TIPFOL, ZD7_CTADEB, ZD7.ZD7_CC,ZD7.ZD7_ITEM "
+	_cQuery += " ORDER BY ZD7.ZD7_TIPFOL, ZD7_CTADEB, ZD7.ZD7_CC,ZD7.ZD7_ITEM "
+
+	TCQUERY _cQuery NEW ALIAS "TMPA"
+
+
+	DbSelectArea("TMPA")
+	TMPA->( DbGoTop() )
+
+	If .Not. TMPA->( Eof() )
+
+		While .Not. TMPA->( EOF() )
+
+			aAdd(aDados,{ _cFilial,;  //[1] Filial
+			"1",;					  //[2] 1 - Debito / 2 - Credito
+			TMPA->ZD7_CTADEB,;        //[3] Conta Debito
+			" ",;					  //[4] Conta Credito
+			TMPA->VALTOT,;            //[5] Valor
+			" ",;					  //[6] Centro de Custo Credito
+			" ",;					  //[7] Item Contabil Credito
+			TMPA->ZD7_CC,;			  //[8] Centro de Custo Debito
+			TMPA->ZD7_ITEM,;          //[9] Item Contabil Debito
+			"MSEXECAUT",;			  //[10] Origem
+			TMPA->ZD7_TIPFOL})        //[11] Tipo Folha
+
+			TMPA->( DbSkip() )
+		ENDDO
+
+		TMPA->(DbCloseArea())
+	else
+		TMPA->(DbCloseArea())	
+	ENDIF
+
+
+
+//-----------------------------
+//Credito não Rateado
+//-----------------------------    
+oGrid:SetIncMeter(1, "Calculando Credito Integral " + StrZero( 3, 1) + " de " + StrZero( nTotal, 1) +  ".")   
+	_cQuery := " "
+	_cQuery += " SELECT ZD7_CTACRE, ZD7_TIPFOL, SUM(ZD7_VALRAT) VALTOT "
+	_cQuery += " FROM " + RetSqlName("ZD7") + " ZD7 "
+	_cQuery += " WHERE ZD7.D_E_L_E_T_ <> '*' "
+	_cQuery += " AND SUBSTR(ZD7_FILRAT,1,2) = '" + _cEmpr + "' "
+	_cQuery += " AND SUBSTR(ZD7_CTACRE,1,1) IN ('1','2') "
+	_cQuery += " AND ZD7_MESANO = '" + ALLTRIM(MV_PAR03) +"' "
+	_cQuery += " AND ZD7_TIPFOL = '" + _cTipo +"' "
+	_cQuery += " GROUP BY ZD7_CTACRE, ZD7_TIPFOL"
+	_cQuery += " ORDER BY ZD7_CTACRE, ZD7_TIPFOL "
+
+	TCQUERY _cQuery NEW ALIAS "TMPA"
+
+
+	DbSelectArea("TMPA")
+	TMPA->( DbGoTop() )
+
+	If .Not. TMPA->( Eof() )
+
+		While .Not. TMPA->( EOF() )
+
+			aAdd(aDados,{ _cFilial,;  //[1] Filial
+			"2",;					  //[2] 1 - Debito / 2 - Credito
+			" ",;                     //[3] Conta Debito
+			TMPA->ZD7_CTACRE,;		  //[4] Conta Credito
+			TMPA->VALTOT,;            //[5] Valor
+			" ",;					  //[6] Centro de Custo Credito
+			" ",;					  //[7] Item Contabil Credito
+			" ",;					  //[8] Centro de Custo Debito
+			" ",;                     //[9] Item Contabil Debito
+			"MSEXECAUT",;			  //[10] Origem
+			TMPA->ZD7_TIPFOL})        //[11] Tipo Folha
+
+			TMPA->( DbSkip() )
+		ENDDO
+
+		TMPA->(DbCloseArea())
+	else
+		TMPA->(DbCloseArea())	
+	ENDIF
+
+//------------------------------
+//Credito Rateado
+//------------------------------
+oGrid:SetIncMeter(1, "Calculando Credito Rateado " + StrZero( 4, 1) + " de " + StrZero( nTotal, 1) +  ".")
+	_cQuery := " "
+	_cQuery += " SELECT ZD7.ZD7_TIPFOL, ZD7_CTACRE, ZD7.ZD7_CC,ZD7.ZD7_ITEM, SUM(ZD7_VALRAT) VALTOT "
+	_cQuery += " FROM " + RetSqlName("ZD7") + " ZD7 "
+	_cQuery += " WHERE ZD7.D_E_L_E_T_ <> '*' "
+	_cQuery += " AND SUBSTR(ZD7_FILRAT,1,2) = '" + _cEmpr + "' "
+	_cQuery += " AND SUBSTR(ZD7_CTACRE,1,1) NOT IN ('1','2', ' ') "
+	_cQuery += " AND ZD7_MESANO = '" + ALLTRIM(MV_PAR03) +"' "
+	_cQuery += " AND ZD7_TIPFOL = '" + _cTipo +"' "
+	_cQuery += " GROUP BY ZD7.ZD7_TIPFOL, ZD7_CTACRE, ZD7.ZD7_CC,ZD7.ZD7_ITEM "
+	_cQuery += " ORDER BY ZD7.ZD7_TIPFOL, ZD7_CTACRE, ZD7.ZD7_CC,ZD7.ZD7_ITEM "
+
+	TCQUERY _cQuery NEW ALIAS "TMPA"
+
+
+	DbSelectArea("TMPA")
+	TMPA->( DbGoTop() )
+ 
+	If .Not. TMPA->( Eof() )
+
+		While .Not. TMPA->( EOF() )
+
+			aAdd(aDados,{ _cFilial,;  //[1] Filial
+			"2",;					  //[2] 1 - Debito / 2 - Credito
+			" ",;                     //[3] Conta Debito
+			TMPA->ZD7_CTACRE,;		  //[4] Conta Credito
+			TMPA->VALTOT,;            //[5] Valor
+			TMPA->ZD7_CC,;			  //[6] Centro de Custo Credito
+			TMPA->ZD7_ITEM,;		  //[7] Item Contabil Credito
+			" ",;					  //[8] Centro de Custo Debito
+			" ",;                     //[9] Item Contabil Debito
+			"MSEXECAUT",;			  //[10] Origem
+			TMPA->ZD7_TIPFOL})        //[11] Tipo Folha
+
+			TMPA->( DbSkip() )
+		ENDDO
+
+		TMPA->(DbCloseArea())
+
+	else
+		TMPA->(DbCloseArea())
+	ENDIF
+
+For nX := 1 to LEN(aDados)
+
+
+			nLinha := Soma1(nLinha)
+		aAdd(aItens,{;
+			{'CT2_FILIAL'  , _cFilial   			        , NIL},;
+			{'CT2_LINHA'   , nLinha              			, NIL},;
+			{'CT2_MOEDLC'  ,'01'                 			, NIL},;
+			{'CT2_DC'      , FwCutOff(aDados[nX][2],.T.)    , NIL},;
+			{'CT2_DEBITO'  , FwCutOff(aDados[nX][3],.T.)	, NIL},;
+			{'CT2_CREDIT'  , FwCutOff(aDados[nX][4],.T.)    , NIL},;
+			{'CT2_CCC'     , FwCutOff(aDados[nX][6],.T.)	, NIL},;
+			{'CT2_ITEMC'   , FwCutOff(aDados[nX][7],.T.)	, NIL},;
+			{'CT2_CCD'     , FwCutOff(aDados[nX][8],.T.)	, NIL},;
+			{'CT2_ITEMD'   , FwCutOff(aDados[nX][9],.T.)	, NIL},;
+			{'CT2_VALOR'   , aDados[nX][5]             	    , NIL},;
+			{'CT2_ORIGEM'  ,'MSEXECAUT'          			, NIL},;
+			{'CT2_HP'      ,''                   			, NIL},;
+			{'CT2_HIST'    , _cHist             			, NIL} } )
+
+ConOut("["+ aDados[nX][1] + "]" + "["+ aDados[nX][2] + "]" + "["+ aDados[nX][3] + "]" + "["+ aDados[nX][4] + "]" + ;
+       "["+ STR(aDados[nX][5]) + "]" + "["+ aDados[nX][6] + "]" + "["+ aDados[nX][7] + "]" + "["+ aDados[nX][8] + "]" + ;
+	   "["+ aDados[nX][9] + "]" + "["+ aDados[nX][10] + "]" )
+
+NEXT nX
+oGrid:SetIncMeter(1, "Contabilizando " + StrZero( 5, 1) + " de " + StrZero( nTotal, 1) +  ".")
+    aCab := {{'DDATALANC'        ,dDataBase               ,NIL},;
+			{'CLOTE'        	 ,_Lote                   ,NIL},;
+			{'CSUBLOTE'    		 ,'001'                   ,NIL},;
+			{'CDOC'         	 , STRZERO( seconds() ,6) ,NIL},;
+			{'CPADRAO'      	 ,''                      ,NIL},;
+			{'NTOTINF'      	 ,0                       ,NIL},;
+			{'NTOTINFLOT'   	 ,0                       ,NIL} }
+
+	//Begin Transaction
+	MSExecAuto( {|X,Y,Z| CTBA102(X,Y,Z)} ,aCab ,aItens, 3)
+	//MostraErro("C:\Erro","MEUERRO.LOG")
+	MostraErro()
+
+	If lMsErroAuto <> Nil
+		If !lMsErroAuto
+			_lOk := .T.
+			MsgInfo('InclusÃ£o com sucesso!')
+			If !IsBlind()
+				MsgInfo('InclusÃ£o com sucesso!')
+			EndIf
+			//DisarmTransaction()
+		Else
+			_lOk := .F.
+			//MostraErro()
+			MsgAlert('Erro na inclusao!')
+			If !IsBlind()
+				MsgAlert('Erro na inclusao!')
+			Endif
+		EndIf
+	EndIf
+	
+
+
+Return

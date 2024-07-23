@@ -1,0 +1,1225 @@
+#INCLUDE "FINA150.CH"
+#INCLUDE "PROTHEUS.ch"
+
+Static lFWCodFil := FindFunction("FWCodFil")
+
+/*/{Protheus.doc} SF06A11X
+Funcao para realizar a geracao do arquivo CNAB a tercerizada - SPC (CNAB 180/540)
+Utilizada a chamada no PE - FA740BRW
+
+@author 	Luiz Junior - J2A
+@since 	31/10/2016
+@version 	1.0
+/*/
+
+User Function SF06A11X()
+
+	Local   lOk	      := .F.
+	Local   aSays     := {}
+	Local   aButtons  := {}	
+	Local   lPanelFin := If (FindFunction("IsPanelFin"),IsPanelFin(),.F.)
+	Local   lPergunte := .F.	
+	Local   nPosAuto  := 0
+	Local   cCart     := ""
+	Private cCadastro := OemToAnsi(STR0005)  // "Comunica‡„o Banc ria - Envio Cobrança"	
+	
+	Public lGerTer  := .T.
+	Public nLinLote := 1
+	Public nLinTote := 1	
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ A fun‡„o SomaAbat reabre o SE1 com outro nome pela ChkFile, pois ³
+	//³ o filtro do SE1, desconsidera os abatimentos							|
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	SomaAbat("","","","R")
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Variaveis utilizadas para parametros  ³
+	//³ mv_par01		 // Do Bordero 		  ³
+	//³ mv_par02		 // Ate o Bordero 	  ³
+	//³ mv_par03		 // Arq.Config 		  ³
+	//³ mv_par04		 // Arq. Saida    	  ³
+	//³ mv_par05		 // Banco     		  ³
+	//³ mv_par06		 // Agenciao     	  ³
+	//³ mv_par07		 // Conta   		  ³
+	//³ mv_par08		 // Sub-Conta  		  ³
+	//³ mv_par09		 // Cnab 1 / Cnab 2   ³
+	//³ mv_par10		 // Considera Filiais ³
+	//³ mv_par11		 // De Filial   	  ³
+	//³ mv_par12		 // Ate Filial        ³
+	//³ mv_par13		 // Quebra por ?	  ³
+	//³ mv_par14-		 // Seleciona Filial? ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	
+	//u_SFAJUSX1()
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Verifica as perguntas selecionadas                           ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	
+	If lPanelFin
+		lPergunte := PergInPanel("AFI150",.T.)
+	Else
+	   lPergunte := pergunte("AFI150",.T.)
+	Endif
+	
+	If lPergunte
+		dbSelectArea("SE1")
+		dbSetOrder(1)
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Inicializa o log de processamento                            ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		ProcLogIni( aButtons )
+		
+		If nPosAuto <> Nil
+			lOk	:= .T.
+		Else
+			aADD(aSays,STR0015) // "Esta rotina permite gerar o arquivo de envio do CNAB de cobrança, com base nas ocorrências"
+			aADD(aSays,STR0016) // "cadastradas e com os borderôs de cobrança gerados."
+			
+			If lPanelFin  //Chamado pelo Painel Financeiro			
+				aButtonTxt := {}			
+				If Len(aButtons) > 0
+					AADD(aButtonTxt,{STR0021,STR0021,aButtons[1][3]}) // Visualizar			
+				Endif
+				AADD(aButtonTxt,{STR0003,STR0003, {||Pergunte("AFI150",.T. )}}) // Parametros						
+				FaMyFormBatch(aSays,aButtonTxt,{||lOk:=.T.},{||lOk:=.F.})
+	      Else		
+				aADD(aButtons, { 5,.T.,{|| Pergunte("AFI150",.T. ) } } )
+				aADD(aButtons, { 1,.T.,{|| lOk := .T.,FechaBatch()}} )
+				aADD(aButtons, { 2,.T.,{|| FechaBatch() }} )
+		
+				FormBatch( cCadastro, aSays, aButtons ,,,540)
+			Endif
+				
+		Endif	
+	
+		If lOk
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Atualiza o log de processamento   ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			ProcLogAtu("INICIO")
+			
+			xFa150Gera("SE1")
+			lGerTer := .F.
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Atualiza o log de processamento   ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			ProcLogAtu("FIM")
+		EndIf
+	
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Recupera a Integridade dos dados                             ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		dbSelectArea("SE1")
+		dbSetOrder(1)
+	EndIf
+
+Return 	
+
+/*/{Protheus.doc} Xfa150Gera
+(long_description)
+@author j2a.luizjunior
+@since 31/10/2016
+@version 1.0
+@param cAlias, character, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function xFa150Gera(cAlias)
+
+	Private cBanco,cAgencia,xConteudo
+	Private nHdlBco    	   := 0
+	Private nHdlSaida  	   := 0
+	Private nSeq       	   := 0
+	Private nSomaValor	   := 0
+	Private nSomaVlLote	   := 0
+	Private nQtdTotTit	   := 0
+	Private nQtdTitLote	   := 0
+	Private nSomaAcres	   := 0
+	Private nSomaDecre	   := 0
+	Private nBorderos	   := 0
+	Private xBuffer,nLidos := 0
+	Private nTotCnab2	   := 0 // Contador de Lay-out nao deletar 
+	Private nLinha		   := 0 // Contador de Linhas nao deletar 
+	Private nQtdLinLote	   := 0 // Contador de linhas do detalhe do lote
+	
+	Processa({|lEnd| xFa150Ger(cAlias)})  // Chamada com regua
+	
+	nBorderos  := 0
+	nSeq		  := 0
+	nSomaValor := 0
+	nSomaVlLote:= 0
+	nQtdTotTit := 0
+	nQtdTitLote:= 0
+	
+	FCLOSE(nHdlBco)
+	FCLOSE(nHdlSaida)
+
+Return .T.
+
+/*/{Protheus.doc} xFa150Ger
+(long_description)
+@author j2a.luizjunior
+@since 31/10/2016
+@version 1.0
+@param cAlias, character, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function xFa150Ger(cAlias)
+
+	Local nTamArq    := 0, lResp := .t.
+	Local lHeader    := .F.,lFirst := .F.,lFirst2 := .F.
+	Local nTam,nDec,nUltDisco := 0, nGrava := 0, aBordero :={}
+	Local nSavRecno  := recno()
+	Local lRecicl	 := GETMV("MV_RECICL")
+	Local cDbf
+	Local lFIN150_1  := ExistBlock("FIN150_1")
+	Local lFIN150_2  := ExistBlock("FIN150_2")
+	Local lFIN150_3  := ExistBlock("FIN150_3")
+	Local lFINA150   := ExistBlock("FIN150")
+	Local lFinCnab2  := ExistBlock("FINCNAB2")
+	Local oDlg,oBmp,nMeter := 1
+	Local cTexto     := "CNAB"
+	Local nRegEmp    := SM0->(RecNo())
+	Local cFilDe
+	Local cFilAte
+	Local cNumBorAnt := CRIAVAR("E1_XNUMBOR",.F.)
+	Local cCliAnt	 := CRIAVAR("E1_CLIENTE",.F.)
+	Local lFirstBord := .T.
+	Local lBorBlock  := .F.
+	Local lAchouBord := .F.
+	Local lF150Exc   := ExistBlock("F150EXC")
+	Local lIdCnab    := .T.
+	Local cArqGerado := ""
+	Local lF150Sum   := ExistBlock("F150SUM")
+	Local lAtuDsk    := .F.
+	Local lCnabEmail := .F.
+	Local cFilBor    := ""  
+	Local nOrdSE1    := 5
+	Local lF150Ord   := ExistBlock("F150ORD")                                       
+	Local lNovoLote  := .F.
+	Local lF150SumA  := ExistBlock("F150SUMA")
+	Local lF150SumD  := ExistBlock("F150SUMD")
+	Local lF150BBCO  := ExistBlock("F150BBCO")
+	Local lBCOBORD   := .T.
+	Local cAliasTrb
+	Local lF150NoGrv := ExistBlock("F150NOGRV")
+	Local lGestao	 := Iif( lFWCodFil, FWSizeFilial() > 2, .F. )	// Indica se usa Gestao Corporativa
+	//--- Tratamento Gestao Corporativa
+	Local cFilFwSE1  := IIF( lGestao .And. FindFunction("FwFilial"), FwFilial("SE1") , xFilial("SE1") )
+	
+	#IFNDEF TOP
+		Local cIndexSe1
+		Local nIndexSe1
+	#ELSE
+		Local cQuery 
+	#ENDIF
+	Local lHeadMod2 := .F.
+	Local bWhile2
+	Local cOrder
+	Local nValor
+	Local cCart	:= "R"
+	//Gestao
+	Local lQuery 	:= IfDefTopCTB() // verificar se pode executar query (TOPCONN)
+	Local aSelFil	:= {}
+	Local lSE1Acces := Iif( lGestao, FWModeAccess("SE1",1) == "C", FWModeAccess("SE1",3) == "C")
+	Local bWhile 	:= {||.T.}
+	Local cSelFil	:= ""
+	Local cLastFil	:= ""
+	Local nX		:= 1
+	Local nTam      := 0
+	Local nDec      := 0
+	Local cConteudo := ""
+	
+	ProcRegua(SE1->(RecCount()))
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Posiciona no Banco indicado                                  ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	cBanco  := mv_par05
+	cAgencia:= mv_par06
+	cConta  := mv_par07
+	cSubCta := mv_par08
+	
+	dbSelectArea("SA6")
+	If !(dbSeek(xFilial("SA6")+cBanco+cAgencia+cConta))
+		Help(" ",1,"FA150BCO")
+	
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Atualiza o log de processamento com o erro  ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		ProcLogAtu("ERRO","FA150BCO",Ap5GetHelp("FA150BCO"))
+	
+		Return .F.
+	ElseIf Max(SA6->A6_MOEDA,1) > 1
+	
+		PutHelp( "PMOEDACNAB",	{"Arquivos CNAB somente serão gerados para","contas bancárias em moeda corrente","do pais"},;
+								{"CNAB files will only be generated for the bank","in the country's currency" },;
+								{"Archivos CNAB sólo se generará para el banco ", "en la moneda del país."} )
+								
+		PutHelp( "SMOEDACNAB",	{"Verifique os parâmetros de conta","corrente (F12)"},;
+								{"Check the parameters of bank account (F12)" },;
+								{"Compruebe los parámetros de la cuenta ","bancaria (F12)."} )
+	
+		Help( "  ", 1, "MOEDACNAB" )
+	
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Atualiza o log de processamento com o erro  ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		ProcLogAtu("ERRO","FA150BCO",Ap5GetHelp("FA150BCO"))
+	
+		Return .F.
+	
+	Endif
+	
+	dbSelectArea("SEE")
+	SEE->( dbSeek(xFilial("SEE")+cBanco+cAgencia+cConta+cSubCta) )
+	If !SEE->( found() )
+		Help(" ",1,"PAR150")
+	
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Atualiza o log de processamento com o erro  ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		ProcLogAtu("ERRO","PAR150",Ap5GetHelp("PAR150"))
+	
+		Return .F.
+	Else
+		If !Empty(SEE->EE_FAXFIM) .and. !Empty(SEE->EE_FAXATU) .and. Val(SEE->EE_FAXFIM)-Val(SEE->EE_FAXATU) < 100
+			Help(" ",1,"FAIXA150")
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Atualiza o log de processamento com o erro  ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			ProcLogAtu("ERRO","FAIXA150",Ap5GetHelp("FAIXA150"))
+		
+		EndIf
+	EndIf
+	
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Posiciona no Bordero Informado pelo usuario                  ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	if mv_par10 == 2
+		cFilDe := cFilAnt
+		cFilAte:= cFilAnt
+	Else
+		cFilDe := mv_par11
+		cFilAte:= mv_par12
+	Endif
+	
+	nTotCnab2 := 0
+	nSeq := 0
+	
+	If lRecicl
+		cDbf := "RECICL" + Substr(cNumEmp,1,2)
+		If !File(cDbf+GetDBExtension())
+			lRecicl := .F.
+		Else
+			DbUseArea(.T.,,cDbf,"cTemp",.F.,.F.)
+			IndRegua("cTemp",cDbf,"FILIAL+NOSSONUM",,,OemToAnsi(STR0008))  //"Selecionando Registros..."
+		EndIf
+	EndIf		
+	
+	If lF150Ord
+		nOrdSE1 := ExecBlock("F150ORD",.F.,.F.)                                        
+	EndIf
+	
+	//Gestao
+	If lQuery
+		If mv_par14 == 1	
+			//SE1 totalmente compartilhado nao habilita tela de selecao de filiais				
+			If lSE1Acces
+				aSelFil := { cFilAnt }	 				
+			Else
+				aSelFil := AdmGetFil(.F.,.T.,"SE1")
+				nLenFil := Len( aSelFil )
+				If nLenFil <= 0
+					Return
+				EndIf	
+			Endif
+		Else
+			aSelFil := { cFilAnt }	 				
+		Endif			
+	
+		bWhile :=	{||.T. }
+		
+		For nX := 1 to Len(aSelFil)
+			cSelFil  += aSelFil[nX]+"|" 
+			If nX == 1	
+				cFilDe := aSelFil[nX]
+			Endif
+		    cLastFil := aSelFil[nX]
+		Next			
+	
+		DbSelectArea("SM0")
+		MsSeek(cEmpAnt+cFilDe,.T.)
+		
+	Else
+		DbSelectArea("SM0")
+		DbSeek(cEmpAnt+cFilDe,.T.)
+		lAchouBord := .F.
+		bWhile := {||FWGETCODFILIAL <= cFilAte}
+	Endif
+	While SM0->(!Eof()) .and. SM0->M0_CODIGO == cEmpAnt .and. Eval(bWhile)
+		cFilAnt := FWGETCODFILIAL
+		
+		//Gestao
+		If lQuery
+	
+			//Verifico se processei a ultima filial do range de filiais selecionadas pelo usuario
+			If lGestao .and. Left(SM0->M0_CODFIL,FWSizeFilial()) > cLastFil
+				Exit
+			Endif
+	
+			//Verifico se a filial esta contida no range de filiais selecionadas pelo usuario
+			If !(cFilAnt $ cSelFil)
+				SM0->(DbSkip())
+				Loop
+			EndIf
+	
+		EndIf
+		
+		DbSelectArea("SE1")
+		//SE1->( DbSetOrder(nOrdSE1))
+		DbOrderNickName("GERATER")
+	
+		If (mv_par13 == 1 .And. mv_par09 == 2) .Or.;
+			mv_par13 == 3 .Or. mv_par09 == 1 // Quebra por Bordero no CNAB modelo 2, ou se nao quebra ou se for CNAB modelo 1
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Inicia a leitura do arquivo de Titulos                       ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If lGestao 
+				SE1->( MSSeek( FWCompany("SE1") + FWUnitBusiness("SE1") + FWFilial("SE1") + mv_par01, .T. ) )
+				bWhile2 := { || !SE1->( Eof()) .and. E1_XNUMBOR >= mv_par01 .AND. E1_XNUMBOR <= mv_par02 .and. FWCompany("SE1") + FWUnitBusiness("SE1") + FWFilial("SE1") == E1_FILIAL }
+			Else
+				SE1->( MSSeek(xFilial("SE1")+mv_par01,.T.))
+				bWhile2 := { || !SE1->( Eof()) .and. E1_XNUMBOR >= mv_par01 .AND. E1_XNUMBOR <= mv_par02 .and. xFilial("SE1")==E1_FILIAL }
+			EndIf
+			
+			cAliasTrb := "SE1"
+		Elseif mv_par13 == 2 .And. mv_par09 == 2 // Quebra por Cliente no CNAB modelo 2
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Inicia a leitura do arquivo de Titulos                       ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			cOrder := "E1_FILIAL+E1_CLIENTE+E1_LOJA+E1_PREFIXO+E1_NUM+E1_PARCELA+E1_TIPO"
+			#IFDEF TOP
+				cAliasTrb := GetNextAlias()
+				cQuery := "SELECT SE1.R_E_C_N_O_ RECNOSE1 "
+				cQuery += "FROM "+	RetSqlName("SE1") + " SE1"
+				cQuery += " WHERE E1_FILIAL = '" + xFilial("SE1") + "'"
+				cQuery += " AND E1_XNUMBOR <> '" + Space(Len(SE1->E1_XNUMBOR)) + "'"
+				cQuery += " AND E1_XNUMBOR between '" + mv_par01        + "' AND '" + mv_par02 + "'"
+				cQuery += " AND D_E_L_E_T_ <> '*' "
+				cQuery += " ORDER BY "+SqlOrder(cOrder)
+				cQuery := ChangeQuery(cQuery)
+				dbSelectArea("SA1")
+				dbUseArea(.T., "TOPCONN", TCGenQry(,,cQuery), cAliasTrb, .F., .T.)
+			#ELSE
+				cAliasTrb := "SE1"
+				cIndexSe1 := CriaTrab(nil,.f.)
+				IndRegua("SE1",cIndexSe1,cOrder,,"E1_FILIAL = '"+xFilial("SE1")+"' .AND. !Empty(SE1->E1_XNUMBOR) .And. E1_XNUMBOR >= '"+mv_par01+"' .And. E1_XNUMBOR <= '" +mv_par02 + "'","Selecionando dados no servidor")
+				nIndexSE1 := RetIndex("SE1")
+				dbSetIndex(cIndexSe1+OrdBagExt())
+				dbSetOrder(nIndexSe1+1)
+				MsSeek(xFilial("SE1"))
+			#ENDIF	
+			bWhile2 := { || !(cAliasTrb)->( Eof()) }
+		Endif	
+		// Processa SE1 filtrado por bordero em ordem de cliente ou em ordem de bordero
+		While Eval(bWhile2)
+		
+			#IFDEF TOP 
+				If mv_par13 == 2 .And. mv_par09 == 2 // quebra por cliente, CNAB modelo 2
+					SE1->(MsGoto((cAliasTrb)->RECNOSE1))
+				Endif	
+			#ENDIF
+			
+			lAchouBord := .T.
+			IncProc()
+	
+			IF Empty(SE1->E1_XNUMBOR) .or. (SE1->E1_XNUMBOR == cNumBorAnt .and. lBorBlock)
+				(cAliasTrb)->( dbSkip() )
+				Loop
+			EndIF
+	
+			If lF150BBCO
+				lBCOBORD := Execblock("F150BBCO",.F.,.F.)
+				lBCOBORD := IF(ValType(lBCOBORD) == "L", lBCOBORD, .T.)
+			EndIf
+			IF SE1->E1_XPORTAD<>cBanco .And. cAgencia<>SE1->E1_XAGEDEP .And. SE1->E1_CONTA<>cConta .And. lBCOBORD
+				(cAliasTrb)->( dbSkip() )
+				Loop
+			EndIF
+	
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Verificacao do usuario se o bordero deve ser considerado     ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If lF150Exc
+				If !(ExecBlock("F150EXC",.F.,.F.))
+					(cAliasTrb)->( dbSkip() )
+					Loop
+				Endif
+			Endif
+	
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Verifica se o portador do bordero ‚ o mesmo dos parametros   ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			// Se mudou o bordero ou se CNAB modelo 2, com quebra por cliente e mudou o cliente
+			If SE1->E1_XNUMBOR != cNumBorAnt .Or. (mv_par13 == 2 .And. mv_par09 == 2 .And. SE1->E1_CLIENTE != cCliAnt) .or. lFirstBord
+				// Se CNAB modelo 2 e mudou o bordero ou cliente
+				If (mv_par09 == 2 .And. (mv_par13 == 1 .And. SE1->E1_XNUMBOR != cNumBorAnt) .Or. (mv_par13 == 2 .And. SE1->E1_CLIENTE != cCliAnt)) .And. !lFirstBord
+					lNovoLote := .T. // Para criar Trailler de Lote e Header do novo lote
+				Endif	
+				lFirstBord := .F.
+				
+				dbSelectArea("SEA")
+				SEA->(DbSetOrder(2))
+				If SEA->(DbSeek(xFilial("SEA") + SE1->E1_XNUMBOR + cCart))
+				//If xFa150PesqBord(SE1->E1_XNUMBOR,@cFilBor,cCart)
+									
+					While SEA->EA_NUMBOR == SE1->E1_XNUMBOR .and. SEA->EA_FILIAL == SE1->E1_FILIAL .and. !Eof()
+						If SEA->EA_CART == "R"
+							cNumBorAnt := SE1->E1_XNUMBOR
+							cCliAnt	  := SE1->E1_CLIENTE
+							lBorBlock := .F.
+							If cBanco+cAgencia+cConta != SEA->(EA_PORTADO+EA_AGEDEP+EA_NUMCON) .And. lBCOBORD
+								//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+								//³ Bordero pertence a outro Bco/Age/Cta ³
+								//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+								Help(" ",1,"NOBCOBORD",,cNumBorAnt,4,1) 
+	
+								//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+								//³ Atualiza o log de processamento com o erro  ³
+								//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+								ProcLogAtu("ERRO","NOBCOBORD",Ap5GetHelp("NOBCOBORD")+cNumBorAnt)
+							
+								lBorBlock := .T.
+							Endif
+							Exit
+						Else
+							//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+							//³ Bordero pertence a outra Carteira (Pagar) ³
+							//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+							lBorBlock := .T.
+							SEA->(dbSkip())
+							Loop
+						Endif
+					Enddo
+				Else
+					//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+					//³ Bordero nÆo foi achado no SEA        ³
+					//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+					Help(" ",1,"BORNOXADO",,SE1->E1_XNUMBOR,4,1)
+	
+					//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+					//³ Atualiza o log de processamento com o erro  ³
+					//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+					ProcLogAtu("ERRO","BORNOXADO",Ap5GetHelp("BORNOXADO")+SE1->E1_XNUMBOR)
+	
+					lBorBlock := .T.
+				Endif
+			Endif
+			dbSelectArea(cAliasTrb)
+			If lBorBlock
+				(cAliasTrb)->( dbSkip() )
+				Loop
+			Endif
+	
+			IF SE1->E1_TIPO $ MVRECANT+"/"+MVPROVIS
+				(cAliasTrb)->( dbSkip() )
+				Loop
+			EndIF
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		  	//³ Ponto de entrada para desprezar a gravação do título que ³
+		  	//³ tenha algum impedimento no arquivo de envio.	         ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If lF150NoGrv
+				If !(Execblock("F150NOGRV",.F.,.F.))
+					(cAliasTrb)->(dbSkip())
+					Loop			
+				EndIf
+			EndIf
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		   //³ Posiciona no Contrato bancario                               ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			dbSelectArea("SE9")
+			dbSetOrder(1)
+			MsSeek(xFilial("SE9")+SE1->(E1_XCONTRA+E1_XPORTAD+E1_XAGEDEP))
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		   //³ Posiciona no cliente                                         ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			dbSelectArea("SA1")
+			MsSeek(xFilial("SA1")+SE1->E1_CLIENTE+SE1->E1_LOJA)
+			// Se o Header do arquivo nao foi criado, cria.
+			If !lHeadMod2  //Modelo 2
+				lHeadMod2:=AbrePar(@cArqGerado)	//Abertura Arquivo ASC II
+				// Se houve erro na criacao do arquivo, abandona o processo
+				If ! lHeadMod2
+					Exit
+				Endif
+			Endif	
+			lCnabEmail := If(FieldPos("A1_BLEMAIL") > 0, A1_BLEMAIL == "1", .F.)
+			If lFin150_1
+				Execblock("FIN150_1",.F.,.F.)
+			Endif
+			
+			dbSelectArea(cAliasTrb)
+			
+			// Mudou de Bordero e nao eh o primeiro bordero. Cria Trailler de Lote e Novo Header de lote.
+			If lNovoLote .And. mv_par09 == 2 .And. (mv_par13 == 1 .Or. mv_par13 == 2)
+				// CNAB Modelo 2, gera Trailler do Lote anterior e Header do novo lote
+				RodaLote2(nHdlSaida,MV_PAR03)
+				HeadLote2(nHdlSaida,MV_PAR03)
+				cNumBorAnt	:= SE1->E1_XNUMBOR
+				lNovoLote 	:= .F.
+				nQtdTitLote := 0
+				nSomaVlLote := 0
+			Endif
+	
+			If lRecicl
+				dbSelectArea("cTemp")
+				MsSeek(xFilial("SE1")+SE1->E1_NUMBCO)
+				RecLock("cTemp",.t.)
+				dbDelete()
+				MsUnLock()   
+			EndIf
+		
+			nSeq++
+			nQtdTitLote ++
+			nQtdTotTit ++
+			
+			If lF150Sum
+				nValor := ExecBlock("F150SUM",.F.,.F.)
+				nSomaValor	+= nValor
+				nSomaVlLote += nValor
+			Else
+				nSomaValor	+= SE1->E1_SALDO+SE1->E1_SDACRES-SE1->E1_SDDECRE
+				nSomaVlLote += SE1->E1_SALDO+SE1->E1_SDACRES-SE1->E1_SDDECRE
+	   		Endif
+		   	If lF150SumA
+				nSomaAcres += ExecBlock("F150SUMA",.F.,.F.)
+			Else
+			  	nSomaAcres += SE1->E1_SDACRES
+			Endif
+			
+			If lF150SumD
+				nSomaDecre += ExecBlock("F150SUMD",.F.,.F.)
+			Else
+			  	nSomaDecre += SE1->E1_SDDECRE
+			Endif
+			If ( MV_PAR09 == 1 )
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//³ Le Arquivo de Parametrizacao                                 ³
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+				nLidos:=0
+				FSEEK(nHdlBco,0,0)
+				nTamArq:=FSEEK(nHdlBco,0,2)
+				FSEEK(nHdlBco,0,0)
+				lIdCnab := .T.
+		
+				While nLidos <= nTamArq
+	
+					//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+					//³ Verifica o tipo qual registro foi lido                       ³
+					//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+					xBuffer:=Space(85)
+					FREAD(nHdlBco,@xBuffer,85)
+		
+					Do Case
+						Case SubStr(xBuffer,1,1) == CHR(1)
+							IF lHeader
+								nLidos+=85
+								Loop
+							EndIF
+						Case SubStr(xBuffer,1,1) == CHR(2)
+							lFirst2 := .F. //Controle do detalhe tipo 5	
+							IF !lFirst
+								lFirst := .T.
+								FWRITE(nHdlSaida,CHR(13)+CHR(10))
+								If lFina150
+									Execblock("FIN150",.F.,.F.)
+								Endif
+							EndIF
+						Case SubStr(xBuffer,1,1) == CHR(4) .and.  lCnabEmail
+							IF !lFirst2
+								nSeq++
+								lFirst2 := .T.
+								FWRITE(nHdlSaida,CHR(13)+CHR(10))
+							Endif
+						Case SubStr(xBuffer,1,1) == CHR(3)
+							nLidos+=85
+							Loop
+						Otherwise
+							nLidos+=85
+							Loop
+					EndCase
+	
+					nTam := 1+(Val(SubStr(xBuffer,20,3))-Val(SubStr(xBuffer,17,3)))
+					nDec := Val(SubStr(xBuffer,23,1))
+					cConteudo:= SubStr(xBuffer,24,60)
+					nGrava := xfA150Grava(nTam,nDec,cConteudo,@aBordero,,lFinCnab2,@lIdCnab,cFilBor)//StaticCall(FINA150,fA150Grava,nTam,nDec,cConteudo,@aBordero,,lFinCnab2,@lIdCnab,xFilial("SE1"))
+					If nGrava != 1
+						nSeq--
+						Exit
+					Endif
+					dbSelectArea("SE1")
+					nLidos+=85
+				EndDO
+				If nGrava == 3
+					Exit
+				Endif
+			Else
+				nGrava := xfA150Grava(nTam,nDec,cConteudo,@aBordero,,lFinCnab2,@lIdCnab,xFilial())//StaticCall(FINA150,fA150Grava,nTam,nDec,cConteudo,@aBordero,,lFinCnab2,@lIdCnab,xFilial("SE1"))
+			EndIf
+			
+		   If nGrava == 1
+				lAtuDsk := .T.
+				If ( MV_PAR09 == 1 )
+					lIdCnab := .T.	// Para obter novo identificador do registro CNAB na rotina 
+										// FA150GRAVA
+		   		fWrite(nHdlSaida,CHR(13)+CHR(10))
+					IF !lHeader
+						lHeader := .T.
+					EndIF
+				Endif
+				dbSelectArea("SEA")
+				SEA->(DbSetOrder(1))
+				If SEA->(MsSeek(xFilial("SEA")+SE1->E1_XNUMBOR+SE1->E1_PREFIXO+SE1->E1_NUM+SE1->E1_PARCELA+SE1->E1_TIPO))
+					Reclock("SEA")
+					SEA -> EA_TRANSF := "S"
+					MsUnlock()
+				Endif
+				If lRecicl       
+					dbSelectArea("SE1")
+					RecLock("SE1")
+					Replace E1_OCORREN With "01"
+					MsUnLock()
+				EndIf	
+	   		Endif
+	
+			If lFin150_2
+				nSeq++
+				If !(Execblock("FIN150_2",.f.,.f.))		// N„o incrementou
+					nSeq--
+				Endif
+			Endif
+			dbSelectArea("SE1")
+			(cAliasTrb)->( dbSkip())
+		Enddo
+		#IFDEF TOP
+			If mv_par13 == 2 .And. mv_par09 == 2 // Quebra por cliente CNAB modelo 2
+				(cAliasTrb)->(DbCloseArea())
+			Endif	
+		#ENDIF                  
+		If lGestao
+			If lAchouBord .And. Empty( cFilFwSE1 )
+				Exit
+			EndIf
+		Else		
+			If Empty( cFilFwSE1 )
+				Exit
+			Endif
+		EndIf	
+		dbSelectArea("SM0")
+		dbSkip()
+	EndDO
+	
+	SM0->(dbgoto(nRegEmp))
+	cFilAnt := FWGETCODFILIAL
+	
+	If !lAchouBord
+		Help(" ",1,"BORD150")
+	
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Atualiza o log de processamento com o erro  ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		ProcLogAtu("ERRO","BORD150",Ap5GetHelp("BORD150"))
+	
+		Return .F.
+	EndIF
+	// Se conseguiu criar o Header do arquivo, entao cria o Trailler
+	If lHeadMod2
+		If ( mv_par09 == 1 )
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Monta Registro Trailler                              		  ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			nSeq++
+			nLidos:=0
+			FSEEK(nHdlBco,0,0)
+			nTamArq:=FSEEK(nHdlBco,0,2)
+			FSEEK(nHdlBco,0,0)
+			While nLidos <= nTamArq
+		
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//³ Tipo qual registro foi lido                                  ³
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+				xBuffer:=Space(85)
+				FREAD(nHdlBco,@xBuffer,85)
+		
+				IF SubStr(xBuffer,1,1) == CHR(3)
+					nTam := 1+(Val(SubStr(xBuffer,20,3))-Val(SubStr(xBuffer,17,3)))
+					nDec := Val(SubStr(xBuffer,23,1))
+					cConteudo:= SubStr(xBuffer,24,60)
+					nGrava := xfA150Grava( nTam,nDec,cConteudo,@aBordero,.T.,lFinCnab2,.F.,xFilial())
+				Endif
+				nLidos+=85
+			End
+		Else
+			RodaCnab2(nHdlSaida,MV_PAR03)
+		EndIf
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Atualiza Numero do ultimo Disco                              ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		dbSelectArea("SEE")
+		IF !Eof() .and. nGrava != 3 .and. lAtuDsk
+			Reclock("SEE")
+			nUltDisco:=VAL(EE_ULTDSK)+1
+		   Replace EE_ULTDSK With StrZero(nUltDisco,TamSx3("EE_ULTDSK")[1])
+		   MsUnlock()
+		EndIF
+		
+		If ( MV_PAR09 == 1 )
+			// Se nao existir o campo que determina se deve ou nao saltar
+			// a linha na gravacao do trailler do arquivo, ou se existir e 
+			// estiver como "1-Sim", Grava o final de linha (Chr(13)+Chr(10))
+			If SEE->(FieldPos("EE_FIMLIN")) == 0 .Or. SEE->EE_FIMLIN == "1"
+				FWRITE(nHdlSaida,CHR(13)+CHR(10))
+			Endif	
+		EndIf
+		dbSelectArea( cAlias )
+		dbGoTo( nSavRecno )
+		
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Fecha o arquivos utilizados                                  ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		FCLOSE(nHdlBco)
+		FCLOSE(nHdlSaida)
+		
+		If nGrava == 3 // Abandonou a rotina, quando o bordero ja foi enviado.
+			// Apaga o arquivo de saida, para nao caracterizar um erro no programa
+			// a geracao incompleta do arquivo quando o usuario cancelar.
+			FErase(cArqGerado)
+			ProcLogAtu("ERRO","",STR0019) //"Processo Cancelado por usuário. Arquivo não gerado"
+		Else
+			ProcLogAtu("ALERTA","",STR0020+cArqGerado) //"Processo Finalizado. Arquivo gerado: "
+		Endif
+		
+		If lRecicl 
+			dbSelectArea("cTemp")
+			Pack
+			DbCloseArea()
+		EndIF	
+		
+		If lFin150_3
+			Execblock("FIN150_3",.F.,.F.)
+		Endif	
+	Endif
+	
+	//Ponto de entrada para verificacao do conteudo da variavel nQtdTotTit
+	If ExistBlock ("F150QTDT")
+		ExecBlock("F150QTDT",.F.,.F.,{nQtdTotTit,nGrava})
+	EndIf     
+	
+	
+	dbSelectArea( cAlias )
+	dbGoTo( nSavRecno )
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Recupera a Integridade dos dados                             ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	RetIndex("SE1")
+	dbSetOrder(1)
+	dbClearFilter()
+
+Return(.T.)
+
+/*/{Protheus.doc} xFa150PesqBord
+(long_description)
+@author j2a.luizjunior
+@since 31/10/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function xFa150PesqBord(cNumBor,cFilBor,cCart)
+
+	Local cFilOld 	:= cFilAnt
+	Local lRet 		:= .F.
+	Local nInc		:= 0
+	Local cAlias	:= Alias()
+	Local aSM0		:= AdmAbreSM0()
+	Local aFiliais  := {}        
+	Local nPos      := 0
+	
+	//--- Tratamento Gestao Corporativa
+	Local lGestao   := Iif( lFWCodFil, FWSizeFilial() > 2, .F. )	// Indica se usa Gestao Corporativa
+	//
+	Local cFilFwSEA := IIF( lGestao .And. FindFunction("FwFilial"), FwFilial("SEA") , xFilial("SEA") )
+	Local nRecBordero := 0
+	
+	Default cCart	:= ""
+	
+	// Se deve pesquisar com a carteira do bordero "P" ou "R"
+	If !Empty( cCart )
+		SEA->( dbSetOrder( 2 ) )
+	Else	
+		SEA->( dbSetOrder( 1 ) )
+	EndIf
+	
+	If !Empty( cFilFwSEA ) // Se o SEA for exclusivo, pesquisa o bordero em todas as filiais  
+		For nInc := 1 To Len( aSM0 )
+			If aSM0[nInc][1] == cEmpAnt
+				cFilAnt := aSM0[nInc][2]
+				If SEA->( MsSeek( xFilial( "SEA" ) + cNumBor + cCart ) )
+					aadd(aFiliais,SEA->EA_FILIAL)
+					lRet	:= .T.
+					nRecBordero := SEA->(Recno())
+				EndIf
+			EndIf
+		Next
+		SEA->(dbGoto(nRecBordero))
+	Else
+		lRet := SEA->( MsSeek( xFilial( "SEA" ) + cNumBor + cCart ) )
+		cFilBor := SEA->EA_FILIAL
+	Endif	
+	nPos := aScan(aFiliais,cFilOld)
+	If nPos > 0
+		cFilBor := aFiliais[nPos]
+	ElseIf Len(aFiliais)>=1
+		cFilBor := aFiliais[1]
+	Endif
+	// Restaura ambiente
+	cFilAnt := cFilOld
+	
+	dbSelectArea( cAlias )
+
+Return lRet
+
+/*/{Protheus.doc} xfA150Grava
+(long_description)
+@author j2a.luizjunior
+@since 31/10/2016
+@version 1.0
+@param nTam, numérico, (Descrição do parâmetro)
+@param nDec, numérico, (Descrição do parâmetro)
+@param cConteudo, character, (Descrição do parâmetro)
+@param aBordero, array, (Descrição do parâmetro)
+@param lTrailler, ${param_type}, (Descrição do parâmetro)
+@param lFinCnab2, ${param_type}, (Descrição do parâmetro)
+@param lIdCnab, ${param_type}, (Descrição do parâmetro)
+@param cFilBor, character, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function xfA150Grava( nTam,nDec,cConteudo,aBordero,lTrailler,lFinCnab2,lIdCnab,cFilBor)
+
+Local nRetorno := 1
+Local nX       := 1
+Local oDlg, oRad, nTecla
+Local cIdCnab
+Local aGetArea := GetArea()
+Local aOrdSe1  := {}
+Local lPanelFin := If (FindFunction("IsPanelFin"),IsPanelFin(),.F.)     
+Local lNewIndice := FaVerInd() 
+Local cChaveID := ""
+Local nOrdCNAB := Iif(lNewIndice,19,16)
+
+DEFAULT lIdCnab := .F.
+DEFAULT cFilBor := xFilial("SEA")
+
+lTrailler := IIF( lTrailler==NIL, .F., lTrailler ) // Para imprimir o trailler
+                                                   // caso se deseje abandonar
+                                                   // a gera‡Æo do arquivo
+                                                   // de envio pela metade
+
+lFinCnab2 := Iif( lFinCnab2 == Nil, .F., lFinCnab2 )
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ O retorno podera' ser :                                  ³
+//³ 1 - Grava Ok                                             ³
+//³ 2 - Ignora bordero                                       ³
+//³ 3 - Abandona rotina                                      ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Verifica se titulo ja' foi enviado                       ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+dbSelectArea("SEA")
+SEA->(DbSetOrder(1))
+If	(!SE1->( Eof()) .and. SE1->E1_XNUMBOR >= mv_par01 .AND. SE1->E1_XNUMBOR <= mv_par02 .and. xFilial("SE1")==SE1->E1_FILIAL) .And.;
+	(SEA->(MsSeek(cFilBor+SE1->E1_XNUMBOR+SE1->E1_PREFIXO+SE1->E1_NUM+SE1->E1_PARCELA+SE1->E1_TIPO)))
+	If SEA->EA_TRANSF == "S"
+		nX := ASCAN(aBordero,SubStr(SE1->E1_XNUMBOR,1,6))
+		If nX == 0
+			nOpc := 0
+			aSize := MSADVSIZE()
+			If lPanelFin  //Chamado pelo Painel Financeiro											
+				oPanelDados := FinWindow:GetVisPanel()
+				oPanelDados:FreeChildren()
+				aDim := DLGinPANEL(oPanelDados)
+				DEFINE MSDIALOG oDlg OF oPanelDados:oWnd FROM 0,0 To 0,0 PIXEL STYLE nOR( WS_VISIBLE, WS_POPUP )							
+			
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//³ Observacao Importante quanto as coordenadas calculadas abaixo: ³ 
+				//³ -------------------------------------------------------------- ³ 		
+				//³ a funcao DlgWidthPanel() retorna o dobro do valor da area do	 ³
+				//³ painel, sendo assim este deve ser dividido por 2 antes da sub- ³
+				//³ tracao e redivisao por 2 para a centralizacao. 					 ³		
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ		
+				nEspLarg := ((DlgWidthPanel(oPanelDados)/2) - 114) /2		 					
+				nEspLin  := 0
+				
+		   Else   
+		   	nEspLarg := 0 
+		   	nEspLin  := 0  			
+				DEFINE MSDIALOG oDlg FROM  035,037 TO 188,383 TITLE OemToAnsi(STR0009) PIXEL  // "Bordero Existente"
+			Endif             
+			oDlg:lMaximized := .F.
+			oPanel := TPanel():New(0,0,'',oDlg,, .T., .T.,, ,20,20)
+			oPanel:Align := CONTROL_ALIGN_ALLCLIENT    		
+			
+			@ 037+nEspLin,006+nEspLarg TO 069+nEspLin, 120+nEspLarg LABEL OemToAnsi(STR0012) OF oPanel  PIXEL  //"Para prosseguir escolha uma das op‡äes"
+			
+			@ 011+nEspLin, 007+nEspLarg SAY OemToAnsi(STR0010) 			SIZE 058, 007 OF oPanel PIXEL  // "O border“ n£mero:"
+			@ 011+nEspLin, 068+nEspLarg MSGET SE1->E1_XNUMBOR When .F. 	SIZE 037, 010 OF oPanel PIXEL
+			@ 024+nEspLin, 007+nEspLarg SAY OemToAnsi(STR0011) 			SIZE 082, 007 OF oPanel PIXEL  // "j  foi enviado ao banco."			
+			@ 045+nEspLin, 011+nEspLarg RADIO oRad VAR nTecla 3D	 		SIZE 065, 011 PROMPT OemToAnsi(STR0013),OemToAnsi(STR0014) OF oPanel PIXEL  // "Gera com esse border“"###"Ignora esse border“"
+         
+			If lPanelFin  //Chamado pelo Painel Financeiro					
+				ACTIVATE MSDIALOG oDlg CENTERED ON INIT FaMyBar(oDlg,{||nOpc:=1,oDlg:End()},{||nOpc:=0,oDlg:End()})
+				
+		   Else		
+				DEFINE SBUTTON FROM 011, 0140 TYPE 1 ENABLE OF oPanel Action (nOpc:=1,oDlg:End())
+				DEFINE SBUTTON FROM 024, 0140 TYPE 2 ENABLE OF oPanel Action (nopc:=0,oDlg:End())
+				ACTIVATE MSDIALOG oDlg Centered
+			Endif
+			
+			If nOpc == 1
+				If nTecla == 1
+					nRetorno := 1
+					nBorderos++
+				Else
+					nRetorno := 2
+				EndIf
+			Else
+				nRetorno := 3
+			EndIf				
+		Else
+			nRetorno := Int(Val(SubStr(aBordero[nX],7,1)))
+		EndIf
+	Else
+		nX := ASCAN(aBordero,SubStr(SE1->E1_XNUMBOR,1,6))
+		If nX == 0
+			nBorderos++
+		EndIf
+	EndIf
+EndIf
+If nRetorno == 1 .or. ( lTrailler .and. nBorderos > 0 )
+	If ( MV_PAR09 == 1 )
+		If !lTrailler .and. lIdCnab .And. Empty(SE1->E1_IDCNAB) // So gera outro identificador, caso o titulo
+															 // ainda nao o tenha, pois pode ser um re-envio do arquivo
+			// Gera identificador do registro CNAB no titulo enviado
+			cIdCnab := GetSxENum("SE1", "E1_IDCNAB","E1_IDCNAB"+cEmpAnt,nOrdCNAB)
+			cChaveID := If(lNewIndice,cIdCnab,xFilial("SE1")+cIdCnab)
+			dbSelectArea("SE1")
+			aOrdSE1 := SE1->(GetArea())
+			dbSetOrder(nOrdCNAB)
+			While SE1->(MsSeek(cChaveID))
+				If ( __lSx8 )
+					ConfirmSX8()
+				EndIf
+				cIdCnab := GetSxENum("SE1", "E1_IDCNAB","E1_IDCNAB"+cEmpAnt,nOrdCNAB)
+				cChaveID := If(lNewIndice,cIdCnab,xFilial("SE1")+cIdCnab)
+			EndDo
+			
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//³ Ponto de entrada para tratamento da variavel cIdCnab     ³
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If ExistBlock ("F150ICNB")
+				cIdCnab := ExecBlock("F150ICNB",.F.,.F.,{cIdCnab})
+			EndIf 					
+			
+			SE1->(RestArea(aOrdSE1))
+			Reclock("SE1")
+			SE1->E1_IDCNAB := cIdCnab
+			MsUnlock()
+			ConfirmSx8()
+			lIdCnab := .F. // Gera o identificacao do registro CNAB apenas uma vez no
+								// titulo enviado
+		Endif
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//³ Analisa conteudo                                         ³
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		IF Empty(cConteudo)
+			cCampo:=Space(nTam)
+		Else
+			lConteudo := fa150Orig( cConteudo )
+			IF !lConteudo
+				RestArea(aGetArea)
+				Return nRetorno
+			Else
+				IF ValType(xConteudo)="D"
+					cCampo := GravaData(xConteudo,.F.)
+				Elseif ValType(xConteudo)="N"
+					cCampo:=Substr(Strzero(xConteudo,nTam,nDec),1,nTam)
+				Else
+					cCampo:=Substr(xConteudo,1,nTam)
+				EndIf
+			EndIf
+		EndIf
+		If Len(cCampo) < nTam  //Preenche campo a ser gravado, caso menor
+			cCampo:=cCampo+Space(nTam-Len(cCampo))
+		EndIf
+		Fwrite( nHdlSaida,cCampo,nTam )
+	Else
+		nTotCnab2++
+		xDetCnab2(nHdlSaida,MV_PAR03,lIdCnab,"SE1")
+		lIdCnab := .T.	// Para obter novo identificador do registro CNAB na rotina 
+							// DetCnab2
+		If lFinCnab2
+			nSeq := Execblock("FINCNAB2",.F.,.F.,{nHdlSaida,nSeq,nTotCnab2})
+		EndIf
+	EndIf
+EndIf
+If nX == 0
+	Aadd(aBordero,Substr(SE1->E1_XNUMBOR,1,6)+Str(nRetorno,1))
+EndIf
+RestArea(aGetArea)
+
+If lPanelFin  //Chamado pelo Painel Financeiro					
+	cAlias := FinWindow:cAliasFile
+	dbSelectarea(cAlias)
+	FinVisual(cAlias,FinWindow,(cAlias)->(Recno()),.T.)			
+Endif
+
+Return nRetorno
+
+/*/{Protheus.doc} xDetCnab2
+(long_description)
+@author j2a.luizjunior
+@since 31/10/2016
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function xDetCnab2(nHandle,cLayOut,lIdCnab,cAlias)
+
+Local nHdlLay	 := 0
+Local lContinua := .T.
+Local cBuffer	 := ""
+Local aLayOut	 := {}
+Local aDetalhe  := {}
+Local nCntFor	 := 0
+Local nCntFor2  := 0
+Local lFormula  := ""
+Local nPosIni	 := 0
+Local nPosFim	 := 0
+Local nTamanho  := 0
+Local nDecimal  := 0
+Local bBlock	 := ErrorBlock()
+Local bErro 	:= ErrorBlock( { |e| ChecErr260(e,xConteudo) } )
+Local aGetArea  := GetArea()
+Local cIdCnab
+
+DEFAULT cAlias 	:= ""
+DEFAULT lIdCnab 	:= .F.
+Private xConteudo := ""
+
+If ( File(cLayOut) )
+	nHdlLay := FOpen(cLayOut,64)
+	While ( lContinua )
+		cBuffer := FreadStr(nHdlLay,502)
+		If ( !Empty(cBuffer) )
+			If ( SubStr(cBuffer,1,1)=="1" )
+				If ( SubStr(cBuffer,3,1) == "D" )
+					aadd(aLayOut,{ SubStr(cBuffer,02,03),;
+					SubStr(cBuffer,05,30),;
+					SubStr(cBuffer,35,255)})
+				EndIf
+			Else
+				If ( SubStr(cBuffer,3,1) == "D" )
+					aadd(aDetalhe,{SubStr(cBuffer,02,03),;
+					SubStr(cBuffer,05,15),;
+					SubStr(cBuffer,20,03),;
+					SubStr(cBuffer,23,03),;
+					SubStr(cBuffer,26,01),;
+					SubStr(cBuffer,27,255)})
+				EndIf
+			EndIf
+		Else
+			lContinua := .F.
+		EndIf
+	End
+	FClose(nHdlLay)
+EndIf
+If nHandle > 0
+	For nCntFor := 1 To Len(aLayOut)
+		Begin Sequence
+		lFormula := &(AllTrim(aLayOut[nCntFor,3]))
+		If ( lFormula .And. SubStr(aLayOut[nCntFor,1],2,1)=="D" )
+			cBuffer := ""
+			// So gera outro identificador, caso o titulo ainda nao o tenha, pois pode ser um re-envio do arquivo
+			//If !Empty(cAlias) .And. lIdCnab .And. Empty((cAlias)->&(Right(cAlias,2)+"_IDCNAB")) 
+				// Gera identificador do registro CNAB no titulo enviado
+				//cIdCnab := GetSxENum(cAlias, Right(cAlias,2)+"_IDCNAB",Right(cAlias,2)+"_IDCNAB"+cEmpAnt)
+				//DbSelectArea("SE1")
+				//DbSetOrder(1)
+				//If DbSeek(xFilial("SE1"))
+					//If Reclock("SE1",.F.)
+						//"SE1"->&(Right(cAlias,2)+"_IDCNAB") := cIdCnab
+						//SE1->E1_IDCNAB := cIdCnab					 
+						//MsUnlock()
+						//ConfirmSx8()
+						//lIdCnab := .F. // Gera o identificacao do registro CNAB apenas uma vez no
+										// titulo enviado
+					//EndIf
+				//EndIf					
+			//Endif
+			For nCntFor2 := 1 To Len(aDetalhe)
+				If ( aDetalhe[nCntFor2,1] == aLayOut[nCntFor,1] )
+					xConteudo := aDetalhe[nCntFor2,6]
+					If ( Empty(xConteudo) )
+						xConteudo := ""
+					Else
+						xConteudo := &(AllTrim(xConteudo))
+					EndIf
+					nPosIni   := Val(aDetalhe[nCntFor2,3])
+					nPosFim   := Val(aDetalhe[nCntFor2,4])
+					nDecimal  := Val(aDetalhe[nCntFor2,5])
+					nTamanho  := nPosFim-nPosIni+1
+					Do Case
+						Case ValType(xConteudo) == "D"
+							xConteudo := GravaData(xConteudo,.F.)
+						Case ValType(xConteudo) == "N"
+							xConteudo := StrZero(xConteudo,nTamanho,nDecimal)
+					EndCase
+					xConteudo := SubStr(xConteudo,1,nTamanho)
+					xConteudo := PadR(xConteudo,nTamanho)
+					cBuffer += xConteudo
+				EndIf
+			Next nCntFor2
+			cBuffer += Chr(13)+Chr(10)
+			Fwrite(nHandle,cBuffer,Len(cBuffer))
+		EndIf
+		End Sequence
+	Next nCntFor
+	ErrorBlock(bBlock)
+EndIf
+
+RestArea(aGetArea)
+
+Return(.T.)

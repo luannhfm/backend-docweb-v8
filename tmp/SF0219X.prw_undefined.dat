@@ -1,0 +1,119 @@
+#include "protheus.ch"
+#include "topconn.ch"
+#include "tbiconn.ch"
+
+/*/{Protheus.doc} SF0202X
+@author Newton Silva - J2A Consultoria
+@since 01/12/2016
+@version 1.0
+@description Utilizado Template do Fonte SF0219X Walmir Junior Notificação genérica ;
+do Workflow de Compras para processos de Aprovação e Reprovação do Termo de Referencia.
+@history 31/10/2019, Franklin de Brito de oliveira, Adição de justificativa e local de entrega.
+@history 23/07/2020, Franklin de Brito de Oliveira, Adição dos itens da SC no corpo da notificação.
+/*/
+
+User Function SF0219X(cNumSC,cStatus,cText,cUser)
+//cNumSC,cStatus,cText,cUser
+Local aItensSc		:= {}
+Local _cWfDir    	:= Iif(Right(RTrim(GetNewPar("MV_WFDIRWF","\workflow")),1)#"\" ,RTrim(GetNewPar("MV_WFDIRWF","\workflow")) + "\",RTrim(GetNewPar("MV_WFDIRWF","\workflow")))
+Local cEmpFilNom 	:= RTrim(cFilAnt) + " - " + RTrim(Posicione("SM0",1,cEmpAnt+cFilAnt,"M0_FILIAL")) + " - " + RTrim(Posicione("SM0",1,cEmpAnt+cFilAnt,"M0_NOME"))
+Local cAssunto   	:= ""
+Local _cEmail	 	:= ''
+Local cEmail	 	:= ''
+Local _cStatus 	 	:= ''
+Local _cJusCom		:= ''
+Local _cLocEnt		:= ''
+Local _cSolic    	:= GetMv("MV_XGPOTR")
+Local nX			:= 0
+
+	//E-mail do Solicitante
+	dbSelectArea('SC1')
+	SC1->(dbSetOrder(1))
+	If SC1->(dbSeek(xFilial('SC1')+cNumSC))
+		If !Empty( UsrRetMail(SC1->C1_USER) )
+			_cEmail += UsrRetMail(SC1->C1_USER) + ';'
+		EndIf
+		_cJusCom := SC1->C1_XJUSTIF
+		_cLocEnt := SC1->C1_XLOCENT
+		While !SC1->(Eof()) .And. SC1->C1_FILIAL == xFilial('SC1') .And. SC1->C1_NUM == Alltrim( cNumSC )
+			aAdd( aItensSc, {;
+					AllTrim( SC1->C1_ITEM ),;
+					AllTrim( SC1->C1_PRODUTO ),;
+					AllTrim( SC1->C1_DESCRI ),;
+					AllTrim( Transform( SC1->C1_QUANT, '@E 999,999,999.99' ) ),;
+					DtoC( SC1->C1_DATPRF );
+				})
+			SC1->( DbSkip() )
+		Enddo
+	Endif
+	
+	//E-mail dos Aprovadores do Doc.
+	dbSelectArea('SCR')
+	SCR->(dbSetOrder(1))
+	If SCR->(dbSeek(xFilial('SCR')+"SC"+cNumSC))//CR_USERLIB
+		While !SCR->(EOF()) .and. xFilial('SCR') = SCR->CR_FILIAL .AND. SCR->CR_TIPO = "SC" .AND. ALLTRIM(SCR->CR_NUM) = cNumSC
+			If !Empty( UsrRetMail(SCR->CR_USER) )
+				_cEmail += UsrRetMail(SCR->CR_USER) + ';' 
+			EndIf
+			SCR->(dbSkip())
+		Enddo
+	Endif
+	
+	//E-mail dos Analistas TR
+	dbSelectArea('SAJ')
+	SAJ->(dbSetOrder(1))
+	If SAJ->(dbSeek(xFilial('SAJ')+_cSolic))//Criar Estrutura for
+		While !SAJ->(Eof()) .and. xFilial('SAJ') == SAJ->AJ_FILIAL .AND. SAJ->AJ_GRCOM == _cSolic
+			If !Empty( UsrRetMail(SAJ->AJ_USER) )
+				_cEmail += UsrRetMail(SAJ->AJ_USER) + ';'
+			EndIf
+			SAJ->(dbSkip())
+		Enddo
+	Endif
+	
+	cEmail := _cEmail 
+
+	If !Empty(cEmail)
+		If cStatus == "A"
+			_cStatus := "Aprovado"
+			cAssunto   := "TR Aprovado"
+		ElseIf cStatus == "R"
+			_cStatus := "Reprovado"
+			cAssunto   := "TR Reprovado"
+		ElseIf cStatus == "E"
+			_cStatus := "Estornado"
+			cAssunto   := "TR Estornado"
+		ElseIf Empty(cStatus)
+			_cStatus := "Anexado"
+			cAssunto   := "TR Anexado"
+		EndIf
+		
+		oProcess := TWFProcess():New( "NotTRWF", "Notificação do Workflow" )
+		oProcess:NewTask( "Notificacao TR", _cWfDir + "NotTRWF.htm" )
+		oProcess:cSubject := cAssunto + " No. " +cNumSC
+		oProcess:cTo      := Alltrim(cEmail)
+		oProcess:UserSiga := cUser
+		oProcess:NewVersion(.T.)        
+		oHTML   := oProcess:oHTML
+		
+		oHtml:ValByName("ASSUNTO", cAssunto)
+		oHtml:ValByName("SOLICITANTE", AllTrim( Capital( SubStr( UsrFullName( cUser ), 1, At( " ", UsrFullName( cUser ) ) ) ) ) )
+		oHtml:ValByName("MSGSTATUS", _cStatus)
+		oHtml:ValByName("NUMDOC", cNumSC)		
+		oHtml:ValByName("FILIAL", cEmpFilNom)
+		oHtml:ValByName("OBS", cText)
+		oHtml:ValByName("JUSTCOMPRA", _cJusCom)
+		oHtml:ValByName("LOCALENTREGA", _cLocEnt)
+		For nX := 1 To Len(aItensSc)
+			AAdd( oHtml:ValByName( "prod.cItem"  ), aItensSc[nX][1] )
+			AAdd( oHtml:ValByName( "prod.cCod"   ), aItensSc[nX][2] )
+			AAdd( oHtml:ValByName( "prod.cDesc"  ), aItensSc[nX][3] )
+			AAdd( oHtml:ValByName( "prod.nQuant" ), aItensSc[nX][4] )
+			AAdd( oHtml:ValByName( "prod.dNeces" ), aItensSc[nX][5] )
+		Next nX
+		oProcess:Start()
+	Else
+		Conout("SF0219X: Nenhum endereço e-mail localizado para a notificação de TR.")
+	EndIf
+Return
+

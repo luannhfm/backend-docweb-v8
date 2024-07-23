@@ -1,0 +1,145 @@
+#include "Protheus.ch"
+#Include "MsOle.Ch"
+
+#Define oleWdFormatDocument "0"
+#Define oleWdFormatHTML "102"
+#Define oleWdFormatPDF "17"
+
+/*/{Protheus.doc} User Function IE69R01F
+    Impressão do contrato de venda do IEL conforme modelo WORD.
+    @type  Function
+    @author Franklin de Brito de Oliveira
+    @since 10/08/2021
+    /*/
+User Function IE69R01F()
+    Local aArea := GetArea()
+    Private cArqModelo := AllTrim(SuperGetMV("MV_XDOTGCT", , "IEL-FF-001.dotm"))
+    Private cLocalPath := AllTrim(SuperGetMV("MV_PATWORD", , "K:\Util\"))
+    Private cSrvPath    := AllTrim(SuperGetMV("MV_XPATGCT", , "\system\DOT\GCT\"))
+     
+    dbSelectArea("CN1")
+    dbSetOrder(1)
+    if CN1->(DbSeek(xFilial("CN1")+CN9->CN9_TPCTO))
+        if CN1->CN1_ESPCTR == "2"	//Contrato de Venda
+            if CN9->CN9_SITUAC == '03' .AND. CN9->CN9_XMINUT == 'N'
+                Processa({|| fImpCont()}, "Aguarde...", "Gerando contrato de venda...", .F.)
+            else
+                If CN9->CN9_SITUAC <> '03'														
+					MsgStop("Permitido somento p/ contratos em situação 03-Emitido")
+				ElseIf CN9->CN9_XMINUT <> 'N'
+                    MsgStop("Minutas do Cliente devem ser impressas diretamente no Word")
+				EndIf
+            endif
+        else
+            MsgStop("Impressão válida somente para Contrato de Venda")
+        endif
+    else
+        MsgStop('Tipo de Contrato não encontrado')
+    endif
+
+    RestArea(aArea)
+
+Return Nil
+
+Static Function fImpCont()
+    
+    Local lOk := .T.
+    local cNumero := CN9->CN9_NUMERO
+    Local cNomeArq := "GCT"+cNumero+DtoS(dDataBase)+StrTran(Time(), ":", "")
+    Local hWord
+    local aUnVige := {"Dias", "Meses", "Anos"}
+     
+    //Verifica se o arquivo existe localmente. Se existe, apaga ele.
+    If File(cLocalPath+cArqModelo)
+        If FErase(cLocalPath+cArqModelo) <> -1
+            lOk := .T.
+        Else
+            lOk := .F.
+        EndIf
+    EndIf
+     
+    //Copia o Arquivo para a estacao
+    If lOk
+        lOk := CpyS2T(cSrvPath+cArqModelo, cLocalPath, .T.)
+    EndIf
+    If lOk
+        //Monta a conexao com o arquivo WORD
+        hWord   := OLE_CreateLink()
+        OLE_NewFile(hWord, cLocalPath+cArqModelo)
+        OLE_SetDocumentVar(hWord, "CN9_NUMERO", cNumero)
+        DbSelectArea("CNC")
+        DbSetOrder(1)//CNC_FILIAL+CNC_NUMERO+CNC_REVISA+CNC_CODIGO+CNC_LOJA
+        if CNC->(DbSeek(CN9->CN9_FILIAL+CN9->CN9_NUMERO+CN9->CN9_REVISA))
+            DbSelectArea("SA1")
+            DbSetOrder(1)   //A1_FILIAL+A1_COD+A1_LOJA
+            if SA1->(DbSeek(xFilial("SA1")+CNC->CNC_CLIENT+CNC->CNC_LOJACL))
+                OLE_SetDocumentVar(hWord, "A1_NOME", AllTrim(SA1->A1_NOME))
+                OLE_SetDocumentVar(hWord, "A1_CGC", AllTrim(Transform(SA1->A1_CGC, "@R 99.999.999/9999-99")))
+                OLE_SetDocumentVar(hWord, "A1_END", AllTrim(SA1->A1_END))
+                OLE_SetDocumentVar(hWord, "A1_BAIRRO", AllTrim(SA1->A1_BAIRRO))
+                OLE_SetDocumentVar(hWord, "A1_MUN", AllTrim(SA1->A1_MUN))
+                OLE_SetDocumentVar(hWord, "A1_EST", AllTrim(SA1->A1_EST))
+                DbSelectArea("AC8")
+                DbSetOrder(2)   //AC8_FILIAL+AC8_ENTIDA+AC8_FILENT+AC8_CODENT+AC8_CODCON
+                if AC8->(DbSeek(xFilial("AC8")+"SA1"+xFilial("AC8")+SA1->A1_COD+SA1->A1_LOJA))
+                    while .Not. AC8->(EoF()) .And.;
+                        AC8->AC8_FILIAL+AC8->AC8_ENTIDA+AC8->AC8_FILENT+AC8->AC8_CODENT==xFilial("AC8")+"SA1"+xFilial("AC8")+Padr(SA1->A1_COD+SA1->A1_LOJA, TamSX3("AC8_CODENT")[1])
+                        if AC8->AC8_XISREL=="1"  //1=Sim;2=Nao
+                            DbSelectArea("SU5")
+                            DbSetOrder(1)   //U5_FILIAL+U5_CODCONT+U5_IDEXC
+                            if SU5->(Dbseek(xFilial("SU5")+AC8->AC8_CODCON))
+                                OLE_SetDocumentVar(hWord, "U5_CONTAT", AllTrim(Capital(SU5->U5_CONTAT)))
+                            endif
+                        endif
+                        AC8->(DbSkip())
+                    end
+                endif
+            endif
+        endif
+        DbSelectArea("CNA")
+        DbSetOrder(1)   //CNA_FILIAL+CNA_CONTRA+CNA_REVISA+CNA_NUMERO
+        if CNA->(DbSeek(CN9->CN9_FILIAL+CN9->CN9_NUMERO+CN9->CN9_REVISA))
+            OLE_SetDocumentVar(hWord, "CNA_VLTOT", AllTrim(Transform(CNA->CNA_VLTOT, "@E 9,999,999,999,999.99")))
+            OLE_SetDocumentVar(hWord, "ValorTotalPorExtenso", AllTrim(Extenso(CNA->CNA_VLTOT)))
+            aVenc := Condicao(CNA->CNA_VLTOT, CN9->CN9_CONDPG)
+            if Len(aVenc)>0
+                OLE_SetDocumentVar(hWord, "ValorParcela", AllTrim(Transform(aVenc[1,2], "@E 9,999,999,999,999.99")))
+                OLE_SetDocumentVar(hWord, "PrimeiroVencimento", aVenc[1,1])
+            endif
+            DbSelectArea("ADY")
+            DbSetOrder(2)   //ADY_FILIAL+ADY_OPORTU+ADY_REVISA+ADY_PROPOS
+            if ADY->(DbSeek(CNA->CNA_FILIAL+CNA->CNA_XOPORT+CNA->CNA_XREVOP+CNA->CNA_XPROPO))
+                while .Not. ADY->(EoF()) .And.;
+                    CNA->CNA_FILIAL+CNA->CNA_XOPORT+CNA->CNA_XREVOP+CNA->CNA_XPROPO== ADY->ADY_FILIAL+ ADY->ADY_OPORTU+ ADY->ADY_REVISA+ADY->ADY_PROPOS
+                    if CNA->CNA_XPREVI== ADY->ADY_PREVIS
+                        OLE_SetDocumentVar(hWord, "FormaDePagamento", AllTrim(Posicione("SX5", 1, xFilial("SX5")+"ZC"+ADY->ADY_XFORPG, "X5_DESCRI")))
+                    endif
+                    ADY->(DbSkip())
+                end
+            endif
+            DbSelectArea("CNB")
+            DbSetOrder(1)   //CNB_FILIAL+CNB_CONTRA+CNB_REVISA+CNB_NUMERO
+            if CNB->(DbSeek(CNA->CNA_FILIAL+CNA->CNA_CONTRA+CNA->CNA_REVISA+CNA->CNA_NUMERO))
+                OLE_SetDocumentVar(hWord, "CNB_DESCRI", AllTrim(CNB->CNB_DESCRI))    
+            endif
+        endif
+        OLE_SetDocumentVar(hWord, "CN9_CONDPG", AllTrim(Posicione("SE4", 1, xFilial("SE4")+CN9->CN9_CONDPG, "E4_DESCRI")))
+        OLE_SetDocumentVar(hWord, "CN9_DTFIM", AllTrim(Dtoc(CN9->CN9_DTFIM)))
+        OLE_SetDocumentVar(hWord, "CN9_UNVIGE", AllTrim(aUnVige[Val(CN9->CN9_UNVIGE)]))
+        OLE_SetDocumentVar(hWord, "CN9_VIGE", AllTrim(Str(CN9->CN9_VIGE)))
+        
+        OLE_UpDateFields(hWord)
+        OLE_SaveAsFile(hWord, cLocalPath+cNomeArq+".pdf", "", "", .F., oleWdFormatPDF)
+        OLE_CloseFile(hWord)
+        OLE_CloseLink(hWord)
+        If File(cLocalPath+cArqModelo)
+            FErase(cLocalPath+cArqModelo)
+        Endif
+        If MsgNoYes("Contrato gerado com sucesso. Deseja visualizar o arquivo gerado?", "Contrato Gerado")
+                ShellExecute( "open", cLocalPath+cNomeArq+".pdf", "", "", 1 )
+        EndIf
+    Else
+        MsgStop('Erro na execução da copia do arquivo Modelo do Microsoft Word para a estação de trabalho')
+    EndIf
+
+Return Nil

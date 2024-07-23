@@ -1,0 +1,548 @@
+#Include 'Protheus.ch'
+#Include 'Topconn.ch'
+
+#DEFINE DEF_TRANS01	"001" 	//Transacao de controle total do contrato
+#DEFINE DEF_TRANS18 "018"	//Transacao de controle de situacoes
+#DEFINE DEF_TRANS32	"032"	//
+#DEFINE DEF_TRANS33	"033"	//
+#DEFINE DEF_TRANS37 "037"	//Transacao de visualizacao do contrato
+
+/*/{Protheus.doc} SF69A01J
+Funcao responsavel por criar/vincular planilha financeira e cronograma contabil com o contrato, de acordo
+com as informações do CRM - Proposta Comercial.
+
+Chamada no ponto de entrada: CTA100MNU
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	26/10/2016
+@version 	1.0
+@return 	Nil, Nulo
+/*/
+User Function SF69A01J()
+	
+	Local _lOK			:= .F.
+	Local _aArea 		:= GetArea()
+	Local _lFisico 		:= Posicione("CN1",1,xFilial("CN1")+CN9->CN9_TPCTO,"CN1_CROFIS") == "1"
+	Private cCodTurma   := ""
+	Private _cNumPla	:= StrZero(1,TamSX3('CNA_NUMERO')[1])
+	Private _cDescri 	:= 'CONTRATO N. '+ AllTrim(CN9->CN9_NUMERO)
+	
+	If  (.Not. Empty(CN9->CN9_XOPORT) .And. .Not. Empty(CN9->CN9_XREVOP)) .OR. CN9->CN9_XCONVE == "S"
+		If MsgNoYes("Deseja vincular Planilha Financeira/Contábil ao Contrato?" + CRLF + "Confirma a ação?")
+			DbSelectArea("CNA")
+			CNA->(DbSetOrder(1))
+			If CNA->(DbSeek( CN9->CN9_FILIAL + CN9->CN9_NUMERO + CN9->CN9_REVISA + _cNumPla))
+			
+				If ChecaCNF()			
+					Alert("O contrato:" + CN9->CN9_NUMERO +"/"+ CN9->CN9_REVISA +", já existe planilha, favor verificar!")				
+				Else
+				
+					u_SF69A01X(,,3,,CN9->CN9_NUMERO,CN9->CN9_REVISA,,,)
+
+					If ChecaCNF()						
+						AtuLeg("2")
+					EndIf
+					
+				EndIf
+				
+			Else
+			
+				If CN9->CN9_SITUAC == '02' //Em Elaboracao
+					Begin Transaction
+						_lOK := fGravaCNA()
+						If _lOK
+							//-> inserir validação
+							_lOK := fGrvCnbCnw()
+						Else
+							Alert("Erro na Inclusão da Planilha(CNA), favor verificar!")
+							DisarmTransaction()
+						EndIf
+						If _lOK
+							MsgInfo("Inclusão Efetuada.","Sucesso!")
+							AtuLeg("1")
+						Else
+							Alert("Erro na Inclusão da Planilha(CNB) e Cronograma (CNW), favor verificar!")
+							DisarmTransaction()
+						EndIf
+					End Transaction
+					//Se for medicao eventual e cronograma fisico
+					If _lOK //.And. _lFisico 
+							//cAlias,nReg,nOpcX,aCpos,cContra,cRevisa,lAtuPlan,lPlanReg,lVisAprCt
+						    //CN110Manut(,,3,,CN9->CN9_NUMERO,CN9->CN9_REVISA,,,)
+						    
+						u_SF69A01X(,,3,,CN9->CN9_NUMERO,CN9->CN9_REVISA,,,)		
+						
+						If ChecaCNF()						
+							AtuLeg("2")
+						EndIf
+											
+					EndIf
+				Else
+					Alert("O contrato:" + CN9->CN9_NUMERO +"/"+ CN9->CN9_REVISA +", não esta mais em fase de Elaboração, favor verificar!")
+				EndIf
+			EndIf
+		EndIf
+	Else
+		Alert("Funcionalidade não disponivel para este Contrato - Somente contrato CRM. "+ CRLF +" Favor verificar!")
+	EndIf
+
+	RestArea(_aArea)
+	
+Return
+
+
+/** {Protheus.doc} fGravaCNA
+Funcao para gravar os dados na tabela CNA
+
+@param: 	<Nil>
+@author 	Jose Leite de Barros Neto
+@since 	27/10/2016
+@Uso: 		SFIEMT
+*/
+Static Function fGravaCNA()
+	
+	Local _lRet	:= .T.
+	
+	DbSelectArea("CNA")
+	CNA->(DbSetOrder(1))
+	If .Not. CNA->(DbSeek( CN9->CN9_FILIAL + CN9->CN9_NUMERO + CN9->CN9_REVISA + _cNumPla))
+		If RecLock('CNA', .T.)
+			CNA->CNA_FILIAL	:= CN9->CN9_FILIAL
+			CNA->CNA_CONTRA	:= CN9->CN9_NUMERO
+			CNA->CNA_XDESC	:= SubStr(_cDescri,1,TamSX3('CNA_XDESC')[1])
+			CNA->CNA_NUMERO	:= _cNumPla
+			CNA->CNA_CLIENT	:= CN9->CN9_CLIENT
+			CNA->CNA_LOJACL	:= CN9->CN9_LOJACL
+			CNA->CNA_DTINI	:= CN9->CN9_XDTINI
+			CNA->CNA_VLTOT	:= CN9->CN9_VLINI
+			CNA->CNA_SALDO	:= CN9->CN9_VLINI
+			CNA->CNA_DTFIM 	:= CN9->CN9_DTFIM
+			CNA->CNA_TIPPLA	:= '001'  
+			CNA->CNA_FLREAJ	:= '2'
+			CNA->(MsUnLock())
+			ConOut("Gravou CNA")
+		EndIf
+		
+		_cTraCod := DEF_TRANS01 //Controle total sobre o Contrato
+							
+		DbSelectArea('CNN')
+		CNN->( DbSetOrder(1) ) //CNN_FILIAL+CNN_USRCOD+CNN_CONTRA+CNN_TRACOD
+		CNN->( DbGoTop() )
+		If .Not. CNN->(DbSeek( CN9->CN9_FILIAL + '000000' + CN9->CN9_NUMERO + _cTraCod))
+			If RecLock("CNN", .T.)
+				CNN->CNN_FILIAL := CN9->CN9_FILIAL
+				CNN->CNN_CONTRA := CN9->CN9_NUMERO
+				CNN->CNN_GRPCOD := '000000'	
+				CNN->CNN_TRACOD := _cTraCod 	
+				CNN->(MsUnLock())
+			EndIf
+			ConOut("Gravou CNN")
+		EndIf
+
+	Else
+		Alert("O contrato:" + CN9->CN9_NUMERO +"/"+ CN9->CN9_REVISA +", já existe planilha, favor verificar!")
+		_lRet := .F.
+	EndIf
+	
+Return(_lRet)
+
+
+/** {Protheus.doc} fGrvCnbCnw
+Funcao para gravar os dados na tabela CNB e CNW
+
+@param: 	<Nil>
+@author 	Jose Leite de Barros Neto
+@since 	27/10/2016
+@Uso: 		SFIEMT
+*/
+Static Function fGrvCnbCnw()
+	
+	Local _lReturn		:= .T.
+	Local _cQuery		:= ""
+	Local _cProp 		:= ""
+	Local _cRvPr		:= ""
+	Local _aDadosCNB	:= {}
+	Local _aDadosCNV	:= {}
+	Local _aDadosCNW	:= {}
+	Local _nItem		:= 0
+	Local _nVlrtot		:= 0
+	Local _cConta		:= ""
+	Local _cCusto		:= GetNewPar("MV_XSGECCV","")
+	Local _cItemCt		:= ""
+	Local _cClvl   		:= Posicione("SA1",1,xFilial("SB1")+ CN9->CN9_CLIENT + CN9->CN9_LOJACL,"A1_CLVL")
+	Local _cTesSai		:= ""
+	Local _aParcelas	:= {}
+	
+	If Empty(_cCusto)
+		Alert("Parametro do Centro de Custo Inválido, favor verificar: MV_XSGECCV")
+		_lReturn := .F.
+		Return _lReturn
+	EndIf
+	
+	If Empty(_cClvl)
+		Alert("Classe de Valor do Cliente Inválido, favor verificar!")
+		_lReturn := .F.
+		Return _lReturn
+	EndIf
+	
+	If Select('TRA') > 0
+		DbSelectArea('TRA')
+		TRA->(DbCloseArea())
+	EndIf
+	
+	_cQuery := " SELECT * "
+	_cQuery += " FROM "+ RetSqlName("ADY")
+	_cQuery += " WHERE ADY_FILIAL = '"+ xFilial("ADY") +"'"
+	_cQuery += " AND ADY_OPORTU = '"+ CN9->CN9_XOPORT +"' "
+	_cQuery += " AND ADY_REVISA = '"+ CN9->CN9_XREVOP +"' "
+	_cQuery += " AND ADY_STATUS = 'E'	"
+	_cQuery += " AND D_E_L_E_T_ <> '*' "
+	
+	TcQuery _cQuery New Alias 'TRA'
+	
+	_cProp := TRA->ADY_PROPOS
+	_cRvPr := TRA->ADY_PREVIS
+	
+	TRA->(DbCloseArea())
+	
+	_cQuery := " SELECT * "
+	_cQuery += " FROM "+ RetSqlName("ADZ")
+	_cQuery += " WHERE ADZ_FILIAL = '"+ xFilial("ADZ") +"' 
+	_cQuery += " AND ADZ_PROPOS = '"+ _cProp +"' "
+	_cQuery += " AND ADZ_REVISA = '"+ _cRvPr +"' "
+	_cQuery += " AND D_E_L_E_T_ <> '*' "
+	
+	TcQuery _cQuery New Alias 'TRA'
+	
+	_nVlrtot := 0
+	
+	While .Not. TRA->(EOF())
+	
+		cCodTurma := TRA->ADZ_XTURMA
+		
+		_nItem++
+		_nVlrtot += TRA->ADZ_TOTAL
+		_cConta  := Posicione("SB1",1,xFilial("SB1")+ TRA->ADZ_PRODUT,"B1_CONTA")
+		_cItemCt := Posicione("SB1",1,xFilial("SB1")+ TRA->ADZ_PRODUT,"B1_ITEMCC")
+		_cTesSai := TRA->ADZ_TES
+		
+		aAdd(_aDadosCNB,{	CN9->CN9_FILIAL									,;
+								_cNumPla											,;
+								CN9->CN9_REVISA									,;
+								StrZero(_nItem,TamSX3('CNB_ITEM')[1])		,;
+								TRA->ADZ_PRODUT									,;
+								TRA->ADZ_DESCRI									,;
+								TRA->ADZ_UM										,;
+								TRA->ADZ_QTDVEN									,;
+								TRA->ADZ_PRCVEN									,;
+								TRA->ADZ_TOTAL									,;
+								_cConta											,;
+								_cCusto											,;
+								_cItemCt											,;
+								_cClvl												,;
+								_cTesSai											})
+		TRA->(DbSkip())
+	End
+	
+	TRA->(DbCloseArea())
+	
+	If Len(_aDadosCNB) > 0
+		DbSelectArea("CNB")
+		CNB->(DbSetOrder(1))
+		If .Not. CNB->(DbSeek( CN9->CN9_FILIAL + CN9->CN9_NUMERO + _aDadosCNB[1][02] + _cNumPla))
+			For nX := 1 To Len(_aDadosCNB)
+				If RecLock('CNB', .T.)
+					CNB->CNB_FILIAL	:= _aDadosCNB[nX][01]
+					CNB->CNB_CONTRA	:= CN9->CN9_NUMERO
+					CNB->CNB_NUMERO	:= _aDadosCNB[nX][02]
+					CNB->CNB_REVISA	:= _aDadosCNB[nX][03]
+					CNB->CNB_ITEM	:= _aDadosCNB[nX][04]
+					CNB->CNB_PRODUT	:= _aDadosCNB[nX][05]
+					CNB->CNB_DESCRI	:= _aDadosCNB[nX][06]
+					CNB->CNB_UM		:= _aDadosCNB[nX][07]
+					CNB->CNB_QUANT 	:= _aDadosCNB[nX][08]
+					CNB->CNB_VLUNIT	:= _aDadosCNB[nX][09]
+					CNB->CNB_VLTOT	:= _aDadosCNB[nX][10]
+					CNB->CNB_SLDMED	:= _aDadosCNB[nX][10]
+					CNB->CNB_CONTA	:= _aDadosCNB[nX][11]
+					CNB->CNB_CC		:= _aDadosCNB[nX][12]
+					CNB->CNB_ITEMCT	:= _aDadosCNB[nX][13]
+					CNB->CNB_CLVL	:= _aDadosCNB[nX][14]
+					CNB->CNB_TS		:= _aDadosCNB[nX][15]
+					CNB->(MsUnLock())
+				EndIf
+			Next nX
+			ConOut("Gravou CNB")
+		Else
+			Alert("Para este contrato já existe os itens da planilha de contrato (CNB), favor verificar!")
+			_lReturn := .F.
+			Return _lReturn
+		EndIf
+	Else
+		Alert("Não foi encontrado produto na proposta comercial - CRM, favor verificar!")
+		_lReturn := .F.
+		Return _lReturn
+	EndIf
+	
+	/*_aTurma    := ChkTurma(cCodTurma)
+	
+	If (!Empty(_aTurma[2]) .AND. !Empty(_aTurma[3]))
+		Reclock("CN9", .F.)
+		CN9->CN9_XDTINI := STOD(_aTurma[2])
+		CN9->CN9_XDTFIM := STOD(_aTurma[3])
+		CN9->(MsUnlock())
+	EndIf
+	
+	//_aParcelas := Condicao(_nVlrtot,CN9->CN9_CONDPG,,CN9->CN9_XDTINI)
+	
+	// funcao que recalcula as parcelas baseando na nova forma de calculo
+	// caio.lima j2a - 13/07/2017
+	_aParcelas := STATICCALL(SF06A18X,fCondCont,_nVlrtot,CN9->CN9_XDTINI,CN9->CN9_XDTFIM)
+	*/
+	
+	_aParcelas := Condicao(_nVlrtot,CN9->CN9_CONDPG,,CN9->CN9_XDTINI)
+	
+	For j := 1 to Len(_aParcelas)
+		
+		//_cDtPr := StoD(cValToChar(Year(_aParcelas[j][1])) + StrZero(Month(_aParcelas[j][1]),2) + StrZero(28,2))
+		_cDtPr := _aParcelas[j][1]
+		_nVlrP := _aParcelas[j][2]
+		_cParc := StrZero(j,TamSX3('CNW_PARCEL')[1])
+		_cComp := StrZero(Month(_cDtPr),2) + '/' + cValToChar(Year(_cDtPr))
+		_cHist := "Parc: "+ _cParc + " - Compt: "+ _cComp
+		
+		aAdd(_aDadosCNW, { CN9->CN9_FILIAL		,;
+								CN9->CN9_REVISA		,;
+								_cParc					,;
+								_cComp					,;
+								_cDtPr					,;
+								_nVlrP					,;
+								_cHist					,;
+								'2'						,; 			//1=Sim;2=Nao
+								_cCusto				,;
+								_aDadosCNB[1][13]	})
+	Next
+	
+	/*Gravar Cronograma Contabil*/	
+	If Len(_aDadosCNW) > 0
+	
+		//-> NAO GERA CRONOGRAMA CONTABIL PARA CONTRATOS DE VENDA DO PARQUE
+		If CN9->CN9_XCONVE == "S"
+			Return(_lReturn)
+		EndIf
+		
+		_cNumCron  := GetNumCNW()
+		_aDadosCNV := {}
+		
+		//cContab    := ChkTurma(cCodTurma)
+		
+		//Cabec
+		aAdd(_aDadosCNV, CN9->CN9_FILIAL	)
+		aAdd(_aDadosCNV, CN9->CN9_REVISA	)
+		aAdd(_aDadosCNV, _cNumPla			)
+		aAdd(_aDadosCNV, 1						)
+		aAdd(_aDadosCNV, _cConta				)
+		aAdd(_aDadosCNV, '1'					)//1=Mensal;2=Quinzenal;3=Diario
+		aAdd(_aDadosCNV, 30 					)//Dias entre as parcelas
+		//aAdd(_aDadosCNV, _aTurma[1]				)//Flag para informar se Contabiliza - S=Sim;N=Nao
+		
+		If RecLock('CNV', .T.)
+			CNV->CNV_FILIAL := _aDadosCNV[1]
+			CNV->CNV_NUMERO := _cNumCron
+			CNV->CNV_CONTRA := CN9->CN9_NUMERO
+			CNV->CNV_REVISA := _aDadosCNV[2]
+			CNV->CNV_PLANIL := _aDadosCNV[3]
+			CNV->CNV_TXMOED := _aDadosCNV[4]
+			CNV->CNV_CONTA  := _aDadosCNV[5]
+			CNV->CNV_PERIOD := _aDadosCNV[6]	
+			CNV->CNV_DIAPAR := _aDadosCNV[7]	
+			//CNV->CNV_XCTBIL := _aDadosCNV[8]		
+			CNV->(MsUnlock())
+		EndIf
+		
+		//Itens				
+		DbSelectArea("CNW")
+		CNW->(DbSetOrder(1))
+		CNW->(DbGoTop())
+		If .Not. CNW->(DbSeek(CN9->CN9_FILIAL + CN9->CN9_NUMERO + CN9->CN9_REVISA + _cNumCron))
+			For nX := 1 To Len(_aDadosCNW)
+				If RecLock('CNW', .T.)
+					CNW->CNW_FILIAL := _aDadosCNW[nX][01]
+					CNW->CNW_CONTRA := CN9->CN9_NUMERO
+					CNW->CNW_REVISA := _aDadosCNW[nX][02]
+					CNW->CNW_NUMERO := _cNumCron
+					CNW->CNW_PARCEL := _aDadosCNW[nX][03]
+					CNW->CNW_COMPET := _aDadosCNW[nX][04]
+					CNW->CNW_DTPREV := _aDadosCNW[nX][05]
+					CNW->CNW_VLPREV := _aDadosCNW[nX][06]
+					CNW->CNW_HIST   := _aDadosCNW[nX][07]
+					CNW->CNW_FLGAPR := _aDadosCNW[nX][08]
+					CNW->CNW_CC     := _aDadosCNW[nX][09]
+					CNW->CNW_ITEMCT := _aDadosCNW[nX][10]
+					CNW->CNW_CLVL   := _cClvl
+					CNW->(MsUnlock())
+				EndIf
+			Next nX
+			
+			DbSelectArea('CNA')
+			CNA->(DbSetOrder(1)) //CNA_FILIAL+CNA_CONTRA+CNA_REVISA+CNA_NUMERO
+			CNA->(DbGotop())
+			If CNA->( DbSeek( CN9->CN9_FILIAL + CN9->CN9_NUMERO + CN9->CN9_REVISA + _cNumPla ) )
+				If RecLock('CNA', .F.)
+					CNA->CNA_CRONCT := _cNumCron  
+					CNA->(MsUnlock())
+				EndIf
+				ConOut('IMPGCTRM: Gravou o Codigo do Cronograma Contabil - CNA')
+			Else
+				ConOut('IMPGCTRM: Nao gravou o Codigo do Cronograma Contabil - CNA')
+			EndIf
+							
+		Else
+			Alert("Para este contrato já existe as parcelas do cronograma contabil - (CNW), favor verificar!")
+			_lReturn := .F.
+			Return _lReturn
+		EndIf
+	Else
+		Alert("Não foi encontrado parcelas do cronograma contabil - (CNW), favor verificar!")
+		_lReturn := .F.
+		Return _lReturn
+	EndIf
+	
+Return(_lReturn)
+
+
+/** {Protheus.doc} GetNumCNW
+Funcao para pegar a ultimo Numero do Cronograma valido
+
+@param: 	<Nil>
+@author 	Jose Leite de Barros Neto
+@since 	27/10/2016
+@Uso: 		SFIEMT
+*/
+Static Function GetNumCNW()
+	
+	Local _cNumero := ''
+	Local _cQuery  := ''
+	
+	If Select('TMP') > 0
+		DbSelectArea('TMP')
+		TMP->( DbCloseArea() )
+	EndIf
+		
+	_cQuery := " SELECT MAX(CNW_NUMERO) CNW_NUMERO " 
+	_cQuery += " FROM "+ RetSqlName('CNW') 
+	
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMP',.T.,.F.)
+	
+	DbSelectArea('TMP')
+	TMP->(DbGoTop())
+
+	If Empty(TMP->(CNW_NUMERO))
+		_cNumero := StrZero(1, TamSx3("CNW_NUMERO")[1])
+	Else
+		_cNumero := StrZero(Val(TMP->(CNW_NUMERO)) + 1, TamSx3("CNW_NUMERO")[1])
+	EndIf
+		
+	TMP->(DbCloseArea())
+	
+Return( _cNumero )
+
+/*/{Protheus.doc} ChecaCNF
+(long_description)
+@author j2a.luizjunior
+@since 09/06/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ChecaCNF
+
+	Local cAlCNF := GetNextAlias()
+	Local lRet   := .F.
+	
+	BeginSql Alias cAlCNF
+	
+		SELECT CNF_NUMERO
+		FROM   CNF010
+		WHERE  CNF_CONTRA  = %Exp:CN9->CN9_NUMERO%
+		AND    CNF_FILIAL  = %Exp:CN9->CN9_FILIAL%
+		AND    %NOTDEL%		
+	
+	EndSql
+	
+	If !(cAlCNF)->(Eof())
+		lRet := .T.
+	EndIf
+
+Return lRet
+
+/*/{Protheus.doc} AtuLeg
+(long_description)
+@author j2a.luizjunior
+@since 12/06/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function AtuLeg(pCronog)
+	
+	Local cCronog := pCronog
+	Local cSituac := ""
+	
+	If cCronog == "1"
+		cSituac := "11"
+	Else
+		cSituac := "12"
+	EndIf
+
+	DbSelectArea("CN9")
+	DbSetOrder(1)
+	If DbSeek(CN9->CN9_FILIAL + CN9->CN9_NUMERO + CN9->CN9_REVISA)
+	
+		If RecLock("CN9",.F.)			
+			CN9->CN9_XSITUA := cSituac
+			CN9->(MsUnlock())		
+		EndIf
+		
+	EndIf
+
+Return
+
+/*/{Protheus.doc} ChkTurma
+(long_description)
+@author j2a.luizjunior
+@since 20/06/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ChkTurma(pCodTurma)
+
+	Local aRet     := {}
+	Local cAlZMD   := GetNextAlias() 
+	Local cAliasRM := GetNewPar("MV_XSGEABD", "") //"@RMSGE"
+	Local cTurma   := AllTrim(pCodTurma)
+	Local cQuery   := ""
+	
+	cQuery += " SELECT TO_CHAR(DATAINI,'YYYYMMDD') AS DATAINI, TO_CHAR(DATAFIM,'YYYYMMDD') AS DATAFIM "
+	cQuery += " ,TURMA_INI "
+	cQuery += " FROM   ZMD_TURMAS_COMPL"+ cAliasRM
+	cQuery += " WHERE  CODTURMA  = '"+ cTurma +"' "
+	cQuery += " AND    TURMA_INI = '1' "
+
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAlZMD,.T.,.F.)
+		
+	If !Empty((cAlZMD)->TURMA_INI)
+		aRet := { "S", (cAlZMD)->DATAINI, (cAlZMD)->DATAFIM}
+	Else
+		aRet := { "N", '', ''}
+	EndIf
+
+Return aRet

@@ -1,0 +1,170 @@
+#INCLUDE "TOTVS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"
+
+/*/
+@author: j2a.caiolima
+@data: 24/07/2017
+@descricao: SF06A22X
+Funcao para cadastro da proviso do fluxo financeiro
+/*/
+User Function SF06A22X
+Local oBrowse := FWMBrowse():New()
+Local _nz := 0
+
+Private _aCores := {}
+
+DbSelectArea("ZF4")
+DbSetOrder(1)
+ZF4->(DbGoTop())
+
+Private aRotina := MenuDef()
+
+oBrowse:SetAlias('ZF4')
+
+// Adicionando Legendas
+Aadd(_aCores , {"ZF4_COND='R'" , "BR_VERDE", "Receita"} )
+Aadd(_aCores , {"ZF4_COND='D'" , "BR_AZUL" , "Despesa"} )
+for _nz:= 1 to Len(_aCores)
+	oBrowse:AddLegend(_aCores[_nz,1], _aCores[_nz,2], _aCores[_nz,3])
+next
+
+oBrowse:SetDescription("Provisão - Fluxo de caixa projetado")
+
+oBrowse:Activate()
+
+Return
+/*/
+@author: caiocrol
+@data: 13/08/2014
+@descricao: MENUDEF
+/*/
+Static Function MenuDef()
+Local aRotina := {}
+
+ADD OPTION aRotina Title 'Pesquisar'  Action 'PesqBrw'          OPERATION 1 ACCESS 0
+ADD OPTION aRotina Title 'Visualizar' Action 'VIEWDEF.SF06A22X' OPERATION 2 ACCESS 0
+ADD OPTION aRotina Title 'Incluir'    Action 'VIEWDEF.SF06A22X' OPERATION 3 ACCESS 0
+ADD OPTION aRotina Title 'Alterar'    Action 'VIEWDEF.SF06A22X' OPERATION 4 ACCESS 0
+ADD OPTION aRotina Title 'Excluir'    Action 'VIEWDEF.SF06A22X' OPERATION 5 ACCESS 0
+ADD OPTION aRotina Title 'Legenda'    Action 'StaticCall(SF06A22X,fLegend)' OPERATION 1 ACCESS 0
+
+Return(aRotina)
+
+/*/
+@author: caiocrol
+@data: 13/08/2014
+@descricao: MODELDEF
+/*/
+Static Function ModelDef()
+Local oStrZF4 := FWFormStruct( 1, 'ZF4' )
+Local oModel // Modelo de dados que será construído
+
+oModel := MPFormModel():New( 'SF06A22Z', , {|oModel| fValidZF4(oModel) } /*Validacao Antes da Gravação*/, /*Funcao de Gravacao Manual*/ )
+
+oModel:AddFields( 'ZF4MASTER' , /*cOwner*/ , oStrZF4 )
+
+//Setando Chave Primária
+oModel:SetPrimaryKey( { "ZF4_FILIAL", "ZF4_CODIGO" } )
+
+oModel:SetDescription( "Provisão - Fluxo de caixa projetado" )
+
+oModel:GetModel( 'ZF4MASTER'  ):SetDescription( "Provisão - Fluxo de caixa projetado" )
+
+Return(oModel)
+/*/
+@author: caiocrol
+@data: 13/08/2014
+@descricao: VIEWDEF
+/*/
+Static Function ViewDef()
+Local oModel := FWLoadModel( 'SF06A22X' ) //_MVC
+
+// Cria as estruturas a serem usadas na View
+Local oStrZF4 := FWFormStruct( 2, 'ZF4' ) //Cabeçalho
+
+oView := FWFormView():New()
+oView:SetModel( oModel )
+
+oView:AddField( 'VW_ZF4', oStrZF4, 'ZF4MASTER'  )
+
+oView:CreateHorizontalBox( 'CABECALHO' , 100 )
+
+oView:SetOwnerView( 'VW_ZF4', 'CABECALHO'  )
+
+Return(oView)
+
+/*/{Protheus.doc} fLegend
+Exibe a tela das legendas
+@author j2a.caiolima
+@since 24/07/2017
+/*/
+Static Function fLegend()
+	Local _aLeg := {}
+	
+	aEval(_aCores, {|x,y| Aadd(_aLeg, {x[2], x[3]} ) } )
+	
+	BrwLegenda("Legenda da provisão", "Legenda" , _aLeg)
+	
+Return nil
+
+/*/{Protheus.doc} fValNat
+valida a natureza digitada
+chamada a partir da validacao do campo ZF4_NATURE
+@author j2a.caiolima
+@since 26/07/2017
+@version 1.0
+@return logico, true se a natureza é valida, e falso se a natureza é invalida 
+/*/
+Static Function fValNat(_cVar)
+	Local _aArea := GetArea()
+	Local _lRet := .T.
+	Local _nTEDC := TamSX3("ED_CODIGO")[1]
+	
+	dbSelectArea("SED")
+	SED->(dbSetOrder(1))
+	If SED->( dbSeek(xFilial("SED")+PadR(_cVar, _nTEDC)) )
+		If SED->ED_TIPO == "2" // aceita apenas nautrezas analiticas
+			_lRet := .T.
+		Else
+			ALert("Favor informar uma natureza analitica.")
+			_lRet := .F.
+		EndIf
+	Else
+		ALert("Natureza inexistente.")
+		_lRet := .F.
+	EndIf
+	RestArea(_aArea)
+Return(_lRet)
+
+
+/*/{Protheus.doc} fValidZF4
+valida se a condição da natureza é a mesma da provisao
+@author j2a.caiolima
+@since 26/07/2017
+@version 1.0
+@return Logico, true se as condicões forem iguais e falso se forem diferentes
+/*/
+Static Function fValidZF4(oModel)
+	Local _oModZF4 := oModel:GetModel("ZF4MASTER")
+	Local _aArea := GetArea()
+	Local _aAreaZF4 := ZF4->(GetArea())
+	Local _lRet := .T.
+	Local _cEDCond := ""
+	Local _cNat  := _oModZF4:GetValue("ZF4_NATURE")
+	Local _cCond := _oModZF4:GetValue("ZF4_COND")
+	
+	_cEDCond := Posicione("SED",1,xFilial("SED")+_cNat,"ED_COND")
+	If _cCond <> _cEDCond
+		Alert("A condição da natureza precisa ser igual ao da provisão." + CRLF +;
+		"Condição da natureza: " + _cEDCond + CRLF + ;
+		"Condição da provisão: " + _cCond )
+		_lRet := .F.
+	Else
+		_lRet := .T.
+	EndIf
+	
+	RestArea(_aArea)	
+	RestArea(_aAreaZF4)	
+Return(_lRet)

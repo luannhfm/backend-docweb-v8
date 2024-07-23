@@ -1,0 +1,1088 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "PARMTYPE.CH"
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<SN062EX>                                                   |
+|Controle de [SESSOES & MATRICULAS] de Pagamento do Pronatec               |
+|                                                                          |
+|    ATENCAO:                                                              |
+|    --------                                                              |
+|    Para utilizar a faciliade verifique o criacao e declaracao do         |
+|    parametros: conforme segue:                                           |
+|    MV_XDBNOME := "MSSQL/sige"   - Identificacao do DataBase SIGE         |
+|    MV_XSRVEND := "10.52.28.17"  - Endereco IP de aceso ao DataBase SIGE  |
+|    MV_XSRVPOR := 7890           - Porta de Acesso do DataBase SIGE       |   
+|    Tais parametros seram utilizadas pela rotina de Integracao com        |
+|    sistema legado SIGE na rotina de funcao de integracao GetMatric()     |
+|    descrita do programa SN0699X.PRG.                                     |
+|                                                                          |
+|    MV_XPREPRN := "PRT"          - Prefixo" dos Titulos PRONATEC          |   
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<20/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@return                                                                   |
+|<   _lReturn  (L) - (.T.) - A consulta encontrou dados                    |
+|                    (.F.) - A consulta NAO encontrou dados.               |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|@review                                                                   |
+|<>                                                                        |
+|@Author<>                                                                 |
+|@since<>                                                                  |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function SN062EX()
+Local _cAlias  	:= "ZP6"
+Local _cTitle  	:= "Controle de Sessoes x Matriculas"
+Local _oBrowse 	:= FWMBrowse():New()   
+Private aRotina	:= MenuDef()
+_oBrowse:SetAlias(_cAlias)
+_oBrowse:SetDescription(_cTitle)
+_oBrowse:Activate()
+Return NIL
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<MenuDef>                                                   |
+|Definicao do MenuDef                                                      |
+|@Author<Antonio Dantas>                                                   |
+|@since<20/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@return                                                                   |
+|<   _aRotina (a) - Vetor com as opcoes de Menu                            |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function MenuDef()
+Local _aRotina 		:= {}
+ADD OPTION _aRotina TITLE "Pesquisar"				ACTION "PESQBRW"         	OPERATION 1 ACCESS 0
+ADD OPTION _aRotina TITLE "Visualizar" 				ACTION "VIEWDEF.SN062EX" 	OPERATION 2 ACCESS 0
+ADD OPTION _aRotina TITLE "Incluir"    				ACTION "VIEWDEF.SN062EX" 	OPERATION 3 ACCESS 0
+ADD OPTION _aRotina TITLE "Manutenção"				ACTION "VIEWDEF.SN062EX" 	OPERATION 4 ACCESS 0
+ADD OPTION _aRotina TITLE "Excluir"   				ACTION "VIEWDEF.SN062EX" 	OPERATION 5 ACCESS 0
+ADD OPTION _aRotina TITLE "Imprimir"   				ACTION "VIEWDEF.SN062EX" 	OPERATION 8 ACCESS 0
+ADD OPTION _aRotina TITLE "Controle Cartão P Pago"	ACTION "u_SN061AX()" 		OPERATION 2 ACCESS 0  
+ADD OPTION _aRotina TITLE "Cad Cartões Pre Pago"	ACTION "u_SN062FX()" 		OPERATION 2 ACCESS 0  
+ADD OPTION _aRotina TITLE "Lib Cartões Pre Pago"	ACTION "u_SN061BX()" 		OPERATION 2 ACCESS 0  
+ADD OPTION _aRotina TITLE "Gerar Rem Lib PrePago"	ACTION "u_SN0629X()" 		OPERATION 2 ACCESS 0  
+ADD OPTION _aRotina TITLE "Cancela Rem Lib PrePg"	ACTION "u_SN062LX()" 		OPERATION 2 ACCESS 0  
+ADD OPTION _aRotina TITLE "Ler Retor. Lib PrePago"	ACTION "u_SN062AX()" 		OPERATION 2 ACCESS 0  
+ADD OPTION _aRotina TITLE "Restaura Sessao c/Rem"	ACTION "u_fRestSes()" 		OPERATION 2 ACCESS 0 
+ADD OPTION _aRotina TITLE "Visualizar Remessas"		ACTION "u_SN062NX()" 		OPERATION 2 ACCESS 0  
+ 
+//+-----------------------------------------------------------------------+
+//| Antonio Dantas                                             14/11/2014 |
+//| Conforme acorda Guilherme x Dantas Nesta data, descontinuamos a       |
+//| opção de encerramento MANUAL da Sessão                                |
+//+-----------------------------------------------------------------------+
+//&&--  ADD OPTION _aRotina TITLE "Encerra a Sessão"		ACTION "u_fEncerZP6()" 		OPERATION 2 ACCESS 0 
+Return _aRotina
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<MenuDef>                                                   |
+|Definicao do ModelDef                                                     |
+|@Author<Antonio Dantas>                                                   |
+|@since<20/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@return                                                                   |
+|<   _oModel (o) - Objeto com a Definicao do Modelo                        |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function ModelDef()
+Local _oStruZP6 := FWFormStruct(1,"ZP6")
+Local _oStruZP7 := FWFormStruct(1,"ZP7")
+Local _oModel   := Nil
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Definicao e Tratamento do Modelo                                    |
+//|  New("SN062EXP"), refere-se ao nome do Ponto de Entrada PADRAO      |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_oModel		:= MPFormModel():New("SN062EXP",/*PreValid*/, {|_oMod| fVldForM(_oMod) }, {|_oMod| fGravar(_oMod)} )
+_oModel:AddFields("ZP6MASTER"	, /*cOwner*/ ,_oStruZP6)
+_oModel:AddGrid("ZP7DETAIL"		, "ZP6MASTER" ,_oStruZP7)
+_oModel:SetPrimaryKey({"ZP6_FILIAL","ZP6_XCOD"})
+&&-- ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+&&-- | ***** ATENCAO                                                       |
+&&-- | Em decorencia do volume previsto de registros de Matriculas;        |
+&&-- | Desativamos o relacionamento para que a carga nao seja realizado de |
+&&-- | forma automaticamente, e sim, em rotina de carga para visualizacao: |
+&&-- | a ser realizadas na chamada da funcao fVerMatr()                    |
+&&-- ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+&&-- //-- Matriculas x Sessao x Calendario x Periodo
+&&-- _oModel:SetRelation("ZP7DETAIL", {{"ZP7_FILIAL", "FwxFilial('ZP7')"},{"ZP7_XPERIO", "ZP4_XCOD"},{"ZP7_XSEG","ZP5_XSEG"},{"ZP7_XSESSA","ZP6_XCOD"}},ZP7->(IndexKey(1)))
+&&-- fim
+_oModel:SetDescription("Controle de Sessoes x Matriculas")
+_oModel:GetModel("ZP6MASTER"):SetDescription("Sessoes")
+_oModel:GetModel("ZP7DETAIL"):SetDescription("Matriculas")
+//-- Modifica a Obrigatoriedade do Campo tipo Neste Formulario 
+_oStruZP7:SetProperty("ZP7_XTIPO",MODEL_FIELD_OBRIGAT,.f.)  
+//-- Nao Permite que a Grid de Matriculas seja editavel 
+_oModel:GetModel("ZP7DETAIL"):SetNoInsertLine(.T.)
+_oModel:GetModel("ZP7DETAIL"):SetNoDeleteLine(.T.)
+_oModel:GetModel("ZP7DETAIL"):SetNoUpdateLine(.T.)
+_oModel:GetModel("ZP7DETAIL"):SetOnlyQuery(.T.)    			//-- Indica que o model e somente para consulta
+_oModel:GetModel("ZP7DETAIL"):SetOptional(.T.)  
+
+Return _oModel
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<MenuDef>                                                   |
+|Definicao do ViewDef                                                      |
+|@Author<Antonio Dantas>                                                   |
+|@since<20/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@return                                                                   |
+|<   _oView (o) - Objeto com a Definicao do Visao do Modelo                |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function ViewDef()
+Local _oStruZP6 := FWFormStruct(2,"ZP6",/*{|_cFild| xDefFilds(_cFild)}*/)
+Local _oStruZP7 := FWFormStruct(2,"ZP7",/*{|_cFild| xDefFilds(_cFild)}*/)
+Local _oModel   := FWLoadModel("SN062EX")
+Local _oView    := FWFormView():New()
+Local _nOpc     := _oModel:GetOperation()
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//|  Monta Box Horizontal - Superior - Sessoes                          |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+//--
+//-- Remove os campos do Formulario
+_oStruZP6:RemoveField("ZP6_FILIAL")
+//--
+_oView:SetModel(_oModel)
+_oView:CreateHorizontalBox("SUPERIOR",50)
+_oView:CreateVerticalBox("ZP6_CAD",100,"SUPERIOR")
+_oView:AddField("VIEW_ZP6",_oStruZP6,"ZP6MASTER")
+_oView:EnableTitleView("VIEW_ZP6","Sesão")
+_oView:SetOwnerView("VIEW_ZP6","ZP6_CAD")
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//|  Monta Box Horizontal - Inferios - Matriculas                       |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_oView:CreateHorizontalBox("INFERIOR",50)
+_oView:CreateVerticalBox("ZP7_CAD",100,"INFERIOR")
+_oView:AddGrid("VIEW_ZP7",_oStruZP7,"ZP7DETAIL")
+_oView:EnableTitleView("VIEW_ZP7","Matriculas")
+_oView:SetOwnerView("VIEW_ZP7","ZP7_CAD")
+//-- Removes os campos da Grid
+_oStruZP7:RemoveField("ZP7_FILIAL")
+_oStruZP7:RemoveField("ZP7_XPERIO")
+_oStruZP7:RemoveField("ZP7_XSEG")
+_oStruZP7:RemoveField("ZP7_XSESSA") 
+_oStruZP7:RemoveField("ZP7_XDESEV")   
+_oStruZP7:RemoveField("ZP7_XCURSO")
+//-- Modifica a Obrigatoriedade do Campo tipo Neste Formulario 
+_oStruZP7:SetProperty("ZP7_XTIPO",MODEL_FIELD_OBRIGAT,.f.)  
+//-- Cria Botoes Personalizados
+_oView:AddUserButton("Vincular Matriculas" 	  	,'CLIPS',{|_oView| fVincMat()	} )
+_oView:AddUserButton("Modif Tipo de Pgto"		,'CLIPS',{|_oView| u_SN062IX()	} )
+_oView:AddUserButton("Carga das Matriculas"	  	,'CLIPS',{|_oView| fVerMatr()	} )
+_oView:AddUserButton("Gerar Remessa e Pgto"	   	,'CLIPS',{|_oView| u_SN0624X()	} )
+_oView:AddUserButton("Ler Retorno Remessa"	   	,'CLIPS',{|_oView| u_SN0625X()	} )    
+
+//-- *********************************************************************
+//--     Reinicializa a View .. Obrigatoriamente deve retornar um objeto
+//-- *********************************************************************
+// _oView:bAfterViewActivate := {|_oView| xFuncao(_oView) }	
+
+Return _oView
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fVldForM>                                                  |
+| Funcao de Validacao do Formulario e Chamada de Rotinas de Pre-Gracacao   |
+| das Tabelas co-Relacionadas                                              |
+|@Author<Antonio Dantas>                                                   |
+|@since<31/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<      _oModel (o) - Objeto [oModel] - Formulario a ser validado          |
+|>                                                                         |
+|@return                                                                   |
+|<     _lReturn (l) - (.t.) Validacao OK, pode proceguir acao              |
+|                     (.f.) Validacao Negativa, impedi a acao              |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fVldForM(_oModel)
+Local _lReturn  	:= .t.
+Local _nOper		:= _oModel:GetOperation()
+do Case
+	Case _nOper == 3	//-- Incluir
+		//-- Modifica a Condicao (STATUS) do Periodo para: [C=CalendÃ¡rio Definido]
+		fLibPer(_oModel)
+	Case _nOper == 4	//-- Alterar
+		_lReturn := .T.
+	Case _nOper == 5	//-- Excluir
+		_lReturn  := .t.
+	Case _nOper == 8	//-- Imprimir
+		_lReturn  := .t.
+	Case _nOper == 9	//-- Copiar
+		_lReturn  := .t.
+Endcase
+Return _lReturn 
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fVincMat>                                                  |
+| Funcao para viculo das MATRICULAS que seram pagas no Calendario/Sessao   |
+|@Author<Antonio Dantas>                                                   |
+|@since<05/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<      _oModel (o) - Objeto [oModel] - Formulario a ser validado          |
+|>                                                                         |
+|@return                                                                   |
+|<      DEFAULT .t.                                                        |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fVincMat()
+Local _aArea		:= GetArea() 
+Local _lReturn		:= .T. 
+Local _oModel      	:= FWModelActive() 
+Local _nOper		:= _oModel:GetOperation()    
+Local _oStruZP6 	:= _oModel:GetModel("ZP6MASTER")
+Local _c6Status		:= _oStruZP6:GetValue("ZP6_XSTATU")
+Local _cPerio		:= _oStruZP6:GetValue("ZP6_XPERIO")
+Local _cSeg			:= _oStruZP6:GetValue("ZP6_XSEG")
+Local _cSessa		:= _oStruZP6:GetValue("ZP6_XCOD")
+Local _nVlrHora		:= _oStruZP6:GetValue("ZP6_XVLR")
+Local _cTpImpor		:= "A"		//-- Defini o tipo de Vinculo das Matriculas ["A"bertura de Sessao;"C"orrecoes de Mastriculas]
+Private _lViewOK 	:= .f.		//-- Controle de Tudo ok na consulta 
+Private _oMdlMat 	:= Nil 		//-- Sera inicizalizada logo abaixo 
+Private _aColsNEW	:= {}		//-- Inicializa Private [aCols] das Matriculas, que sera apresentada ao operador,
+ 								//-- se Modificada na Funcao de Integracao com SIGE 
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Valido o Periodo e Calendario                                      ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If _nOper != 4 	//-- Manuteção "Alteracao"
+	Aviso(FunName()+"/"+ProcName(),"Esta opção só pode ser executada no modo de [Manuteção]!",{"OK"})
+	_lReturn := .f.
+Endif 
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Valido o Periodo e Calendario                                      ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If Empty(Alltrim(_cPerio)) .or. Empty(Alltrim(_cSeg))
+	Aviso(FunName()+"/"+ProcName(),"Para efetuar vincula informe primeiro Período & Calendário",{"OK"})
+	_lReturn := .f.
+Endif 
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Implementa controle de Transacao.                                  ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+Begin Transaction
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| PERMITE que a Grid de Matriculas seja editavel                           |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_oModel:GetModel("ZP7DETAIL"):SetNoInsertLine(.F.)
+	_oModel:GetModel("ZP7DETAIL"):SetNoDeleteLine(.F.)
+	_oModel:GetModel("ZP7DETAIL"):SetNoUpdateLine(.F.) 
+	_oModel:GetModel("ZP7DETAIL"):SetOnlyQuery(.F.)    			//-- Indica que o model e somente para consulta
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| *****ATENCAO:                                                            |
+	//| Por mais que possa parece estranho, e isso mesmo, DESATIVAMOS e ATIVAMOS |
+	//| o model para aplicas a mudanca das propriedades, senao, nao funciona !!  |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_oModel:GetModel("ZP7DETAIL"):DeActivate() 	   		//-- Desativa 
+	_oModel:GetModel("ZP7DETAIL"):Activate()			//-- aTIVA	
+	_oMdlMat 	:= _oModel:GetModel("ZP7DETAIL")		//-- Matriculas
+	If INCLUI .or. ALTERA
+		If ALTERA
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//| Se houver tentativa de Vinculo de Matriculas em SESSAO A=Ativa, |
+			//| questiona ao operador se realmente quer Vicular Matricular.     |
+			//| A=Ativa (Apos o Vinc. das Matriculas a Pagar)                   |
+			//| L=Liberada para Pagamento (Apos Liberação)                      |
+			//| D=Remessas Parciais                                             |
+			//| R=Remessas Efetivadas (Apos Remessa de Todos os Convenios       |
+			//|   da Sessao)                                                    |
+			//| F=Retorno Parciais                                              |
+			//| T=Retornos OK (Apos Retorno de Confirmação de todos os Covenios |
+			//| da Sessao)                                                      |
+			//| E=Encerrada                                                     |
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If _c6Status == "E"
+				Aviso(FunName()+"/"+ProcName(),"Sessão já foi encerada! Não pode mais ser corigida!", {"OK"})
+				_lReturn := .F.
+			Else
+				If _c6Status == "A"
+					If Aviso(FunName()+"/"+ProcName(),"jà existem Matriculas Vinculadas a esta Sessão. Serão consideradas somente as Matriculas com STATUS de Rejeitadas!", {"OK","Cancelar"}) == 1	             
+						_cTpImpor := "C"
+					Else
+						_lReturn := .F.
+					Endif 
+				Endif  
+				If _c6Status $ "D#R#F#T"
+					If Aviso(FunName()+"/"+ProcName(),"Já Houve VINCULO para esta Sessão. Vincula as Correções?", {"OK","Cancelar"}) == 1	             
+						_cTpImpor := "C"
+					Else
+						_lReturn := .F.
+					Endif 
+				Endif
+				If _c6Status == "L"
+					Aviso(FunName()+"/"+ProcName(),"jà existem Matriculas liberadas nesta Sessão. O Vinculo de correção não pode mais ser executado!", {"OK"})
+					_lReturn := .F.
+				Endif  
+			Endif	
+		Endif    
+		If _lReturn
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//| Posiciona no Calendario para Pegar o Periodo correspondente ao pagamento |
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			dbSelectArea("ZP5")
+			ZP5->(dbSetOrder(1))
+			ZP5->(dbSeek(FwxFilial("ZP5")+_cPerio+_cSeg))
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//| Limpa a GRID de Dados para ZP7 - Matriculas                              |
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			_oMdlMat:clearData()
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//| Exdecuta a rotina de Integracao com SIGE                                 |
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ  
+			_lViewOK := .t.		//--- Controle de Tudo ok na consulta 
+			Processa({|| u_ViewSige(_cTpImpor,ZP5->ZP5_XDTINI,ZP5->ZP5_XDTFIN,_cPerio,_cSeg,_cSessa,_nVlrHora)} ,"Importando Matriculas do SGE...")
+		Endif 	
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| NAO PERMITE que a Grid de Matriculas seja editavel                       |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		_oModel:GetModel("ZP7DETAIL"):SetNoInsertLine(.T.)
+		_oModel:GetModel("ZP7DETAIL"):SetNoDeleteLine(.T.)
+		_oModel:GetModel("ZP7DETAIL"):SetNoUpdateLine(.T.)
+		_oModel:GetModel("ZP7DETAIL"):SetOnlyQuery(.T.)   		 //-- Indica que o model e somente para consulta
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| ***** ATENCAO:                                                           |
+		//| Por mais que possa parece estranho, e isso mesmo, DESATIVAMOS e ATIVAMOS |
+		//| o model para aplicas a mudanca das propriedades, senao, nao funciona !!  |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		_oModel:GetModel("ZP7DETAIL"):DeActivate() 	   		//-- Desativa 
+		_oModel:GetModel("ZP7DETAIL"):Activate()			//-- aTIVA	  
+		If _lViewOK
+			If _cTpImpor != "C"
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//| Modifica a Condicao (STATUS) da SESSAO para: [A=Ativa]                   |
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+				_oStruZP6:LoadValue("ZP6_XSTATU","A") 
+				dbSelectArea("ZP6")
+				ZP6->(dbSetOrder(2))			//-- Periodo+Seg Calendar+Codigo		
+				If (ZP6->(dbSeek(FwxFilial("ZP6")+_cPerio+_cSeg+_cSessa)))
+					ZP6->(RecLock("ZP6",.F.))
+					Replace ZP6->ZP6_XSTATU With "A" //-- [A=Ativa]
+					ZP6->(MsUnlock())
+					ZP6->(dbCommit()) 
+					//-- Modifica o Status do Calendario 					
+					dbSelectArea("ZP5")
+					ZP5->(dbSetOrder(2))			//-- Periodo+Seg Calendar
+					If (ZP5->(dbSeek(FwxFilial("ZP5")+_cPerio+_cSeg)))
+						ZP5->(RecLock("ZP5",.F.))
+						Replace ZP5->ZP5_XSTATU With "M" //-- [M=Em Movimentação]
+						ZP5->(MsUnlock())
+						ZP5->(dbCommit()) 
+					Endif 					
+				Endif 
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//| Permite incluir Matriculas Pendentes de Sessoes Anteriores               |
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+				/* 25/01/2017 - Jose Leite - CSI
+					Solicitado o comentario das funcoes abaixo, pois nao vao ser mais utilizadas.
+				
+				If Aviso(FunName()+"/"+ProcName(),"Deseja Incluir Matriculas PENDENTES das Sessoes anteriores",{"Sim","Não"}) == 1	             
+					Processa({|| u_fIncPend(ZP6->ZP6_XPERIO,ZP6->ZP6_XSEG,ZP6->ZP6_XCOD, "C")} , "Carregando...","Inclui Matriculas PENDENTES...")
+				Endif
+				If Aviso(FunName()+"/"+ProcName(),"Deseja Incluir Matriculas DEVOLVIDAS das Sessoes anteriores",{"Sim","Não"}) == 1	             
+					Processa({|| u_fIncPend(ZP6->ZP6_XPERIO,ZP6->ZP6_XSEG,ZP6->ZP6_XCOD, "D")} , "Carregando...","Inclui Matriculas DEVOLVIDAS...")
+				Endif  
+				If Aviso(FunName()+"/"+ProcName(),"Deseja Incluir Matriculas (NÃO LIBERADAS, TRANSFERIDAS DE SESSÕES ANTERIORES) das Sessoes anteriores",{"Sim","Não"}) == 1	             
+					Processa({|| u_fTraNLib(ZP6->ZP6_XPERIO,ZP6->ZP6_XSEG,ZP6->ZP6_XCOD, "D")} , "Carregando...","Inclui Matriculas NÃO LIBERADAS...")
+				Endif
+				*/  
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//| Chama Rotina que Gera mensagem de Matriculas a LIBERAR as Provadores     |
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+				FWMsgRun(, {|| u_xSendMsg(ZP5->ZP5_XDTINI,ZP5->ZP5_XDTFIN,_cPerio,_cSeg,_cSessa) }, "Aviso ao Liberador", "Remessa da Mensagem..." )
+			Else
+				Aviso(FunName()+"/"+ProcName(),"Vinculo para Correções encerrada!",{"OK"})
+			Endif		
+		Endif
+	Endif                                      	                 
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Fim do Controle de Transacao.                                      ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+End Transaction
+RestArea(_aArea)
+Return 
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fVerMatr>                                                  |
+|Prepracao para chamada da Rotina de Carga das Matriculas na Grid para     |
+|visualizacao                                                              |
+|@Author<Antonio Dantas>                                                   |
+|@since<22/04/2014>                                                        |
+|@version<Nil>                                                             |
+|@parameters:                                                              |
+|@receive                                                                  |
+|@return                                                                   |
+|<   _lReturn (l) - Sempre .t.                                             |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fVerMatr()
+Local _lReturn 		:= .t.
+Local _oModel      	:= FWModelActive() 
+Local _nOper		:= _oModel:GetOperation()    
+Local _oStruZP6 	:= _oModel:GetModel("ZP6MASTER")
+Local _c6Status		:= _oStruZP6:GetValue("ZP6_XSTATU")
+Local _cPerio		:= _oStruZP6:GetValue("ZP6_XPERIO")
+Local _cSeg			:= _oStruZP6:GetValue("ZP6_XSEG")
+Local _cSessa		:= _oStruZP6:GetValue("ZP6_XCOD")
+Local _nVlrHora		:= _oStruZP6:GetValue("ZP6_XVLR")
+Local _oMdlMat		:= Nil    
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Valido o Periodo e Calendario                                      ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If _nOper != 4 
+	Aviso(FunName()+"/"+ProcName(),"Esta opção só pode ser executada no modo de [Manuteção]!",{"OK"})
+	Return .f.
+Endif
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| PERMITE que a Grid de Matriculas seja editavel                           |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_oModel:GetModel("ZP7DETAIL"):SetNoInsertLine(.F.)
+_oModel:GetModel("ZP7DETAIL"):SetNoDeleteLine(.F.)
+_oModel:GetModel("ZP7DETAIL"):SetNoUpdateLine(.F.) 
+_oModel:GetModel("ZP7DETAIL"):SetOnlyQuery(.F.)    			//-- Indica que o model e somente para consulta
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| *****ATENCAO:                                                            |
+//| Por mais que possa parece estranho, e isso mesmo, DESATIVAMOS e ATIVAMOS |
+//| o model para aplicas a mudanca das propriedades, senao, nao funciona !!  |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_oModel:GetModel("ZP7DETAIL"):DeActivate() 	   		//-- Desativa 
+_oModel:GetModel("ZP7DETAIL"):Activate()			//-- aTIVA	
+_oMdlMat 	:= _oModel:GetModel("ZP7DETAIL")		//-- Matriculas
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Carga p/Grid de Matriculas, relativo ao Periodo/Calendario/Sessao      |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+FWMsgRun(, {|| fCargaMt(_oMdlMat,_cPerio,_cSeg,_cSessa) }, "Carga das Matriculas", "Matriculas do Periodo: "+Alltrim(_cPerio)+", Calendário: "+Alltrim(_cSeg)+" e Sessão:"+Alltrim(_cSessa))
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| NAO PERMITE que a Grid de Matriculas seja editavel                       |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_oModel:GetModel("ZP7DETAIL"):SetNoInsertLine(.T.)
+_oModel:GetModel("ZP7DETAIL"):SetNoDeleteLine(.T.)
+_oModel:GetModel("ZP7DETAIL"):SetNoUpdateLine(.T.)
+_oModel:GetModel("ZP7DETAIL"):SetOnlyQuery(.T.)   		 //-- Indica que o model e somente para consulta
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| ***** ATENCAO:                                                           |
+//| Por mais que possa parece estranho, e isso mesmo, DESATIVAMOS e ATIVAMOS |
+//| o model para aplicas a mudanca das propriedades, senao, nao funciona !!  |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_oModel:GetModel("ZP7DETAIL"):DeActivate() 	   		//-- Desativa 
+_oModel:GetModel("ZP7DETAIL"):Activate()			//-- aTIVA	  
+Return _lReturn   
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCargaMt>                                                  |
+| Efetua a carga das Matriculas correspondete ao Periodo/Calendario/Sessao |
+| enviados como referencia.                                                |
+|@Author<Antonio Dantas>                                                   |
+|@since<31/03/2014>                                                        |
+|@version<Nil>                                                             |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<  _oMdlMat (o) - oModel do Modelo Grid das Matriculas                    |
+|    _cPerio (c) - Codigo do Periodo Selecionado                           |
+|      _cSeg (c) - Codigo do Calendario Selecionado                        |
+|    _cSessa (c) - Codigo da Sessao                                        |
+|>                                                                         |
+|@return                                                                   |
+|<   _lReturn (l) - Sempre .t.                                             |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fCargaMt(_oMdlMat,_cPerio,_cSeg,_cSessa)
+Local _lReturn 		:= .t.
+Local _aArea			:= GetArea() 
+Local _lNoFirstT	:= .F.
+Local _nCount		:= 0
+Local _nCtaA 		:= 0
+Local _nLenGrid		:= _oMdlMat:Length()
+
+_oMdlMat:ClearData()
+
+dbSelectArea("ZP7")
+ZP7->(dbSetOrder(11))	//-- Cod Periodo+Seg Calendar+Cod Sessao
+If (ZP7->(dbSeek(FwxFilial("ZP7")+_cPerio+_cSeg+_cSessa)))
+	Do While ZP7->(!Eof()) .and. ZP7->ZP7_FILIAL == FwxFilial("ZP7") .and.;
+	         ZP7->ZP7_XPERIO == _cPerio .and. ZP7->ZP7_XSEG == _cSeg .and.;
+	         ZP7->ZP7_XSESSA == _cSessa 
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Nao considera o Primeiro Registro como Inclussao na GRID, pois ja existe um      |
+		//| registro em Branco que sera modificado                                           |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		If _lNoFirstT
+			_oMdlMat:AddLine()
+		Endif		
+		_lNoFirstT	:= .T.
+		_nCount		:= ZP7->(FCount())
+		_nCtaA 		:= 0
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Gera [_aColsNEW], que sera apresentado ao operador. Devera obrigatoriamente ser  |
+		//| definida PRIVATE na funcao que chamou                                            |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		For _nCtaA := 1 to _nCount
+			_oMdlMat:LoadValue(ZP7->(FieldName(_nCtaA)),ZP7->(FieldGet(_nCtaA)))
+		Next _nCtaA
+		ZP7->(dbSkip())
+	Enddo
+Else
+	Aviso(FunName()+"/"+ProcName(),"Não localizamos nenhuma Matricula do Periodo: "+Alltrim(_cPerio)+", Calendário: "+Alltrim(_cSeg)+" e Sessão: "+Alltrim(_cSessa)+" Informado!",{"OK"})
+Endif
+RestArea(_aArea)
+Return
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fVlrZP6>                                                   |
+|Funcao que prenche o campo VALOR na Sessao com valor do Periodo           |
+|visualizacao                                                              |
+|@Author<Antonio Dantas>                                                   |
+|@since<21/06/2014>                                                        |
+|@version<Nil>                                                             |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<   _cPeriodo (c) - Codigo do Periodo                                     |
+|>                                                                         |
+|@return                                                                   |
+|<   _lReturn (l) - Sempre .t.                                             |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fVlrZP6(_cPeriodo)    
+Local _aArea	:= GetArea() 
+Local _oModel	:= FWModelActive() 
+Local _oMdlZP6	:= _oModel:GetModel("ZP6MASTER")		//-- Sessoes
+Local _nValor	:= Posicione("ZP4",1,FwxFilial("ZP4")+_cPeriodo,"ZP4_XVLRHR")
+_oMdlZP6:LoadValue("ZP6_XVLR",_nValor) 
+RestArea(_aArea)
+Return .t.
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fVincMat>                                                  |
+|Botão Para Encerramento sesao; Corrige as matriculas pendentes e encerra  |
+|Sessao                                                                    |
+|@Author<Antonio Dantas>                                                   |
+|@since<22/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<      Nil                                                                |
+|>                                                                         |
+|@return                                                                   |
+|<      Nil                                                                |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fEncerZP6()
+Local _aArea		:= GetArea() 
+Local _lReturn		:= .T. 
+Local _c6Status		:= ZP6->ZP6_XSTATU
+Local _cPerio		:= ZP6->ZP6_XPERIO
+Local _cSeg			:= ZP6->ZP6_XSEG
+Local _cSessa		:= ZP6->ZP6_XCOD
+Local _nVlrHora		:= ZP6->ZP6_XVLR
+Local _cTpImpor		:= "C"		//-- Defini o tipo de Vinculo das Matriculas ["A"bertura de Sessao;"C"orrecoes de Mastriculas]
+Private _lViewOK 	:= .f.		//-- Controle de Tudo ok na consulta 
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Valido o Periodo e Calendario                                      ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If Empty(Alltrim(_cPerio)) .or. Empty(Alltrim(_cSeg))
+	Aviso(FunName()+"/"+ProcName(),"Para efetuar vincula informe primeiro Período & Calendário",{"OK"})
+	Return .f. 
+Endif 
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Verifica se a sessao esta em condicoes de encerramento             ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If !(_c6Status $ "F#T")
+	Aviso(FunName()+"/"+ProcName(),"Sessão não encontra-se em codições de ser encerrada!",{"OK"})
+	Return .f. 
+Endif 
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Implementa controle de Transacao.                                  ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+Begin Transaction
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Posiciona no Calendario para Pegar o Periodo correspondente ao pagamento |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	dbSelectArea("ZP5")
+	ZP5->(dbSetOrder(1))
+	ZP5->(dbSeek(FwxFilial("ZP5")+_cPerio+_cSeg))
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Exdecuta a rotina de Integracao com SIGE                                 |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ  
+	_lViewOK := .t.		//--- Controle de Tudo ok na consulta 
+	Processa({|| u_ViewSige(_cTpImpor,ZP5->ZP5_XDTINI,ZP5->ZP5_XDTFIN,_cPerio,_cSeg,_cSessa,_nVlrHora,.f.)} ,"Integração de Correção p/Encerramento...")
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Modifica a Condicao (STATUS) da SESSAO para: [A=Ativa]                   |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	If _lViewOK
+		ZP6->(RecLock("ZP6",.F.))
+		Replace ZP6->ZP6_XSTATU With "E" //-- [E=Encerrada]
+		ZP6->(MsUnlock())
+		ZP6->(dbCommit()) 
+		Aviso(FunName()+"/"+ProcName(),"Sessçao Encerrada",{"OK"})
+	Endif                                      	                 
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Fim do Controle de Transacao.                                      ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+End Transaction
+RestArea(_aArea)
+Return  
+
+
+
+
+&&**************************************************************************
+&&**************************************************************************
+&&**************************************************************************
+&& ---                                                                --- &&
+&& ---   ROTINAS DE CONTROLE DE INTERFACE PARA SELECAO DO CONVENIO    --- &&
+&& ---   INTEGRACAO FINANCEIRA                                        --- &&
+&& ---                                                                --- &&
+&&**************************************************************************
+&&**************************************************************************
+&&**************************************************************************
+ 
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fIntFin>                                                   |
+|Rotina de preparacao p/Gerar o TITULO PRINCIPAL de Pagamento do Pronatec  |
+|no financeiro APOS o Retorno da Validacao do Arquivo de Remessa Para      |
+|Pagamento                                                                 |
+|@Author<Antonio Dantas>                                                   |
+|@since<03/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<      Nil                                                                |
+|>                                                                         |
+|@return                                                                   |
+|<      Nil                                                                |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fIntFin()  
+Local _lOK			:= .f.
+Local _cMensagem	:= ""
+Private _cCodConv	:=  ""      
+Private _aInfTit	:= {}
+If !(ZP6->ZP6_XSTATU != "D#R")			//-- D=Remessas Parciais;	R=Remessas Efetivadas
+	Aviso(FunName()+"/"+ProcName(),"Integração Financeira só pode ser realizada Após a Remessa, e antes de processado o Retorno!",{"OK"}) 
+	Return .f.
+Endif 
+_cCodConv	:=  fSelConv(ZP6->ZP6_FILIAL,ZP6->ZP6_XPERIO,ZP6->ZP6_XSEG,ZP6->ZP6_XCOD)  
+If _cCodConv == "Encerra"
+	Return .f.
+ENdif 
+If Alltrim(_cCodConv) == ""
+	Aviso(FunName()+"/"+ProcName(),"A seleção do CONVENIO é Obrigatório!!", {"OK"})
+	Return .f.
+Endif   
+Return .t.
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fSelConv>                                                  |
+|Conjunto de Rotinas que permite ao operador selecionar o CONVENIO para    |
+|geracao dos arquivos de remesas de pagamento ao Banco ou gerar as inform. |
+|no financeiro para pagamento manual.                                      |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<12/04/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<    _cFilial (c) - Codigo da Filial                                      |
+|    _cPeriodo (c) - Codigo do Periodo selecionado                         |
+|        _cSeg (c) - Codigo do Calendario (Seguencia)                      |
+|     _cSessao (c) - Codigo da Sessao                                      |
+|>                                                                         |
+|@return                                                                   |
+|<   _cCodConv (c) - Codigo do Convenio Selecionado                        |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fSelConv(_cFilial,_cPeriodo,_cSeg,_cSessao)
+Local _nOpcB		:= GD_INSERT + GD_DELETE + GD_UPDATE	//-- Define o modo de edicao da MsNewGetDados (Soma dos Modos) 
+Local _cIniCposB	:= ""									//-- Nome dos campos do tipo caracter que utilizarao incremento automatico.
+Local _cLinOkB		:= "AllwaysTrue"						//-- Funcao de usuario na saida da edicao da linha
+Local _cTudoOkB		:= "AllwaysTrue"						//-- Funcao de usuario para validado de toda a grid
+Local _cFieldOkB	:= "AllwaysTrue"						//-- Funcao de usuario para validacao do campo e foco de edicao 
+Local _cDelOkB		:= "AllwaysTrue"						//-- Funcao de usuario para validavao do DEL
+Local _nFreezeB		:= 000									//-- Campos estaticos na GetDados.
+Local _nMaxB		:= 999									//-- Numero Maximo de Elementos na Grid
+Local _cSupDelB		:= NIL                             		//-- Funcao executada quando pressionada as teclas <Ctrl>+<Delete>
+Local _cCodConv		:= ""
+Local _cCabec		:= "Convenios Relacionados"                   
+Local _cMesag		:= "Selecione o Convenio para Integração Financeira."
+Private _aAlterB	:= {}									//-- Array dos campos que podem ser editados MsNewGetDados
+Private _aHeaderB	:= {}									//-- Array com os Elementos da Grid
+Private _aColsB		:= {}									//-- Array (Descricao) Cabecalho dos campos da Grid  
+Private _nRegs		:= 0
+//-- *******************************************************************
+//--    Declaracao de Variaveis Private dos Objetos
+//-- *******************************************************************
+SetPrvt("_oFontAR","_oDlgCOV","_oGrid","_oSayMsg","_oBrwMatr","_oBtnOK","_oBtnESC")
+//-- Define a Fonte da mensagem 
+_oFontAR	:= TFont():New( "Arial Rounded MT Bold",0,-15,,.F.,0,,400,.F.,.F.,,,,,, )
+//-- *******************************************************************
+//--    Funcao que Cria a aHeader que sera utilizada pela MsNewGetDados
+//-- *******************************************************************
+fCriaHeB()
+//-- *******************************************************************
+//--    Funcao que Cria a aCols que sera utilizada pela MsNewGetDados
+//-- *******************************************************************
+If !fCriaCoB(_cFilial,_cPeriodo,_cSeg,_cSessao)   
+	Aviso(FunName()+"/"+ProcName(),"Não existem para este convenio, nesta sessão, Matriculas pendentes de Integração financeira!",{"OK"})
+	Return "Encerra"
+Endif 
+//-- *******************************************************************
+//--    Apresenta a Interface para selecao do Convenio 
+//-- *******************************************************************
+_oDlgCOV	:= MSDialog():New(130,250,470,860,_cCabec,,,.F.,,,,,,.T.,,,.T. )
+//-- Mensagem do Cabecalho 	
+_oGrid		:= TGroup():New( 004,008,032,300,"",_oDlgCOV,CLR_BLACK,CLR_WHITE,.T.,.F. )
+_oSayMsg	:= TSay():New(015,018,{|| _cMesag },_oGrid,,_oFontAR,.F.,.F.,.F.,.T.,CLR_BLUE,CLR_WHITE,300,008)
+//-- Grid de Selecao 
+_oBrwMatr	:= MsNewGetDados():New(040,0010,150,300,_nOpcB,_cLinOkB,_cTudoOkB,_cIniCposB,_aAlterB,_nFreezeB,_nMaxB,_cFieldOkB,_cSupDelB,_cDelOkB,_oDlgCOV,_aHeaderB,_aColsB)
+//-- Botoes de Comando
+_oBtnOK		:= TButton():New( 155,224,"Continua"	,_oDlgCOV,{|| _cCodConv := u_fGetC62E()	,_oDlgCOV:End() }	,037,012,,,,.T.,,"",,,,.F. )
+_oBtnESC	:= TButton():New( 155,264,"Cancela"	,_oDlgCOV,{|| _oDlgCOV:End() }								,037,012,,,,.T.,,"",,,,.F. )
+//-- 
+_oDlgCOV:Activate(,,,.T.)  
+Return _cCodConv
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGetCv624>                                                 |
+|Permite que o Operador possa seleciona qual o Convenio que sera Processado|
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<12/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<Nil>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fGetC62E()
+Local _lOK			:= .f.
+Local _aNewCols		:= aClone(_oBrwMatr:aCols)
+Local _aNewHead		:= aClone(_oBrwMatr:aHeader)   
+Local _nPosC 		:= aScan(_aNewHead,{|x| AllTrim(x[2])  == "ZP1_XCONV"}) 
+Local _cCodConv 	:= _aNewCols[_oBrwMatr:nAt,_nPosC]  
+Return _cCodConv   
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCriaHeB>                                                  |
+|Funcao de contrucao do aHearder que sera utilizado pelo MsNewGetDados.    |
+|ATENCAO: Considera criada PRIVATE pela funcao que chamou o array          |
+|         [_aHeaderB]                                                      |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<13/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<Nil>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fCriaHeB()
+Aadd(_aHeaderB 	,{"Cod Conv"	,"ZP1_XCONV" 	,TRIM(X3PICTURE("ZP1_XCONV")) 	,TamSX3("ZP1_XCONV")[1]  	,TamSX3("ZP1_XCONV")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Cod SIGE"	,"ZP1_XSIGE" 	,TRIM(X3PICTURE("ZP1_XSIGE"))	,TamSX3("ZP1_XSIGE")[1]  	,TamSX3("ZP1_XSIGE")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Cod Banco"	,"ZP1_XBCO" 	,TRIM(X3PICTURE("ZP1_XBCO"))	,TamSX3("ZP1_XBCO")[1]  	,TamSX3("ZP1_XBCO")[2] 		,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Agencia"		,"ZP1_XAGEN" 	,TRIM(X3PICTURE("ZP1_XAGEN"))	,TamSX3("ZP1_XAGEN")[1]  	,TamSX3("ZP1_XAGEN")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Num Conta"	,"ZP1_XCONTA" 	,TRIM(X3PICTURE("ZP1_XCONTA"))	,TamSX3("ZP1_XCONTA")[1]  	,TamSX3("ZP1_XCONTA")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Contrat Conv","ZP1_XCONTR" 	,TRIM(X3PICTURE("ZP1_XCONTR"))	,TamSX3("ZP1_XCONTR")[1]  	,TamSX3("ZP1_XCONTR")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Descricao"	,"ZP1_XDESCR" 	,TRIM(X3PICTURE("ZP1_XDESCR"))	,TamSX3("ZP1_XDESCR")[1]  	,TamSX3("ZP1_XDESCR")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Naturez CR"	,"ZP1_XNATCR" 	,TRIM(X3PICTURE("ZP1_XNATCR"))	,TamSX3("ZP1_XNATCR")[1]  	,TamSX3("ZP1_XNATCR")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Desc Nat CR"	,"ZP1_XNCRDE" 	,TRIM(X3PICTURE("ZP1_XNCRDE"))	,TamSX3("ZP1_XNCRDE")[1]  	,TamSX3("ZP1_XNCRDE")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Naturez DB"	,"ZP1_XNATDB" 	,TRIM(X3PICTURE("ZP1_XNATDB"))	,TamSX3("ZP1_XNATDB")[1]  	,TamSX3("ZP1_XNATDB")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Desc Nat Deb","ZP1_XNDBDE" 	,TRIM(X3PICTURE("ZP1_XNDBDE"))	,TamSX3("ZP1_XNDBDE")[1]  	,TamSX3("ZP1_XNDBDE")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Layout Rem"	,"ZP1_XLYREM" 	,TRIM(X3PICTURE("ZP1_XLYREM"))	,TamSX3("ZP1_XLYREM")[1]  	,TamSX3("ZP1_XLYREM")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Layout Retor","ZP1_XLYRET" 	,TRIM(X3PICTURE("ZP1_XLYRET"))	,TamSX3("ZP1_XLYRET")[1]  	,TamSX3("ZP1_XLYRET")[2] 	,"" ,"","C",""  ,""})
+Aadd(_aHeaderB 	,{"Tp Convenio"	,"ZP1_XTIPO" 	,TRIM(X3PICTURE("ZP1_XTIPO"))	,TamSX3("ZP1_XTIPO")[1]  	,TamSX3("ZP1_XTIPO")[2] 	,"" ,"","C",""  ,""})
+Return
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCriaCoB>                                                  |
+|Funcao de contrucao do aCols que sera utilizado pelo MsNewGetDados.       |
+|ATENCAO: Considera criado PRIVATE pela funcao que chamou o array          |
+|         [_aColsB]                                                        |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<13/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<  _cFilial (c) - Codigo da Filial                                        |
+|  _cPeriodo (c) - Codigo do Periodo selecionado                           |
+|      _cSeg (c) - Codigo do Calendario (Seguencia)                        |
+|   _cSessao (c) - Codigo da Sessao                                        |
+|>                                                                         |
+|@return                                                                   |
+|<Nil>                                                                     |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - Federacao das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fCriaCoB(_cFilial,_cPeriodo,_cSeg,_cSessao)
+Local _aConven		:= {}
+Local _cQuery		:= ""
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+Local _lTemRemes	:= .f.
+Local _cLengenda	:= ""   
+//-- ********************************************************************
+//--    Seleciona a Tabela de Convenios 
+//-- ********************************************************************
+dbSelectArea("ZP1")
+ZP1->(dbSetOrder(1)) 		//-- Cod Periodo+Seg Calendar+Cod Sessao  
+//-- ********************************************************************
+//--    Efetua consulta na Tabela de Matriculas a Pagar para selecionar 
+//--    os convenios EM CONDICOES para Remessa 
+//-- ********************************************************************
+_cQuery	:= ""
+_cQuery	+= "Select Distinct ZP7_XCONVE From "+RetSqlName("ZP7")+_ChrBreak
+_cQuery	+= "Where D_E_L_E_T_ <> '*'"+_ChrBreak
+_cQuery	+= "and ZP7_FILIAL = '"+_cFilial+"'"+_ChrBreak
+_cQuery	+= "and ZP7_XPERIO = '"+_cPeriodo+"'"+_ChrBreak
+_cQuery	+= "and ZP7_XSEG = '"+_cSeg+"'"+_ChrBreak    
+_cQuery	+= "and ZP7_XTITPG = '"+Space(TamSX3("ZP7_XTITPG")[1])+"'"+_ChrBreak    
+_cQuery	+= "and ZP7_XSESSA = '"+_cSessao+"'"+_ChrBreak  
+_cQuery	+= "and ZP7_XSTATU = 'E' "+_ChrBreak   			//-- E=Remessa Gerada
+//-- ********************************************************************
+//--    Retorna {TMP} Tabela temporaria com o resultado da Query 
+//-- ********************************************************************
+dbUseArea(.t.,"TOPCONN",TCGENQRY(,,_cQuery),"TMPZP7",.t.,.t.)
+dbSelectArea("TMPZP7")
+TMPZP7->(dbGoTop())
+Do While TMPZP7->(!Eof())
+ 	ZP1->(dbSeek(FwxFilial("ZP1")+TMPZP7->ZP7_XCONVE))
+ 	aAdd(_aColsB, {	ZP1->ZP1_XCONV 	,;
+					ZP1->ZP1_XSIGE 	,;
+					ZP1->ZP1_XBCO  	,;
+					ZP1->ZP1_XAGEN 	,;
+					ZP1->ZP1_XCONTA	,;
+					ZP1->ZP1_XCONTR	,;
+					ZP1->ZP1_XDESCR	,;
+					ZP1->ZP1_XNATCR	,;      
+					POSICIONE("SED",1,XFILIAL("SED")+ZP1->ZP1_XNATCR,"ED_DESCRIC")	,;
+					ZP1->ZP1_XNATDB	,;
+					POSICIONE("SED",1,XFILIAL("SED")+ZP1->ZP1_XNATDB,"ED_DESCRIC")	,;
+					ZP1->ZP1_XLYREM	,;
+					ZP1->ZP1_XLYRET	,;
+					ZP1->ZP1_XTIPO	,;
+					.f.				} )
+	TMPZP7->(dbSkip())
+	_lTemRemes	:= .t.
+Enddo   
+If Select("TMPZP7")>0
+	TMPZP7->(DbCloseArea())
+Endif    
+Return _lTemRemes
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGravar>                                                   |
+|Funcao de Controel de Gravacao: Chamada as Funcoes de Validacao das       |
+|Acoes do Formulario                                                       |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<10/10/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<    _oModel (o) - Objeto do Modelo Principal                             |
+|>                                                                         |
+|@return                                                                   |
+|<     _lReturn (l) - (.t.) Pode Executar a Acao                           |
+|                     (.f.) Nao Pode executar a Acao                       |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGravar(_oModel)
+Local _lReturn  	:= .t.
+Local _nOper		:= _oModel:GetOperation()   
+Local _oStruZP6 	:= _oModel:GetModel("ZP6MASTER")
+//--
+Local _cFilial 		:= _oStruZP6:GetValue("ZP6_FILIAL")
+Local _cPeriodo 	:= _oStruZP6:GetValue("ZP6_XPERIO")
+Local _cCalenda 	:= _oStruZP6:GetValue("ZP6_XSEG")
+Local _cSessao 		:= _oStruZP6:GetValue("ZP6_XCOD")
+Local _c6Status 	:= _oStruZP6:GetValue("ZP6_XSTATU")
+do Case
+	Case _nOper == 3	//-- Incluir
+		_lReturn  := .t.
+	Case _nOper == 4	//-- Alterar
+		_lReturn  := .t.
+	Case _nOper == 5	//-- Excluir
+		_lReturn  := .t.
+		If !(_c6Status $ " #A")
+			Help(,,"HELP",,"Sessão não pode mais ser excluida, já houve Liberação!",1,0)    
+			_lReturn  := .f.
+		Else
+			//-- Valida a Exclusão das Matriculas SOMENTE se houve vinculo de Matriculas
+			If _c6Status != " "
+				_lReturn := u_fExZP7OK({{"ZP7_XPERIO",_cPeriodo},{"ZP7_XSEG",_cCalenda},{"ZP7_XSESSA",_cSessao}},"'B','x'")	
+			Endif 
+			If !_lReturn
+				Help(,,"HELP",, "Período/Calendário/Sessao com MATRICULAS vinculadas e já Liberadas não pode ser excluida!",1,0)    
+			Endif 	
+		Endif     
+	Case _nOper == 8	//-- Imprimir
+		_lReturn  := .t.
+	Case _nOper == 9	//-- Copiar
+		_lReturn  := .t.
+Endcase
+If _lReturn .and. _nOper == 5	//-- Excluir
+	//+--------------------------------------------------------------------------+
+	//| Antonio Dantas                                               30/10/2014  |
+	//| ANTES DA EXCLUSÃO: Restaura as Matriculas TRANSFERIDAS de outras Sessões |
+	//| para esta sessao que sera EXCLUIDA                                       |
+	//+--------------------------------------------------------------------------+
+	If u_fRestTra(_cFilial,_cPeriodo,_cCalenda,_cSessao)
+		If fDelZP7(_cFilial,_cPeriodo,_cCalenda,_cSessao,_c6Status)
+			FWFormCommit(_oModel)	
+		Else 
+			Help(,,"HELP",, "Não foi possivel excluir as Matriculas vinculadas a Sessão!",1,0)    
+		Endif 
+	Endif 
+Elseif _lReturn
+	FWFormCommit(_oModel)
+Endif 	
+Return _lReturn  
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fDelZP7>                                                   |
+|Exclui na ZXP7 - Matriculas para um determinado Perido+Calendario+Sessao  |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<10/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<     _cFilial (c) - Codifo da Filial                                     |
+|	  _cPeriodo (c) - Codigo do periodo                                    |
+|     _cCalenda (c) - Codigo do Calendario                                 |
+|      _cSessao (c) - Codigo da Sesao                                      |  
+|     _c6Status (c) - Status da ZP6                                        |
+|>                                                                         |
+|@return                                                                   |
+|<     _lReturn (l) - (.t.) Exclusao Concluida com Sucesso                 |
+|                     (.f.) Exclussao nao Concluida                        |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fDelZP7(_cFilial,_cPeriodo,_cCalenda,_cSessao,_c6Status)
+Local _lReturn 		:= .f.	
+Local _aArea		:= GetArea() 
+If _c6Status != " " 
+	//-- Localiza as Matriculas da Sessao 
+	dbSelectArea("ZP7")
+	ZP7->(dbSetOrder(11))			//-- Periodo+Seq+Sessao
+	If (ZP7->(dbseek(_cFilial+_cPeriodo+_cCalenda+_cSessao)))
+		//-- Exclui as Matriculas que houver 
+		Begin Transaction
+			Do While ZP7->(!Eof()) .and. ZP7->ZP7_FILIAL == _cFilial .and. ZP7->ZP7_XPERIO == _cPeriodo .and.;
+			         ZP7->ZP7_XSEG == _cCalenda  .and. ZP7->ZP7_XSESSA == _cSessao
+				ZP7->(RecLock("ZP7",.f.))
+				ZP7->(dbDelete())	// Deleta
+				ZP7->(MsUnLock())
+				ZP7->(dbCommit())
+				ZP7->(dbSkip())
+				_lReturn := .t.
+			Enddo
+		End Transaction
+	Else
+		_lReturn := .t.
+	Endif 
+	RestArea(_aArea)
+Else
+	_lReturn := .t.
+Endif
+Return _lReturn

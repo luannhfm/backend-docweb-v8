@@ -1,0 +1,141 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} IMPM010RM
+Funcao responsavel por realizar a integracao dos Produtos RM Classis x Protheus
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	12/11/2015
+@version 	1.0
+
+@param 	p_cColig, Caracter, Codigo da Coligada RM
+@param 	p_cRa, Caracter, Codigo RA RM
+@param 	p_cCodCtr, Caracter, Codigo do Contrato RM
+@param 	p_cIdPlet, Caracter, Codigo IdPerlet RM
+@param 	p_cAliasRM, Caracter, Codigo do Alias (Banco) RM
+
+@return 	_lRet, Lógico, T - Verdadeiro ou F - Falso
+/*/
+User Function IMPM010RM(p_cColig, p_cRa, p_cCodCtr, p_cIdPlet, p_cAliasRM)
+	
+	Local cEstat := U_SFGN001A(ProcName(0), "IMPM010RM")
+	Local _lRet    	:= .T.
+	Local _cQuery  	:= ''
+	Local _cXPrdVen	:= "S" 
+	Local _cXPrdFil	:= SubStr(cFilAnt,0,2)
+	Local _cLocErr	:= GetNewPar( "MV_XLOCERR", "\xml\retorno\rmc\log\")
+	
+	Private lMsErroAuto := .F.
+	
+	If Select('TMPSB1') > 0
+		DbSelectArea('TMPSB1')
+		TMPSB1->( DbCloseArea() )
+	EndIf
+
+	_cQuery := " SELECT * "
+	If Empty(p_cAliasRM)
+		_cQuery += " FROM RM.PROT_SB1 "
+	Else
+		_cQuery += " FROM RM.PROT_SB1"+ p_cAliasRM
+	EndIf
+	_cQuery += " WHERE 	CODCOLIGADA 			= "		+ p_cColig 			
+	_cQuery += " 			AND RA 				= '"	+ p_cRa 		+"' "
+	_cQuery += "				AND CODCONTRATO 	= '"	+ p_cCodCtr 	+"' " 
+	_cQuery += "				AND IDPERLET 		= "		+ p_cIdPlet
+	
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPSB1',.T.,.F.)
+	
+	If .Not. TMPSB1->( EOF() )
+		
+		While .Not. TMPSB1->( Eof())
+			
+			//B1_COD
+			_cCodigo := ""
+			
+			//B1_XPRDSGE
+			_cXPrdSge := AllTrim(cValToChar(TMPSB1->B1_XPRDSGE))
+			
+			//B1_DESC
+			_cDesc := AllTrim(TMPSB1->B1_DESC)
+					
+			//B1_TIPO
+			_cTipo := AllTrim(TMPSB1->B1_TIPO)
+			
+			//B1_UM
+			_cUndM := AllTrim(TMPSB1->B1_UM)
+			
+			//B1_CONTA
+			_cContaC := AllTrim(TMPSB1->B1_CONTA)
+			
+			//B1_GRUPO
+			_cGrupo := '0053'
+			
+			//B1_LOCPAD
+			_cLocPad := "01"
+			
+			//B1_GARANT
+			_cGarant := "2"
+			
+			//B1_XCOLSGE
+			_cColSge := p_cColig
+			
+			DbSelectArea('SB1')
+			SB1->( DbOrderNickName("SB1RMGCT") )
+			SB1->( DbGoTop() )
+			If SB1->(DbSeek(xFilial('SB1') + PADR(_cXPrdSge,TamSX3('B1_XPRDSGE')[1],Space(TamSX3('B1_XPRDSGE')[1])) + PADR(_cColSge,TamSX3('B1_XCOLSGE')[1],Space(TamSX3('B1_XCOLSGE')[1]))))
+				SB1->(DbCloseArea())
+				ConOut("IMPM010RM: O Produto SGE: "+ _cXPrdSge + " Coligada: "+ _cColSge +" - ja esta cadastrado no Protheus")
+			Else
+			
+				_nOpc		:= 3
+				_cCodigo	:= GetSX8Num("SB1","B1_COD")
+				_cXOrigem	:= "Importacao SGE - RM Classis - "+ DtoC(dDataBase) + " - "+ Alltrim( Time() )
+				
+				_aProduto := {}
+				
+				aAdd( _aProduto ,{"B1_COD"   	,_cCodigo		,Nil}) // Codigo
+				aAdd( _aProduto ,{"B1_XPRDSGE" 	,_cXPrdSge	,Nil}) // ID SGE
+				aAdd( _aProduto ,{"B1_DESC"  	,_cDesc		,Nil}) // Descricao
+				aAdd( _aProduto ,{"B1_TIPO"  	,_cTipo		,Nil}) // Tipo
+				aAdd( _aProduto ,{"B1_UM"  		,_cUndM		,Nil}) // Unidade de Medida
+				aAdd( _aProduto ,{"B1_CONTA" 	,_cContaC		,Nil}) // Conta Contabil
+				aAdd( _aProduto ,{"B1_GRUPO" 	,_cGrupo		,Nil}) // Grupo de Produtos
+				aAdd( _aProduto ,{"B1_LOCPAD" 	,_cLocPad		,Nil}) // Local Padrao
+				aAdd( _aProduto ,{"B1_GARANT"  	,_cGarant		,Nil}) // Garantia
+				aAdd( _aProduto ,{"B1_MSBLQL"  	,"1"			,Nil}) // Bloqueio de Tela
+				aAdd( _aProduto ,{"B1_XPRDVEN" 	,_cXPrdVen	,Nil}) // Produto de Venda?
+				aAdd( _aProduto ,{"B1_XPRDFIL" 	,_cXPrdFil	,Nil}) // Produto vinculado a empresa
+				aAdd( _aProduto ,{"B1_XORIGEM" 	,_cXOrigem	,Nil}) // Origem da Informacao
+				aAdd( _aProduto ,{"B1_XCOLSGE" ,_cColSge		,Nil}) // Codigo da Coligada SGE
+				
+				lMsErroAuto := .F.
+				
+				Begin Transaction
+		
+					MSExecAuto({|x,y| Mata010(x,y)},_aProduto,_nOpc) //3- Inclusão, 4- Alteração, 5- Exclusão
+					
+					If lMsErroAuto
+						MostraErro(_cLocErr, "Produto_"+ _cCodigo +"_"+ _cXPrdSge +"_"+ _cColSge +".LOG")
+						ConOut("IMPM010RM: O Produto SGE: "+ _cXPrdSge + " Coligada: "+ _cColSge +" - nao foi cadastrado no Protheus, verifique o log em: "+ _cLocErr)
+						//MostraErro()
+						RollBackSx8()
+						DisarmTransaction()
+						_lRet := .F.
+					Else
+						_lRet := .T.
+						ConfirmSx8()
+						ConOut("IMPM010RM: O Produto SGE: "+ _cXPrdSge + " Coligada: "+ _cColSge +" - foi cadastrado no Protheus: "+ _cCodigo)
+					EndIf
+				
+				End Transaction
+			
+			EndIf
+			SB1->(DbCloseArea())
+			TMPSB1->(DbSkip())
+		End
+		
+	EndIf
+	
+	TMPSB1->( DbCloseArea() )
+	
+Return( _lRet )

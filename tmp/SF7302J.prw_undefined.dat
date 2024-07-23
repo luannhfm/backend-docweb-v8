@@ -1,0 +1,301 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE 'FWMVCDEF.CH'
+
+/*/{Protheus.doc} SF7302J
+Cadastro de Combos de Produtos
+
+@author 	Jose Leite de Barros Neto
+@since 		27/02/2015
+@version 	1.0
+
+@return 	T, Logico
+/*/
+User Function SF7302J()
+	
+	Local oBrowse		:= Nil
+	Private aRotina	:= MenuDef()
+	
+	//Efetua o ajuste do dicionario
+	AjustaSX3()
+	
+	//Cria o Browse
+	oBrowse := FWMBrowse():New()
+	oBrowse:SetAlias('ZC1')
+	oBrowse:SetDescription('Cadastro de Combos de Produtos')
+	
+	oBrowse:AddLegend("ZC1_STATUS == 'A' "	,"GREEN" 	,"Ativo" 		)
+	oBrowse:AddLegend("ZC1_STATUS == 'B' "	,"RED"		,"Bloqueado" 	)
+
+	oBrowse:Activate()
+	
+Return( .T. )
+
+/** {Protheus.doc} MenuDef
+Funcao de definicao do Menu
+
+@author: 	Jose Leite de Barros Neto
+@since: 	27/02/2015
+@Uso: 		SFIEMT
+*/
+Static Function MenuDef()
+	
+	Local _aRotina := {}
+	
+	ADD OPTION _aRotina TITLE "Pesquisar"	ACTION "PESQBRW"        		OPERATION 1 ACCESS 0
+	ADD OPTION _aRotina TITLE "Visualizar"	ACTION "VIEWDEF.SF7302J" 	OPERATION 2 ACCESS 0
+	ADD OPTION _aRotina TITLE "Incluir"  	ACTION "VIEWDEF.SF7302J" 	OPERATION 3 ACCESS 0
+	ADD OPTION _aRotina TITLE "Alterar"		ACTION "VIEWDEF.SF7302J" 	OPERATION 4 ACCESS 0
+	ADD OPTION _aRotina TITLE "Excluir"   	ACTION "VIEWDEF.SF7302J" 	OPERATION 5 ACCESS 0
+	ADD OPTION _aRotina TITLE "Imprimir"	ACTION "VIEWDEF.SF7302J" 	OPERATION 8 ACCESS 0  
+	ADD OPTION _aRotina TITLE "Copiar"		ACTION "VIEWDEF.SF7302J" 	OPERATION 9 ACCESS 0
+
+Return( _aRotina )
+
+/** {Protheus.doc} ModelDef
+Define o modelo de dados do combo de produtos
+
+@author: 	Jose Leite de Barros Neto
+@since: 	27/02/2015
+@Uso: 		SFIEMT
+*/
+Static Function ModelDef()
+	
+	Local oModel
+	Local oStruZC1 		:= FWFormStruct(1,'ZC1',/*bAvalCampo*/,/*lViewUsado*/)
+	Local oStruZC2 		:= FWFormStruct(1,'ZC2',/*bAvalCampo*/,/*lViewUsado*/)
+	Local bPosValidacao 	:= {|oMdl|SF7302JPOS(oMdl)}		//Validacao da tela
+	Local bCommit			:= {|oMdl|SF7302JCMT(oMdl)}		//Gravacao dos dados
+	
+	oModel := MPFormModel():New('SF7302JM',/*bPreValidacao*/,bPosValidacao,bCommit,/*bCancel*/)
+	oModel:AddFields('ZC1MASTER', /*cOwner*/,oStruZC1, /*bPreValidacao*/, /*bPosValidacao*/, /*bCarga*/ )
+	oModel:AddGrid( 'ZC2DETAIL','ZC1MASTER',oStruZC2,	/*bLinePre*/,/*bLinePost*/, /*bPreVal*/, /*bPosVal*/)
+	oModel:SetRelation( 'ZC2DETAIL',{{'ZC2_FILIAL','xFilial("ZC2")'},{'ZC2_CODACE','ZC1_CODACE'}} ,'ZC2_FILIAL+ZC2_CODACE+ZC2_ACESSO')
+	oModel:SetDescription('Cadastro de Combos de Produtos')
+	
+Return( oModel )
+
+/** {Protheus.doc} ViewDef
+Define a interface para cadastro de combos de produtos em MVC.
+
+@author: 	Jose Leite de Barros Neto
+@since: 	27/02/2015
+@Uso: 		SFIEMT
+*/
+Static Function ViewDef()
+	
+	Local oView
+	Local oModel   := FWLoadModel('SF7302J')
+	Local oStruZC1 := FWFormStruct(2,'ZC1')
+	Local oStruZC2 := FWFormStruct(2,'ZC2')
+	
+	oView := FWFormView():New()
+	oView:SetModel(oModel)
+	oView:AddField('VIEW_ZC1', oStruZC1, 'ZC1MASTER' )
+	oView:AddGrid( 'VIEW_ZC2', oStruZC2, 'ZC2DETAIL' )
+	oView:CreateHorizontalBox('SUPERIOR', 40 )
+	oView:CreateHorizontalBox('INFERIOR', 60 )
+	oView:SetOwnerView( 'VIEW_ZC1','SUPERIOR' )
+	oView:SetOwnerView( 'VIEW_ZC2','INFERIOR' )
+	
+Return( oView )
+
+/** {Protheus.doc} MenuDef
+Pos validacao do browse MVC, executada antes da gravacao,
+permitindo validar o formulario.
+
+@author: 	Jose Leite de Barros Neto
+@since: 	27/02/2015
+@Uso: 		SFIEMT
+*/
+Static Function SF7302JPOS( oMdl )
+	
+	Local lRet			:= .T.
+	Local nOperation	:= oMdl:GetOperation()
+	
+	If nOperation == 3 .OR. nOperation == 4
+		If !SF7302JTOK(oMdl)
+			lRet := .F.
+			Return( lRet )
+		EndIf
+	Endif
+	
+Return( lRet )
+
+/** {Protheus.doc} SF7302JCMT
+Bloco executado na gravacao dos dados do formulario MVC.
+
+@author: 	Jose Leite de Barros Neto
+@since: 	27/02/2015
+@Uso: 		SFIEMT
+*/
+Static Function SF7302JCMT( oMdl )
+	
+	Local lRet		 	:= .T.
+	Local nOperation 	:= oMdl:GetOperation()
+	Local oMdlZC2  	:= oMdl:GetModel('ZC2DETAIL')
+	Local cLog			:= AllTrim(cUserName) + ' - ' + DtoC(dDatabase) + ' - ' + AllTrim(Time())
+	
+	FWModelActive(oMdl)
+	
+	//Inclusao ou Alteracao
+	If nOperation == 3 .OR. nOperation == 4
+		
+		If nOperation == 3 //Inclusao
+			
+			For nI := 1 To oMdlZC2:Length()
+				oMdlZC2:GoLine( nI )
+				oMdlZC2:SetValue('ZC2_USRINC','INC - '+cLog)
+			Next
+			
+		Else //Alteracao
+		
+			For nI := 1 To oMdlZC2:Length()
+				oMdlZC2:GoLine( nI )
+				If oMdlZC2:IsUpdated() 
+					oMdlZC2:SetValue('ZC2_USRALT','ALT - '+cLog)
+				EndIf
+			Next
+			
+		EndIf
+		
+	EndIf
+	
+	FWFormCommit( oMdl )
+	
+Return( lRet )
+
+/** {Protheus.doc} SF7302JTOK
+Consistencia geral dos itens em (MVC)
+
+@author: 	Jose Leite de Barros Neto
+@since: 	27/02/2015
+@Uso: 		SFIEMT
+*/
+Static Function SF7302JTOK( oMdl )
+	
+	Local oMdlZC2  := oMdl:GetModel('ZC2DETAIL')
+	Local lRet := .T.
+	Local nX := 0
+	
+	//Verifica se existem linhas em branco
+	For nX := 1 To oMdlZC2:GetQtdLine()
+		oMdlZC2:GoLine(nX)
+		If oMdlZC2:IsEmpty() .AND. !oMdlZC2:IsDeleted()
+			Help(" ",1,"OBRIGAT")
+			lRet := .F.
+		Endif
+	Next nX
+	
+Return( lRet )
+
+/** {Protheus.doc} SF7302JCHK
+Verifica se o mesmo produto ja foi lancado e pega Descricao
+
+@author: 	Jose Leite de Barros Neto
+@since: 	27/02/2015
+@Uso: 		SFIEMT
+*/
+User Function SF7302JCHK()
+			
+	Local oMdl 	:= FWModelActive()
+	Local oMdlZC1 	:= oMdl:GetModel('ZC1MASTER')
+	Local oMdlZC2 	:= oMdl:GetModel('ZC2DETAIL')
+	Local cPrdAce 	:= &(ReadVar())
+	Local nX    	:= 0
+	
+	//Verifico se o item escolhido e igual ao produto principal ³
+	If ALLTRIM(oMdlZC1:GetValue('ZC1_PRODUT')) == ALLTRIM(cPrdAce)
+		Help(" ",1,"ACESSORIO")
+		Return(.F.)
+	Endif
+	
+	//Verifico se o valor informado ja foi cadastrado no grid
+	For nX:= 1  To oMdlZC2:GetQtdLine()
+		If N != nX //Nao faco comparacao na mesma linha
+			If ALLTRIM(oMdlZC2:GetValue('ZC2_ACESSO',nX)) == ALLTRIM(cPrdAce) .AND. !oMdlZC2:IsDeleted(nX)   //Comparo Cada Produto Digitado
+				Help("",1,"ACESSO_LAN")
+				Return(.F.)
+			Endif
+		EndIf
+	Next nX
+	
+	//Procuro o codigo do acessorio no SB1 e coloco a descricao
+	DbSelectarea("SB1")
+	DbSetorder(1)
+	If DbSeek(xFilial("SB1")+oMdlZC2:GetValue('ZC2_ACESSO'))
+		oMdlZC2:SetValue('ZC2_LOCAL',RetFldProd(SB1->B1_COD,"B1_LOCPAD"))
+		oMdlZC2:SetValue('ZC2_DACESS',AllTrim(SB1->B1_DESC))
+	Else
+		Help(" ",1,"B1PROD" )
+		Return(.F.)
+	Endif
+	
+	SB1->( DbCloseArea() )
+	
+Return( .T. )
+
+/** {Protheus.doc} SF7302JPRD
+Atualiza a descricao do produto de acordo com o codigo
+
+@author: 	Jose Leite de Barros Neto
+@since: 	27/02/2015
+@Uso: 		SFIEMT
+*/
+User Function SF7302JPRD()
+	
+	Local cDesc := ""
+	
+	DbSelectarea("SB1")
+	DbSetorder(1)
+	If DbSeek(xFilial("SB1")+M->ZC1_PRODUT)
+		cDesc := SB1->B1_DESC
+	Endif
+	
+	SB1->( DbCloseArea() )
+	
+Return( cDesc )
+
+/** {Protheus.doc} AjustaSX3
+Ajusta o dicionário de dados
+
+@author: 	Jose Leite de Barros Neto
+@since: 	27/02/2015
+@Uso: 		SFIEMT
+*/
+Static Function AjustaSX3()
+	
+	Local aArea := GetArea()	// Salva a area atual
+	
+	DbSelectArea("SX3")
+	DbSetOrder(2)
+	If DbSeek( "ZC1_DESC" )
+		If RecLock("SX3",.F.)
+			If Alltrim(SX3->X3_RELACAO) == "U_SF7302JPRD()"
+				SX3->X3_RELACAO := 'IIF(!INCLUI,Posicione("SB1",1,xFilial("SB1")+ZC1->ZC1_PRODUT,"B1_DESC"),"")'
+			EndIf
+			If Alltrim(SX3->X3_INIBRW) == 'RetField("SB1",1,xFilial("SB1")+ZC1->ZC1_PRODUT,"SB1->B1_DESC")'
+				SX3->X3_INIBRW := 'Posicione("SB1",1,xFilial("SB1")+ZC1->ZC1_PRODUT,"B1_DESC")'
+			EndIf
+			SX3->(MsUnLock())
+		Endif
+	EndIf
+	
+	If DbSeek( "ZC2_DACESS" )
+		If RecLock("SX3",.F.)
+			If Alltrim(SX3->X3_RELACAO) == 'Posicione("SB1",1,xFilial("ZC2")+ZC2->ZC2_ACESSO,"SB1->B1_DESC")'
+				SX3->X3_RELACAO := 'IIF(!INCLUI,Posicione("SB1",1,xFilial("SB1")+ZC2->ZC2_ACESSO,"B1_DESC"),"")'
+			EndIf
+			SX3->(MsUnLock())
+		EndIf
+	EndIf
+	
+	//Verifica se existe teste no campo 'X3_VALID'
+	If DbSeek("ZC1_PRODUT") .And. !'EXISTCPO("SB1",M->ZC1_PRODUT)' $ Upper(SX3->X3_VALID)
+		RecLock("SX3")
+		Replace X3_VALID With 'ExistCpo("SB1",M->ZC1_PRODUT)'
+		MsUnlock()
+	Endif
+	
+	RestArea( aArea )
+	
+Return( Nil )

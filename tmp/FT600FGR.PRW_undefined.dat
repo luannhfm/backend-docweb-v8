@@ -1,0 +1,340 @@
+#INCLUDE 'Protheus.ch'
+#INCLUDE 'topconn.ch'
+#INCLUDE 'FWMVCDEF.CH'
+
+/*/{Protheus.doc} FT600FGR
+@Description Ponto de Entrada - Executado  após a gravação da Proposta Comercial e do Orçamento.
+@type Function
+@author Jonas Nascimento
+@since 21/09/2015
+@version 11.5
+@param ParamIXB[1], objeto, oModel - Modelo de Dados da Proposta
+@see http://tdn.totvs.com/pages/releaseview.action?pageId=143655483
+@history:
+	22/02/2016, Antonio Dantas                                              
+     1) Implementada a funcao <fMarkADY>;
+     2) Implementada a chamada a funcao <fMarkADY>: Preenche o Campo 
+        [ADY_XOPER - OPER DN] com a data da Alteracao no formato
+        AAAAMMAA:hh:mm, para ser utilizado na INTEGRACAO CRM x DN.
+@history 03/03/2016, Breno Nogueira,  Inclusão de bloco para copia do conteudo do campo ADZ_XPESQ para o campo ADJ_XPESQ
+@history 21/11/2018, Alan Teles de Oliveira, alterado seek para nikename dos índices de usuário, endentação de fontes e utilização de modelo de dados.
+@history 17/07/2020, Franklin de Brito de Oliveira, Incluido tratamento para integração do Protheus com o SGT. 
+/*/
+User Function FT600FGR()
+	
+	Local aArea		:= GetArea()
+	Local oModel	:= ParamIXB[1]
+	Local oMdlADY	:= oModel:GetModel('ADYMASTER')
+	Local lPrdIST	:= .F.
+	Local lRet		:= .T.
+	Local cTpPrd	:= ""
+		
+	lRet := GravaPesq()
+	
+	If lRet 
+		lRet := fMarkADY()
+	EndIf 	
+	
+	If lRet .and. "03MT" $ cFilAnt
+
+		DbSelectArea("ADZ")
+			ADZ->(DBOrderNickname('ADZREVISA'))
+			ADZ->(DbGoTop())
+
+		If ADZ->(DbSeek(ADY->ADY_FILIAL + ADY->ADY_PROPOS + ADY->ADY_PREVIS))
+
+			While .Not. ADZ->(Eof()) .and. ADY->ADY_FILIAL == ADZ->ADZ_FILIAL .and.;
+					ADY->ADY_PROPOS == ADZ->ADZ_PROPOS .and. ADY->ADY_PREVIS == ADZ->ADZ_REVISA
+			
+				cTpPrd := Alltrim(Posicione("SB1", 1, xFilial("SB1") + ADZ->ADZ_PRODUT, "B1_TIPO"))
+
+				If cTpPrd == "ST"
+					lPrdIST := .T.
+					Exit
+				EndIf
+
+				ADZ->(dbSkip())
+
+			End
+
+		EndIf
+
+		If lPrdIST
+			ConOut("FT600GRV: Enviando WorkFlow - IST")
+			u_SF73WF02(oMdlADY:GetValue('ADY_FILIAL'), oMdlADY:GetValue('ADY_DESENT'), oMdlADY:GetValue('ADY_OPORTU'), oMdlADY:GetValue('ADY_REVISA'), oMdlADY:GetValue('ADY_PROPOS'), oMdlADY:GetValue('ADY_PREVIS'), oMdlADY:GetValue('ADY_VEND'))
+		EndIf
+
+		if cFilAnt=='03MT0018'
+			if oModel:GetModel("ADYMASTER"):GetValue("ADY_XPROTE")=='1'	//Proposta Tecnica? 1=Sim;2=Nao;
+				fEnvProTec(oModel)
+			endif
+		endif
+	EndIf
+	
+	//Atualização da tabela ZC3 - Proposta X Filial do cliente
+	If lRet .And. oModel:GetOperation() == MODEL_OPERATION_UPDATE
+		lRet := fUpdZC3(oMdlADY) 
+	EndIf 
+	
+	//Integração de proposta com SGT
+	If lRet .And. xFilial("ADY") == "03MT0018" .And. lPrdIST
+		If oMdlADY:GetOperation() == MODEL_OPERATION_INSERT
+			fIntProSGT()	//Integração de proposta SGT
+		EndIf
+		fIntAteSGT(oMdlADY:GetOperation(), oMdlADY)	//Integração de atendimento SGT
+	EndIf
+	
+	RestArea(aArea)
+	
+Return 
+
+
+/*/{Protheus.doc} fMarkADY
+@description    #CONTROLE_DN
+   Preenche o Campo [ADY_XOPER - OPER DN] com a data da Alteracao no formato
+   AAAAMMAA:hh:mm, para ser utilizado na INTEGRACAO CRM x DN.
+@type  Function
+@author Antonio Dantas
+@since 22/02/2016
+@version 11.8
+/*/
+Static Function fMarkADY()
+
+	Local lRet := .f.
+	
+	If ALTERA
+		If ADY->(RecLock("ADY", .f.))
+			Replace ADY->ADY_XOPER With Substr(ADY->ADY_XOPER, 1, 15) + Dtos(dDataBase) + ':' + Substr(Time(), 1, 5)
+			ADY->(MsUnlock())
+			ADY->(dbCommit())
+			lRet := .t.
+		Endif
+	Else
+		lRet := .T.
+	Endif
+
+Return 	lRet
+
+
+/*/{Protheus.doc} GravaPesq
+@description    #Codigo Pesquisa
+   Preenche o Campo [ADJ_XPESQ] com o conteudo do campo ADZ_XPESQ.
+@type  Function
+@authorBreno Nogueira
+@since 04/03/2016
+@version 11.8
+/*/
+Static Function GravaPesq()
+
+	Local aArea	:= GetArea()
+	Local lRet	:= .F.
+
+	If Inclui .or. Altera
+		
+		dbSelectArea("ADZ")
+			ADZ->(DBOrderNickname('ADZREVISA'))
+			ADZ->(dbSeek(ADY->ADY_FILIAL + ADY->ADY_PROPOS + ADY->ADY_PREVIS))
+			
+		dbSelectArea("ADJ")
+			ADJ->(DBOrderNickname('ADJREVISA'))
+		
+		While ADZ->(!Eof()) .and. ADY->ADY_FILIAL == ADZ->ADZ_FILIAL .and.;
+				ADY->ADY_PROPOS == ADZ->ADZ_PROPOS .and. ADY->ADY_PREVIS	== ADZ->ADZ_REVISA
+
+			If ADJ->(dbSeek(ADY->ADY_FILIAL + ADY->ADY_OPORTU + ADY->ADY_REVISA + ADY->ADY_PROPOS + ADZ->ADZ_PRODUT))
+
+				ADJ->(RecLock("ADJ", .F.))
+					Replace ADJ->ADJ_XPESQ With ADZ->ADZ_XPESQ
+				ADJ->(MsUnLock())
+				ADJ->(DbCommit())
+
+				lRet := .T.
+				
+			Endif
+
+			ADZ->(dbSkip())
+
+		End
+
+	Endif
+
+	RestArea(aArea)
+
+Return lRet
+
+Static Function fUpdZC3(oMdlADY)
+Local lRet		:= .T.
+Local cNumProp	:= oMdlADY:GetValue("ADY_PROPOS")
+Local cNumPRev	:= oMdlADY:GetValue("ADY_PREVIS")
+
+	DbSelectArea("ZC3")
+	ZC3->( DbSetOrder(1) ) //ZC3_FILIAL+ZC3_PROPOS
+	
+	If ZC3->( DbSeek(xFilial("ZC3")+cNumProp) )
+		While !ZC3->( EoF() ) .And. ;
+		ZC3->ZC3_FILIAL+ZC3->ZC3_PROPOS == xFilial("ZC3")+cNumProp
+			RecLock("ZC3",.F.)
+			ZC3->ZC3_PREVIS := cNumPRev
+			ZC3->(MsUnLock())
+			ZC3->( DbSkip() )
+		EndDo 
+	EndIf
+
+Return lRet
+
+/*/{Protheus.doc} fIntProSGT
+Função para "Marcar" proposta a ser integrada com o SGT-Proposta.
+@author Franklin Oliveira
+@since 02/03/2020
+@version 1.0
+@param oMdlADY, object, modelo de dados da Tabela ADY
+@type static function
+/*/
+Static Function fIntProSGT()
+	If ADY->(RecLock("ADY", .F.))
+		Replace ADY->ADY_XINSGT With "1"
+		Replace ADY->ADY_XSGTIN With .F.
+		ADY->(MsUnlock())
+		ADY->(dbCommit())
+	EndIf
+Return Nil
+
+/*/{Protheus.doc} fIntAteSGT
+Função para "Marcar" itens da proposta a serem integrados com o SGT-Atendimento(s).
+@author Franklin Oliveira
+@since 03/03/2020
+@param nOper, numeric, Operação executada 3=Insersão;4=Alteração
+@type static function
+/*/
+Static Function fIntAteSGT(nOper, oMdlADY)
+Local cNumProp		:= oMdlADY:GetValue("ADY_PROPOS")
+Local cNumPRev		:= oMdlADY:GetValue("ADY_PREVIS")
+Local cNumPrevAnt	:= ""
+	DbSelectArea("ADZ")
+	ADZ->( DbSetOrder(5) )
+	If ADZ->(DbSeek( xFilial("ADZ") + cNumProp + cNumPRev ))
+		While !ADZ->( EoF() ) .And. ADZ->ADZ_FILIAL + ADZ->ADZ_PROPOS + ADZ->ADZ_REVISA == xFilial("ADZ") + cNumProp + cNumPRev
+			If ADZ->(RecLock("ADZ", .F.))
+				Replace ADZ->ADZ_XINSGT With "1"
+				Replace ADZ->ADZ_XSGTIN With .F.
+				ADY->(MsUnlock())
+				ADY->(dbCommit())
+			EndIf
+			ADZ->( DbSkip() )
+		EndDo
+	EndIf
+	If nOper == MODEL_OPERATION_UPDATE //Altera o atendimento anterior para "Recusado"
+		cNumPrevAnt := StrZero(Val(cNumPRev)-1, 2)
+		If ADZ->(DbSeek( xFilial("ADZ") + cNumProp + cNumPrevAnt ))
+			While !ADZ->( EoF() ) .And. ADZ->ADZ_FILIAL + ADZ->ADZ_PROPOS + ADZ->ADZ_REVISA == xFilial("ADZ") + cNumProp + cNumPrevAnt
+				If ADZ->(RecLock("ADZ", .F.))
+					Replace ADZ->ADZ_XRESGT With "1"
+					Replace ADZ->ADZ_XSGTRE With .F.
+					ADY->(MsUnlock())
+					ADY->(dbCommit())
+				EndIf
+				ADZ->( DbSkip() )
+			EndDo
+		EndIf
+	EndIf
+Return Nil
+
+/*/{Protheus.doc} fEnvProTec
+Envia a proposta técnica para o consultor técnico
+@type  Function
+@author Franklin de Brito de Oliveira
+@since 07/04/2022
+@param oModel, object, modelo de dados da proposta
+/*/
+Static Function fEnvProTec(oModel)
+Local aArea := GetArea()
+Local aSaveLines := FWSaveRows()
+Local cCodVend := oModel:GetModel("ADYMASTER"):GetValue("ADY_XCONST")
+Local cDestina := ""
+Local cNomeVen := ""
+Local cNumOpor := oModel:GetModel("ADYMASTER"):GetValue("ADY_OPORTU")
+Local cRevOpor := oModel:GetModel("ADYMASTER"):GetValue("ADY_REVISA")
+Local cNumProp := oModel:GetModel("ADYMASTER"):GetValue("ADY_PROPOS")
+Local cRevProp := oModel:GetModel("ADYMASTER"):GetValue("ADY_PREVIS")
+Local cEntidad := oModel:GetModel("ADYMASTER"):GetValue("ADY_ENTIDA") //1=Cliente;2=Prospect
+Local cCodEnti := oModel:GetModel("ADYMASTER"):GetValue("ADY_CODIGO")
+Local cLojEnti := oModel:GetModel("ADYMASTER"):GetValue("ADY_LOJA")
+Local cDescEnt := ""
+local cDtPropo := DtoC(oModel:GetModel("ADYMASTER"):GetValue("ADY_DATA"))
+Local cAssunto := "Nova proposta"
+Local cMensage := ""
+local nLinha := 0
+
+	DbSelectArea("SA3")
+	DbSetOrder(1)	//A3_FILIAL+A3_COD
+	if SA3->(DbSeek(xFilial("SA3")+cCodVend))
+		if Empty(AllTrim(SA3->A3_EMAIL))
+			help( , , 'HELP', , "Não foi localizado um  endereço de e-mail para o consultor informado.", 1, 0)
+		else
+			cDestina := AllTrim(SA3->A3_EMAIL)
+			cNomeVen := Capital(AllTrim(SA3->A3_NREDUZ))
+			cMensage += "<!DOCTYPE html>"
+			cMensage += "<html>"
+			cMensage += "<style>"
+			cMensage += "  table {"
+			cMensage += "    border-collapse: collapse;"
+			cMensage += "  }"
+			cMensage += ""
+			cMensage += "  th,"
+			cMensage += "  td {"
+			cMensage += "    text-align: left;"
+			cMensage += "    padding: 10px;"
+			cMensage += "  }"
+			cMensage += ""
+			cMensage += "  tr:nth-child(even) {"
+			cMensage += "    background-color: rgb(200, 200, 200);"
+			cMensage += "  }"
+			cMensage += "</style>"
+			cMensage += ""
+			cMensage += "<body>"
+			cMensage += ""
+			cMensage += "  <h1>Senhor(a) " + cNomeVen + ",</h1>"
+			cMensage += "  <p>informamos que a PROPOSTA abaixo se encontra sob sua responsabilidade:</p>"
+			cMensage += "  <table>"
+			cMensage += "    <tr>"
+			cMensage += "      <td>Oportunidade</td>"
+			cMensage += "      <td>" + cNumOpor + "-" + cRevOpor + "</td>"
+			cMensage += "    </tr>"
+			cMensage += "    <tr>"
+			cMensage += "      <td>Proposta</td>"
+			cMensage += "      <td>" + cNumProp + "-" + cRevProp + "</td>"
+			cMensage += "    </tr>"
+			cMensage += "    <tr>"
+			cMensage += "      <td>" + IIF(cEntidad=='1', "Cliente", "Prospect") + "</td>"
+			if cEntidad=='1'
+				cDescEnt := AllTrim(Posicione("SA1", 1, xFilial("SA1")+cCodEnti+cLojEnti, "A1_NOME"))
+			else
+				cDescEnt := AllTrim(Posicione("SUS", 1, xFilial("SUS")+cCodEnti+cLojEnti, "US_NOME"))
+			endif
+			cMensage += "      <td>" + cCodEnti + "/" + cLojEnti + " - " + cDescEnt + "</td>"
+			cMensage += "    </tr>"
+			cMensage += "    <tr>"
+			cMensage += "      <td>Ativada em</td>"
+			cMensage += "      <td>" + cDtPropo + "</td>"
+			cMensage += "    </tr>"
+			cMensage += "  </table>"
+			cMensage += "  <p>Produto(s):</p>"
+			cMensage += "  <table>"
+			For nLinha := 1 To oModel:GetModel("ADZPRODUTO"):Length()
+				oModel:GetModel("ADZPRODUTO"):GoLine(nLinha)
+				If !oModel:GetModel("ADZPRODUTO"):IsDeleted()
+					cMensage += "    <tr>"
+					cMensage += "      <td>" + AllTrim(oModel:GetModel("ADZPRODUTO"):GetValue("ADZ_PRODUT")) + "</td>"
+					cMensage += "      <td>" + AllTrim(oModel:GetModel("ADZPRODUTO"):GetValue("ADZ_DESCRI")) + "</td>"
+					cMensage += "    </tr>"
+				endif
+			Next nLinha
+			cMensage += "  </table>"
+			cMensage += ""
+			cMensage += "</html>"
+			U_SFEnvEmail(, cDestina, , , cAssunto, cMensage, , )
+		endif
+	endif
+	FWRestRows(aSaveLines)
+	RestArea(aArea)
+return Nil

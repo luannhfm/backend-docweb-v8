@@ -1,0 +1,254 @@
+#Include 'Protheus.ch'
+#Include 'FwMVCDef.ch'
+
+/*/{Protheus.doc} F99A01SI
+Função para integrar registro do cliente com o Sócio Indústra.
+@type function
+@author Franklin de Brito de Oliveira
+@since 12/01/2021
+@type function
+/*/
+User Function SF73A04F()
+	Local aArea		:= GetArea()
+	Local cAliasTmp	:= GetNextAlias()
+	Local cMsgRet	:= ""
+	Local cStatus	:= ""
+	Local cCodIBGEUF := ""
+	Local cColumn	:= ""
+	Local cAliasInt	:= ""
+	Local cWhere	:= ""
+	local cEndereco	:= ""
+	local cNumero	:= ""
+	Local nTentat	:= 0
+	local nNumero	:= 0
+	Local oWsSocIn, oJsonRet, oJsonSend, oMdlZDM
+
+	DbSelectArea("ZDN")
+	ZDN->(DbSetOrder(1))
+	oMdlZDM := FWLoadModel("SF99A01S")
+	oMdlZDM:SetOperation(MODEL_OPERATION_UPDATE)
+	oMdlZDM:Activate()
+	oMdlZDM:SetValue("ZDMMASTER", "ZDM_FILIAL", ZDM->ZDM_FILIAL)
+	oMdlZDM:SetValue("ZDMMASTER", "ZDM_CODIGO", ZDM->ZDM_CODIGO)
+	ZDN->( DbSeek(oMdlZDM:GetValue("ZDMMASTER", "ZDM_FILIAL") + oMdlZDM:GetValue("ZDMMASTER", "ZDM_DEPARA")) )
+	cAliasInt := ZDN->ZDN_ALIAS
+	cChvInt := oMdlZDM:GetValue("ZDMMASTER", "ZDM_CHVORI")
+	If cAliasInt == "ACH"
+		cColumn := " ACH_CGC AS cnpj"
+		cColumn += ", ACH_XFATES AS faturamento"
+		cColumn += ", ACH_XCODSI AS codigo_sindicato"
+		cColumn += ", ACH_XASSSI AS associado_sindicato
+		cColumn += ", ACH_RAZAO AS razao_social"
+		cColumn += ", ACH_NFANT AS nome_fantasia"
+		cColumn += ", ACH_DDD || ACH_TEL AS contato"
+		cColumn += ", ACH_END AS logradouro"
+		cColumn += ", ACH_XNUMEN AS NumeroEndereco"
+		cColumn += ", ACH_CODMUN AS codigo_municipio"
+		cColumn += ", ACH_EST AS codigo_UF"
+		cColumn += ", ACH_CEP AS cep"
+		cColumn += ", ACH_BAIRRO AS bairro"
+		cWhere := " AND ACH_FILIAL || ACH_CODIGO || ACH_LOJA = '" + cChvInt + "'"
+	ElseIf cAliasInt == "SUS"
+		cColumn := " US_CGC AS cnpj"
+		cColumn += ", US_XFATEST AS faturamento"
+		cColumn += ", US_XCODSIN AS codigo_sindicato"
+		cColumn += ", US_XASSSIN AS associado_sindicato
+		cColumn += ", US_NOME AS razao_social"
+		cColumn += ", US_NREDUZ AS nome_fantasia"
+		cColumn += ", US_DDD || US_TEL AS contato"
+		cColumn += ", US_END AS logradouro"
+		cColumn += ", US_XNUMEND AS NumeroEndereco"
+		cColumn += ", US_COD_MUN AS codigo_municipio"
+		cColumn += ", US_EST AS codigo_UF"
+		cColumn += ", US_CEP AS cep"
+		cColumn += ", US_BAIRRO AS bairro"
+		cWhere := " AND US_FILIAL || US_COD || US_LOJA = '" + cChvInt + "'"
+	Else
+		cColumn := " A1_CGC AS cnpj"
+		cColumn += ", A1_XFATEST AS faturamento"
+		cColumn += ", A1_XCODSIN AS codigo_sindicato"
+		cColumn += ", A1_XASSSIN AS associado_sindicato
+		cColumn += ", A1_NOME AS razao_social"
+		cColumn += ", A1_NREDUZ AS nome_fantasia"
+		cColumn += ", A1_DDD || A1_TEL AS contato"
+		cColumn += ", A1_END AS logradouro"
+		cColumn += ", A1_XNUMEND AS NumeroEndereco"
+		cColumn += ", A1_COD_MUN AS codigo_municipio"
+		cColumn += ", A1_EST AS codigo_UF"
+		cColumn += ", A1_CEP AS cep"
+		cColumn += ", A1_BAIRRO AS bairro"
+		cWhere := " AND A1_FILIAL || A1_COD || A1_LOJA = '" + cChvInt + "'"
+	EndIf
+	cColumn := '%' + cColumn + '%'
+	cWhere := '%' + cWhere + '%'
+	cFrom := '%' + RetSqlName(cAliasInt) + '%'
+	BeginSql Alias cAliasTmp
+		SELECT
+			%Exp:cColumn%
+		FROM
+			%Exp:cFrom%
+		WHERE
+			%notDel%
+			%Exp:cWhere%
+	EndSql
+	oWsSocIn := SF73A03F():New()
+	If oWsSocIn:Autentica()
+		If oWsSocIn:GetCliente((cAliasTmp)->cnpj)
+			oJsonRet := JsonObject():New()
+			cRet := oJsonRet:fromJson(oWsSocIn:cResult)
+			If cRet == Nil
+				oJsonSend := JsonObject():New()
+				cCodSin	:= AllTrim(Posicione("ZCA", 1, xFilial("ZCA") + (cAliasTmp)->codigo_sindicato, "ZCA_CODSIG"))
+				lAssoSin := Iif( (cAliasTmp)->associado_sindicato == "S", .T., .F. )
+				cCodIBGEUF := fGetCodIBGEUF(AllTrim(UPPER((cAliasTmp)->codigo_UF)))
+				nFatMed := fGetFaturamento((cAliasTmp)->faturamento)
+				nFatMed := Int(nFatMed*100) //A API do Sócio Indústria deve receber um numero inteiro.
+				cEndereco := AllTrim((cAliasTmp)->logradouro)
+				cNumero := AllTrim((cAliasTmp)->NumeroEndereco)
+				nNumero := Val(cNumero)
+				If (aScan(oJsonRet:GetNames(), "data") > 0)	.And. (Len(oJsonRet["data"]["resultado"]) > 0)	//Cliente já existe no Sócio Indústria.
+					oJsonSend["faturamento"] := nFatMed
+					oJsonSend["codigo_sindicato"] := cCodSin
+					oJsonSend["associado_sindicato"] := lAssoSin
+					If oWsSocIn:PutCliente( (cAliasTmp)->cnpj , oJsonSend:toJson())
+						cMsgRet := oWsSocIn:cResult
+						cStatus := "2" //2=Finalizada
+					Else
+						cMsgRet := oWsSocIn:cErro
+						If !Empty(oWsSocIn:cResult)
+							cMsgRet += ": " + oWsSocIn:cResult
+						EndIf
+						cStatus := "3" //3=Falhou
+					EndIf
+				Else	//Cliente não exite no Sócio Indústria.
+					oJsonSend["cnpj"] := AllTrim( (cAliasTmp)->cnpj )
+					oJsonSend["faturamento"] := nFatMed
+					oJsonSend["codigo_sindicato"] := cCodSin
+					oJsonSend["associado_sindicato"] := lAssoSin
+					oJsonSend["razao_social"] := AllTrim( (cAliasTmp)->razao_social )
+					oJsonSend["nome_fantasia"] := AllTrim( (cAliasTmp)->nome_fantasia )
+					oJsonSend["contato"] := AllTrim( (cAliasTmp)->contato)
+					oJsonSend["logradouro"] := AllTrim( cEndereco )
+					oJsonSend["numero"] := nNumero
+					oJsonSend["codigo_municipio"] := (cAliasTmp)->codigo_municipio
+					oJsonSend["codigo_UF"] := cCodIBGEUF
+					oJsonSend["cep"] := (cAliasTmp)->cep
+					oJsonSend["bairro"] := AllTrim( (cAliasTmp)->bairro )
+					If oWsSocIn:PostCliente( oJsonSend:toJson() )
+						cMsgRet := oWsSocIn:cResult
+						cStatus := "2" //2=Finalizada
+					Else
+						cMsgRet := oWsSocIn:cErro
+						If !Empty(oWsSocIn:cResult)
+							cMsgRet += ": " + oWsSocIn:cResult
+						EndIf
+						cStatus := "3" //3=Falhou
+					EndIf
+				EndIf
+				oMdlZDM:SetValue("ZDMMASTER", "ZDM_MSGORI", oJsonSend:toJson())
+			Else
+				cMsgRet := cRet
+				//Help( ,, 'Help',, 'Erro: ' + cMsgRet, 1, 0 )
+				cStatus := "3" //3=Falhou
+			EndIf
+		Else
+			cMsgRet := oWsSocIn:cErro
+			cStatus := "3" //3=Falhou
+		EndIf
+	Else
+		//Help( ,, 'Help',, 'Erro: ' + oWsSocIn:cErro, 1, 0 )
+		cStatus := "3" //3=Falhou
+	EndIf
+	nTentat := oMdlZDM:GetValue("ZDMMASTER","ZDM_TENTAT") + 1
+	oMdlZDM:SetValue("ZDMMASTER", "ZDM_TENTAT", nTentat)
+	oMdlZDM:SetValue("ZDMMASTER", "ZDM_TNDATA", Date())
+	oMdlZDM:SetValue("ZDMMASTER", "ZDM_TNHORA", Time())
+	oMdlZDM:SetValue("ZDMMASTER", "ZDM_MSGRET", cMsgRet)
+	oMdlZDM:SetValue("ZDMMASTER", "ZDM_STATUS", cStatus)
+	If oMdlZDM:VldData()
+		oMdlZDM:CommitData()
+	Else
+		//Help( ,, 'Help',, 'Erro ao atualizar os dados da ZDM.', 1, 0 )
+	EndIf
+	(cAliasTmp)->(DBCloseArea())
+	oMdlZDM:DeActivate()
+	RestArea(aArea)
+
+Return .T.
+
+/*/{Protheus.doc} fGetCodIBGEUF
+Busca o código IBGE da UF
+@type  Function
+@author Franklin de Brito de Oliveira
+@since 20/05/2021
+@param cSiglaUF, character, sigla da UF 
+@return character, código IBGE da UF
+/*/
+Static Function fGetCodIBGEUF(cSiglaUF)
+local aUF := {}
+	Aadd(aUF,{"RO","11"})
+	Aadd(aUF,{"AC","12"})
+	Aadd(aUF,{"AM","13"})
+	Aadd(aUF,{"RR","14"})
+	Aadd(aUF,{"PA","15"})
+	Aadd(aUF,{"AP","16"})
+	Aadd(aUF,{"TO","17"})
+	Aadd(aUF,{"MA","21"})
+	Aadd(aUF,{"PI","22"})
+	Aadd(aUF,{"CE","23"})
+	Aadd(aUF,{"RN","24"})
+	Aadd(aUF,{"PB","25"})
+	Aadd(aUF,{"PE","26"})
+	Aadd(aUF,{"AL","27"})
+	Aadd(aUF,{"MG","31"})
+	Aadd(aUF,{"ES","32"})
+	Aadd(aUF,{"RJ","33"})
+	Aadd(aUF,{"SP","35"})
+	Aadd(aUF,{"PR","41"})
+	Aadd(aUF,{"SC","42"})
+	Aadd(aUF,{"RS","43"})
+	Aadd(aUF,{"MS","50"})
+	Aadd(aUF,{"MT","51"})
+	Aadd(aUF,{"GO","52"})
+	Aadd(aUF,{"DF","53"})
+	Aadd(aUF,{"SE","28"})
+	Aadd(aUF,{"BA","29"})
+	Aadd(aUF,{"EX","99"})
+
+Return (aUF[aScan(aUF, {|x| x[1]==cSiglaUF})][02])
+
+/*/{Protheus.doc} fGetFaturamento(cFatEst)
+	função para calculo do faturamento médio de acordo com o faturamento estimado
+	@type  Function
+	@author Franklin de Brito de Oliveira
+	@since 15/04/2021
+	@param cFatEst, character, código do faturamento estimado 
+	@return numeric, faturamento médio identificado
+	/*/
+Static Function fGetFaturamento(cFatEst)
+	local nFatMed := 0
+	do case
+		case cFatEst == "01"
+			nFatMed := 81000.00/2
+		case cFatEst == "02"
+			nFatMed := (81000.01 + 360000.00)/2
+		case cFatEst == "03"
+			nFatMed := (360000.01 + 1500000.00)/2
+		case cFatEst == "04"
+			nFatMed := (1500000.01 + 4800000.00)/2
+		case cFatEst == "05"
+			nFatMed := (4800000.01 + 10000000.00)/2
+		case cFatEst == "06"
+			nFatMed := (10000000.01 + 30000000.00)/2
+		case cFatEst == "07"
+			nFatMed := (30000000.01 + 100000000.00)/2
+		case cFatEst == "08"
+			nFatMed := (100000000.01 + 300000000.00)/2
+		case cFatEst == "09"
+			nFatMed := (300000000.01 + 500000000.00)/2
+		case cFatEst == "10"
+			nFatMed := (500000000.01 + 1000000000.00)/2
+		otherwise
+			nFatMed := (1000000000.01 + 1000000000.01)/2
+	endcase
+Return nFatMed

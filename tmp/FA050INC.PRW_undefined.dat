@@ -1,0 +1,134 @@
+#INCLUDE "PROTHEUS.CH"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³FA050INC  ºAutor  ³ TOTVS              º Data ³  10/08/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Validação dos campos de UO e CR                            º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User function FA050INC()
+
+	Local _lRet	 := .T.
+	Local lExist := .F.
+	Local aITEMD := {}
+	// Prefixo que devera movimentar banco na inclusao quando for PA
+	Local _cPrePA := SuperGetMV("MV_XMOVBPA" ,, "ADD") 
+	
+	If !lF050Auto .and. M->E2_MULTNAT == "2" .and. M->E2_RATEIO == "N"
+		IF Empty(M->E2_CCD) .or. Empty(M->E2_ITEMD)
+			Aviso("Atenção","Por favor, informar UO + CR.",{"Voltar"})
+			_lRet := .F.
+		Endif
+	Endif
+	
+	/*
+	caio.lima - j2a
+	12/07/2017
+	alteracao dinamica do parametro 09 (Mov.Banc.Sem Cheque?)
+	*/
+	If M->E2_TIPO = "PA" .AND. M->E2_PREFIXO = _cPrePA .AND. M->E2_XPARECA
+		MV_PAR05 := 2 // Gera cheque para adiantamento?
+		MV_PAR09 := 1 // Movimenta banco sem cheque?
+	Else
+		MV_PAR05 := 2 // Gera cheque para adiantamento?
+		MV_PAR09 := 2 // Movimenta banco sem cheque?
+	EndIf
+	
+	If M->E2_RATEIO == "N"
+	
+		If	IsBlind()
+			Return _lRet
+		EndIf
+		
+		aITEMD := ChkCCD(M->E2_CCD)
+		
+		For nH := 1 To Len(aITEMD)
+		
+				If M->E2_ITEMD == aITEMD[nH][1]
+					lExist := .T.
+				EndIf
+		
+		Next nH
+		
+		If !lExist
+			Help(" ",1,"NOAMARRA01")
+			_lRet := .F.
+			Return(_lRet)
+		EndIf
+	
+	Else
+	
+		DbSelectArea("TMP")
+		DbGoTop()
+		While !TMP->(Eof())
+			
+			aITEMD := ChkCCD(TMP->CTJ_CCD)
+						
+			For nC := 1 To Len(aITEMD)			
+				If AllTrim(TMP->CTJ_ITEMD) == AllTrim(aITEMD[nC][1])					
+					lExist := .T.		
+				EndIf			
+			Next nC
+			
+			If !(lExist)
+				Help(" ",1,"NOAMARRA01")
+				_lRet := .F.
+				Return(_lRet)				
+			EndIf
+			
+			lExist := .F.			
+			
+			TMP->(DbSkip())
+		EndDo	
+	
+	EndIf	
+
+Return(_lRet)
+
+/*/{Protheus.doc} ChkCCD
+(long_description)
+@author j2a.luizjunior
+@since 16/06/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ChkCCD(pCCD) 
+
+	Local cAlCCD := GetNextAlias()
+	Local cCCD   := pCCD//If(Inclui,M->E2_CCD,SE2->E2_CCD) 
+	Local aRet   := {}
+		
+	BeginSql Alias cAlCCD
+		
+		SELECT CTA_ITEM 
+		FROM   %Table:CTA%
+		WHERE  CTA_CUSTO   = %Exp:cCCD%		
+		AND    CTA_FILIAL  = %xFilial:CTA%
+		AND    %NOTDEL% 
+	
+	EndSql
+	
+	While !(cAlCCD)->(Eof())
+		
+		If SubStr((cAlCCD)->CTA_ITEM,1,2) == SubStr(DToS(dDataBase),3,2)
+		
+			aAdd(aRet,{(cAlCCD)->CTA_ITEM})
+		
+		EndIf	
+		
+		(cAlCCD)->(DbSkip())
+	EndDo
+	
+Return aRet

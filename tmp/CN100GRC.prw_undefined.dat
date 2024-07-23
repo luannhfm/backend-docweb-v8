@@ -1,0 +1,98 @@
+/*/
+===============================================================================
+Autor.............: Peder Munksgaard (Do.it Sistemas)
+-------------------------------------------------------------------------------
+Data..............: 11/08/2014
+-------------------------------------------------------------------------------
+Descrição.........: Executada após o processamento das tabelas relacionadas
+                    ao contrato.
+                    Criado para vincular a planilha de medição importada de um
+                    Pedido de Compras, ao próprio PC em questão.
+-------------------------------------------------------------------------------
+Alteração.........: (dd/mm/aaaa) - Motivo
+-------------------------------------------------------------------------------
+Partida...........: CN100GRV()
+-------------------------------------------------------------------------------
+Função............: u_CN100GRC()
+===============================================================================
+/*/
+
+#Include "Protheus.ch"
+#Include "Topconn.ch"
+
+User Function CN100GRC()
+
+   Local _cQry 
+   Local _nX, _nY
+   Local _aArea  := GetArea()
+   
+   Local _nOpc   := ParamIXB[1]    // 2 - Visualizar, 3 - Incluir, 4 - Alterar, 5- Excluir
+   Local _aCabec := ParamIXB[5]    // Array com os cabeçalhos das planilhas
+   Local _aItens := ParamIXB[3]    // Array com os itens das planilhas
+
+   Local _nPosFlPC  := aScan(_aCabec,{|x| Alltrim(x[2]) == "CNB_XFILPC"})
+   Local _nPosNmPC  := aScan(_aCabec,{|x| Alltrim(x[2]) == "CNB_XPC"})
+   Local _nPosItPC  := aScan(_aCabec,{|x| Alltrim(x[2]) == "CNB_XITMPC"})  
+   
+   If IsInCallStack("CNTA100") .And. (_nOpc == 3 .Or._nOpc == 4 .Or. _nOpc == 5)
+   
+      If _nOpc == 3 .Or. _nOpc == 4
+      
+         /*
+          * Se inclusão ou alteração do contrato, amarro o número do contrato ao Pedido de Compras importado
+          * através do número e item do PC.
+          * 
+         */
+            
+         For _nX := 1 to Len(_aItens)
+            
+            For _nY := 1 to Len(_aItens[_nX])
+            
+               If !_aItens[_nX][_nY][Len(_aCabec)+1]
+                        
+                  _cQry := "UPDATE " + RetSqlName("SC7") + " SET C7_XGERGCT = 'S', "        + ;
+                           "C7_XCONTRA = '" + CN9->CN9_NUMERO + "', C7_RESIDUO = 'S', "     + ;
+                           "C7_FILENT  = '" + CN9->CN9_FILIAL + "'"                         + CRLF
+                  _cQry += "WHERE D_E_L_E_T_   <> '*'"                                      + CRLF     
+                  _cQry += "AND   C7_FILIAL     = '" + _aItens[_nX][_nY][_nPosFlPC] + "'"   + CRLF                             
+                  _cQry += "AND   C7_NUM        = '" + _aItens[_nX][_nY][_nPosNmPC] + "'"   + CRLF
+                  _cQry += "AND   C7_ITEM       = '" + _aItens[_nX][_nY][_nPosItPC] + "'"   + CRLF
+                  _cQry += "AND   C7_CONAPRO    = 'L'"                                      + CRLF
+                  _cQry += "AND   C7_CONTRA     = '" + Space(TamSX3("C7_CONTRA")[1]) +  "'" + CRLF                        
+               
+                  TcSqlExec(_cQry)
+                  TcSqlExec("COMMIT")
+                  
+               Endif
+               
+            Next _nY
+                        
+         Next _nX
+                    
+      /*
+       * Se exclusão, removo as informações que são vinculadas ao pedido de compras deixando-o disponível 
+       * para uma nova importação ou para atendimento direto via NFE.
+       * 
+      */                        
+               
+      Elseif _nOpc == 5
+                              
+         _cQry := "UPDATE " + RetSqlName("SC7") + " SET C7_XGERGCT = 'N', "                    + ;
+                  "C7_XCONTRA = '" + Space(TamSX3("C7_XCONTRA")[1]) + "', C7_RESIDUO = ' '"    + CRLF
+         _cQry += "WHERE D_E_L_E_T_   <> '*'"                                                  + CRLF        
+         _cQry += "AND   C7_FILENT     = '" + CN9->CN9_FILIAL + "'"                            + CRLF
+         _cQry += "AND   C7_XCONTRA    = '" + CN9->CN9_NUMERO + "'"                            + CRLF
+         _cQry += "AND   C7_CONAPRO    = 'L'"                                                  + CRLF
+         _cQry += "AND   C7_CONTRA     = '" + Space(TamSX3("C7_CONTRA")[1]) +  "'"             + CRLF
+         _cQry += "AND   C7_XGERGCT    = 'S'"                                                  + CRLF                        
+            
+         TcSqlExec(_cQry)                                                
+         TcSqlExec("COMMIT")
+                        
+      Endif 
+                                                  
+   Endif
+   
+   RestArea(_aArea)
+     
+Return NiL

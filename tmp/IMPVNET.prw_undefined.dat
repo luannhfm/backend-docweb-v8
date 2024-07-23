@@ -1,0 +1,438 @@
+#Include 'Protheus.ch'
+#Include "Tbiconn.ch"
+#Include 'Topconn.ch'
+
+/*/{Protheus.doc} IMPVNET
+Função para fazer a integração entre o Sistema Viagem Net x Protheus
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 		17/04/2017
+@version 	1.0
+@history 02/02/2021, Franklin de Brito de Oliveira, Preenchimento das variáveis AUTBANCO, AUTAGENCIA e AUTCONTA na inclusão de PA.
+/*/
+User Function IMPVNET(_aParams)
+	
+	Local _aArea := GetArea()
+
+	ConOut(Replicate("=",80))
+	ConOut('IMPVNET: Iniciando Importacao - Financeiro ViagemNet x Protheus' )
+	
+	If Valtype( _aParams ) != "U"
+		//+--------------------------------------------------------------+
+		//| Se for SCHEDULE prepara o ambiente                           |
+		//+--------------------------------------------------------------+
+		PREPARE ENVIRONMENT EMPRESA _aParams[1] FILIAL _aParams[2]    
+	EndIf
+	
+	ImportaPA()
+
+	RestArea(_aArea)
+
+	ConOut(Replicate("=",80))
+	ConOut('IMPVNET: Finalizando Importacao - Financeiro ViagemNet x Protheus' )
+
+Return NIL
+
+	
+/** {Protheus.doc} ImportaPA
+Funcao que realiza a importacao da PA
+@type function
+@author	Jose Leite de Barros Neto
+@since 	17/04/2017
+*/
+Static Function ImportaPA()
+Local cFilPa	:= cFilAnt
+Local cPref 	:= "" 
+Local cNum		:= ""
+Local cParc		:= ""
+Local cNome		:= ""
+Local cTipo		:= ""
+Local cCPF  	:= ""
+Local cContaD	:= ""
+Local cCentroD	:= ""
+Local cItemD	:= ""
+Local cNature   := ""
+Local cObs		:= ""
+Local cForn 	:= ""
+Local cLoja 	:= ""
+Local cPathErr := SuperGetMV("MV_XPATHER", .F., "\log\")
+local cFldErr := "IMPVNET"
+Local cChvErr	:= "" 
+Local cChvSE5	:= ""
+Local cBanco	:= "" 
+Local cAgenc	:= ""
+Local cConta	:= ""
+Local nVal		:= 0
+local nLinha := 0
+Local dEmiss	:= dDataBase
+Local dVcto		:= dDataBase
+Local dVctoR	:= dDataBase
+Local aTitPA	:= {}
+Local aErro		:= {}
+Local i			:= 0
+		
+	Private nHErp  		:= AdvConnection()
+	Private lMsErroAuto := .F.
+
+	/* Verifica se o diretório de Logs existe, senão cria. */
+	If !File(cPathErr)
+		MakeDir(cPathErr)
+	EndIf
+
+	/* Verifica se o diretório de Logs existe, senão cria. */
+	If !File(cPathErr + cFldErr)
+		MakeDir(cPathErr + cFldErr)
+	EndIf
+
+	aViagens := getViagens()
+	
+	/*
+	aViagens[nLinha][01]=TRA->NOME
+	aViagens[nLinha][02]=TRA->TPESSOA
+	aViagens[nLinha][03]=TRA->CPF
+	aViagens[nLinha][04]=TRA->CPF_PS
+	aViagens[nLinha][05]=TRA->PAIS
+	aViagens[nLinha][06]=TRA->ANO
+	aViagens[nLinha][07]=TRA->CC
+	aViagens[nLinha][08]=TRA->SEQ
+	aViagens[nLinha][09]=TRA->ITEMC
+	aViagens[nLinha][10]=TRA->OBS
+	aViagens[nLinha][11]=TRA->VLRADT
+	*/
+	for nLinha := 1 to Len(aViagens)	
+		aTitPA	:= {}
+		cNome	:= AllTrim(aViagens[nLinha][01])
+		cTipo	:= AllTrim(aViagens[nLinha][02])
+		
+		If cTipo == "F"
+			cPref 	:= "ADV" 
+			cCPF  	:= AllTrim(aViagens[nLinha][03])
+			cContaD	:= GetNewPar("MV_XVNTCTF",'11030401001')
+		ElseIf cTipo == "P"
+			cPref 	:= "ADT"
+			cCPF  	:= AllTrim(aViagens[nLinha][04])
+			cContaD := GetNewPar("MV_XVNTCTP",'11030402001')
+		Else
+			cPref   := "ADD"
+			cContaD := GetNewPar("MV_XVNTCTD",'11030403001')
+		EndIf
+		
+		If Upper(AllTrim(aViagens[nLinha][05])) == 'BRASIL'
+			cNature := GetNewPar("MV_XVNTNTP",'2100000064') //DIARIAS DE VIAGENS NO PAIS
+		Else
+			//Nao vai mais integrar Viagens para o exterior
+			Loop
+			cNature := GetNewPar("MV_XVNTNTF",'2100000065') //DIARIAS DE VIAGENS NO EXTERIOR
+		EndIf
+		
+		cCentroD	:= AllTrim(aViagens[nLinha][07])
+		cItemD		:= SubStr(cValToChar(aViagens[nLinha][06]),3,2) + AllTrim(aViagens[nLinha][09])
+		cSeqAno		:= cValToChar(aViagens[nLinha][08])
+		cNum  		:= cSeqAno + cValToChar(aViagens[nLinha][06])
+		cParc 		:= "" 
+		cTipo 		:= "PA"
+		cObs		:= SubStr(AllTrim(FwNoAccent(aViagens[nLinha][10])),1,TAMSX3("E2_HIST")[1])
+		nVal 		:= Val(AllTrim(aViagens[nLinha][11]))
+		cChvErr		:= cFilPa + "_" + cPref + "_" + cNum +".LOG"
+		
+		DbSelectArea('SA2')
+		SA2->(DbSetOrder(3)) //A2_FILIAL+A2_CGC
+		SA2->(DbGoTop())
+		If DbSeek(xFilial('SA2') + PADR(cCPF,TAMSX3("A2_CGC")[1]))
+			cForn := SA2->A2_COD
+			cLoja := SA2->A2_LOJA
+			If AllTrim(SA2->A2_BANCO) == '104' //CEF
+				cBanco	:= GetNewPar( "MV_XVNTBCC", "104") 
+				cAgenc	:= GetNewPar( "MV_XVNTAGC", "0016")
+				cConta	:= GetNewPar( "MV_XVNTCNC", "1834")
+			Else
+				cBanco	:= GetNewPar( "MV_XVNTBCB", "001") 
+				cAgenc	:= GetNewPar( "MV_XVNTAGB", "4205")
+				cConta	:= GetNewPar( "MV_XVNTCNB", "2001")
+			EndIf
+		Else
+			aAdd(aErro, {'1', cNome, cCPF})
+			Loop
+		EndIf
+		
+		SA2->(DbCloseArea())
+		
+		dEmiss 	:= dDataBase
+		dVcto  	:= dDataBase+5
+		dVctoR 	:= DataValida(dVcto)
+		
+		aTitPA := { {"E2_FILIAL"   	,cFilPa		,Nil},;
+					{"E2_PREFIXO"  	,cPref  	,Nil},;
+					{"E2_NUM"     	,cNum		,Nil},;
+					{"E2_PARCELA"  	,cParc 		,Nil},;
+					{"E2_TIPO"     	,cTipo     	,Nil},;
+					{"E2_FORNECE"  	,cForn  	,Nil},;
+					{"E2_LOJA"     	,cLoja    	,Nil},;
+					{"E2_NATUREZ"	,cNature   	,Nil},;
+					{"E2_CONTAD"	,cContaD    ,Nil},; 
+					{"E2_CCD"		,cCentroD	,Nil},;
+					{"E2_ITEMD"		,cItemD		,Nil},;
+					{"E2_HIST"    	,cObs   	,Nil},;
+					{"E2_EMISSAO"  	,dEmiss		,Nil},;
+					{"E2_VENCTO"   	,dVcto		,Nil},;
+					{"E2_VENCREA"  	,dVctoR		,Nil},;
+					{"AUTBANCO"  	,cBanco		,Nil},;
+					{"AUTAGENCIA"  	,cAgenc		,Nil},;
+					{"AUTCONTA"  	,cConta		,Nil},;
+					{"E2_VALOR"    	,nVal       ,Nil}}
+		
+		lMsErroAuto := .F.
+		
+		Begin Transaction
+		
+			//executa a rotina automatica para inclusao de titulo a pagar
+			MsExecAuto( { |x,y,z| FINA050(x,y,z)}, aTitPA,, 3)  // 3 - Inclusao, 4 - Alteração, 5 - Exclusão
+			
+			//Tratamento de resposta
+			If lMsErroAuto
+				MostraErro(cPathErr+cFldErr+"\", cChvErr)
+				DisarmTransaction()
+			Else
+				ConOut("IMPVNET/ImportaPA: Titulo inserido com sucesso!")
+			EndIf
+			
+		End Transaction
+		
+		cChvSE5 := ""
+		
+		If .Not. lMsErroAuto
+			cChvSE5 := cFilPa + PadR(cPref,TamSx3("E5_PREFIXO")[1]) + PadR(cNum,TamSx3("E5_NUMERO")[1]) + PadR(cParc,TamSx3("E5_PARCELA")[1]) + PadR(cTipo,TamSx3("E5_TIPO")[1]) + cForn + cLoja
+			DbSelectArea('SE5')
+			SE5->(DbSetOrder(7)) //E5_FILIAL+E5_PREFIXO+E5_NUMERO+E5_PARCELA+E5_TIPO+E5_CLIFOR+E5_LOJA+E5_SEQ
+			SE5->(DbGoTop())
+			If SE5->(DbSeek(cChvSE5))
+				While .Not. SE5->(EOF()) .And. SE5->(E5_FILIAL+E5_PREFIXO+E5_NUMERO+E5_PARCELA+E5_TIPO+E5_CLIFOR+E5_LOJA) == cChvSE5
+					If Reclock('SE5',.F.)
+						SE5->E5_BANCO	:= cBanco  
+						SE5->E5_AGENCIA	:= cAgenc
+						SE5->E5_CONTA	:= cConta
+					EndIf
+					SE5->(MsUnlock())
+					SE5->(DbSkip())
+				End
+			EndIf
+			SE5->(DbCloseArea())
+			//Atualiza registro no ViagemNet
+			UpdViagem(cSeqAno, cValToChar(Year(dDataBase)))
+		EndIf
+	next nLinha
+
+	//Enviar email para cadastro de fornecedores
+	If Len(aErro) > 0
+		For i := 1 to Len(aErro)
+			EnvMail(aErro[i][1],aErro[i][2],aErro[i][3])
+		Next
+	EndIf
+		
+Return
+
+/*/{Protheus.doc} GetViagens
+Função para recuperar as viagens pendentes de importação no ViagemNet.
+@type Function
+@author Franklin de Brito de Oliveira
+@since 25/01/2022
+@return array, Lista das viagens pendentes de integração com o Protheus-FIN.
+/*/
+Static Function GetViagens()
+Local aViagem := {}
+Local aViagens := {}
+Local cFilPa := cFilAnt
+Private nHndSql := 0
+
+	//Inicia nova conexão com o ViagemNet
+	GetConexao()
+	
+	//Conectou no Banco de Dados		
+	If nHndSql > 0
+		If Select("TRA") > 0
+			DbSelectArea("TRA")
+			TRA->(DbCloseArea())
+		EndIf
+						
+		cQuery := " SELECT NOME, TPESSOA, CPF, CPF_PS, PAIS, ANO, CentroCusto CC, sequenciaano SEQ, "
+		cQuery += " ITEMC, observacao OBS, ValorAdiantado VLRADT FROM " + CRLF
+		If "01MT" $ cFilPa 
+			cQuery += " fiemt215.VW_INT_PRT_VI " + CRLF
+		ElseIf "02MT" $ cFilPa 
+			cQuery += " fiemt218.VW_INT_PRT_VI " + CRLF
+		ElseIf "03MT" $ cFilPa 
+			cQuery += " fiemt217.VW_INT_PRT_VI " + CRLF
+		ElseIf "04MT" $ cFilPa 
+			cQuery += " fiemt216.VW_INT_PRT_VI " + CRLF
+		Else
+			cQuery += " fiemt219.VW_INT_PRT_VI " + CRLF
+		EndIF
+		cQuery += " WHERE ano = " + cValToChar(Year(dDataBase)) + " " + CRLF
+		cQuery += " AND situacao = 4 "+ CRLF
+		cQuery += " AND xintprotheus = 'N' "+ CRLF
+		//cQuery += " AND codigo in (1678) "+ CRLF  //TESTE
+		
+		If TCSQLExec(cQuery) < 0
+			ConOut("IMPVNET/GetViagens: TCSQLError() - View: " + TCSQLError())
+			Return aViagens
+		EndIf
+		
+		TCQUERY cQuery NEW ALIAS "TRA"
+		
+		DbSelectArea("TRA")
+		TRA->(DbGoTop())
+		
+		while !TRA->(EoF())
+			aViagem := {}
+			Aadd(aViagem, TRA->NOME)
+			Aadd(aViagem, TRA->TPESSOA)
+			Aadd(aViagem, TRA->CPF)
+			Aadd(aViagem, TRA->CPF_PS)
+			Aadd(aViagem, TRA->PAIS)
+			Aadd(aViagem, TRA->ANO)
+			Aadd(aViagem, TRA->CC)
+			Aadd(aViagem, TRA->SEQ)
+			Aadd(aViagem, TRA->ITEMC)
+			Aadd(aViagem, TRA->OBS)
+			Aadd(aViagem, TRA->VLRADT)
+			Aadd(aViagens, aViagem)
+			TRA->(dbSkip())
+		endDo
+		
+		If Empty(aViagens)
+			ConOut("IMPVNET/GetViagens: Nao existem titulos a importar - VW_INT_PRT_VI")
+		EndIf
+		
+		TRA->(DbCloseArea())
+	
+		TcUnlink(nHndSql)
+		ConOut("IMPVNET/GetViagens: Desconectado do ViagemNet.")
+	Else
+		ConOut("IMPVNET/GetViagens: Nao foi possivel realizar a conexao no Banco de Dados - Viagem Net","Erro")
+		Return aViagens
+	EndIf
+
+Return aViagens
+
+/*/{Protheus.doc} UpdViagem
+Função para atualizar viagem, indicando que já foi integrada com o Protheus.
+@type Function
+@author Franklin de Brito de Oliveira
+@since 25/01/2022
+@param cSeqAno, character, numero sequencial da viagem no ano
+@param cAno, character, Ano da viagem
+/*/
+Static Function UpdViagem(cSeqAno, cAno)
+local cQuery := ""
+Local cFilPa := cFilAnt
+Private nHndSql := 0
+	
+	//Inicia nova conexão com o ViagemNet
+	GetConexao()
+
+	If nHndSql > 0
+		//Update ViagemNet
+		cQuery := "update "+ CRLF
+		
+		If "01MT" $ cFilPa 
+			cQuery += " fiemt215.viagem " + CRLF
+		ElseIf "02MT" $ cFilPa 
+			cQuery += " fiemt218.viagem " + CRLF
+		ElseIf "03MT" $ cFilPa 
+			cQuery += " fiemt217.viagem " + CRLF
+		ElseIf "04MT" $ cFilPa 
+			cQuery += " fiemt216.viagem " + CRLF
+		Else
+			cQuery += " fiemt219.viagem " + CRLF
+		EndIf
+		
+		cQuery += " set xintprotheus = 'S' " + CRLF
+		cQuery += " where sequenciaano = "+ cSeqAno +" " + CRLF
+		cQuery += " and ano = " + cAno + " "+ CRLF 
+		cQuery += " and situacao = 4 "+ CRLF 
+		cQuery += " and xintprotheus = 'N' "+ CRLF
+		
+		If TCSQLExec(cQuery) < 0
+			ConOut("IMPVNET/UpdViagem: TCSQLError() - Update: " + TCSQLError())
+		Else
+			ConOut("IMPVNET/UpdViagem: Registro Atualizado no ViagemNet" )
+		EndIf
+		TCUnlink(nHndSql)
+		ConOut("IMPVNET/UpdViagem: Desconectado do ViagemNet.")
+	else
+		ConOut("IMPVNET/UpdViagem: Nao foi possivel realizar a conexao no Banco de Dados - Viagem Net","Erro")
+	EndIf
+Return NIL
+
+/** {Protheus.doc} GetConexao
+Funcao que realiza conexao com o banco de dados do Viagem Net
+@author 	Jose Leite de Barros Neto
+@since 	17/04/2017
+@Uso: 		SFIEMT
+*/
+Static Function GetConexao()
+local cDbSql :=  SuperGetMV("MV_XVNTDB", .F., 'ODBC/VNETFIEMT')
+local cSrvSql := SuperGetMV("MV_XVNTSRV", .F., 'SRVERPGTW')
+
+	nHndSql := TcLink(cDbSql, cSrvSql, 7890)
+ 
+	If nHndSql < 0
+		ConOut( "IMPVNET/GetConexao: Erro ("+ Str(nHndSql, 4) +") ao conectar com "+ cDbSql +" em " + cSrvSql )
+	else
+		ConOut( "IMPVNET/GetConexao: "+ cDbSql + " conectado - Handler" + Str(nHndSql, 4) )
+	EndIf
+	
+Return NIL
+
+/** {Protheus.doc} EnvMail
+Funcao que realiza o envio de email para determinado usuario realizar o
+cadastro do fornecedor.
+
+@author 	Jose Leite de Barros Neto
+@since 	17/04/2017
+@Uso 		SFIEMT
+@return 	logical, Retorna o status do envio de email
+*/
+Static Function EnvMail(p_cTipo, p_cNome, p_cCpf)
+	
+	Local cMsg  	:= ''
+	Local cHtml 	:= ''
+	Local cEmailCt	:= GetNewPar("MV_XVNTEML",'desenvolvedor.csi@fiemt.com.br')
+	Local cAssunt	:= ''
+	
+	If p_cTipo == '1'
+		cAssunt	:= 'ViagemNet x Protheus - Fornecedor não cadastrado'
+		cMsg := 'Prezado(a), favor realizar a inclusão do fornecedor: ' + p_cNome +' -  CPF/CNPJ: '+ p_cCpf+', o mesmo não esta cadastrado no Protheus.'
+	EndIf
+	
+	cHtml := '	<html> '
+	cHtml += '		<head> '
+	cHtml += '			<title>Sistema FIEMT - ViagemNet x Protheus</title> '
+	cHtml += '			<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1"> '
+	cHtml += '		</head> '
+	cHtml += '		<body> '
+	cHtml += '			<form name="form1"> '
+	cHtml += '				<table style="width: 100%;" bordercolorlight="#000000" border="1"> '
+	cHtml += '					<tbody> '
+	cHtml += '						<tr> '
+	cHtml += '							<td style="width: 112px;"> '
+	cHtml += '								<p align="left"> '
+	cHtml += '									<img style="border: 0px solid; width: 257px; height: 40px;" alt="Sistema FIEMT" '
+	cHtml += '										src="http://www.katoombagroup.org/documents/events/event27/FIEMT.JPG"></p> '
+	cHtml += '							</td> '
+	cHtml += '							<td style="width: 866px; text-align: center; vertical-align: middle;"> '
+	cHtml += '								<p> '
+	cHtml += '									<big><big> <font size="3"><big><big><b>Notificação do Viagem Net</b></big></big></font></big></big> '
+	cHtml += '								</p> '
+	cHtml += '							</td> '
+	cHtml += '						</tr> '
+	cHtml += '					</tbody> '
+	cHtml += '				</table> '
+	cHtml += '				<p>&nbsp;</p> ' + cMsg 
+	cHtml += '			</form> '
+	cHtml += '		</body> '
+	cHtml += ' </html> '
+	
+	U_SFEnvEmail( , cEmailCt, , , cAssunt, cMsg,,,)
+	
+Return

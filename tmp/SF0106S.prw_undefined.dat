@@ -1,0 +1,162 @@
+#include 'protheus.ch'
+#Include 'FWMVCDEF.CH'
+#INCLUDE "FWBROWSE.CH"
+#Include 'TopConn.ch'
+
+/*/{Protheus.doc} SF0106S
+//Rotina para Classificação dos Bens Duraveis após o
+//Lançamentos da Nota Fiscal.
+@author sergio.salustiano
+@since 18/07/2016
+@version 6
+@return return, return_description
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+user function SF0106S()
+Local oBrowse
+	Private _cFilCod :=  FWCODFIL()                                                                                                                     
+
+	oBrowse:= FWMBrowse():New()
+	oBrowse:SetAlias('ZEA')
+	oBrowse:SetDescription('Cadastro de Bens')
+	oBrowse:AddLegend("ZEA_SITBEM =='A'","GREEN"       ,"Ativo")
+	oBrowse:AddLegend("ZEA_SITBEM =='B'","BR_CANCEL"   ,"Baixado")
+	oBrowse:AddLegend("ZEA_SITBEM =='E'","BLUE"        ,"Emprestado")
+	oBrowse:AddLegend("ZEA_SITBEM =='T'","BR_AMARELO"  ,"Transferido")
+	oBrowse:AddLegend("ZEA_SITBEM =='C'","BR_PRETO"    ,"A Classificar")
+	oBrowse:SetFilterDefault("(ZEA_FILORI == _cFilCod .OR. ZEA_FILATU == _cFilCod) .AND. ZEA_SITBEM = 'C' ")
+	oBrowse:SetAttach( .T. )
+	//oBrowse:SetOpenChart( .T. ) //Define se o gráfico virá aberto ou oculto no carregamento do browse
+	
+	oBrowse:Activate()
+
+Return Nil
+
+Static Function MenuDef()
+
+	Local aRotina := {}
+
+	ADD OPTION aRotina Title 'Visualizar'  Action 'VIEWDEF.SF0106S' OPERATION 2 ACCESS 0
+	ADD OPTION aRotina Title 'Classificar' Action 'VIEWDEF.SF0106S' OPERATION 4 ACCESS 0
+
+
+Return aRotina
+
+/*/{Protheus.doc} ModelDef
+	Definição do modedo de dados da rotina de classificação dos bens duráveis
+	
+@author sergio.salustiano
+@since 14/09/2016
+
+@type function
+/*/
+Static Function ModelDef()
+
+	Local oStruZEA := FWFormStruct(1,'ZEA')
+	Local oModel
+	
+	oModel := MPFormModel():New('SF0106SM', , , { | oModel | F0106SGRV( oModel ) }, ) 
+	oModel:AddFields('ZEAMASTER',/*cOwner*/,oStruZEA)
+	oModel:SetDescription('Classificação de Bens Duraveis')
+	oModel:GetModel('ZEAMASTER'):SetDescription('Classificação de Bens Duraveis')
+	oModel:SetPrimaryKey( { "ZEA_FILIAL", "ZEA_CODIGO" } )
+	
+	//Se for a rotina de classificação
+	If FunName() == 'SF0106S'
+		//Torno os campos ZEA_LOCAL e ZEA_CODRES Obrigatórios
+		oStruZEA:SetProperty( 'ZEA_LOCAL'  , MODEL_FIELD_OBRIGAT, .T. )
+		oStruZEA:SetProperty( 'ZEA_CODRES' , MODEL_FIELD_OBRIGAT, .T. )
+		
+		//Torno os campos ZEA_LOCAL, ZEA_CODRES e ZEA_CCORES editáveis SF01A01F
+		oStruZEA:SetProperty( 'ZEA_DOC'    , MODEL_FIELD_WHEN, FwBuildFeature(STRUCT_FEATURE_WHEN, "M->ZEA_ORIGEM == 'SF01A01F'") )
+		oStruZEA:SetProperty( 'ZEA_SERIE'  , MODEL_FIELD_WHEN, FwBuildFeature(STRUCT_FEATURE_WHEN, "M->ZEA_ORIGEM == 'SF01A01F'") )
+		oStruZEA:SetProperty( 'ZEA_ITEM'   , MODEL_FIELD_WHEN, FwBuildFeature(STRUCT_FEATURE_WHEN, "M->ZEA_ORIGEM == 'SF01A01F'") )
+		oStruZEA:SetProperty( 'ZEA_FORNEC' , MODEL_FIELD_WHEN, FwBuildFeature(STRUCT_FEATURE_WHEN, "M->ZEA_ORIGEM == 'SF01A01F'") )
+		
+		//Torno o campo ZEA_NUMSER Não editável
+		oStruZEA:SetProperty( 'ZEA_NUMSER'    , MODEL_FIELD_WHEN, FwBuildFeature(STRUCT_FEATURE_WHEN, ".F.") )
+		
+		//Torno os campos ZEA_LOCAL, ZEA_CODRES e ZEA_CCORES editáveis quando for importação pela rotina x
+		oStruZEA:SetProperty( 'ZEA_LOCAL'  , MODEL_FIELD_WHEN, FwBuildFeature(STRUCT_FEATURE_WHEN, /* cExprAdvPL */) )
+		oStruZEA:SetProperty( 'ZEA_CODRES' , MODEL_FIELD_WHEN, FwBuildFeature(STRUCT_FEATURE_WHEN, /* cExprAdvPL */) )
+		oStruZEA:SetProperty( 'ZEA_CCORES' , MODEL_FIELD_WHEN, FwBuildFeature(STRUCT_FEATURE_WHEN, /* cExprAdvPL */) )
+	EndIf
+
+Return oModel
+
+/*/{Protheus.doc} ViewDef
+	Definição da visualização de dados da rotina de classificação dos bens duráveis
+	
+@author sergio.salustiano
+@since 14/09/2016
+
+@type function
+/*/
+Static Function ViewDef()
+
+	Local oModel := FWloadModel('SF0106S')
+	Local oStruZEA := FWFormStruct(2,'ZEA') 
+	Local oView := FWFormView():New()
+	
+	oStruZEA:RemoveField('ZEA_FILATU')
+	oStruZEA:RemoveField('ZEA_DFILAT')
+	oStruZEA:RemoveField('ZEA_CCATU')
+	oStruZEA:RemoveField('ZEA_DCCATU')
+
+	oView:SetModel(oModel)
+	oView:AddField('VIEW_ZEA',oStruZEA,'ZEAMASTER')
+	oView:CreateHorizontalBox('TELA',100)
+	oView:SetOwnerView('VIEW_ZEA', 'TELA')
+	
+	//Metodo que seta um bloco de código para verificar se a janela deve ou não ser fechada após a execução do botão OK na View.
+	oView:SetCloseOnOk( {|| .t.} )
+
+Return oView
+
+/*/{Protheus.doc} F0106SGRV
+	Função para gravação manual de dados do formulario de classificação dos bens duráveis 
+	
+@author franklin.oliveira
+@since 14/09/2016
+@param oModel, object, modelo de dados ativo
+
+@type function
+/*/
+Static function F0106SGRV( oModel )
+
+Local aArea		:= GetArea()
+Local cCodigo	:= oModel:getValue('ZEAMASTER', 'ZEA_CODIGO')
+Local lRet 		:= .T.
+Local nOperation:= oModel:GetOperation()
+
+	Begin Transaction
+		//Gravo o formulário
+		lRet := FwFormCommit(oModel)
+		
+		If lRet
+			If nOperation == MODEL_OPERATION_UPDATE
+				DbSelectArea("ZEA")
+				DbSetOrder(1)
+				//Marco o bem como Ativo
+				If  ZEA->( DbSeek(xFilial('ZEA') + cCodigo) )
+					If RecLock('ZEA', .F.)
+						Replace ZEA_SITBEM With 'A'
+						ZEA->(MsUnlock())
+					EndIf
+				Else
+					lRet := .F.
+				EndIf
+			EndIf
+		EndIf
+		
+		If !lRet
+			DisarmTransaction()
+		EndIf
+	End Transaction
+	
+	RestArea(aArea)
+
+Return lRet

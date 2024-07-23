@@ -1,0 +1,761 @@
+#Include 'Protheus.ch'
+#Include "Topconn.CH"
+#Include "FWMVCDEF.CH"
+
+/*/{Protheus.doc} SF0404F
+	Rotina de requisição de material didático por turma;
+	Integração SIGE x Estoque Protheus.
+
+@author franklin.oliveira
+@since 16/05/2016
+
+@type function
+/*/
+User Function SF0404F()
+
+Local oBrowse
+
+	// Instanciamento da Classe de Browse
+	oBrowse := FWMBrowse():New()
+
+	// Definição da tabela do Browse
+	oBrowse:SetAlias('ZE0')
+
+	// Definição da legenda	
+	oBrowse:AddLegend( "ZE0_STSSOL == 'A'", "GREEN"	, "Pendente"	)
+	oBrowse:AddLegend( "ZE0_STSSOL == 'B'", "RED"	, "Bloqueada"	)
+	oBrowse:AddLegend( "ZE0_STSSOL == 'F'", "YELLOW", "Finalizada"	)
+	oBrowse:AddLegend( "ZE0_STSSOL == 'I'", "ORANGE", "Inativo"		)
+	
+	//Filtro
+	//oBrowse:SetFilterDefault( 'ZE0_NUMSA <> " " .AND. ZE0_STSSOL == "A" ' )
+
+	// Titulo da Browse
+	oBrowse:SetDescription('Requisição de Material por Turma')
+
+	// Opcionalmente pode ser desligado a exibição dos detalhes
+	oBrowse:DisableDetails()
+	
+	// Ativação da Classe
+	oBrowse:Activate()
+
+Return (Nil)
+
+/*/{Protheus.doc} MenuDef
+	Definição das operações que serão realizadas na rotina
+	
+@author franklin.oliveira
+@since 16/05/2016
+
+@type function
+/*/
+Static Function MenuDef()
+
+Local aRotina := {}
+
+	ADD OPTION aRotina Title 'Visualizar' 	Action 'VIEWDEF.SF0404F' 	OPERATION 2 ACCESS 0
+	//ADD OPTION aRotina Title 'Incluir'		Action 'VIEWDEF.SF0404F' 	OPERATION 3 ACCESS 0
+	ADD OPTION aRotina Title 'Alterar'		Action 'VIEWDEF.SF0404F' 	OPERATION 4 ACCESS 0
+	ADD OPTION aRotina Title 'Baixar Req.'	Action 'U_fBxReqEst()' 		OPERATION 4 ACCESS 0
+	//ADD OPTION aRotina Title 'Excluir'		Action 'VIEWDEF.SF0404F' 	OPERATION 5 ACCESS 0
+	ADD OPTION aRotina Title 'Imprimir' 	Action 'VIEWDEF.SF0404F' 	OPERATION 8 ACCESS 0
+	//ADD OPTION aRotina Title 'Copiar'		Action 'VIEWDEF.SF0404F' 	OPERATION 9 ACCESS 0
+
+Return aRotina
+
+/*/{Protheus.doc} ModelDef
+	Construção e definição do modelo de dados.
+
+@author franklin.oliveira
+@since 16/05/2016
+
+@type function
+/*/
+Static Function ModelDef()
+
+Local oStruZE0	:= FWFormStruct(1, "ZE0")
+Local oStruZE1	:= FWFormStruct(1, "ZE1")
+Local oModel	:= MPFormModel():New("SF0404FM")
+	
+	oModel:AddFields("ZE0MASTER", /*cOwner*/ , oStruZE0)
+	oModel:AddGrid("ZE1DETAIL"  , "ZE0MASTER", oStruZE1)
+	
+	oModel:SetPrimaryKey({ "ZE0_FILIAL", "ZE0_CODCUR", "ZE0_CODDIS", "ZE0_CODTUR", "ZE0_ITMSEQ", "ZE0_NUMSA" })                                                                                               
+	oModel:SetRelation("ZE1DETAIL", { {"ZE1_FILIAL", "xFilial('ZE1')"}, {"ZE1_CODCUR", "ZE0_CODCUR"},;
+	 		{"ZE1_CODDIS", "ZE0_CODDIS"}, {"ZE1_CODTUR", "ZE0_CODTUR"}, {"ZE1_ITMSEQ", "ZE0_ITMSEQ"},;
+	 		{"ZE1_NUMSA", "ZE0_NUMSA"} }, ZE1->(IndexKey(3))) //ZE1_FILIAL+ZE1_CODCUR+ZE1_CODDIS+ZE1_CODTUR+ZE1_ITMSEQ+ZE1_NUMSA+ZE1_CODMAT
+	
+	//Validação da ativação do modelo
+	oModel:SetVldActivate( {|oModel| fVldActModel(oModel) })
+	
+	oModel:SetDescription( 'Requisições de Material por Turma' )
+	
+	oModel:GetModel( 'ZE0MASTER' ):SetDescription( 'Dados da Requisição' )
+	oModel:GetModel( 'ZE1DETAIL' ):SetDescription( 'Alunos' )
+
+Return oModel
+
+/*/{Protheus.doc} ViewDef
+	Construção e definição da interfaçe.
+
+@author franklin.oliveira
+@since 16/05/2016
+
+@type function
+/*/
+Static Function ViewDef()
+
+// Cria um objeto de Modelo de dados baseado no ModelDef do fonte informado
+Local oModel := FWLoadModel( 'SF0404F' )
+// Cria as estruturas a serem usadas na View
+Local oStruZE0 := FWFormStruct( 2, 'ZE0' )
+Local oStruZE1 := FWFormStruct( 2, 'ZE1' )
+// Interface de visualização construída
+Local oView
+	
+	// Cria o objeto de View
+	oView := FWFormView():New()
+	
+	// Define qual Modelo de dados será utilizado
+	oView:SetModel( oModel )
+	
+	// Adiciona no nosso View um controle do tipo formulário (antiga Enchoice)
+	oView:AddField( 'VIEW_ZE0', oStruZE0, 'ZE0MASTER' )
+	
+	//Adiciona no nosso View um controle do tipo Grid (antiga Getdados)
+	oView:AddGrid( 'VIEW_ZE1', oStruZE1, 'ZE1DETAIL' )
+	
+	// Cria um "box" horizontal para receber cada elemento da view
+	oView:CreateHorizontalBox( 'SUPERIOR', 20 )
+	oView:CreateHorizontalBox( 'INFERIOR', 80 )
+	
+	// Relaciona o identificador (ID) da View com o "box" para exibição
+	oView:SetOwnerView( 'VIEW_ZE0', 'SUPERIOR' )
+	oView:SetOwnerView( 'VIEW_ZE1', 'INFERIOR' )
+	
+	//Habilita titulo dos componentes
+	oView:EnableTitleView('VIEW_ZE0')
+	oView:EnableTitleView('VIEW_ZE1')
+
+Return oView
+
+/*/{Protheus.doc} AjustZE0
+	Rotina para ajuste na tabela ZE0
+	
+@author franklin.oliveira
+@since 16/05/2016
+
+@type function
+/*/
+User Function AjustZE0()
+
+Local aSay 		:= {}
+Local aButton 	:= {}
+Local cTitulo 	:= 'Ajusta ZE0'
+Local cDesc1 	:= 'Esta rotina fará o ajuste da tabela ZE0'
+Local lOk 		:= .T.
+Local nOpc 		:= 0
+
+	aAdd( aSay, cDesc1 )
+	aAdd( aButton, { 1, .T., { || nOpc := 1, FechaBatch() } } )
+	aAdd( aButton, { 2, .T., { || FechaBatch() } } )
+	
+	FormBatch( cTitulo, aSay, aButton )
+	
+	If nOpc == 1
+		Processa( { | | lOk := fAjusteZE0() },'Aguarde','Processando...',.F.)
+		
+		If lOk
+			ApMsgInfo( 'Processamento terminado com sucesso.', 'ATENÇÃO' )
+		Else
+			ApMsgStop( 'Processamento realizado com problemas.', 'ATENÇÃO' )
+		EndIf
+	EndIf
+
+Return (Nil)
+
+/*/{Protheus.doc} fAjusteZE0
+	Função para ajuste na tabela ZE0.
+	Este ajuste será realizado para transformar a tabela ZE0 em Pai-Filho (ZE0->ZE1),
+	conforme o especificado.
+
+@author franklin.oliveira
+@since 16/05/2016
+
+@type function
+/*/
+Static Function fAjusteZE0()
+
+Local aArea		:= GetArea()
+Local aDados	:= {}
+Local cAliasZE0	:= GetNextAlias()
+Local cIndex	:= ""
+Local cIndexZE0	:= ""
+Local cItem		:= ""
+Local cQuery	:= ""
+Local lRet		:= .T.
+Local nX		:= 1
+
+	cQuery := "SELECT ZE0.ZE0_FILIAL,	" + CRLF
+	cQuery += "	ZE0.ZE0_CODCUR,	" + CRLF
+	cQuery += "	ZE0.ZE0_CODDIS,	" + CRLF
+	cQuery += "	ZE0.ZE0_CODTUR,	" + CRLF
+	cQuery += "	SCP.CP_NUM,	" + CRLF
+	cQuery += "	SCP.CP_ITEM	" + CRLF
+	cQuery += "FROM " + RetSqlName("ZE0") + " ZE0	" + CRLF
+	cQuery += "INNER JOIN " + RetSqlName("SCP") + " SCP	" + CRLF
+	cQuery += "ON SCP.D_E_L_E_T_ = ' '	" + CRLF
+	cQuery += "	AND SCP.CP_FILIAL = ZE0.ZE0_FILIAL	" + CRLF
+	cQuery += "	AND SCP.CP_NUM    = ZE0.ZE0_NUMSA	" + CRLF
+	cQuery += "GROUP BY ZE0.ZE0_FILIAL,	" + CRLF
+	cQuery += "	ZE0.ZE0_CODCUR,	" + CRLF
+	cQuery += "	ZE0.ZE0_CODDIS,	" + CRLF
+	cQuery += "	ZE0.ZE0_CODTUR,	" + CRLF
+	cQuery += "	SCP.CP_NUM,		" + CRLF
+	cQuery += "	SCP.CP_ITEM		" + CRLF
+	cQuery += "ORDER BY ZE0.ZE0_FILIAL," + CRLF
+	cQuery += "	ZE0.ZE0_CODCUR,	" + CRLF
+	cQuery += "	ZE0.ZE0_CODDIS,	" + CRLF
+	cQuery += "	ZE0.ZE0_CODTUR,	" + CRLF
+	cQuery += "	SCP.CP_NUM,		" + CRLF
+	cQuery += "	SCP.CP_ITEM	" + CRLF
+	
+	cQuery := ChangeQuery(cQuery)
+	
+	MemoWrite("c:/pLog/" + FunName() + "_" + ProcName() + ".sql", cQuery)
+	dbUseArea(.T., "TOPCONN", TcGenQry( , , cQuery), cAliasZE0, .T., .F.)
+	
+	ProcRegua(RecCount())
+	
+	While !(cAliasZE0)->( EoF() )
+		DbSelectArea("ZE0")
+		DbSetOrder(2)
+
+		cIndex := (cAliasZE0)->ZE0_FILIAL + (cAliasZE0)->CP_NUM + (cAliasZE0)->CP_ITEM
+		
+		While !(cAliasZE0)->( EoF() ) .And. ( cIndex == (cAliasZE0)->ZE0_FILIAL + (cAliasZE0)->CP_NUM + (cAliasZE0)->CP_ITEM )
+			
+			cItem  := (cAliasZE0)->CP_ITEM
+			
+			DbSelectArea("ZE1")
+			DbSetOrder(1)
+			
+			If ZE0->( DbSeek((cAliasZE0)->ZE0_FILIAL + (cAliasZE0)->CP_NUM) )
+			
+				cIndexZE0 := (cAliasZE0)->ZE0_FILIAL + (cAliasZE0)->CP_NUM
+				
+				While !ZE0->( EoF() ) .And. ( cIndexZE0 == ZE0->ZE0_FILIAL + ZE0->ZE0_NUMSA )
+					
+					If !MsSeek(ZE0->ZE0_FILIAL + ZE0->ZE0_CODCUR +  ZE0->ZE0_CODDIS + ZE0->ZE0_CODTUR + PadL( cItem, TamSX3('ZE1_ITMSEQ')[1], "0" ) + ZE0->ZE0_NUMSA + ZE0->ZE0_CODMAT)
+						RecLock("ZE1", .T.)
+							ZE1->ZE1_FILIAL	:= ZE0->ZE0_FILIAL
+							ZE1->ZE1_CODCUR	:= ZE0->ZE0_CODCUR
+							ZE1->ZE1_CODDIS	:= ZE0->ZE0_CODDIS
+							ZE1->ZE1_CODTUR	:= ZE0->ZE0_CODTUR
+							ZE1->ZE1_ITMSEQ	:= PadL( cItem, TamSX3('ZE1_ITMSEQ')[1], "0" )
+							ZE1->ZE1_NUMSA 	:= ZE0->ZE0_NUMSA 
+							ZE1->ZE1_STSENT	:= ZE0->ZE0_STSENT
+							ZE1->ZE1_CODMAT	:= ZE0->ZE0_CODMAT
+							ZE1->ZE1_NOMALU	:= ZE0->ZE0_NOMALU
+						MsUnlock("ZE1")
+					EndIf
+					
+		 			ZE0->( DbSkip() )
+				EndDo
+			EndIf
+						
+			IncProc()
+			(cAliasZE0)->( DbSkip() )
+		EndDo
+	EndDo
+	
+	(cAliasZE0)->( DbGoTop() )
+	
+	While !(cAliasZE0)->( EoF() )
+		If ZE0->( Dbseek((cAliasZE0)->ZE0_FILIAL + (cAliasZE0)->CP_NUM) )
+			aAdd(aDados, {ZE0->ZE0_FILIAL,;
+				ZE0->ZE0_CODCUR,;
+				ZE0->ZE0_CODDIS,;
+				ZE0->ZE0_DESDIS,;
+				ZE0->ZE0_CODTUR,;
+				(cAliasZE0)->CP_ITEM,;
+				ZE0->ZE0_NUMSA,;
+				ZE0->ZE0_NOMPRO,;
+				IIf(ZE0->ZE0_STSSOL == 'A', 'F', ZE0->ZE0_STSSOL),;
+				ZE0->ZE0_CC,;
+				ZE0->ZE0_USRETI,;
+				})
+		EndIf
+		
+		(cAliasZE0)->( DbSkip() )
+	EndDo
+	
+	ZE0->( DbGoTop() )
+	
+	While !ZE0->( EoF() )
+		RecLock("ZE0",.F.)
+		DbDelete()
+		MsUnLock()
+		ZE0->( DbSkip() )
+	EndDo
+	
+	For nX := 1 To Len(aDados)
+		RecLock("ZE0",.T.)
+			ZE0->ZE0_FILIAL := aDados[nX][01]
+			ZE0->ZE0_CODCUR	:= aDados[nX][02]
+			ZE0->ZE0_CODDIS	:= aDados[nX][03]
+			ZE0->ZE0_DESDIS	:= aDados[nX][04]
+			ZE0->ZE0_CODTUR	:= aDados[nX][05]
+			ZE0->ZE0_ITMSEQ	:= PadL( aDados[nX][06], TamSX3('ZE1_ITMSEQ')[1], "0" )
+			ZE0->ZE0_NUMSA	:= aDados[nX][07]
+			ZE0->ZE0_NOMPRO	:= aDados[nX][08]
+			ZE0->ZE0_STSSOL	:= aDados[nX][09]
+			ZE0->ZE0_CC		:= aDados[nX][10]
+			ZE0->ZE0_USRETI	:= aDados[nX][11]
+		MsUnLock()
+	Next nX
+	
+	(cAliasZE0)->( DbCloseArea() )
+	
+	RestArea(aArea)
+
+Return lRet
+
+/*/{Protheus.doc} fVldActModel
+	Validação realizada no momento da ativação do modelo.
+	
+@author franklin.oliveira
+@since 16/05/2016
+
+@param oModel, object, Modelo de dados.
+
+@type function
+/*/
+Static Function fVldActModel(oModel)
+
+Local aArea		:= GetArea()
+Local lRet 		:= .T.
+Local nOper		:= oModel:GetOperation()
+Local oModelZE0	:= oModel:GetModel('ZE0MASTER')
+
+	If nOper == MODEL_OPERATION_UPDATE
+		If (ZE0->ZE0_STSSOL <> 'A') .Or. Empty(ZE0->ZE0_NUMSA)
+			lRet := .F.
+			Help( , , FunName() + "/" + ProcName(), , "Não é permitido Alterar Requisição diferente de [Ativo] ou que não possua uma Solicitação ao Armazém.", 1, 0)
+		Else
+			DbSelectArea("SCP")
+			DbSetOrder(1)
+			
+			If (SCP->( DbSeek(xFilial("SCP") + ZE0->ZE0_NUMSA) ))
+				If Empty(SCP->CP_STATUS) .OR. SCP->CP_PREREQU <> "S" .OR. (QtdComp(SCP->CP_QUANT) <> QtdComp(SCP->CP_QUJE))
+					lRet := .F.
+					Help( , , FunName() + "/" + ProcName(), , "A solicitação ao armazém [" + ZE0->ZE0_NUMSA + "] não foi atendida.", 1, 0)
+				EndIf
+			EndIf
+		EndIf 
+	EndIf
+	
+	If lRet .And. (nOper == MODEL_OPERATION_UPDATE)
+		//Não pode Adicionar linha
+		oModel:GetModel( 'ZE1DETAIL' ):SetNoInsertLine(.T.)
+		
+		//Não pode excluir linha
+		oModel:GetModel( 'ZE1DETAIL' ):SetNoDeleteLine(.T.)
+	EndIf
+	
+	RestArea(aArea)
+	
+Return lRet
+
+/*/{Protheus.doc} fBxReqEst
+	Função para baixar requisições de material didático ATIVAS. 
+	
+@author franklin.oliveira
+@since 16/05/2016
+@version undefined
+
+@type function
+/*/
+User Function fBxReqEst()
+
+Local aArea		:= GetArea()
+Local aCposCab 	:= {}
+Local aCposDet 	:= {}
+Local aDadosSCP	:= {}
+Local aAux 		:= {}
+Local cCodProd	:= ""
+Local cChavAtu	:= ""
+Local lRet 		:= .T.
+Local lIncRec	:= .T.
+Local nQuant	:= 0
+
+	//Valido o registro selecionado
+	If (ZE0->ZE0_STSSOL <> 'A') .Or. Empty(ZE0->ZE0_NUMSA)
+		lRet := .F.
+		Help( , , FunName() + "/" + ProcName(), , "Não é permitido baixar requisição de material com status diferente de [Ativo]";
+						+ " ou que não possua uma Solicitação ao Armazém.", 1, 0)
+		
+	Else
+		If !MsgYesNo("Deseja Baixar requisição de material?", "ATENÇÃO")
+			lRet := .F.
+		EndIf
+	EndIf
+	
+	If lRet
+		//Altero status da requisição para finalizada
+		RecLock("ZE0", .F.)
+			ZE0->ZE0_STSSOL := 'F'
+		MsUnlock()
+		
+		/*
+		| Através da tabela ZZB - Amarração Disciplina x Livro,
+		|Verifico se é necessário incluir uma nova requisição de material
+		*/
+		/*lIncRec := .F.
+		
+		cChavAtu := ZE0->ZE0_FILIAL + ZE0->ZE0_CODCUR + ZE0->ZE0_CODDIS + ZE0->ZE0_CODTUR + ZE0->ZE0_ITMSEQ + ZE0->ZE0_NUMSA
+		
+		DbSelectArea("ZZB")
+		DbSetOrder(1)
+		ZZB->( DbSeek(xFilial("ZZB") + ZE0->ZE0_CODCUR + ZE0->ZE0_CODDIS) )
+		
+		While !ZZB->( EoF() ) .And. ZZB->ZZB_CODCUR + ZZB->ZZB_CODDIS == ZE0->ZE0_CODCUR + ZE0->ZE0_CODDIS
+			If ZZB->ZZB_ITEM > ZE0->ZE0_ITMSEQ
+				lIncRec  := .T.
+				cCodProd := ZZB->ZZB_CODPRO
+				cItmSeq	 := ZZB->ZZB_ITEM
+				Exit
+			EndIf
+			
+			ZZB->( DbSkip() )
+		EndDo
+		
+		If lIncRec
+			//Dados do Cabeçalho da nova Requisição
+			aAdd( aCposCab, { 'ZE0_FILIAL' 	, ZE0->ZE0_FILIAL } )
+			aAdd( aCposCab, { 'ZE0_CODCUR'	, ZE0->ZE0_CODCUR } )
+			aAdd( aCposCab, { 'ZE0_CODDIS'	, ZE0->ZE0_CODDIS } )
+			aAdd( aCposCab, { 'ZE0_DESDIS'	, ZE0->ZE0_DESDIS } )
+			aAdd( aCposCab, { 'ZE0_CODTUR'	, ZE0->ZE0_CODTUR } )
+			aAdd( aCposCab, { 'ZE0_ITMSEQ'	, cItmSeq } )
+			aAdd( aCposCab, { 'ZE0_NUMSA'	, Space(TAMSX3('ZE0_NUMSA')[1]) } )
+			aAdd( aCposCab, { 'ZE0_NOMPRO'	, ZE0->ZE0_NOMPRO } )
+			aAdd( aCposCab, { 'ZE0_STSSOL'	, 'A' } )
+			aAdd( aCposCab, { 'ZE0_CC'		, ZE0->ZE0_CC } )
+			aAdd( aCposCab, { 'ZE0_USRETI'	, Space(TAMSX3('ZE0_USRETI')[1]) } )
+
+			//Dados dos itens da nova requisição
+			DbSelectArea("ZE1")
+			DbSetOrder(1)
+			
+			ZE1->( DbSeek(xFilial("ZE1") + ZE0->ZE0_CODCUR + ZE0->ZE0_CODDIS + ZE0->ZE0_CODTUR + ZE0->ZE0_ITMSEQ + ZE0->ZE0_NUMSA) )
+			
+			While !ZE1->( Eof() ) .And. ZE0->ZE0_FILIAL + ZE0->ZE0_CODCUR + ZE0->ZE0_CODDIS + ZE0->ZE0_CODTUR + ZE0->ZE0_ITMSEQ + ZE0->ZE0_NUMSA == ;
+									ZE1->ZE1_FILIAL + ZE1->ZE1_CODCUR + ZE1->ZE1_CODDIS + ZE1->ZE1_CODTUR + ZE1->ZE1_ITMSEQ + ZE1->ZE1_NUMSA
+				//Adiciono apenas materiais entregues.
+				If ZE1->ZE1_STSENT == '1'
+					aAux := {}
+					aAdd( aAux, { 'ZE1_FILIAL'	, ZE1->ZE1_FILIAL } )
+					aAdd( aAux, { 'ZE1_CODCUR'	, ZE1->ZE1_CODCUR } )
+					aAdd( aAux, { 'ZE1_CODDIS'	, ZE1->ZE1_CODDIS } )
+					aAdd( aAux, { 'ZE1_CODTUR'	, ZE1->ZE1_CODTUR } )
+					aAdd( aAux, { 'ZE1_ITMSEQ'	, cItmSeq } )
+					aAdd( aAux, { 'ZE1_NUMSA'	, Space(TAMSX3('ZE0_NUMSA')[1]) } )
+					aAdd( aAux, { 'ZE1_STSENT'	, '2' } )
+					aAdd( aAux, { 'ZE1_CODMAT'	, ZE1->ZE1_CODMAT } )
+					aAdd( aAux, { 'ZE1_NOMALU'	, ZE1->ZE1_NOMALU } )
+					aAdd( aCposDet, aAux )
+					
+					nQuant++
+				EndIf					
+				
+				ZE1->( DbSkip() )
+			EndDo
+			
+			aDadosSCP := {cCodProd, nQuant, aCposCab[10][02]}
+			
+			//Só Incluo nova requisição de material se existirem itens.
+			If !Empty (aCposDet)
+				lRet := U_fIncRequis('ZE0', 'ZE1', aCposCab, aCposDet, aDadosSCP)
+			EndIf
+			
+		EndIf
+		
+		If lRet .And. ZE0->( DbSeek(cChavAtu) )
+			//Altero status da requisição para finalizada
+			RecLock("ZE0", .F.)
+				ZE0->ZE0_STSSOL := 'F'
+			MsUnlock()
+		EndIf*/ 
+	EndIf
+	
+	RestArea(aArea)
+
+Return (Nil)
+
+/*/{Protheus.doc} fIncRequis
+	Função para incluir requisição para entrega de materiais didáticos.
+
+@author franklin.oliveira
+@since 16/05/2016
+
+@param cMaster, characters, Descrição do modelo de dados "Pai"
+@param cDetail, characters, Descrição do modelo de dados "Filho"
+@param pCpoMaster, array, campos a serem incluidos na tabela ZE0 
+@param pCpoDetail, array, campos a serem incluidos na tabela ZE1
+@param aDadosSCP, array, campos a serem incluidos na tabela SCP
+@param lSendMail, logical, Se .T. envia email de erro para responsável.
+
+@type function
+/*/
+User Function fIncRequis( cMaster, cDetail, pCpoMaster, pCpoDetail, aDadosSCP, lSendMail )
+
+Local aArea		:= GetArea()
+Local aAux 		:= {}
+Local aC 		:= {}
+Local aH 		:= {}
+Local aCpoMaster:= pCpoMaster
+Local aCpoDetail:= pCpoDetail
+Local aSaveLin	:= {}
+Local cNumSA	:= ""
+Local cCodCur 	:= pCpoMaster[02][02]
+Local cCodDis 	:= pCpoMaster[03][02]
+Local cCodTur	:= pCpoMaster[05][02]
+Local cItemCta	:= SuperGetMV("MV_XITCBSA")	
+Local cMsg		:= ""
+Local lRet 		:= .T.
+Local lAux 		:= .T.
+Local nI 		:= 0
+Local nJ 		:= 0
+Local nPos 		:= 0
+Local nItErro 	:= 0
+Local oModel, oAux, oStruct
+
+PRIVATE lMsErroAuto 	:= .F.
+PRIVATE lMsHelpAuto		:= .T.
+PRIVATE _c105CCusto 	:= Criavar("CP_CC") 
+	
+DEFAULT lSendMail	:= .F.	
+	
+	dbSelectArea( cDetail )
+	dbSetOrder( 1 )
+	
+	dbSelectArea( cMaster )
+	dbSetOrder( 1 )
+	
+	// Aqui ocorre o instânciamento do modelo de dados (Model)
+	oModel := FWLoadModel( 'SF0404F' )
+	
+	// Temos que definir qual a operação deseja: 3 – Inclusão / 4 – Alteração / 5 - Exclusão
+	oModel:SetOperation( 3 )
+	
+	oModel:Activate()
+
+	oAux := oModel:GetModel( cMaster + 'MASTER' )
+	
+	// Obtemos a estrutura de dados do cabeçalho
+	oStruct := oAux:GetStruct()
+	aAux := oStruct:GetFields()
+	
+	If lRet
+		For nI := 1 To Len( aCpoMaster )
+			// Verifica se os campos passados existem na estrutura do cabeçalho
+			If ( nPos := aScan( aAux, { |x| AllTrim( x[3] ) == AllTrim( aCpoMaster[nI][1] ) } ) ) > 0
+				// É feita a atribuição do dado ao campo do Model do cabeçalho
+				If !( lAux := oModel:SetValue( cMaster + 'MASTER', aCpoMaster[nI][1], aCpoMaster[nI][2] ) )
+					// Caso a atribuição não possa ser feita, por algum motivo (validação, por exemplo)
+					// o método SetValue retorna .F.
+					lRet := .F.
+					Exit
+				EndIf
+			EndIf
+		Next
+	EndIf
+	
+	If lRet
+		// Instanciamos apenas a parte do modelo referente aos dados do item
+		oAux := oModel:GetModel( cDetail + 'DETAIL' )
+		// Obtemos a estrutura de dados do item
+		oStruct := oAux:GetStruct()
+		aAux := oStruct:GetFields()
+		nItErro := 0
+		For nI := 1 To Len( aCpoDetail )
+			// Incluímos uma linha nova
+			// ATENÇÃO: Os itens são criados em uma estrutura de grid (FORMGRID), portanto já é criada uma primeira linha
+			//branco automaticamente, desta forma começamos a inserir novas linhas a partir da 2ª vez
+			If nI > 1
+				// Incluímos uma nova linha de item
+				If ( nItErro := oAux:AddLine() ) <> nI
+					// Se por algum motivo o método AddLine() não consegue incluir a linha, // ele retorna a quantidade de linhas já // existem no grid. Se conseguir retorna a quantidade mais 1
+					lRet := .F.
+					Exit
+				EndIf
+			EndIf
+		
+			For nJ := 1 To Len( aCpoDetail[nI] )
+				// Verifica se os campos passados existem na estrutura de item
+				If ( nPos := aScan( aAux, { |x| AllTrim( x[3] ) == AllTrim( aCpoDetail[nI][nJ][1] ) } ) ) > 0
+					If !( lAux := oModel:SetValue( cDetail + 'DETAIL', aCpoDetail[nI][nJ][1], aCpoDetail[nI][nJ][2] ) )
+						// Caso a atribuição não possa ser feita, por algum motivo (validação, por exemplo)
+						// o método SetValue retorna .F.
+						lRet := .F.
+						nItErro := nI
+						Exit
+					EndIf
+				EndIf
+			Next
+	
+			If !lRet
+				Exit
+			EndIf
+		Next
+	EndIf
+	
+	If lRet
+		// Faz-se a validação dos dados, note que diferentemente das tradicionais "rotinas automáticas"
+		// neste momento os dados não são gravados, são somente validados.
+		lRet := oModel:VldData()
+	EndIf
+	
+	If !lRet
+		// Se os dados não foram validados obtemos a descrição do erro para gerar
+		// LOG ou mensagem de aviso
+		aErro := oModel:GetErrorMessage()
+		// A estrutura do vetor com erro é:
+		// [1] identificador (ID) do formulário de origem
+		// [2] identificador (ID) do campo de origem
+		// [3] identificador (ID) do formulário de erro
+		// [4] identificador (ID) do campo de erro
+		// [5] identificador (ID) do erro
+		// [6] mensagem do erro
+		// [7] mensagem da solução
+		// [8] Valor atribuído
+		// [9] Valor anterior		
+		
+		Help( , , FunName() + "/" + ProcName(), , "Mensagem do erro: " + ' [' + AllToChar( aErro[6] ) + ']' + ;
+							"Mensagem da solução: " + ' [' + AllToChar( aErro[7] ) + ']', 1, 0)
+		
+		//Envio e-mail para responsável, caso seja passado por parâmetro.					
+		If lSendMail
+			cMsg := "Não foi possível incluir registros para entrega de materiais:" + CRLF 
+			cMsg += "Id do formulário de origem:" + ' [' + AllToChar( aErro[1] ) + ']' + CRLF
+			cMsg += "Id do campo de origem: " + ' [' + AllToChar( aErro[2] ) + ']' + CRLF
+			cMsg += "Id do formulário de erro: " + ' [' + AllToChar( aErro[3] ) + ']' + CRLF
+			cMsg +=	"Id do campo de erro: " + ' [' + AllToChar( aErro[4] ) + ']' + CRLF
+			cMsg += "Id do erro: " + ' [' + AllToChar( aErro[5] ) + ']' + CRLF
+			cMsg += "Mensagem do erro: " + ' [' + AllToChar( aErro[6] ) + ']' + CRLF
+			cMsg += "Mensagem da solução: " + ' [' + AllToChar( aErro[7] ) + ']' + CRLF
+			cMsg += "Valor atribuído: " + ' [' + AllToChar( aErro[8] ) + ']' + CRLF
+			cMsg += "Valor anterior: " + ' [' + AllToChar( aErro[9] ) + ']' + CRLF
+			cMsg += "Por favor, verifique."
+		EndIf
+	EndIf
+	
+	//Inclusão da Solicitação ao Armazém	
+	If lRet
+		Begin Transaction
+			cNumSA		:= GetSx8Num('SCP', 'CP_NUM')
+			_c105CCusto	:= aDadosSCP[03]
+			cChaveZE0	:= aCpoMaster[01][02] + aCpoMaster[02][02] + aCpoMaster[03][02] + aCpoMaster[05][02] + ;
+				aCpoMaster[06][02]
+			
+			aCpoMaster := {}
+			aadd(aCpoMaster, {"CP_NUM"	   , cNumSA	, })
+			aAdd(aCpoMaster, {"CP_PRODUTO" , aDadosSCP[01] ,})
+			aAdd(aCpoMaster, {"CP_EMISSAO" , dDataBase ,})
+			
+			aCpoDetail := {}
+			aAdd(aCpoDetail, {})
+			//aAdd(aCpoDetail[len(aCpoDetail)], {"CP_ITEM"    , StrZero(1, TamSX3("CP_ITEM")[01]), })
+			aAdd(aCpoDetail[len(aCpoDetail)], {"CP_ITEM"    , '01', })
+			aAdd(aCpoDetail[len(aCpoDetail)], {"CP_PRODUTO" , aDadosSCP[01], })
+			aAdd(aCpoDetail[len(aCpoDetail)], {"CP_QUANT"   , aDadosSCP[02], })
+			aAdd(aCpoDetail[len(aCpoDetail)], {"CP_XVUNIT"	, 0.01, })
+			aAdd(aCpoDetail[len(aCpoDetail)], {"CP_XVLRTOT"	, 0.01 * aDadosSCP[02]	, })
+			aAdd(aCpoDetail[len(aCpoDetail)], {"CP_CC"		, aDadosSCP[03]			, })
+			aAdd(aCpoDetail[len(aCpoDetail)], {"CP_ITEMCTA"	, cItemCta				, })
+			
+			MSExecAuto({|x,y,z| MATA105(x,y,z)}, aCpoMaster, aCpoDetail, 3)	
+
+			If lMsErroAuto
+				//Help( , , FunName() + "/" + ProcName(), , "Não Foi possível incluir a Solicitação ao Armazém.", 1, 0)
+				If lSendMail
+					aErro := GetAutoGRLog()
+					
+					cMsg := "Não foi possível incluir registros para entrega de materiais " + CRLF 
+					cMsg += "por problemas na inclusão da solicitação ao armazém: " + CRLF
+					
+					For nI := 1 To Len(aErro)
+						cMsg += aErro[nX] + CRLF
+					Next nI
+					
+					cMsg += "Por favor, verifique."
+				EndIf
+				
+				MostraErro()
+				lRet := .F.
+				DisarmTransaction()
+				RollBackSx8()			
+			Else
+				ConfirmSx8()
+			EndIf
+		End Transaction
+	EndIf
+	
+	//Atualizo a requisição com o número da Solicitação ao Armazém incluída
+	If lRet
+		If oModel:SetValue(cMaster + 'MASTER', 'ZE0_NUMSA', cNumSA)
+			aSaveLin := FWSaveRows()
+			
+			oAux := oModel:GetModel(cDetail + 'DETAIL')
+
+			For nI := 1 To oAux:Length()
+				oAux:GoLine(nI)
+				
+				If !(oModel:SetValue(cDetail + 'DETAIL', 'ZE1_NUMSA', cNumSA))
+					// Se os dados não foram validados obtemos a descrição do erro para gerar
+					// LOG ou mensagem de aviso
+					aErro := oModel:GetErrorMessage()
+		
+					Help( , , FunName() + "/" + ProcName(), , "Mensagem do erro: " + ' [' + AllToChar( aErro[6] ) + ']' + ;
+							"Mensagem da solução: " + ' [' + AllToChar( aErro[7] ) + ']', 1, 0)
+					
+					If lSendMail
+						cMsg := "Não foi possível Atualizar registros para entrega de materiais com o número da SA:" + CRLF 
+						cMsg += "Id do formulário de origem:" + ' [' + AllToChar( aErro[1] ) + ']' + CRLF
+						cMsg += "Id do campo de origem: " + ' [' + AllToChar( aErro[2] ) + ']' + CRLF
+						cMsg += "Id do formulário de erro: " + ' [' + AllToChar( aErro[3] ) + ']' + CRLF
+						cMsg +=	"Id do campo de erro: " + ' [' + AllToChar( aErro[4] ) + ']' + CRLF
+						cMsg += "Id do erro: " + ' [' + AllToChar( aErro[5] ) + ']' + CRLF
+						cMsg += "Mensagem do erro: " + ' [' + AllToChar( aErro[6] ) + ']' + CRLF
+						cMsg += "Mensagem da solução: " + ' [' + AllToChar( aErro[7] ) + ']' + CRLF
+						cMsg += "Valor atribuído: " + ' [' + AllToChar( aErro[8] ) + ']' + CRLF
+						cMsg += "Valor anterior: " + ' [' + AllToChar( aErro[9] ) + ']' + CRLF
+						cMsg += "Por favor, verifique."
+					EndIf
+					
+					lRet := .F.
+					Exit
+				EndIf
+			Next nI
+			
+			FwRestRows(aSaveLin)
+		EndIf
+	EndIf
+	
+	If lRet
+		//Valido o modelo novamente
+		If ( lRet := oModel:VldData() )
+			// Se os dados foram validados faz-se a gravação efetiva dos dados (commit)
+			oModel:CommitData()
+		EndIf
+	Else
+		U_F0405FLOG(xFilial("ZE0"), cCodCur, cCodDis, cCodTur, cMsg)
+	EndIf
+		
+	//Desativo o modelo
+	oModel:DeActivate()	
+		
+	RestArea(aArea)
+
+Return lRet

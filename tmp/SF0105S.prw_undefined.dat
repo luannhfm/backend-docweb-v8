@@ -1,0 +1,470 @@
+#Include 'Protheus.ch'
+#Include 'FWMVCDEF.CH'
+#INCLUDE "FWBROWSE.CH"
+#Include 'TopConn.ch'
+
+
+/*/{Protheus.doc} SF0105S
+	Browse MVC da rotina de aceite da movimentação de bens duráveis
+	
+@author Sergio Ricardo Leite Salustiano 
+@since 14/09/2016
+
+@type function
+/*/
+user function SF0105S()
+	Local aCoors := FWGetDialogSize(oMainWnd)
+	Local oPanelUp, oFWLayer, oPanelLeft, oPanelRight, oBrowseUp, oBrowseLeft, oBrowseDown, oRelacZEC
+
+	Define MsDialog oDlgPrinc Title 'Validação de Solicitação de Transferencias / Baixas / Emprestimos' From aCoors[1], aCoors[2] To aCoors[3], aCoors[4] Pixel
+
+	//Cria Conteiner onde serão colocados os Browses
+
+	oFwLayer := FWLayer():New()
+	oFwLayer:Init(oDlgPrinc,.F.,.T.)
+
+	//Define o Painel Superior
+	oFwLayer:AddLine('UP', 45, .F.)                     //Cria uma Linha com 65 % do Tamanho da Tela.
+	oFWLayer:AddCollumn( 'ALL', 100, .T., 'UP' )        //Na "linha" criada eu crio uma coluna com 100% do tamanho da tela
+	oPanelUp := oFwLayer:GetColPanel('ALL', 'UP')
+
+	//Painel Inferior
+	oFWLayer:AddLine( 'DOWN', 55, .T.)                      //Cria uma linha com 35% da tela
+	oFWLayer:AddCollumn('RIGHT', 100, .T., 'DOWN')         //Cria Coluna com 100 % do TAmanho da Linha
+	oPanelRight := oFWLayer:GetColPanel('RIGHT', 'DOWN')
+
+	//FWmBrowse Superior Albuns
+	oBrowseUp := FWmBrowse():New()
+	oBrowseUp:SetOwner(oPanelup)                          //Associa o Browse ao Componente de tela
+	oBrowseUp:SetDescription("Solicitação de Aprovação")
+	oBrowseUp:SetAlias('ZEC')
+	oBrowseUp:SetProfileID('1')
+	oBrowseUp:ForceQuitButton()
+	oBrowseUp:DisableDetails()
+	oBrowseUp:SetFilterDefault("ZEC_FILDES == '" + cFilAnt + "' .Or. (ZEC_MSFIL == '" + cFilAnt + "' .And. (ZEC_TPMOV = 'B' .Or. (ZEC_TPMOV $ 'ER' .And. ZEC_TPEMPR != 'EF'))) ")
+
+	oBrowseUp:AddLegend("ZEC_ACEITE = ' '","BPMSTSK1A"   ,"Solicitacao Pendente")
+	oBrowseUp:AddLegend("ZEC_ACEITE = 'R'","BR_VERMELHO" ,"Solicitação Rejeitada")
+	oBrowseUp:AddLegend("ZEC_ACEITE = 'A'","BR_VERDE"    ,"Solicitação Aceita")
+	//oBrowseUp:AddLegend("ZZM_SITGA = '3'","PMSEDT3"     ,"Integrado Gestão de Contratos")
+	//oBrowseUp:AddLegend("ZZM_SITGA = '4'","BR_CANCEL"   ,"Atendimento Cancelado")
+	oBrowseUp:Activate()
+
+	//FWmBrowse Inferior(Detalhes)
+	oBrowseDown := FWMBrowse():New()
+	oBrowseDown:SetOwner( oPanelRight)
+	oBrowseDown:SetDescription('BEM')
+	oBrowseDown:SetMenuDef(' ')                         //Referencia Vazia para que nao exiba nenhum botao
+	oBrowseDown:DisableDetails()
+	oBrowseDown:SetAlias('ZED')
+	oBrowseDown:SetProfileID( '2' )
+	oBrowseDown:Activate()
+
+	//Relacionamento entre os Paineis
+	oRelacZEC := FWBrwRelation() :New()
+	oRelacZEC:AddRelation(oBrowseUp , oBrowseDown , {{'ZEC_FILIAL', 'xFilial( "ZEC" )' },{'ZED_FILIAL','ZEC_FILIAL'}, {'ZED_CODIGO','ZEC_CODIGO'}})
+	oRelacZEC:Activate()
+
+	Activate MsDialog oDlgPrinc Center
+
+//---------------------------------------------------------------------
+
+/*/{Protheus.doc} MenuDef
+	Definição do menu da rotina de aceite da movimentação de bens duráveis
+	
+@author Sergio Ricardo Leite Salustiano 
+@since 14/09/2016
+
+@type function
+/*/
+Static Function MenuDef()
+
+	Local aRotina := {}
+
+	ADD OPTION aRotina Title 'Visualizar'                   Action 'VIEWDEF.SF0105S' OPERATION 2 ACCESS 0
+	ADD OPTION aRotina Title 'Aceitar'                      Action 'U_ACTSOL'        OPERATION 4 ACCESS 0
+	ADD OPTION aRotina Title 'Rejeitar'                     Action 'U_RJTSOL'        OPERATION 5 ACCESS 0
+	//ADD OPTION aRotina Title 'Prep. Medição'                Action 'U_PREPMD'      OPERATION 4 ACCESS 0
+	//ADD OPTION aRotina Title 'Alterar G.A.'                Action 'VIEWDEF.SS3309S' OPERATION 5 ACCESS 0
+	//ADD OPTION aRotina Title 'Cancelar G.A.'               Action 'VIEWDEF.SS3309S' OPERATION 6 ACCESS 0
+Return ( aRotina )
+
+/*/{Protheus.doc} ModelDef
+	Definição de modelo da rotina de aceite da movimentação de bens duráveis
+	
+@author Sergio Ricardo Leite Salustiano 
+@since 14/09/2016
+
+@type function
+/*/
+Static Function ModelDef()
+
+Return FwLoadModel('SF0104S')
+
+/*/{Protheus.doc} ViewDef
+	Definição de visualização da rotina de aceite da movimentação de bens duráveis
+	
+@author Sergio Ricardo Leite Salustiano 
+@since 14/09/2016
+
+@type function
+/*/
+Static Function ViewDef()
+
+
+	Return FwLoadView('SF0104S')
+
+
+Return
+
+/*/{Protheus.doc} ACTSOL
+	Aceite da Solicitação.
+
+@author sergio.salustiano
+@since 21/06/2016
+@version 6
+
+@type function
+/*/
+User Function ACTSOL()
+	Local lRetorno       := .T.
+	Local aAreaAtu       := GetArea()
+	Local oModel 		 := FwLoadModel('SF0104S')
+	Local oGrdZEC		 := oModel:GetModel('ZECMASTER')
+	Local cFilLan        := ' '
+	Local cNumSol        := ' '
+	Local cTPMov         := ' '
+	Local cQuery         := ' '
+	Local aCposZEB		 := {}
+	Local aResp          := {}	
+	Local aCoResp        := {}
+	Local aCCusto        := {}
+	Local aEmpTer        := {}
+	Local aEmprest       := {}
+	Local aFilial        := {}
+	Local aCposZEA       := {}
+	Local aCposZEC       := {}
+	Local aBaixa         := {}
+	
+	oModel:Activate()
+
+	cFilLan := oGrdZEC:GetValue('ZEC_MSFIL')
+	cNumSol := oGrdZEC:GetValue('ZEC_CODIGO')
+	cTPMov  := oGrdZEC:GetValue('ZEC_TPMOV')
+	cAceite := oGrdZEC:GetValue('ZEC_ACEITE')
+
+	If (cAceite = 'A')
+		Help(, ,"AJUDA",  ,"A solicitação nao esta em aberto, recebeu o aceite",1,0)
+
+	elseIf (cAceite = 'R')
+		Help(, ,"AJUDA",  ,"A solicitação nao esta em aberto, A solicitação foi rejeitada",1,0)
+	Else
+		cQuery := " "
+		cQuery += "SELECT  * FROM "      + RETSQLNAME("ZEC") + " ZEC "
+		cQuery += "INNER JOIN "+ RETSQLNAME("ZED") + " ZED ON ZEC_CODIGO = ZED_CODIGO AND ZEC_FILIAL = ZED_FILIAL "
+		cQuery += "WHERE ZEC_CODIGO = '" + cNumSol + "'"
+		cQuery += "AND ZEC.D_E_L_E_T_ <> '*' "
+		cQuery += "AND ZED.D_E_L_E_T_ <> '*' "
+
+		TCQUERY cQuery NEW ALIAS "TRAZEC"
+
+		DBSelectArea("TRAZEC")
+		DBGoTop()
+	
+		While .Not. TRAZEC->( EOF() )
+			cQry := " "
+			cQry += "SELECT MAX(ZEB_SEQ) SEQ FROM " + RETSQLNAME("ZEB") + " ZEB "
+			cQry += "WHERE ZEB_CODBEM  = '" + TRAZEC->ZED_CODBEM + "' 
+			cQry += "AND ZEB.D_E_L_E_T_ <> '*' "	
+	
+			TCQUERY cQry NEW ALIAS "TRBZEB"
+	
+			DBSELECTAREA("TRBZEB")
+			cSeq := PADL(TRBZEB->SEQ,3)
+			cSeq := SOMA1(cSeq)
+			
+			//------------------------------------------------||
+			// Informações do usuário que incluiu a movimen-  ||
+			//  tação                                         || 
+			//------------------------------------------------||
+			aCposZEB := {}
+			aAdd(aCposZEB, {'ZEB_FILIAL' , TRAZEC->ZEC_FILIAL			})		
+			aAdd(aCposZEB, {'ZEB_CODBEM' , TRAZEC->ZED_CODBEM			})	
+			aAdd(aCposZEB, {'ZEB_SEQ'    , cSeq      					})
+			aAdd(aCposZEB, {'ZEB_DTMOV'  , STOD(TRAZEC->ZEC_DTMOVI)		})
+			aAdd(aCposZEB, {'ZEB_TIPMOV' , AllTrim(TRAZEC->ZEC_TPMOV)	})
+			aAdd(aCposZEB, {'ZEB_NUMSOL' , cNumSol                      })
+			aAdd(aCposZEB, {'ZEB_HISTOR' , "MOV. DO BEM INC. POR: " + AllTrim(TRAZEC->ZEC_CODUSR) + " - " + AllTrim(TRAZEC->ZEC_USUARI) })
+			aAdd(aCposZEB, {'ZEB_CODUSR' , AllTrim(TRAZEC->ZEC_CODUSR)  })
+			aAdd(aCposZEB, {'ZEB_USER'   , AllTrim(TRAZEC->ZEC_USUARI)  })
+			
+			U_IMPM01S('ZEB', aCposZEB, 'SF0103S', 3)
+	
+			DBSelectArea("ZEA")
+			DBSetOrder(1)
+			DBSeek(xFilial()+TRAZEC->ZED_CODBEM)
+			
+			cSeq := SOMA1(cSeq)	
+	
+			//------------------------------------------------||
+			//     Preenche as informações para alterar o     || 
+			//     Cadastro do bem com novas informações      ||
+			//------------------------------------------------||
+			aCposZEA := {}
+			aAdd(aCposZEA, {'ZEA_FILATU', TRAZEC->ZEC_FILDES                })
+			aAdd(aCposZEA, {'ZEA_CODBEM', TRAZEC->ZED_CODBEM                })
+	
+			//----------------------------------------------||
+			//      Transferencia de Responsavel            ||
+			//----------------------------------------------||		
+	
+			If(TRAZEC->ZEC_TPMOV $ 'ERT')
+				aResp := {}
+				aAdd(aResp, {'ZEB_FILIAL' , TRAZEC->ZEC_FILIAL               })		
+				aAdd(aResp, {'ZEB_CODBEM' , TRAZEC->ZED_CODBEM               })	
+				aAdd(aResp, {'ZEB_SEQ'    , cSeq                             })
+				aAdd(aResp, {'ZEB_DTMOV'  , STOD(TRAZEC->ZEC_DTMOVI)         })
+				aAdd(aResp, {'ZEB_TIPMOV',  TRAZEC->ZEC_TPMOV                })
+				aAdd(aResp, {'ZEB_CAMPAN' , 'RESPONSAVEL ANT '               })
+				aAdd(aResp, {'ZEB_CCAMPO' , 'RESPONSAVEL ATUAL'              })
+				aAdd(aResp, {'ZEB_VALATU' , TRAZEC->ZEC_CODRES               })
+				aAdd(aResp, {'ZEB_CAMPAT' , ZEA->ZEA_CODRES                  })
+				aAdd(aResp, {'ZEB_HISTOR' , "TRANSFERENCIA DE RESPONSAVEL DE " + AllTrim(ZEA->ZEA_NOMRES) + " PARA " + AllTrim(TRAZEC->ZEC_NOMRES)})
+				aAdd(aResp, {'ZEB_NUMSOL' , cNumSol                          })
+	
+				U_IMPM01S('ZEB',aResp,'SF0103S',3)
+				aAdd(aCposZEA, {'ZEA_CODRES' , TRAZEC->ZEC_CODRES})
+	
+	
+				//-------------------------------------------||
+				//    Transferencia de Co-Responsavel        ||
+				//-------------------------------------------||
+				If(!Empty(TRAZEC->ZEC_CCORES))
+					cSeq := SOMA1(cSeq)
+					aCoResp := {}
+					aAdd(aCoResp, {'ZEB_FILIAL', TRAZEC->ZEC_FILIAL          })		
+					aAdd(aCoResp, {'ZEB_CODBEM', TRAZEC->ZED_CODBEM          })	
+					aAdd(aCoResp, {'ZEB_SEQ'   , cSeq                        })
+					aAdd(aCoResp, {'ZEB_DTMOV' , STOD(TRAZEC->ZEC_DTMOVI)    })
+					aAdd(aCoResp, {'ZEB_TIPMOV', TRAZEC->ZEC_TPMOV           })
+					aAdd(aCoResp, {'ZEB_CAMPAN', 'CO-RESPONSAVEL ATUAL'      })
+					aAdd(aCoResp, {'ZEB_CCAMPO', 'CO-RESPONSAVEL ANTER'      })
+					aAdd(aCoResp, {'ZEB_VALATU', TRAZEC->ZEC_CCORES          })
+					aAdd(aCoResp, {'ZEB_CAMPAT', ZEA->ZEA_CCORES             })
+					aAdd(aCoResp, {'ZEB_HISTOR', "TRANSFERENCIA DE CO-RESPONSAVEL DE " + Alltrim(ZEA->ZEA_NCORES) +" PARA " + AllTrim(TRAZEC->ZEC_NCORES) })
+					aAdd(aCoResp, {'ZEB_NUMSOL', cNumSol                     })
+	
+					U_IMPM01S('ZEB',aCoResp,'SF0103S',3)
+					aAdd(aCposZEA, {'ZEA_CCORES', TRAZEC->ZEC_CCORES })
+				EndIf
+			EndIf
+			
+			//----------------------------------------------||
+			//    Empréstimo Entre Filiais					||
+			//----------------------------------------------||		
+					
+			If(TRAZEC->ZEC_TPMOV == 'E' .And. TRAZEC->ZEC_TPEMPR == 'EF')
+				cSeq := SOMA1(cSeq)
+				aAdd(aEmprest, {'ZEB_FILIAL', TRAZEC->ZEC_FILIAL             })		
+				aAdd(aEmprest, {'ZEB_CODBEM', TRAZEC->ZED_CODBEM             })	
+				aAdd(aEmprest, {'ZEB_SEQ'   , cSeq                           })
+				aAdd(aEmprest, {'ZEB_DTMOV' , STOD(TRAZEC->ZEC_DTMOVI)       })
+				aAdd(aEmprest, {'ZEB_TIPMOV', TRAZEC->ZEC_TPMOV              })
+				aAdd(aEmprest, {'ZEB_CAMPAN', 'EMPRÉSTIMO DE'                })
+				aAdd(aEmprest, {'ZEB_CCAMPO', 'EMPRÉSTIMO PARA'              })
+				aAdd(aEmprest, {'ZEB_VALATU', TRAZEC->ZEC_FILDES             })
+				aAdd(aEmprest, {'ZEB_CAMPAT', ZEA->ZEA_FILORI                })
+				aAdd(aEmprest, {'ZEB_HISTOR', "EMPRESTIMO DE FILIAL DE " + AllTrim(ZEA->ZEA_FILORI) + " PARA " + Alltrim(TRAZEC->ZEC_FILDES) })
+				aAdd(aEmprest, {'ZEB_NUMSOL', cNumSol                        })
+	
+				U_IMPM01S('ZEB',aEmprest,'SF0103S',3)
+				aAdd(aCposZEA, {'ZEA_FILATU', TRAZEC->ZEC_FILDES })
+				aAdd(aCposZEA, {'ZEA_SITBEM', 'E' })
+			EndIf
+			
+			//----------------------------------------------||
+			//    Empréstimo Para Terceiro					||
+			//----------------------------------------------||		
+					
+			If(TRAZEC->ZEC_TPMOV == 'E' .And. TRAZEC->ZEC_TPEMPR $ 'EM/PU/PP')
+				cSeq := SOMA1(cSeq)
+				aAdd(aEmpTer, {'ZEB_FILIAL', TRAZEC->ZEC_FILIAL         	 })		
+				aAdd(aEmpTer, {'ZEB_CODBEM', TRAZEC->ZED_CODBEM         	 })	
+				aAdd(aEmpTer, {'ZEB_SEQ'   , cSeq                       	 })
+				aAdd(aEmpTer, {'ZEB_DTMOV' , STOD(TRAZEC->ZEC_DTMOVI)   	 })
+				aAdd(aEmpTer, {'ZEB_TIPMOV', TRAZEC->ZEC_TPMOV          	 })
+				aAdd(aEmpTer, {'ZEB_CAMPAN', ''                  			 })
+				aAdd(aEmpTer, {'ZEB_CCAMPO', 'EMPRÉSTIMO PARA TERCEIRO' 	 })
+				aAdd(aEmpTer, {'ZEB_VALATU', TRAZEC->ZEC_CODCLI + ' ' + TRAZEC->ZEC_LOJA	})
+				aAdd(aEmpTer, {'ZEB_CAMPAT', '' 							 })
+				aAdd(aEmpTer, {'ZEB_HISTOR', "EMPRESTIMO PARA TERCEIRO " + TRAZEC->ZEC_CODCLI + ' ' + TRAZEC->ZEC_LOJA })
+				aAdd(aEmpTer, {'ZEB_NUMSOL', cNumSol                    	 })
+	
+				U_IMPM01S('ZEB',aEmpTer,'SF0103S',3)
+				aAdd(aCposZEA, {'ZEA_SITBEM', 'E' })
+			EndIf
+			
+			//----------------------------------------------||
+			//    Devolução de empréstimo					||
+			//----------------------------------------------||		
+					
+			If(TRAZEC->ZEC_TPMOV == 'R' .And. TRAZEC->ZEC_TPEMPR == 'EF')
+				cSeq := SOMA1(cSeq)
+				aAdd(aEmprest, {'ZEB_FILIAL', TRAZEC->ZEC_FILIAL             })		
+				aAdd(aEmprest, {'ZEB_CODBEM', TRAZEC->ZED_CODBEM             })	
+				aAdd(aEmprest, {'ZEB_SEQ'   , cSeq                           })
+				aAdd(aEmprest, {'ZEB_DTMOV' , STOD(TRAZEC->ZEC_DTMOVI)       })
+				aAdd(aEmprest, {'ZEB_TIPMOV', TRAZEC->ZEC_TPMOV              })
+				aAdd(aEmprest, {'ZEB_CAMPAN', 'DEV. DO EMPRÉSTIMO DE'     	 })
+				aAdd(aEmprest, {'ZEB_CCAMPO', 'DEV. DO EMPRÉSTIMO PARA'   	 })
+				aAdd(aEmprest, {'ZEB_VALATU', ZEA->ZEA_FILATU                })
+				aAdd(aEmprest, {'ZEB_CAMPAT', TRAZEC->ZEC_FILDES             })
+				aAdd(aEmprest, {'ZEB_HISTOR', "DEV. DO EMPR. DE FILIAL DE " + AllTrim(ZEA->ZEA_FILATU) + " PARA " + Alltrim(TRAZEC->ZEC_FILDES) })
+				aAdd(aEmprest, {'ZEB_NUMSOL', cNumSol                        })
+	
+				U_IMPM01S('ZEB',aEmprest,'SF0103S',3)
+				aAdd(aCposZEA, {'ZEA_FILATU', '' })
+				aAdd(aCposZEA, {'ZEA_SITBEM', 'A' })
+			EndIf
+			
+			//----------------------------------------------||
+			//    Devolução de empréstimo para Terceiro		||
+			//----------------------------------------------||		
+					
+			If(TRAZEC->ZEC_TPMOV == 'R' .And. TRAZEC->ZEC_TPEMPR $ 'EM/PU/PP')
+				cSeq := SOMA1(cSeq)
+				aAdd(aEmpTer, {'ZEB_FILIAL', TRAZEC->ZEC_FILIAL              })		
+				aAdd(aEmpTer, {'ZEB_CODBEM', TRAZEC->ZED_CODBEM              })	
+				aAdd(aEmpTer, {'ZEB_SEQ'   , cSeq                            })
+				aAdd(aEmpTer, {'ZEB_DTMOV' , STOD(TRAZEC->ZEC_DTMOVI)        })
+				aAdd(aEmpTer, {'ZEB_TIPMOV', TRAZEC->ZEC_TPMOV               })
+				aAdd(aEmpTer, {'ZEB_CAMPAN', ''                  			 })
+				aAdd(aEmpTer, {'ZEB_CCAMPO', 'DEV. DE EMPR. PARA TERCEIRO'	 })
+				aAdd(aEmpTer, {'ZEB_VALATU', TRAZEC->ZEC_CODCLI + ' ' + TRAZEC->ZEC_LOJA	})
+				aAdd(aEmpTer, {'ZEB_CAMPAT', ''								 })
+				aAdd(aEmpTer, {'ZEB_HISTOR', "DEV. DE EMPR. PARA TERCEIRO " + TRAZEC->ZEC_CODCLI + ' ' + TRAZEC->ZEC_LOJA })
+				aAdd(aEmpTer, {'ZEB_NUMSOL', cNumSol                         })
+	
+				U_IMPM01S('ZEB',aEmpTer,'SF0103S',3)
+				aAdd(aCposZEA, {'ZEA_SITBEM', 'A' })
+			EndIf
+	
+			//----------------------------------------------||
+			//         Transferencia de Filial              ||
+			//----------------------------------------------||
+			
+			If(TRAZEC->ZEC_TPMOV = 'T')
+				aFilial := {}
+				cSeq := SOMA1(cSeq)
+				aAdd(aFilial, {'ZEB_FILIAL', TRAZEC->ZEC_FILIAL              })		
+				aAdd(aFilial, {'ZEB_CODBEM', TRAZEC->ZED_CODBEM              })	
+				aAdd(aFilial, {'ZEB_SEQ'   , cSeq                            })
+				aAdd(aFilial, {'ZEB_DTMOV' , STOD(TRAZEC->ZEC_DTMOVI)        })
+				aAdd(aFilial, {'ZEB_TIPMOV', TRAZEC->ZEC_TPMOV               })
+				aAdd(aFilial, {'ZEB_CAMPAN', 'FILIAL ATUAL'                  })
+				aAdd(aFilial, {'ZEB_CCAMPO', 'FILIAL ANTERIOR'               })
+				aAdd(aFilial, {'ZEB_VALATU', TRAZEC->ZEC_FILDES              })
+				aAdd(aFilial, {'ZEB_CAMPAT', ZEA->ZEA_FILATU                 })
+				aAdd(aFilial, {'ZEB_HISTOR', "TRANSF. DE FILIAL DE " + AllTrim(ZEA->ZEA_DFILAT) + " PARA " + AllTrim(TRAZEC->ZEC_FILDES) })                  
+				aAdd(aFilial, {'ZEB_NUMSOL', cNumSol                         })
+	
+				U_IMPM01S('ZEB',aFilial,'SF0103S',3)
+				
+				aAdd(aCposZEA, {'ZEA_FILATU', ''  					})
+				aAdd(aCposZEA, {'ZEA_FILORI', TRAZEC->ZEC_FILDES	})
+				aAdd(aCposZEA, {'ZEA_SITBEM', 'A' 					})
+				aAdd(aCposZEA, {'ZEA_DFILOR', AllTrim(FwFilialName(TRAZEC->ZEC_FILDES))	})
+			EndIf
+			
+			//----------------------------------------------||
+			//                  Baixa do Bem                ||
+			//----------------------------------------------||
+			If(TRAZEC->ZEC_TPMOV = 'B')
+				aBaixa := {}
+				cSeq   := SOMA1(cSeq)
+				
+				aAdd(aBaixa,   {'ZEB_FILIAL', TRAZEC->ZEC_FILIAL       		 })		
+				aAdd(aBaixa,   {'ZEB_CODBEM', TRAZEC->ZED_CODBEM       		 })	
+				aAdd(aBaixa,   {'ZEB_SEQ'   , cSeq                  		 })
+				aAdd(aBaixa,   {'ZEB_DTMOV' , STOD(TRAZEC->ZEC_DTMOVI) 		 })
+				aAdd(aBaixa,   {'ZEB_TIPMOV', TRAZEC->ZEC_TPMOV        		 })
+				aAdd(aBaixa,   {'ZEB_HISTOR', "BAIXA DO BEM "       		 })
+				aAdd(aBaixa,   {'ZEB_CODSOL', cNumSol               		 })
+	
+				u_IMPM01S('ZEB',aBaixa,'SF0103S',3)
+				
+				aAdd(aCposZEA, {'ZEA_DTBAIX', STOD(TRAZEC->ZEC_DTMOVI) })
+				aAdd(aCposZEA, {'ZEA_SITBEM', 'B' })
+			EndIf
+			
+			//------------------------------------------------||
+			//    Insere as Alterações no cadastro de Bem,    ||
+			//    conforme a movimentação.                    ||
+			//------------------------------------------------||
+			U_IMPM01S('ZEA',aCposZEA,'SF0102S',4)
+	
+			TRAZEC->(DBSKIP())
+			TRBZEB->(DBCLOSEAREA())
+			ZEA->(DBCLOSEAREA())	
+	
+		EndDo
+		TRAZEC->(DBCLOSEAREA())
+		
+		//------------------------------------------------||
+		//    Atualiza a Movimentação do bem.    		  ||
+		//------------------------------------------------||
+		
+		aCposZEC := {}
+		aAdd(aCposZEC, {'ZEC_FILIAL', xFilial("ZEC")	})
+		aAdd(aCposZEC, {'ZEC_CODIGO', cNumSol       	})
+		aAdd(aCposZEC, {'ZEC_ACEITE', 'A'           	})
+		aAdd(aCposZEC, {'ZEC_DTACEI', DATE()        	})
+		aAdd(aCposZEC, {'ZEC_CDUSAP', RetCodUsr()   	})		
+	
+		U_IMPM01S('ZEC',aCposZEC,'SF0104S',4)
+		
+	EndIf
+
+Return NIL
+
+/*/{Protheus.doc} RJTSOL
+	Função para rejeição da solicitação. 
+
+@author sergio.salustiano
+@since 21/06/2016
+@version 6
+
+@return return, return_description
+/*/
+
+User Function RJTSOL()
+	Local lRetorno       := .T.
+	Local aAreaAtu       := GetArea()
+	Local oModel 		 := FwLoadModel('SF0104S')
+	Local oGrdZEC		 := oModel:GetModel('ZECMASTER')
+	Local cFilLan        := ' '
+	Local cNumSol        := ' '
+	
+	oModel:Activate()
+	
+	cFilLan := oGrdZEC:GetValue('ZEC_MSFIL')
+	cNumSol := oGrdZEC:GetValue('ZEC_CODIGO')
+	cTPMov  := oGrdZEC:GetValue('ZEC_TPMOV')
+	cAceite := oGrdZEC:GetValue('ZEC_ACEITE')
+	
+	If (cAceite = 'R')
+		Help(, ,"AJUDA",  ,"A solicitação nao esta em aberto, recebeu o aceite",1,0)
+	ElseIf (cAceite = 'A')
+		Help(, ,"AJUDA",  ,"A solicitação nao esta em aberto, A solicitação foi rejeitada",1,0)
+	Else
+		aCposZEC := {}
+		aAdd(aCposZEC, {'ZEC_FILIAL', xFilial("ZEC")	})
+		aAdd(aCposZEC, {'ZEC_CODIGO', cNumSol   		})
+		aAdd(aCposZEC, {'ZEC_ACEITE', 'R'       		})
+		aAdd(aCposZEC, {'ZEC_DTACEI', DATE()    		})
+		aAdd(aCposZEC, {'ZEC_CDUSAP', RetCodUsr()   	})
+
+		U_IMPM01S('ZEC',aCposZEC,'SF0104S',4)
+	EndIf
+
+Return NIL

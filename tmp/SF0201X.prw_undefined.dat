@@ -1,0 +1,80 @@
+#include "protheus.ch"
+#include "topconn.ch"
+#include "tbiconn.ch"
+
+/*=========================================================================
+  FONTES GENÉRICOS PARA USO DO WORKFLOW                                    
+  =========================================================================*/
+
+/*----------------------+--------------------------------+------------------+
+|   Programa: SF0201X   | Autor: Walmir Junior           | Data: 16/12/2015 |
++-----------------------+--------------------------------+------------------+
+|  Descricao:  Notificação genérica do Workflow de Compras para processos
+|              de: Solicitação, Cotação e Pedido de Compra.
++---------------------------------------------------------------------------+
+|    Projeto:  CNI e Federações                                             |
++---------------------------------------------------------------------------+
+| Parâmetros:  cStatus    = Status do Docto - (A)provado / (R)eprovado
+|              cNumDoc    = Número do Documento
+|              cDescTpDoc = Descrição do Tipo de Documento
+|              _cEmail    = Email Grupo de Usuários
+|              cObs       = Observação do Aprovador
++----------------------------------------------------------------------------
+|    Exemplo:  U_NotifWF("A",SC1->C1_NUM,"Solicitação de Compra",SC1->C1_USER,_cObs)
++----------------------------------------------------------------------------
+|    Retorno:  Nulo                                                               
++--------------------------------------------------------------------------*/
+
+User Function SF0201X(cStatus,cNumDoc,cDescTpDoc,cUser,cObs,_cEmail, _cNumMed)		//cStatus = (A)provada / (R)eprovada
+
+Local cFunc      := "U_SF0201X"
+Local _cWfDir    := Iif(Right(RTrim(GetNewPar("MV_WFDIRWF","\workflow")),1)#"\" , ;
+                     RTrim(GetNewPar("MV_WFDIRWF","\workflow")) + "\", ;
+                     RTrim(GetNewPar("MV_WFDIRWF","\workflow")))
+Local cEmpFilNom := RTrim(cFilAnt) + " - " + RTrim(Posicione("SM0",1,cEmpAnt+cFilAnt,"M0_FILIAL")) + " - " + ;
+                    RTrim(Posicione("SM0",1,cEmpAnt+cFilAnt,"M0_NOME"))
+Local cAssunArti := ""
+Local cAssunto   := ""
+
+//Private oHtml
+
+If !Empty(_cEmail)
+	If Right(Left(AllTrim(cDescTpDoc),At(" ",AllTrim(cDescTpDoc))-1),3) $ ("ção|cao|ÇÃO|CAO")
+		cAssunArti := "a"
+	ElseIf Right(Left(AllTrim(cDescTpDoc),At(" ",AllTrim(cDescTpDoc))-1),1) $ ("a|A")
+		cAssunArti := "a"
+	Else
+		cAssunArti := "o"
+	EndIf
+	
+	cAssunto   := "Status d"+ cAssunArti + " " + Capital(AllTrim(cDescTpDoc))
+	
+	U_Console("Processando envio da notificacao de " + cDescTpDoc + " Fil/NumDoc: "+cFilAnt+"/"+cNumDoc,cFunc)
+	
+	oProcess := TWFProcess():New( "NotMedWF", "Notificação do Workflow" )
+	oProcess:NewTask( "000110", _cWfDir+"NotMedWF.htm" )
+	oProcess:cSubject := cAssunto + " No. " +cNumDoc
+	oProcess:cTo      := Alltrim(_cEmail)
+	oProcess:UserSiga := cUser
+	oProcess:NewVersion(.T.)        
+	oHTML   := oProcess:oHTML
+	
+	oProcess:oHtml:ValByName("ASSUNTO",cAssunto)
+	//oProcess:oHtml:ValByName("SOLICITANTE",UsrRetName(cUser))
+	oProcess:oHtml:ValByName("DESCTPDOC",cAssunArti + " " + Capital(AllTrim(cDescTpDoc)))
+	oProcess:oHtml:ValByName("NUMDOC",cNumDoc)
+	oProcess:oHtml:ValByName("NUMMED",Iif(!Empty(_cNumMed), Iif(Len(_cNumMed) > 6 ,"As Medições N° ", "A Medição N° ")+_cNumMed+ Iif(Len(_cNumMed) > 6 ," foram geradas automaticamente e estão disponíveis para encerramento.", " foi gerada automaticamente e está disponível para encerramento."), " "))
+	
+	If cStatus == "A"		// (A)provada / (R)eprovada
+		cMsgStatus := '<span lang="pt-br" class="corpo" style="color: #0000FF; font-weight: bold;">Aprovad'+cAssunArti+'</span>'
+	Else
+		cMsgStatus := '<span lang="pt-br" class="corpo" style="color: #FF0000; font-weight: bold;">Reprovad'+cAssunArti+'</span>'
+	EndIf
+	
+	oProcess:oHtml:ValByName("MSGSTATUS",cMsgStatus)
+	oProcess:oHtml:ValByName("FILIAL",cEmpFilNom)
+	oProcess:oHtml:ValByName("OBS",cObs)
+	
+	oProcess:Start()
+EndIf
+Return

@@ -1,0 +1,187 @@
+#include "rwmake.ch"
+#include "protheus.ch"
+#INCLUDE "TOPCONN.CH"
+
+/*/{Protheus.doc} SF06R28X
+	Relatório de Produtividade de CObrança por Analista e Período
+	@author Daniel Castro
+	@since 02/03/2022
+/*/
+
+User Function SF06R28X()
+	local oReport
+
+	Private aRet := {}
+
+	//Perguntas do RelatÃ³rio
+	Pergunta()
+
+	oReport := reportDef()
+	oReport:printDialog()
+Return
+
+static function reportDef()
+	local oReport
+	Local oSection1
+	local cTitulo := 'Produtividade por Analista - Periodo: ' + dToC(MV_PAR01) + ' a ' + dToC(MV_PAR02) + ' Operador: ' + Alltrim(MV_PAR03)
+
+	oReport := TReport():New('SF06R28X', cTitulo, , {|oReport| PrintReport(oReport)},"Este relatorio ira imprimir a relacao de produtividade por analista.")
+	oReport:SetPortrait()
+	oReport:SetTotalInLine(.F.)
+	oReport:ShowHeader()
+
+	oSection1 := TRSection():New(oReport,"OPERADOR",{"QRY"})
+	oSection1:SetTotalInLine(.F.)
+
+	TRCell():New(oSection1, "ZAF_NOME"	, "QRY", 'OPERADOR'			,PesqPict('ZAF',"ZAF_NOME"),TamSX3("ZAF_NOME")[1]+1)
+	TRCell():new(oSection1, "ZAF_QUANT"	, "QRY", 'QUANTIDADE'		,"@9999",5)
+	TRCell():new(oSection1, "ZAF_RENEG"	, ""	, 'RENEGOCIADOS'	,"@9999",5)
+	TRCell():new(oSection1, "ZAF_PERC"	, ""	, '%'				,"@999.99",6)
+	TRCell():new(oSection1, "ZAF_TEMPO"	, ""	, 'TEMPO(Horas)'	,"@E",6)
+
+
+return (oReport)
+
+Static Function PrintReport(oReport)
+
+	Local oSection1 := oReport:Section(1)
+	Local cQuery := ""
+	Local x
+	Local nPos := 0
+	Local aDados := {}
+	Local nQuant := 0
+	Local nReg	:= 0
+
+	oSection1:Init()
+	oSection1:SetHeaderSection(.T.)
+
+	cQuery := " SELECT ZAF_COD, ZAF_NOME, ZAK_DATA,  ZAK_DTPATE, ZAK_HORA,ZAK_HRPATE, ZAK_COD"
+	cQuery += " FROM " + RetSqlTab("ZAK")
+	cQuery += " INNER JOIN " + RetSqlTab("ZAF") + " ON ZAF.D_E_L_E_T_ = ' ' "
+	cQuery += " AND ZAK_CODOPE = ZAF_COD "
+	cQuery += " WHERE ZAK_DATA BETWEEN '" + DtoS(aRet[1]) + "' AND '" + DtoS(aRet[2]) + "' "
+	cQuery += " AND ZAK.D_E_L_E_T_ = ' ' "
+
+	If MV_PAR03 <> "Todos"
+		cQuery += " AND ZAF_NREDUZ IN '" + SubStr(MV_PAR03,At("-",MV_PAR03) +1, Len(MV_PAR03))+ "' "
+	EndIf
+
+	cQuery += " ORDER BY ZAF_NOME, ZAK_DATA "
+
+	TCQuery cQuery New Alias "QRY"
+
+	DbSelectArea('QRY')
+	QRY->(dbGoTop())
+
+	While QRY->(!Eof())
+
+		nPos := aScan(aDados,{ |x| x[6] == QRY->ZAF_COD})
+		If nPos == 0 //Verifica se é um novo analista e zera renegociações
+			nReg := 0
+			nTime := 0
+		EndIf
+
+		nQuant++
+
+		cMinu := ElapTime(QRY->ZAK_HORA + ":00",QRY->ZAK_HRPATE + ":00")
+		nTime := SomaHoras(nTime,cMinu)
+		cCodZAL := QRY->ZAK_COD
+
+		BeginSql alias 'TMP'
+   			SELECT
+				ZAL.ZAL_COD
+			FROM
+				%table:ZAL% ZAL
+			WHERE
+				ZAL.ZAL_CODATE= %exp:cCodZAL% AND
+				ZAL.ZAL_STATUS= %exp:'F'% AND
+				ZAL.%notDel% 
+		EndSql
+
+		TMP->(dbGoTop())
+
+		If !Empty(TMP->ZAL_COD)
+			nReg++ // Renegociações efetuadas
+		EndIf
+		TMP->(dbCloseArea())
+
+
+		If nReg = 0
+			nPerc := 0
+		Elseif nQuant == nReg
+			nPerc := 100
+		Else
+			nPerc := 100 - (((nQuant-nReg) / nQuant) * 100 )// Percentual de Renegociação
+		EndIf
+
+		If nPos = 0 //Verifica se é um novo analista e gera novo acumulador
+			nQuant:=1
+			aAdd(aDados,{QRY->ZAF_NOME, nQuant, nReg, nPerc, nTime , QRY->ZAF_COD} )
+		else
+			aDados[nPos,2]	:= nQuant
+			aDados[nPos,3]  := nReg
+			aDados[nPos,4]  := nPerc
+			aDados[nPos,5]	:= nTime
+		EndIf
+
+		QRY->(dbSkip())
+	EndDo
+
+	oReport:SetMeter(Len(aDados))
+
+	For x:= 1 to Len(aDados)
+
+		If oReport:Cancel()
+			Exit
+		EndIf
+
+		oReport:IncMeter()
+
+		oSection1:Cell("ZAF_NOME"):SetValue(aDados[x,1])
+		oSection1:Cell("ZAF_QUANT"):SetValue(aDados[x,2])
+		oSection1:Cell("ZAF_RENEG"):SetValue(aDados[x,3])
+		oSection1:Cell("ZAF_PERC"):SetValue(aDados[x,4])
+		oSection1:Cell("ZAF_TEMPO"):SetValue(Round(aDados[x,5],1))
+
+		oSection1:PrintLine()
+
+	Next x
+
+	oSection1:Finish()
+
+Return
+
+//===============================================================
+
+Static Function Pergunta ()
+
+	Local aPergs := {}
+	Local aCombo    := {}
+	Local cCombo	:= "Todos,"
+	Local lRet		:= .T.
+
+	BeginSql Alias "TOPER"
+		SELECT * FROM %TABLE:ZAF% ZAF
+		WHERE ZAF.%NOTDEL% 
+		AND ZAF_ATIVO = %EXP:"S"%
+		ORDER BY ZAF_NOME
+	EndSQL
+
+	While TOPER->(!EOF())
+		cCombo +=  Alltrim(TOPER->ZAF_NOME) + "-" + Alltrim(TOPER->ZAF_NREDUZ) +','
+		TOPER->(dbSkip())
+	EndDo
+	TOPER->(dbCloseArea())
+
+	aCombo :=  strtokarr(cCombo, ",")
+
+	aAdd(aPergs,{1,"Data De  ",dDataBase,"","","","",70,.T.})
+	aAdd(aPergs,{1,"Data Ate ",dDataBase,"","","","",70,.T.})
+	aAdd(aPergs,{2,"Operador  ","Todos",aCombo,120,"",.T.})
+
+	If !ParamBox(aPergs ,"Parametros",aRet)
+		MsgAlert("Processo Cancelado ","ATENÇÃO")
+		lRet := .F.
+	EndIf
+
+Return

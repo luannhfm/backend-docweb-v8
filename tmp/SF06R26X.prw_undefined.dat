@@ -1,0 +1,257 @@
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE 'IDATOOLS.CH'
+
+
+/*/{Protheus.doc} SF06R26X
+@description  Relatorio de acompanhamento de titulos enviado pela API
+
+@author Diego Donatti Moura
+@since 21/08/2020
+@version 12.1.17
+
+/*/
+User Function SF06R26X()
+
+	Local oReport := Nil
+	Local cPerg   := PadR('SF06R26X',10,Space(1))
+
+	//Criando Pergunta
+	AjustaSX1(cPerg)
+
+	//Inicializando Pergunta
+	If Pergunte(cPerg, .T.)
+
+		//Cria as definições do relatório
+		oReport := ReportDef(cPerg)
+
+		If Valtype( oReport ) == 'O'
+
+			If !Empty( oReport:uParam )
+				Pergunte( oReport:uParam, .F. )
+			EndIf
+
+			oReport:PrintDialog()
+		Endif
+		
+	Endif
+
+Return
+
+
+
+/*/{Protheus.doc} ReportDef
+@description Definicoes do relatorio de inconsistencias.
+
+@author Diego Donatti Moura
+@since 30/07/2020
+@version 12.1.27
+/*/
+
+Static Function ReportDef(cPerg)
+
+	Local oReport	:= Nil
+	Local oSection	:= Nil
+	Local cTitulo   := "Demonstrativo Status Envio/Retorno BB"
+	Local cDescTit  := "Este programa tem o objetivo de imprimir status de retorno dos titulos enviado ao BB"
+
+	//Criação do componente de impressão
+	oReport:=TReport():New("SF06R26X",cTitulo,cPerg,{|oReport| ReportPrint(oReport)},cDescTit)
+	oReport:SetTotalInLine(.F.)
+	oReport:SetTitle(cTitulo)
+	oReport:SetLandscape(.F.)
+	oReport:SetLineHeight(40)
+	oReport:SetColSpace(1)
+	oReport:SetLeftMargin(0)
+	oReport:cFontBody := 'Courier New'
+	oReport:nFontBody := 6
+	oReport:lBold := .F.
+	oReport:lUnderLine := .F.
+	oReport:lHeaderVisible := .T.
+	oReport:lFooterVisible := .T.
+	oReport:lParamPage := .F.
+
+	//Criando a seção de dados
+	oSection:= TRSection():New(oReport,"oSection",{"TRBREL"})
+	oSection:AddTable("oSection")
+	oSection:SetHeaderPage(.T.)
+
+	//Criando Cell
+	TRCell():New(oSection,"FILIAL"		,, "Filial"     ,                   ,FWSizeFilial()+2			, .F.							)
+	TRCell():New(oSection,"PREFIXO"	    ,, "Prefixo"    ,                   ,TamSX3("EA_PREFIXO")[1]	, .F.							)
+	TRCell():New(oSection,"TITULO"	    ,, "Titulo"     ,                   ,TamSX3("EA_NUM")[1] + 3	, .F.							)
+	TRCell():New(oSection,"PARCELA"	    ,, "Parcela"    ,                   ,TamSX3("EA_PARCELA")[1]	, .F.							)
+	TRCell():New(oSection,"TIPO"	    ,, "Tipo"       ,                   ,TamSX3("EA_TIPO")[1]	    , .F.							)
+	TRCell():New(oSection,"NUMBOR"	    ,, "Bordero"    ,                   ,TamSX3("EA_NUMBOR")[1]	    , .F.							)
+	TRCell():New(oSection,"NUMBCO"	    ,, "Nosso Num"  ,                   ,TamSX3("E1_NUMBCO")[1]	+ 10, .F.							)
+	TRCell():New(oSection,"XCONV"	    ,, "Conv/Var"   ,                   ,20							, .F.							)
+	TRCell():New(oSection,"EMISSAO"	    ,, "Emissao"    ,                   ,TamSX3("E1_EMISSAO")[1]	, .F.							)
+	TRCell():New(oSection,"VENCTO"	    ,, "Vencto"     ,                   ,TamSX3("E1_VENCTO")[1]		, .F.							)
+	TRCell():New(oSection,"CLIENTE"	    ,, "Cliente"    ,                   ,25  						, .F.							)
+	TRCell():New(oSection,"NOME"	    ,, "Nome Cli"   ,                   ,25					        , .F.							)
+	TRCell():New(oSection,"VALOR"		,, "Vlr Orig"   ,"@R 999,999,999.99",TamSX3("E1_VALOR")[1]      ,/*[lPixel]*/,,"RIGHT",,"RIGHT"	)
+	TRCell():New(oSection,"MULTA"	    ,, "Multa"      ,"@R 999,999,999.99",TamSX3("E1_MULTA")[1]		,/*[lPixel]*/,,"RIGHT",,"RIGHT"	)
+	TRCell():New(oSection,"JUROS"	    ,, "Juros"      ,"@R 999,999,999.99",TamSX3("E1_JUROS")[1]		,/*[lPixel]*/,,"RIGHT",,"RIGHT"	)
+	TRCell():New(oSection,"DESCONT"	    ,, "Desconto"   ,"@R 999,999,999.99",TamSX3("E1_DESCONT")[1]	,/*[lPixel]*/,,"RIGHT",,"RIGHT"	)
+	TRCell():New(oSection,"XVLRPGA"		,, "Vlr Pago"   ,"@R 999,999,999.99",TamSX3("EA_XVLRPGA")[1]    ,/*[lPixel]*/,,"RIGHT",,"RIGHT"	)
+	TRCell():New(oSection,"XSTATUS"	    ,, "Status"     ,                   ,40							, .F.							)
+
+	//Totalizador Geral
+	TRFunction():New(oSection:Cell("VALOR")		,"TOTALORI"	,"SUM",,,,,.F.,.T.)
+	TRFunction():New(oSection:Cell("XVLRPGA")  	,"TOTALPGA"	,"SUM",,,,,.F.,.T.)
+
+Return oReport
+
+
+/*/{Protheus.doc} ReportPrint
+@description Funcao para impressao do relatorio de inconsistencias.
+
+@author Diego Donatti Moura
+@since 30/07/2020
+@version 12.1.27
+/*/
+
+Static Function ReportPrint(oReport)
+
+	Local cQuery      := ""
+	Local oSection    := oReport:Section(1)
+
+	//Montando consulta de dados
+	cQuery += "SELECT "
+	cQuery += " E1_FILIAL,"
+	cQuery += " EA_NUMBOR,"
+	cQuery += " E1_NUMBCO, "
+	cQuery += " E1_EMISSAO,"
+	cQuery += " E1_VENCTO,"
+	cQuery += " A6_XCONV,"
+	cQuery += " A6_XVARCAR,"
+	cQuery += " E1_PREFIXO,"
+	cQuery += " E1_NUM,"
+	cQuery += " E1_PARCELA,"
+	cQuery += " E1_TIPO,"
+	cQuery += " E1_CLIENTE,"
+	cQuery += " E1_LOJA,"
+	cQuery += " A1_NOME,"
+	cQuery += " E1_VALOR,"
+	cQuery += " E1_JUROS,"
+	cQuery += " E1_MULTA,"
+	cQuery += " E1_DESCONT,"
+	cQuery += " EA_XVLRPGA,"
+	cQuery += " EA_XSTATUS, "
+	cQuery += " EA_XMENSG, "
+	cQuery += " EA_XCODAPI,"
+	cQuery += " EA_XMSGAPI, "
+	cQuery += " E1_BAIXA, "
+	cQuery += " E1_XENVBOL "
+	cQuery += " FROM " + RetSqlName("SE1") + "  E1 "
+	cQuery += " LEFT JOIN " + RetSqlName("SEA") + " EA ON EA_FILIAL     = E1_FILIAL "
+	cQuery += "              						  AND EA_PREFIXO    = E1_PREFIXO "
+	cQuery += "              						  AND EA_NUM        = E1_NUM "    
+	cQuery += "              						  AND EA_PARCELA    = E1_PARCELA "
+	cQuery += "              						  AND EA_TIPO       = E1_TIPO "      
+	cQuery += "              						  AND EA_NUMBOR     = E1_NUMBOR"
+	cQuery += "              						  AND E1.D_E_L_E_T_ = ' ' "
+	cQuery += " LEFT JOIN " + RetSqlName("SA6") + "  A6 ON A6_FILIAL     = EA_FILIAL"
+	cQuery += "              						   AND A6_COD        = EA_PORTADO "
+	cQuery += "              						   AND A6_AGENCIA    = EA_AGEDEP "
+	cQuery += "              						   AND A6_NUMCON     = EA_NUMCON "
+	cQuery += "              						   AND A6.D_E_L_E_T_ = ' ' "	
+	cQuery += " LEFT JOIN " + RetSqlName("SA1") + " A1 ON A1_FILIAL     = '" + xFilial("SA1") + "'"
+	cQuery += "                                       AND A1_COD        = E1_CLIENTE "
+	cQuery += "                                       AND A1_LOJA       = E1_LOJA "
+	cQuery += "                                       AND A1.D_E_L_E_T_ = ' ' "
+	cQuery += " WHERE E1.E1_EMISSAO BETWEEN '" + DtoS(MV_PAR03) + "' AND '" + DtoS(MV_PAR04) + "'"
+	cQuery += "   AND E1.E1_FILIAL BETWEEN '" + MV_PAR01 + "' AND '" + MV_PAR02 + "' "
+	cQuery += "   AND E1.E1_XENVBOL IN ('1', '3', '4') "
+	cQuery += "   AND E1.D_E_L_E_T_ = ' ' "
+	cQuery += " ORDER BY "+ SqlOrder(SE1->(IndexKey()))
+	cQuery:= ChangeQuery(cQuery)
+
+	//Executa a Query e cria uma tabela temporária
+	DbUseArea(.T.,"TOPCONN",TCGenQry(,,cQuery),"TRBREL",.F.,.T.)
+
+	//Define o limite da régua de progressão do relatório.
+	oReport:SetMeter(TRBREL->(RecCount()))
+
+	//Enquanto houver dados
+	TRBREL->(DbGoTop())
+	While TRBREL->(!Eof())
+
+		If !Empty(MV_PAR05) .and. .not. TRBREL->EA_XSTATUS = MV_PAR05
+			TRBREL->(DbSkip())
+			Loop
+		Endif
+		
+		// Impressao da oSection
+		oSection:Init()
+		oReport:IncMeter()
+
+		If oReport:Cancel()
+			Exit
+		EndIf
+
+		oSection:Cell("FILIAL"):SetValue(Alltrim(TRBREL->E1_FILIAL))
+
+		oSection:Cell("PREFIXO"):SetValue(Alltrim(TRBREL->E1_PREFIXO))
+		oSection:Cell("TITULO"):SetValue(Alltrim(TRBREL->E1_NUM))
+		oSection:Cell("PARCELA"):SetValue(Alltrim(TRBREL->E1_PARCELA))
+		oSection:Cell("TIPO"):SetValue(Alltrim(TRBREL->E1_TIPO))
+
+		oSection:Cell("NUMBOR"):SetValue(Alltrim(TRBREL->EA_NUMBOR))
+		oSection:Cell("NUMBCO"):SetValue(Alltrim(TRBREL->E1_NUMBCO))
+		oSection:Cell("XCONV"):SetValue(Alltrim(TRBREL->A6_XCONV + '-' + TRBREL->A6_XVARCAR))
+		oSection:Cell("EMISSAO"):SetValue(StoD(TRBREL->E1_EMISSAO))
+		oSection:Cell("VENCTO"):SetValue(StoD(TRBREL->E1_VENCTO))
+		oSection:Cell("CLIENTE"):SetValue(TRBREL->E1_CLIENTE + '-'+ TRBREL->E1_LOJA)
+		oSection:Cell("NOME"):SetValue(Alltrim(TRBREL->A1_NOME))
+		oSection:Cell("VALOR"):SetValue(TRBREL->E1_VALOR)
+		oSection:Cell("JUROS"):SetValue(TRBREL->E1_JUROS)
+		oSection:Cell("MULTA"):SetValue(TRBREL->E1_MULTA)
+		oSection:Cell("DESCONT"):SetValue(TRBREL->E1_DESCONT)
+		oSection:Cell("XVLRPGA"):SetValue(TRBREL->EA_XVLRPGA)
+
+		If TRBREL->E1_XENVBOL = '1' .and. Empty(TRBREL->EA_NUMBOR) .and. !Empty(TRBREL->E1_BAIXA)
+			oSection:Cell("XSTATUS"):SetValue('Liquidado Manualmente')
+		ElseIf TRBREL->E1_XENVBOL = '1' .and. Empty(TRBREL->EA_NUMBOR)
+			oSection:Cell("XSTATUS"):SetValue('Não está em Borderô')
+		ElseIf TRBREL->E1_XENVBOL = '1' .and. !Empty(TRBREL->EA_NUMBOR) .and. Val(TRBREL->EA_XSTATUS) < 3
+			oSection:Cell("XSTATUS"):SetValue('Aguardando Envio')
+		Else
+			oSection:Cell("XSTATUS"):SetValue(TRBREL->EA_XSTATUS + '-' + Alltrim(TRBREL->EA_XMENSG))
+		EndIf
+
+		//Imprimindo a linha atual
+		oSection:PrintLine()
+
+		TRBREL->(DbSkip())
+
+	End
+
+	TRBREL->(DbCloseArea())
+
+	//Fechando Secao
+	oSection:Finish()
+
+Return
+
+
+
+/*/{Protheus.doc} AjustaSx1
+@description Criando as Perguntas
+
+@author Diego Donatti Moura
+@since 30/07/2020
+@version 12.1.27
+/*/
+Static Function AjustaSx1(p_cPerg)
+
+	Local aHelp := {}
+
+	AAdd(aHelp, {{""}, {""}, {""}})
+
+	iPutSX1( p_cPerg , "01", "Da  Filial","","","MV_CH1","C", 08,00,00,"G","","SM0EMP","","","MV_PAR01","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")	
+	iPutSX1( p_cPerg , "02", "Ate  Filial","","","MV_CH2","C", 08,00,00,"G","","SM0EMP","","","MV_PAR02","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")	
+	iPutSX1( p_cPerg , "03", "Da  Emissao","","","MV_CH3","D", 08,00,00,"G","","","","","MV_PAR03","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")	
+	iPutSX1( p_cPerg , "04", "Ate  Emissao","","","MV_CH4","D", 08,00,00,"G","","","","","MV_PAR04","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")	
+	iPutSX1( p_cPerg , "05", "Status","","","MV_CH5","C", 02,00,00,"G","","ZX","","","MV_PAR05","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")	
+
+Return

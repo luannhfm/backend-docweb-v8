@@ -1,0 +1,429 @@
+#Include 'Protheus.ch'
+#Include 'TopConn.ch'
+
+/*/{Protheus.doc} SF73A04J
+Cadastro de Eventos - CRP
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	16/05/2016
+@version 	1.0
+
+@return 	Nil, Nulo
+/*/
+User Function SF73A04J()
+	
+	Local oBrowse
+	
+	Private aRotina := MenuDef()
+	
+	//Instancio a classe FWMBrowse
+	oBrowse := FWMBrowse():New()
+	
+	//Setando o Alias a ser utilizado
+	oBrowse:SetAlias( 'ZC6' )
+	
+	//Descrição do Cabeçalho
+	oBrowse:SetDescription('Cadastro de Eventos')
+	
+	//Ativando
+	oBrowse:Activate()
+	
+Return
+
+
+/** {Protheus.doc} MenuDef
+Funcao para Montar o Menu
+
+@author: 	Jose Leite de Barros Neto
+@since: 	16/05/2016
+@Uso: 		SFIEMT
+*/
+Static Function MenuDef()
+	
+	Local aRotina := {}
+
+	aAdd( aRotina, { 'Pesquisar' , 'PesqBrw'        	, 0, 1, 0, .T. } )
+	aAdd( aRotina, { 'Visualizar', 'ViewDef.SF73A04J'	, 0, 2, 0, Nil } )
+	aAdd( aRotina, { 'Incluir'   , 'ViewDef.SF73A04J'	, 0, 3, 0, Nil } )
+	aAdd( aRotina, { 'Alterar'   , 'ViewDef.SF73A04J'	, 0, 4, 0, Nil } )
+	aAdd( aRotina, { 'Excluir'   , 'ViewDef.SF73A04J'	, 0, 5, 0, Nil } )
+	aAdd( aRotina, { 'Imprimir'  , 'ViewDef.SF73A04J'	, 0, 8, 0, Nil } )
+	aAdd( aRotina, { 'Copiar'    , 'ViewDef.SF73A04J'	, 0, 9, 0, Nil } )
+	
+Return( aRotina )
+
+
+/** {Protheus.doc} ModelDef
+Funcao para Montar o Modelo de Dados
+
+@author: 	Jose Leite de Barros Neto
+@since: 	16/05/2016
+@Uso: 		SFIEMT
+*/
+Static Function ModelDef()
+	
+	Local oModel
+	Local oStruZC6MASTER := FWFormStruct( 1, 'ZC6', { |X|  AllTrim(X) $ 'ZC6_CODIGO, ZC6_DESCRI' } )
+	Local oStruZC6DETAIL := FWFormStruct( 1, 'ZC6', { |X| .Not. (AllTrim(X) $ 'ZC6_CODIGO, ZC6_DESCRI') } )
+	
+	oModel := MPFormModel():New( 'SF73A04M' )
+	
+	oModel:AddFields( 'ZC6MASTER'	,					, oStruZC6MASTER )
+	oModel:AddGrid('ZC6DETAIL'		, 'ZC6MASTER'	, oStruZC6DETAIL )
+	
+	oModel:SetRelation( 'ZC6DETAIL', { { 'ZC6_FILIAL', 'xFilial( "ZC6" )' }, {'ZC6_CODIGO', 'ZC6_CODIGO' }}, ZC6->( IndexKey( 1 ) ) )
+	
+	oModel:GetModel( 'ZC6DETAIL' ):SetUniqueLine( { 'ZC6_NOME' } )
+	
+	oModel:GetModel( 'ZC6DETAIL' ):SetOptional( .T. )
+	
+	oModel:SetDescription( 'Cadastro de Eventos' )
+	
+	oModel:GetModel( 'ZC6MASTER' ):SetDescription( 'Evento' )
+	
+	oModel:GetModel( 'ZC6DETAIL' ):SetDescription( 'Convidado(s) do Evento' )
+	oModel:GetModel( 'ZC6DETAIL' ):SetNoInsertLine()
+	
+	oModel:SetPrimaryKey( { "ZC6_FILIAL", "ZC6_CODIGO", "ZC6_NOME" } )
+	
+Return( oModel )
+
+
+/** {Protheus.doc} ViewDef
+Funcao para Montar a Interface
+
+@author: 	Jose Leite de Barros Neto
+@since: 	16/05/2016
+@Uso: 		SFIEMT
+*/
+Static Function ViewDef()
+	
+	Local oView
+	Local oModel  := FWLoadModel( 'SF73A04J' )
+	
+	Local oStruZC6MASTER := FWFormStruct( 2, 'ZC6', { |X|  AllTrim(X) $ 'ZC6_CODIGO, ZC6_DESCRI' } )
+	Local oStruZC6DETAIL := FWFormStruct( 2, 'ZC6', { |X| .Not. (AllTrim(X) $ 'ZC6_CODIGO, ZC6_DESCRI') } )
+	
+	oView := FWFormView():New()
+	
+	oView:SetModel( oModel )
+	
+	oView:AddField( 'VZC6MASTER', oStruZC6MASTER, 'ZC6MASTER' )
+	oView:AddGrid( 'VZC6DETAIL', oStruZC6DETAIL, 'ZC6DETAIL' )
+	
+	oView:CreateHorizontalBox( 'CABECALHO', 15 )
+	oView:CreateHorizontalBox( 'DETALHE', 85 )
+	
+	oView:SetOwnerView( 'VZC6MASTER', 'CABECALHO' )
+	oView:SetOwnerView( 'VZC6DETAIL', 'DETALHE' )
+	
+	oView:EnableTitleView( 'VZC6MASTER' )
+	oView:EnableTitleView( 'VZC6DETAIL' )
+	
+	oView:AddUserButton("Blocos x Usuarios",'CLIPS', { |oView| fGroup( oModel ) }	)
+	oView:AddUserButton("Vincular Todos Usuarios",'CLIPS', { |oView| fTotUsr( oModel ) }	)
+	
+	oView:SetCloseOnOk( {|| .t.} )
+	
+Return( oView )
+
+
+/** {Protheus.doc} fGroup
+Funcao para selecionar os dados e gravar na grid -  por bloco selecionado
+
+@author: 	Jose Leite de Barros Neto
+@since: 	31/05/2016
+@Uso: 		SFIEMT
+*/
+Static Function fGroup( oModel )
+	
+	Local oModelZC6	:= oModel:GetModel( 'ZC6DETAIL' )
+	Local nI			:= 0
+	Local _cQuery	:= ""
+	Local _nCont		:= 0
+	Local _lFirst	:= oModelZC6:Length() == 1 .And. Empty( oModelZC6:GetValue( "ZC6_BLOCO" ) )
+	
+	Private _cFilBlc := ''
+	
+	If MsgNoYes( "Foi selecionada a opção de VINCULAR Grupos x Usuários." + CRLF + "Confirma a ação?" )
+		
+		fGetDados()
+		
+		If Select("TRA") > 0
+			DbSelectarea("TRA")
+			TRA->(DbCloseArea())
+		EndIf
+		
+		_cQuery := "SELECT * 									"
+		_cQuery += " FROM "+RetSqlName("ZC7")
+		_cQuery += " WHERE	ZC7_BLOCO IN 					"+ FormatIn(AllTrim(_cFilBlc),";")
+		_cQuery += " 		AND D_E_L_E_T_ <> '*'			"
+		_cQuery += " ORDER BY ZC7_BLOCO, ZC7_NOME		"		
+		
+		TCQUERY _cQuery NEW ALIAS "TRA"	
+		
+		DbSelectArea("TRA")
+		TRA->(DbGotop())
+		
+		nI := oModelZC6:Length()
+		oModelZC6:GoLine( nI )
+		oModelZC6:SetNoInsert( .F. )
+		
+		While .Not. TRA->(Eof())	 
+			
+			_nCont++
+			
+			If _lFirst
+				If _nCont > nI
+					oModelZC6:AddLine()
+				Else
+					oModelZC6:GoLine( _nCont )
+				EndIf
+			Else
+				oModelZC6:AddLine()
+			EndIf
+			
+			oModelZC6:SetValue( 'ZC6_NOME'		, TRA->ZC7_NOME 			)
+			oModelZC6:SetValue( 'ZC6_BLOCO'		, TRA->ZC7_BLOCO 			)
+			oModelZC6:SetValue( 'ZC6_DSCBLC' 	, TRA->ZC7_DSCBLC 			)
+			oModelZC6:SetValue( 'ZC6_CARGO' 	, TRA->ZC7_CARGO 			)
+			oModelZC6:SetValue( 'ZC6_DSCCRG'	, TRA->ZC7_DSCCRG 			)
+			oModelZC6:SetValue( 'ZC6_TRATAM'	, TRA->ZC7_TRATAM			)
+			oModelZC6:SetValue( 'ZC6_EMAIL' 	, TRA->ZC7_EMAIL 			)
+			oModelZC6:SetValue( 'ZC6_TELCEL'	, TRA->ZC7_TELCEL 			)
+			oModelZC6:SetValue( 'ZC6_TELFIX'	, TRA->ZC7_TELFIX 			)
+			oModelZC6:SetValue( 'ZC6_DTANIV'	, StoD(TRA->ZC7_DTANIV)	)
+			oModelZC6:SetValue( 'ZC6_PARTID'	, TRA->ZC7_PARTID 			)
+			oModelZC6:SetValue( 'ZC6_CHFGAB'	, TRA->ZC7_CHFGAB 			)
+			oModelZC6:SetValue( 'ZC6_CHFCEL'	, TRA->ZC7_CHFCEL 			)
+			oModelZC6:SetValue( 'ZC6_CLIENT'	, TRA->ZC7_CLIENT 			)
+			oModelZC6:SetValue( 'ZC6_LOJCLI'	, TRA->ZC7_LOJCLI 			)
+			oModelZC6:SetValue( 'ZC6_EMPRES'	, TRA->ZC7_EMPRES 			)
+			oModelZC6:SetValue( 'ZC6_TITEND'	, TRA->ZC7_TITEND 			)
+			oModelZC6:SetValue( 'ZC6_END'   	, TRA->ZC7_END 				)
+			oModelZC6:SetValue( 'ZC6_CEP'   	, TRA->ZC7_CEP 				)
+			
+			TRA->(DbSkip())	 
+		End
+		
+		oModelZC6:SetNoInsert( .T. )
+		oModelZC6:GoLine(1)
+		
+		If _nCont > 0
+			MsgInfo("Vínculo realizado com sucesso!","Atenção")
+		Else
+			MsgAlert("Não foi possível realizar o Vínculo, favor verificar o(s) Bloco(s) Informados!")
+		EndIf	
+		
+	EndIf
+
+Return
+
+
+/** {Protheus.doc} fTotUsr
+Funcao para selecionar os dados e gravar na grid - todos os usuarios
+
+@author: 	Jose Leite de Barros Neto
+@since: 	31/05/2016
+@Uso: 		SFIEMT
+*/
+Static Function fTotUsr( oModel )
+	
+	Local oModelZC6	:= oModel:GetModel( 'ZC6DETAIL' )
+	Local nI			:= 0
+	Local _nCont		:= 0
+	Local _lFirst	:= oModelZC6:Length() == 1 .And. Empty( oModelZC6:GetValue( "ZC6_BLOCO" ) )
+	
+	If MsgNoYes( "Foi selecionada a opção de VINCULAR todos os Usuários." + CRLF + "Confirma a ação [Sim p/Todos] ?" )
+		
+		If Select("TRA") > 0
+			DbSelectarea("TRA")
+			TRA->(DbCloseArea())
+		EndIf
+		
+		_cQuery := "SELECT * 									"
+		_cQuery += " FROM	"+RetSqlName("ZC7")
+		_cQuery += " WHERE	D_E_L_E_T_ <> '*'				"
+		_cQuery += " ORDER BY ZC7_BLOCO, ZC7_NOME		"
+		
+		TCQUERY _cQuery NEW ALIAS "TRA"	
+		
+		DbSelectArea("TRA")
+		TRA->(DbGotop())
+		
+		nI := oModelZC6:Length()
+		oModelZC6:GoLine( nI )
+		oModelZC6:SetNoInsert( .F. )
+			
+		While .Not. TRA->(Eof())	 
+			
+			_nCont++
+			
+			If _lFirst
+				If _nCont > nI
+					oModelZC6:AddLine()
+				Else
+					oModelZC6:GoLine( _nCont )
+				EndIf
+			Else
+				oModelZC6:AddLine()
+			EndIf
+			
+			oModelZC6:SetValue( 'ZC6_NOME'		, TRA->ZC7_NOME 			)
+			oModelZC6:SetValue( 'ZC6_BLOCO'		, TRA->ZC7_BLOCO 			)
+			oModelZC6:SetValue( 'ZC6_DSCBLC' 	, TRA->ZC7_DSCBLC 			)
+			oModelZC6:SetValue( 'ZC6_CARGO' 	, TRA->ZC7_CARGO 			)
+			oModelZC6:SetValue( 'ZC6_DSCCRG'	, TRA->ZC7_DSCCRG 			)
+			oModelZC6:SetValue( 'ZC6_TRATAM'	, TRA->ZC7_TRATAM			)
+			oModelZC6:SetValue( 'ZC6_EMAIL' 	, TRA->ZC7_EMAIL 			)
+			oModelZC6:SetValue( 'ZC6_TELCEL'	, TRA->ZC7_TELCEL 			)
+			oModelZC6:SetValue( 'ZC6_TELFIX'	, TRA->ZC7_TELFIX 			)
+			oModelZC6:SetValue( 'ZC6_DTANIV'	, StoD(TRA->ZC7_DTANIV)	)
+			oModelZC6:SetValue( 'ZC6_PARTID'	, TRA->ZC7_PARTID 			)
+			oModelZC6:SetValue( 'ZC6_CHFGAB'	, TRA->ZC7_CHFGAB 			)
+			oModelZC6:SetValue( 'ZC6_CHFCEL'	, TRA->ZC7_CHFCEL 			)
+			oModelZC6:SetValue( 'ZC6_CLIENT'	, TRA->ZC7_CLIENT 			)
+			oModelZC6:SetValue( 'ZC6_LOJCLI'	, TRA->ZC7_LOJCLI 			)
+			oModelZC6:SetValue( 'ZC6_EMPRES'	, TRA->ZC7_EMPRES 			)
+			oModelZC6:SetValue( 'ZC6_TITEND'	, TRA->ZC7_TITEND 			)
+			oModelZC6:SetValue( 'ZC6_END'   	, TRA->ZC7_END 				)
+			oModelZC6:SetValue( 'ZC6_CEP'   	, TRA->ZC7_CEP 				)
+			
+			TRA->(DbSkip())	 
+		End
+		
+		oModelZC6:SetNoInsert( .T. )
+		oModelZC6:GoLine(1)
+		
+		If _nCont > 0
+			MsgInfo("Vínculo realizado com sucesso!","Atenção")
+		Else
+			MsgAlert("Não foi possível realizar o Vínculo, favor verificar o(s) Bloco(s) Informados!")
+		EndIf
+			
+	EndIf
+	
+Return
+
+
+/** {Protheus.doc} fGetDados
+Funcao para Buscar os Dados e apresentar os grupos
+
+@author: 	Jose Leite de Barros Neto
+@since: 	31/05/2016
+@Uso: 		SFIEMT
+*/
+Static Function fGetDados()
+	
+	Local _aStru			:= {}
+	Local _aCpoBro 		:= {}
+	Local _oDlgLocal	:= Nil 
+	Local _nOpc			:= 0
+	
+	Private _lInverte 	:= .F.
+	Private _cMark   	:= GetMark()   
+	Private _oMark		:= Nil
+	
+	If Select("TTRB") > 0
+		DbSelectArea("TTRB")
+		TTRB->(DbCloseArea())
+	EndIf
+		
+	AADD(_aStru,{"OK"     		,"C"	,2									,0		})	
+	AADD(_aStru,{"ZC5_CODIGO"   ,"C"	,TAMSX3("ZC5_CODIGO")[1]		,0		})
+	AADD(_aStru,{"ZC5_DESCRI"   ,"C"	,TAMSX3("ZC5_DESCRI")[1]		,0		})
+		
+	//Cria Arquivo Temporario
+	_cArqTrb := Criatrab(_aStru,.T.)
+	DbUseArea(.t.,,_cArqTrb,"TTRB")
+		
+	If Select("TRA") > 0
+		DbSelectArea("TRA")
+		TRA->(DbCloseArea())
+	EndIf
+	
+	_cQuery := " SELECT DISTINCT(ZC5_CODIGO) ZC5_CODIGO, ZC5_DESCRI		" 
+	_cQuery += " FROM "+RetSqlName("ZC5")
+	_cQuery += " WHERE D_E_L_E_T_ <> '*' 											"
+	_cQuery += " ORDER BY ZC5_CODIGO												"
+	
+	TCQUERY _cQuery NEW ALIAS "TRA"	
+		
+	DbSelectArea("TRA")
+	TRA->(DbGotop())
+	While .Not. TRA->(Eof())	
+		DbSelectArea("TTRB")	
+		If RecLock("TTRB",.T.)		
+			TTRB->ZC5_CODIGO	:=  TRA->ZC5_CODIGO	
+			TTRB->ZC5_DESCRI	:=  TRA->ZC5_DESCRI	
+			TTRB->(MsUnlock())
+		EndIf	
+		TRA->(DbSkip())
+	End
+		
+	TRA->(DbCloseArea())
+		
+	//Define quais colunas (campos da TTRB) serao exibidas na MsSelect
+	_aCpoBro	:= {	{ "OK"					,, "Mark"           ,"@!"},;			
+						{ "ZC5_CODIGO"		,, "Codigo"         ,"@!"},;			
+						{ "ZC5_DESCRI"		,, "Loja"           ,"@!"}}
+							
+	//Cria uma Dialog
+	DEFINE MSDIALOG oDlg TITLE "Blocos - CRP" From 9,0 To 315,800 PIXEL
+		
+		DbSelectArea("TTRB")
+		TTRB->(DbGotop())
+			
+		//Cria a MsSelect
+		_oMark := MsSelect():New("TTRB","OK","",_aCpoBro,@_lInverte,@_cMark,{17,1,150,400},,,,,)
+		_oMark:bMark := {| | MarkItem()} 
+		
+	//Exibe a Dialog
+	ACTIVATE MSDIALOG oDlg CENTERED ON INIT EnchoiceBar(oDlg,{|| _nOpc := 1, oDlg:End()},{|| oDlg:End()})
+		
+	If _nOpc == 1
+			
+		DbSelectArea("TTRB")
+		TTRB->(DbGotop())
+		While .Not. TTRB->(Eof())
+			If Marked("OK")
+				_cFilBlc += TTRB->ZC5_CODIGO + ';'
+			EndIf
+			TTRB->(DbSkip())
+		End
+			
+	EndIf
+		
+	//Fecha a Area e elimina os arquivos de apoio criados em disco.
+	TTRB->(DbCloseArea())
+		
+	//Apaga Arquivo Temporario			
+	If File(_cArqTrb + GetDBExtension())
+		FErase(_cArqTrb  + GetDBExtension())
+	EndIf
+	
+Return
+
+
+/** {Protheus.doc} MarkItem
+Funcao para Marcar o item no Browse
+
+@author: 	Jose Leite de Barros Neto
+@since: 	31/05/2016
+@Uso: 		SFIEMT
+*/
+Static Function MarkItem()
+	
+	If RecLock("TTRB",.F.)
+		If Marked("OK")	
+			TTRB->OK := _cMark
+		Else	
+			TTRB->OK := ""
+		Endif        
+		TTRB->(MsUnlock())
+	EndIf
+	
+	_oMark:oBrowse:Refresh()
+	
+Return

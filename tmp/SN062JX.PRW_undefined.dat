@@ -1,0 +1,573 @@
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE 'RWMAKE.CH'
+#INCLUDE "TOPCONN.CH"
+#INCLUDE 'FONT.CH'
+#INCLUDE 'COLORS.CH'
+#INCLUDE "PARMTYPE.CH"
+#INCLUDE "TBICONN.CH"
+/*/
+	+--------------------------------------------------------------------------+
+	|{Protheus.doc}<SN062JX>                                                   |
+	| Conjuntos de Leitura do Arquivo de Retorno do Banco 104 - Cef - Caixa    |
+	| Economica Federeal - RETORNO RELATIVOS DAS REMESSA DE PAGAMENTO          |
+	|                                                                          |
+	|@Author<Antonio Dantas>                                                   |
+	|@since<25/08/2014>                                                        |
+	|@version<001>                                                             |
+	|@return<Nil>,<Nil>                                                        |
+	|                                                                          |
+	|@example                                                                  |
+	|<Nil>                                                                     |
+	|                                                                          |
+	|@see                                                                      |
+	|<Nil>                                                                     |
+	+-----------+--------------------------------------------------------------+
+	|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
+	+-----------+--------------------------------------------------------------+
+/*/
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fLer_104>                                                  |
+|Rotina Responsavel por Ler o arquivo de Retorno conforme configuracao     |
+|																		   |
+|@Author<Antonio Dantas>                                                   |
+|@since<25/08/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@Receive                                                                  |
+|<   _cFilial (c) - Codigo da Filial                                       |
+|    _cConven (c) - Codigo do Convenio (Protheus)                          |
+|   _cPeriodo (c) - Codigo do Periodo                                      |
+|       _cSeg (c) - Codigo da Seguencia (Calendario)                       |
+|    _cSessao (c) - Codigo da Sessao                                       |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _lRetOK (l) - (.t.) Se a Geracao do Arquivo foi OK                    |
+|                  (.f.) Por qualquer motivo não gerou arquivo de remesa   |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+User Function fLer_104(_cFilial,_cConven,_cPeriodo,_cSeg,_cSessao)
+Local _cArqRet 		:= ""
+Local _cArLayout	:= M->ZP1_XLYRET
+Local _cPathRoot	:= GetNewPar("MV_XRETPGT","\Pronatec\Layouts\Pagto\Retorno")   
+Local _aArqLyt 		:= {} 
+Local _aFilds		:= {}  
+//-- 
+Local _aCab_H 		:= {}
+Local _aDet_H 		:= {}
+Local _aTra_H		:= {}
+//-- 
+Local _nH_Arq		:= 0
+Local _cFileLog		:= ""
+Local _nRegs		:= 0
+Local _nCtaREG		:= 0 
+//--
+Local _nPc			:= 0 
+//-- 
+Local _bBlock		:= "" 
+Local _cTpReg   	:= "" 
+Local _lHeader		:= .f.
+Local _lDetalhe		:= .f.
+Local _lTrailler	:= .f. 
+Local _lE_Header	:= .f.
+Local _lE_Traill	:= .f.
+Local _lE_Detalh	:= .f.
+Local _cString 		:= ""        
+Local _nTamTx		:= 0
+Local _nCtaA 		:= 0  
+Local _cTipReg 		:= "" 			//-- Variavel para Identificar o Tipo de Registro do Arquivo de Retorno  
+Local _cCodSeg 		:= ""			//-- Para Linhas DETALHES (Tipo = 3) Define o Seguimento: Primeira Linha (A) | Segunda Linha (B)  
+Private _cNomArqR	:= 	""
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Validacoes antes da chamada da rotina de geracao do arquivo de Remesa |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If Alltrim(_cArLayout) == ""
+	Aviso(FunName()+"/"+ProcName(),"Não foi informado neste Convênio o nome do Arquivo de Configuração do Arquivo de Retorno!",{"OK"})
+	_lRetOK := .f.	
+Endif
+If _lRetOK
+	_cArqRet := cGetFile('Arquivo |*.*','Lêr Arquivo',1,'C:\TEMP',.F.,GETF_LOCALHARD)
+	If _cArqRet == ""
+		Aviso(FunName()+"/"+ProcName(),"Nome do Arquivo de Retorno não Foi Informado!",{"OK"})
+		_lRetOK := .f.
+	Endif  
+	//-- *********************************************************************
+	//--    Captura o NONE do Arquivo de RETORNO DE PAGAMENTO 
+	//-- *********************************************************************
+	_cString	:= Alltrim(_cArqRet)
+	_nTamTx		:= Len(_cString)
+	_nCtaA 		:= 0
+	For _nCtaA := _nTamTx to 1 step -1
+		If Substr(_cString,_nCtaA,1) == "\"
+			Exit			
+		Endif
+	Next _nCtaA
+	_cNomArqR	:= 	Substr(_cString,_nCtaA+1,_nTamTx)
+Endif  
+If _lRetOK
+	If !File(_cPathRoot+Alltrim(_cArLayout))
+		Aviso(FunName()+"/"+ProcName(),"Arquivo de Layout: "+_cPathRoot+Alltrim(_cArLayout)+". não foi encontrado!",{"OK"})
+		_lRetOK := .f.
+	EndIf
+EndIf     
+If _lRetOK
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Carrega o Layout do Arquivo de Retorno                                |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_aArqLyt := u_fCrArqIn(_cPathRoot+Alltrim(_cArLayout))
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Identifica os Arrays de Header, Detalhe e Trailler                    |
+	//| OBS: Caso venha a existir tipo de arquivos com mais de uma linha por  |
+	//|      tipo; Tratar caso a caso. Deve-se adicionar ao array do tipo e   |
+	//|      tratar na seguencia.                                             |
+	//|      - Inicialmente estamos considerando um de cada tipo.             |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ  
+	_nCtaA	:= 0
+	For _nCtaA := 1 To Len(_aArqLyt) 
+		_cLinTP := Substr(_aArqLyt[_nCtaA,1],2,1)
+		Do Case
+			Case _cLinTP == "H"   	//-- Header
+				_aCab_H 	:= _aArqLyt[_nCtaA,4] 
+				aAdd(_aCabecalh,u_fAjustSt(_aCab_H))
+				_lHeader	:= .t.
+			Case _cLinTP == "D"   	//-- Detalhe
+				_aDet_H 	:= _aArqLyt[_nCtaA,4]
+				aAdd(_aDetalhe,u_fAjustSt(_aDet_H))
+				_lDetalhe	:= .t.
+			Case _cLinTP == "T" 	//-- Trailler
+				_aTra_H	:= _aArqLyt[_nCtaA,4]   
+				aAdd(_aTrailler,u_fAjustSt(_aTra_H))
+				_lTrailler	:= .t.
+		Endcase
+	Next _nCtaA    
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Abre o arquivo de RETORNO com acesso exclusivo                        |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_nH_Arq	:= fOpen(_cArqRet,68) 
+	If _nH_Arq = -1
+		Aviso(FunName()+"/"+ProcName(),"Não foi Possivel Abrir o Arquivo de Retorno!",{"OK"})
+		_lRetOK := .f.
+	EndIf         
+Endif 	 
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Trata caso a caso os Layout's da Remessa                              |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ  
+If _lRetOK .and. Len(_aDetalhe) >= 1
+	//-- Seleciona tabela de Alunos 	
+	dbSelectArea("ZP0")
+	ZP0->(dbSetOrder(1))			//-- CPF 
+	//-- Seleciona Tabela de Convenios (Posiciona convencio corrente) 
+	dbSelectArea("ZP3")
+	ZP3->(dbSetOrder(2))		//-- Convenio + Situacao 
+ 	ZP3->(dbSeek(FwxFilial("ZP3")+_cConven+"L"))
+	//-- Seleciona o Arquivo TXT       
+	FT_FUse(_cArqRet)
+	//-- Manda o Ponteiro para topo 
+	FT_FGOTOP()
+	//-- Conta o Numero de Linhas 	
+	_nTotLIN := FT_FLASTREC()
+	//-- Inicializa o Termometro 	
+	ProcRegua(_nTotLIN)
+	//-- Loop de Leitura  
+	Do While !FT_FEof()
+        //-- Captura a linha a ser lida 
+		_cTexto := Upper(AllTrim(FT_FReadln()))
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| IDENTIFICA O TIPO DE REGISTRO, SENDO:                                 |
+		//| -------------------------------------                                 |
+		//| Header do Tipo 0	: Primeira Linha de Cabecalho                     |
+		//| Header do Tipo 1	: Segunda Linha de Cabecalho                      |
+		//|                                                                       |
+		//| Detalhe do Tipo A	: Primeira Linha de Detalhe                       |
+		//| Detalhe do Tipo B 	: Segunda Linha de Detalhe                        |
+		//|                                                                       |
+		//| Trailler do tipo 5	: Primeira Linha de Rodape                        |
+		//| Trailler do tipo 9	: Segunda Linha de Rodape                         |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+  		_cTipReg := Substr(_cTexto,8,1)				//-- Em todas as Linhas e na mesma posicao
+		//-- Implementa Termometro
+		_nCtaREG++
+		IncProc("Total de Registros:"+Alltrim(Transform(_nTotLIN,"@E 999,999,999"))+"|  Lidos:"+Alltrim(Transform(_nCtaREG,"@E 999,999,999")))   
+		//-- Regras para definir se a linha e de Cabecalho, Detalhe ou Rodape	
+		_lE_Header := .f.
+		_lE_Detalh := .f.
+		_lE_Traill := .f.
+		If _cTipReg $ "0#1"
+			_lE_Header := .t.
+		ElseIf _cTipReg $ "5#9"
+			_lE_Traill := .t.
+		Else
+			_lE_Detalh := .t.
+		Endif 
+		do Case
+			Case _lRetOK .and. _lE_Header
+			  	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//| ***** LER CABECALHO "Header"                                          |
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			 	//--     
+				_aFilds	:= {} 
+				_nPc 	:= 0
+				//-- *********************************************************************
+				//--   Utiliza o Layout para Cabecalho "Header" conforme o Tipo de Reg.
+				//-- *********************************************************************
+				If _cTipReg == "0"
+					_nCtaA := 0
+					For _nCtaA := 1 To Len(_aCabecalh[1])    
+						aadd(_aFilds, Substr(_cTexto,_aCabecalh[1,_nCtaA,2,4],_aCabecalh[1,_nCtaA,2,6]))  
+					Next _nCtaA
+				ElseIf _cTipReg == "1"
+					_nCtaA := 0
+					For _nCtaA := 1 To Len(_aCabecalh[2])    
+						aadd(_aFilds, Substr(_cTexto,_aCabecalh[2,_nCtaA,2,4],_aCabecalh[2,_nCtaA,2,6]))  
+					Next _nCtaA
+				Endif 
+				aadd(_aColsCab,_aFilds)  
+				//-- So Verifica quando for "Header" tipo "0"
+				If _cTipReg == "3"
+					_nPc 	:= aScan(_aCabecalh[1], {|x| Upper(x[2,2]) == "ZP1_XCONTR" })
+					//-- *********************************************************************
+					//--    Valida o Contrato/Convenio 
+					//-- *********************************************************************
+					If Val(_aColsCab[1,_nPc]) != Val(ZP1->ZP1_XCONTR)
+						Aviso(FunName()+"/"+ProcName(),"O Arquivo de retorno não pertence á este Contrato/Convênio!",{"OK"})
+						_lRetOK := .f.
+						Exit
+					Endif  
+				Endif 
+			Case _lRetOK .and. _lE_Detalh
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//| ***** LER DETALHE "Detalhe"                                           |
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			 	//--     
+				_aFilds	:= {}          
+				_cCodSeg := Substr(_cTexto,14,1)				//-- Somente para Linhas Detalhe: TIPO DE SEGUIMENTO 
+				//-- *********************************************************************
+				//--   Utiliza o Layout para Detalhe "Detalhe" conforme o Tipo de Reg.
+				//-- *********************************************************************
+				If _cCodSeg == "A"
+					_nCtaA := 0
+					For _nCtaA := 1 To Len(_aDetalhe[1])    
+						aadd(_aFilds, Substr(_cTexto,_aDetalhe[1,_nCtaA,2,4],_aDetalhe[1,_nCtaA,2,6]))   
+					Next _nCtaA
+				ElseIf _cCodSeg == "B"
+					_nCtaA := 0
+					For _nCtaA := 1 To Len(_aDetalhe[2])    
+						aadd(_aFilds, Substr(_cTexto,_aDetalhe[2,_nCtaA,2,4],_aDetalhe[2,_nCtaA,2,6]))   
+					Next _nCtaA
+				Endif 
+				aadd(_aColsDet,_aFilds)   
+			Case _lRetOK .and. _lE_Traill
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//| ***** LER RODAPE "Trailler"                                           |
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			 	//-- 
+				_aFilds	:= {} 
+				//-- *********************************************************************
+				//--   Utiliza o Layout para Rodape "Trailler" conforme o Tipo de Reg.
+				//-- *********************************************************************
+				If _cTipReg == "5"
+					_nCtaA := 0
+					For _nCtaA := 1 To Len(_aTrailler[1])    
+						aadd(_aFilds, Substr(_cTexto,_aTrailler[1,_nCtaA,2,4],_aTrailler[1,_nCtaA,2,6])) 
+					Next _nCtaA
+				ElseIf _cTipReg == "9"
+					_nCtaA := 0
+					For _nCtaA := 1 To Len(_aTrailler[2])    
+						aadd(_aFilds, Substr(_cTexto,_aTrailler[2,_nCtaA,2,4],_aTrailler[2,_nCtaA,2,6])) 
+					Next _nCtaA
+				Endif 
+				aadd(_aColsTra,_aFilds)    
+		Endcase
+		//-- Segue para Proxima Linha 
+		FT_FSkip()
+	EndDo
+	If !_lRetOK
+		Aviso(FunName()+"/"+ProcName(),"Não existem registros aptos para retorno!",{"OK"})
+	Endif 
+	//-- *********************************************************************
+	//--    Fecha o Arquivo de Retorno que esta sendo lido
+	//-- *********************************************************************
+	fClose(_nH_Arq)
+Endif 
+Return _lRetOK
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fPrc_104>                                                  |
+| Processa as Informacoes do Arquivo de Retorno, GRAVA na ZP7 - Matriculas |
+| a Pagar.                                                                 |
+|																		   |
+|@Author<Antonio Dantas>                                                   |
+|@since<25/08/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@Receive                                                                  |
+|<   _cFilial (c) - Codigo da Filial                                       |
+|    _cConven (c) - Codigo do Convenio (Protheus)                          |
+|   _cPeriodo (c) - Codigo do Periodo                                      |
+|       _cSeg (c) - Codigo da Seguencia (Calendario)                       |
+|    _cSessao (c) - Codigo da Sessao                                       |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _lRetOK (l) - (.t.) Se a Geracao do Arquivo foi OK                    |
+|                  (.f.) Por qualquer motivo não gerou arquivo de remesa   |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+User Function fPrc_104(_cFilial,_cConven,_cPeriodo,_cSeg,_cSessao)
+Local _aArea		:= GetArea()
+Local _lFez 		:= .f.
+//--
+Local _Prm 			:= {}
+Local _PrC			:= {}
+Local _Ptr			:= {}
+Local _Psq			:= {}
+Local _Pcs			:= {}
+Local _Poc			:= {}
+Local _Pid 			:= {}
+Local _pdt 			:= {}
+//--
+Local _nPosM 		:= 0
+Local _nCodErro 	:= 0
+Local _cMsgErro 	:= ""   
+Local _cOcorrenc	:= ""   
+//-- 
+Local _cChaveRM		:= ""
+Local _lTemErro 	:= .f.
+//--
+Local _nRegs		:= Len(_aColsDet)  
+Local _nRecNOTOK	:= 0
+Local _nRegOK		:= 0
+Local _cPathRoot	:= GetNewPar("MV_XLOGPRO","\Pronatec\Logs\")   
+Local _cFileLog		:= CriaTrab(Nil,.F.)
+Local _nHdl_log		:= fCreate(_cPathRoot + cFilAnt + "_" + FunName()+"_"+ProcName() + _cFileLog +"_LOG.txt")  
+Local _cMensagem	:= ""
+Local _lIntFIN		:= .f.   
+Local _dDataPG 		:= CTOD("  /  /  ")   
+Private _aInfTit	:= {}
+//-- Cria Regua
+ProcRegua(_nRegs)   
+//-- *********************************************************************
+//-- Implementa controle de Transacao.
+//-- *********************************************************************
+Begin Transaction           
+	//-- *********************************************************************
+	//--    Posiciona o Convenio 
+	//-- *********************************************************************
+	dbSelectArea("ZP1")
+	ZP1->(dbSetOrder(1))			//-- Convenio 
+	ZP1->(dbGoto(_nRecZP1))   
+	//-- Posicao no Cabecalho 
+	_Prm 	:= GetPosVl(_aCabecalh	,"CODREMESSA"	)	//-- No caso da CEF o Codigo da Remesa esta Gravado no Cabecalho 	
+	_PrC	:= GetPosVl(_aCabecalh	,"TIPOREG"		)	//-- Codigo do registro
+	//-- Posicao no Detalhe 
+	_Ptr	:= GetPosVl(_aDetalhe	,"TIPOREG"		)	//-- Codigo do registro
+	_Pcs	:= GetPosVl(_aDetalhe	,"CODSEG"		)  	//-- Cod. Segmento 
+	_Psq	:= GetPosVl(_aDetalhe	,"SEGUENCIA"	)  	//-- Numero Seguencial dos Registros 
+	_Poc	:= GetPosVl(_aDetalhe	,"OCORRENCIA"	)  	//-- Ocorrencia 
+	_Pid 	:= GetPosVl(_aDetalhe	,"MATRICULA"	)  	//-- Idenrificador da Remessa (Codigo da Matricula) 
+	_pdt 	:= GetPosVl(_aDetalhe	,"DATAEFETIV"	)  	//-- Data Efetiva 
+	//-- *********************************************************************
+	//--    Monta cabecalho do Lod de Leitura do Arquivod e Pre Cadastro
+	//-- *********************************************************************
+	_cTextLOG := "#RELATORIO DE LOG - LEITURA DO ARQUIVO RETORNO DE PAGAMENTO (DIARIO) - "+DTOC(date())+" as "+time()+CHR(13)+CHR(10) 
+	_cTextLOG += "       Convenio: "+_cConven+CHR(13)+CHR(10) 
+	_cTextLOG += " Qtde de Regist: "+Alltrim(Transform(_nRegs,"@E 999,999,999"))+_cConven+CHR(13)+CHR(10) 
+	//-- *********************************************************************
+	//--    Imprime o Cabecalho do Relatorio de LOG 
+	//-- *********************************************************************
+	_cTextLOG +=	PadR("Tp SIGE" 		,TamSx3("ZP1_XSIGE")[1])+";"+;
+					PadR("Evento" 		,TamSx3("ZP7_XEVENT")[1])+";"+;
+					PadR("Matricula"	,TamSx3("ZP7_XMATRI")[1])+";"+;
+					PadR("Codigo" 		,TamSx3("ZP0_XCOD")[1])+";"+;
+					PadR("Nome"			,TamSx3("ZP0_XNOME")[1])+";"+;
+					PadR("CPF" 			,TamSx3("ZP0_XCPF")[1])+";"+;
+					PadR("Dt Nasc." 	,TamSx3("ZP0_XDTNAS")[1])+";"+;
+					PadR("Tip Pgto" 	,TamSx3("ZP7_XTIPO")[1])+";"+;	
+					PadR("Ocorr,"		,40)+CHR(13)+CHR(10)      
+	fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+	_nCtaA 	:= 0  
+	_nFim 	:= Len(_aColsDet)-2 	//-- para Evitar as linhas do RODAPE 
+	For _nCtaA := 1 To _nFim
+		IncProc("Total de Registros:"+Alltrim(Transform(_nRegs,"@E 999,999,999"))+"|  Lidos:"+Alltrim(Transform(_nCtaA,"@E 999,999,999")))   
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Identifica o Tipo de Registro, sendo                                  |
+		//| Header do Tipo 0	: Primeira Linha de Cabecalho                     |
+		//| Header do Tipo 1	: Segunda Linha de Cabecalho                      |
+		//|                                                                       |
+		//| Detalhe do Tipo 3                                                     |
+		//|    Seguimento do Tipo A	: Primeira Linha de Detalhe                   |
+		//|    Seguimento do Tipo B : Segunda Linha de Detalhe                    |
+		//|                                                                       |
+		//| Trailler do tipo 5	: Primeira Linha de Rodape                        |
+		//| Trailler do tipo 9	: Segunda Linha de Rodape                         |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+  		_cTipReg 	:= _aColsDet[_nCtaA,_Ptr[2]]
+		If _cTipReg == "3" 
+			_cCodSeg := _aColsDet[_nCtaA,_Pcs[2]]		//-- Define o SEGUMENTE dos tipos = 3 (Detalhe)
+			If _cCodSeg == "A"
+				//-- *********************************************************************
+				//--    Define a Chave para localizar na ZP7
+				//-- *********************************************************************
+	         	_cChaveRM	:= Strzero(Val(_aColsCab[_Prm[1],_Prm[2]]),8)+PadR(Substr(_aColsDet[_nCtaA,_Pid[2]],1,6),TamSX3("ZP7_XMATRI")[1])
+				//-- *********************************************************************
+				//--   Identifica se houve erro e qual a mensagem 
+				//-- *********************************************************************
+				_cCodErro := Upper(Alltrim(_aColsDet[_nCtaA,_Poc[2]]))
+				If _nCodErro > 0 
+					_lTemErro 	:= .t.
+					_cMsgErro := Iif(_nCodErro <= Len(_aErros),_aErros[_nCodErro,3],"Codigo ["+StrZero(_nCodErro,2)+"]. Erro Não Identificado!")
+				Endif 					
+				//-- Seleciona a Tabela de Matriculas 
+				dbSelectArea("ZP7")
+				ZP7->(dbSetOrder(14))		//-- Cod Remessa+Matricula 
+				If (ZP7->(dbSeek(_cChaveRM)))
+					//-- Posiciona o Cadastro do Aluno 			
+					dbSelectArea("ZP0")
+					ZP0->(DbSetOrder(1))
+					ZP0->(dbSeek(FwxFilial("ZP0")+ZP7->ZP7_XCPF))
+					//-- *********************************************************************
+					//--   GRAVA EFETIVAMENTE O RETORNO
+					//-- *********************************************************************
+					ZP7->(RecLock("ZP7",.f.))
+					//-- *********************************************************************
+					//--   Identifica a mensagem de erro se o registro tiver sido rejeitado.
+					//-- *********************************************************************
+					If _lTemErro
+						Replace ZP7->ZP7_XSTATU With "R"			//-- Status (Situacao) -- Rejeitado
+						Replace ZP7->ZP7_XOCORR With _cMsgErro		//-- Ocorrencia 
+						//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+						//| Se nao for valido, grava no LOG                                    ³
+						//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+						_cTextLOG := 	ZP1->ZP1_XSIGE+";"+;
+										ZP7->ZP7_XEVENT+";"+;
+										ZP7->ZP7_XMATRI+";"+;
+										ZP0->ZP0_XCOD+";"+;
+										ZP0->ZP0_XNOME+";"+;
+										ZP0->ZP0_XCPF+";"+;
+										DTOC(ZP0->ZP0_XDTNAS)+";"+;
+										ZP7->ZP7_XTIPO+";"+;	
+										_cMsgErro+" "+CHR(13)+CHR(10)    
+						fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG) 
+						_lTemErro := .f. 
+						_nRecNOTOK++
+					Else
+						//-- Monta a Data de Pagamento 
+						_dDataPG := DTOC(Substr(_aColsDet[_nCtaA,_pdt],1,2)+"/"+Substr(_aColsDet[_nCtaA,_pdt],3,2)+"/"+Substr(_aColsDet[_nCtaA,_pdt],7,2))
+						//-- 
+						Replace ZP7->ZP7_XSTATU With "P"		  	//-- Status (Situacao): PAGA
+						Replace ZP7->ZP7_XNARPG	With _cNomArqR		//-- Nome Arq Pg
+						Replace ZP7->ZP7_XRETPG	With ""				//-- ID Ret Pagto
+						Replace ZP7->ZP7_XDTPG	With _dDataPG		//-- Data do Pagamento 
+						_nRegOK++
+					Endif    
+					//-- 
+					ZP7->(MsUnLock())
+					ZP7->(dbCommit()) 
+					_lFez := .T.
+				Endif	//-- Se Encontrou a Chave 
+			Endif	//-- Se o SEGUIMENTO do Registro for igual a "A"
+		Endif	//-- Se o Tipo de Registro for igual a "3" - Detalhe 
+	Next _nCtaA     
+	If _lFez
+		//-- ****************************************************************
+		//--    MODIFICA O STATUS DA REMESSA: R=Remessa Efetivada
+		//--    Localiza a Remessa [Periodo+Calendario+Sessao+Convenio]
+		//-- ****************************************************************
+		dbSelectArea("ZPA")
+		ZPA->(dbSetOrder(3))			//-- Codigo da Remessa 
+		ZPA->(DbSeek(FwxFilial("ZPA")+_cConven+_cCodRemes+"PG"))
+		//--
+		ZPA->(RecLock("ZPA",.f.))
+		Replace ZPA->ZPA_XSTATU With "T" 			//-- Status da RETORNO OK 
+		ZPA->(MsUnLock())
+		ZPA->(dbCommit())
+		//-- ****************************************************************
+		//--    Modifica o Status da Sessão para Remessa Enviada 
+		//-- ****************************************************************
+		u_fCkRtZP6(_cPeriodo,_cSeg,_cSessao)		//-- Rotina Descrita no fonte [SN0625X.PRW]	  
+	Endif 	//-- _lFez
+End Transaction     
+If _lFez
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Gera a Integracao FINANCEIRA.                                   |
+	//| A Integracao financeira so ocorre se o parametro [MV_XPRTFIN]   |
+	//| estiver DECLARADO como S=Sim                                    |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	If _cIntegrFN == "S"  
+		//-- Chama rotina de integracao finaneira
+		FWMsgRun(,{|| _lIntFIN := U_SN0698X("Retorno_da_Remessa",ZP1->ZP1_XCONV,_cCodRemes,_cPeriodo,_cSeg,_cSessao,,"P")  }, "Integração Financeira.", "Aguarde..." )
+		If _lIntFIN
+			If Len(_aInfTit) > 0
+				//-- _aInfTit := {_cPrefixo,_cNum,_cTipoTIT,_cCliFor,_cLoja,dDataBase+10,_cPeriodo,_cSeg,_cSessao,_nValTit}
+				_cMensagem := "  * A T E N Ç Ã O:  Integração Financeira finalizada com sucesso! "+Chr(13)+Chr(10)
+				_cMensagem += " Gerado o Titulo: "+Chr(13)+Chr(10)
+				_cMensagem += " [Fornecedor : "+_aInfTit[4]+"/"+_aInfTit[5]+" - "+Alltrim(Posicione("SA2",1,FwxFilial("SA2")+_aInfTit[4]+_aInfTit[5],"A2_NOME"))+"]"+Chr(13)+Chr(10)
+				_cMensagem += " [Prefixo: "+Alltrim(_aInfTit[1])+"], [Numero: "+Alltrim(_aInfTit[2])+"], [No Valor de R$ "+Alltrim(TransForm(_aInfTit[10],PesqPict("SE2","E2_VALOR")))+"]"+Chr(13)+Chr(10)
+				_cMensagem += " [Vencimento :"+Dtoc(_aInfTit[6])+"]"+Chr(13)+Chr(10)
+				_cMensagem += " [Periodo :"+_aInfTit[7]+"], [Calendario: "+_aInfTit[8]+"], [Sessão: "+_aInfTit[9]+"] "+Chr(13)+Chr(10)
+				Aviso(FunName()+"/"+ProcName(),_cMensagem,{"OK"})
+			Endif 	//-- _lIntFIN
+		Endif	//-- _lIntFIN
+	Endif 	//-- _cIntegrFN == "S"
+Endif 	//-- _lFez
+_cTextLOG := "Resumo da Leitura do Retorno: "+CHR(13)+CHR(10) 
+_cTextLOG += "    Total de Registro: "+Alltrim(Transform(_nRegs		,"@E 999,999,999"))+CHR(13)+CHR(10) 
+_cTextLOG += "        Total Aceitos: "+Alltrim(Transform(_nRegOK	,"@E 999,999,999"))+CHR(13)+CHR(10) 
+_cTextLOG += "     Total Rejeitados: "+Alltrim(Transform(_nRecNOTOK	,"@E 999,999,999"))+CHR(13)+CHR(10) 
+fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+//-- ****************************************************************
+//--    Fecha o Arquivo de Log
+//-- ****************************************************************
+fClose(_nHdl_Log) 
+If Aviso(FunName()+"/"+ProcName(),"Leitura encerrada. Deseja imprimir o arquivo de Log ["+_cFileLog+"_LOG.txt] neste momento?", {"Sim","Não"}) == 1
+	u_SN069BX(_cPathRoot + cFilAnt + "_" + FunName()+"_"+ProcName() + _cFileLog+"_LOG.txt")
+Endif    
+RestArea(_aArea)
+Return Nil
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<GetPosVl>                                                  |
+| Devolve a posicao de uma campo dentro dos arrays de configuracao de      |
+| Header, Detalhe e Trailler                                               |
+|																		   |
+|@Author<Antonio Dantas>                                                   |
+|@since<25/08/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@Receive                                                                  |
+|<   _aVetor (a) - Array com campos e configuracoes                        |
+|    _cField (c) - Nome "Identificacao" do Campo                           |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   aPosicao := {}  - Array com as posicoes do Campo                      |
+|     aPosicao[1] (n) - Posicao da Linha (Conforme o tipo)                 |
+|     aPosicao[2] (n) - Posicao do Campo                                   |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function GetPosVl(_aVetor,_cField)
+Local _aPosicao := {}
+Local _nCtaA 	:= 0
+Local _nPc 		:= 0
+Local _nPosV	:= 0
+_nCtaA 	:= 0
+For _nCtaA := 1 To Len(_aVetor)    
+	_nPc 	:= aScan(_aVetor[_nCtaA], {|x| Upper(x[2,2]) == _cField })
+	If _nPc > 0 
+		_nPosV	:= _nCtaA
+		Exit 
+	Endif 						
+Next _nCtaA
+_aPosicao := {_nPosV,_nPc}
+Return _aPosicao   

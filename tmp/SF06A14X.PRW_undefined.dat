@@ -1,0 +1,1362 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "TOPCONN.CH"
+
+/*/{Protheus.doc} SF06A14X
+(long_description)
+@type class
+@author j2a.luizjunior
+@since 14/03/2017
+/*/
+
+CLASS SF06A14X
+
+	METHOD New() CONSTRUCTOR
+	METHOD GERACRON()
+	METHOD GETNUMCNW()
+	METHOD CHKEXC()
+	METHOD FGRVSTRM()
+	METHOD PREPEMAIL()
+
+ENDCLASS
+
+/*/{Protheus.doc} NEW
+(long_description)
+@type method
+@author j2a.luizjunior
+@since 14/03/2017
+/*/
+
+METHOD NEW() CLASS SF06A14X
+RETURN(SELF)
+
+/*/{Protheus.doc} CHKEXC
+(long_description)
+@type method
+@author j2a.luizjunior
+@since 16/03/2017
+@version 1.0
+/*/
+
+METHOD CHKEXC() CLASS SF06A14X
+
+	Local _cQuery   := ""
+	Local _cAliasRM := GetNewPar("MV_XSGEABD", "") //"@RMSGE"
+	Local _nOpc     := 5
+	Local _lOk      := .F.
+	Local _cNumCtr  := ""
+	Local _cQury	:= ""
+	//Walmir Junior 17/05/2018 - Variï¿½veis para controle de email.
+	Local _aMsg 	:= {}
+	Local _lRtEm	:= .F.
+	Local _cTo		:= GetMv("MV_XSGEME")
+	Local _cChTrm	:= ""
+
+	//Walmir Junior 03/08/2018 - Controle de Filial para Envio de Email.
+	Local _cFilX	:= cFilAnt
+
+	//Walmir Junior 18/12/2018 - Variavel para controlar se vai haver tentativa de exclusï¿½o de cronograma apropriado.
+	Local _lDAp		:= .F.
+
+	//Daniel Castro 23/08 - Variavel para controlar a Turma
+	Local _cCdTur	:= ""
+	Local nCNWIt	:= 0
+	Local nCNWDl 	:= 0
+
+	Private _cColJob := "0"
+
+	//Walmir Junior 27/01/2020 - Com base na filial de execuï¿½ï¿½o, seta variï¿½vel de coligada.
+	If "03MT" == SubStr(cFilAnt,1,4)
+		_cColJob := "3"
+	ElseIf "02MT" == SubStr(cFilAnt,1,4)
+		_cColJob := "2"
+	EndIf
+
+	If Select('TMPCTO') > 0
+		DbSelectArea('TMPCTO')
+		TMPCTO->(DbCloseArea())
+	EndIf
+	//Walmir Junior 07/05/2018 - (Comentï¿½rio) View com dados de contratos com ou sem cronograma.
+	_cQuery := " SELECT * 									"
+	_cQuery += " FROM RM.ZMD_INT_PRT_CTO_CTB" + _cAliasRM
+	_cQuery += " WHERE	STS_RM_INC = 1						"//->INCLUIDO PELO RM
+	_cQuery += " AND STS_PROT_INC  = 2						"//->INTEGRADO COM PROTHEUS
+	_cQuery += " AND STS_RM_CANC   = 1						"//->CANCELADO PELO RM
+	_cQuery += " AND Coalesce(STS_RM_CRNG,'0') <> '2'		"//->CANCELADO PELO RM
+	_cQuery += " AND Coalesce(STS_PROT_CANC,0) <> 2		    "//->Nï¿½O CANCELADO NO PROTHEUS
+	_cQuery += " AND CODCOLIGADA 	= " + _cColJob + " 		"
+	//_cQuery += " AND CODCONTRATO = 48895	"
+
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPCTO',.T.,.F.)
+
+	If .Not. TMPCTO->(Eof())
+
+		While .Not. TMPCTO->(Eof())
+
+			//-> Checa se o processo a ser executado ï¿½ uma prorrogaï¿½ï¿½ode ou cancelamento de contrato
+			lCancel := If(AllTrim(TMPCTO->(STS_RM_CRNG)) == "2",.T.,.F.)
+
+			_nSeq   := TMPCTO->(SEQ)
+			_cColig := cValToChar(TMPCTO->(CODCOLIGADA))
+			_cRa    := AllTrim(TMPCTO->(RA))
+			_cCtrRM := AllTrim(TMPCTO->(CODCONTRATO))
+			_cIdPLe := cValToChar(TMPCTO->(IDPERLET))
+			_cCdTur	:= Alltrim(TMPCTO->(CODTURMA))
+
+			If Select('TMPCN9') > 0
+				DbSelectArea('TMPCN9')
+				TMPCN9->(DbCloseArea())
+			EndIf
+			//Walmir Junior 07/05/2018 - (Comentï¿½rio) View com dados para CN9 .
+			_cQuery := " SELECT *							     	        "
+			_cQuery += " FROM RM.PROT_CN9"+ _cAliasRM
+			_cQuery += " WHERE	CODCOLIGADA 			=  " + _cColig
+			_cQuery += " AND RA 						= '" + _cRa    + "' "
+			_cQuery += " AND CODCONTRATO 				= '" + _cCtrRM + "' "
+			_cQuery += " AND IDPERLET 					=  " + _cIdPLe
+
+			DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPCN9',.T.,.F.)
+
+			If .Not. TMPCN9->(Eof())
+
+				While .Not. TMPCN9->(Eof())
+
+					_aDadosCNV	:= {}
+					_aDadosCNW	:= {}
+
+					_cFilCt     := TMPCN9->(CN9_FILIAL)
+					_cColig     := cValToChar(TMPCN9->(CODCOLIGADA))
+					_cRa        := AllTrim(TMPCN9->(RA))
+					_cCtrRM     := PADR(AllTrim(TMPCN9->(CODCONTRATO)),TamSX3('CN9_XCTRRM')[1],Space(TamSX3('CN9_XCTRRM')[1]))
+					_cIdPLe     := cValToChar(TMPCN9->(IDPERLET))
+					_cCodPg     := TMPCN9->(CN9_CONDPG)
+					_cChvRM     := 'SF06A14X: Coligada: '+ _cColig + ' / Ra: '+ _cRa + ' / CtrRM: '+ AllTrim(_cCtrRM) + ' / IdPerLet: ' + _cIdPLe
+
+					//_lOk        := .T.
+
+					ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  _cChvRM)
+
+					/* 3 - Valido Contrato */
+					DbSelectArea('CN9')
+					CN9->( DbOrderNickName('CN9RMGCT') ) //CN9_FILIAL+CN9_XCTRRM+CN9_XCOLRM
+					CN9->( DbGotop() )
+					If .Not. CN9->( DbSeek( _cFilCt +  _cCtrRM + _cColig ) )
+						_cMsg := "PF - SF06A14X: ContratoRM: " + AllTrim(_cCtrRM) + " - Nao foi integrado ao Protheus - Invalido"
+						ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  _cMsg)
+
+						_cLogOc := "PF - SF06A14X: Exclui Cronograma: " + AllTrim(_cCtrRM) + " - Nao foi integrado ao Protheus - Invalido"
+						_oGrOcr:GRVOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,_cLogOc,'CTB','2', 25,_cCdTur)
+
+						TMPCN9->(DbSkip())
+						Loop
+						//Return(Self)
+					Else
+						_cNumCtr := CN9->CN9_NUMERO
+						_cMsg := "PF - SF06A14X: ContratoRM: " + AllTrim(_cCtrRM) + " - Ja integrado - Valido"
+						ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  _cMsg)
+						_oGrOcr:EXCOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,'CTB', 25)
+					EndIf
+
+					CN9->(DbCloseArea())
+
+					If !lCancel
+						//Walmir Junior 16/05/2018	-	Deleta registro de alerta de inicio via e-mail,
+						//								caso jï¿½ tenha havido para turma do contrato.
+						If Select('TMPN9') > 0
+							DbSelectArea('TMPN9')
+							TMPN9->(DbCloseArea())
+						EndIf
+						//Walmir Junior 16/05/2018 - (Comentï¿½rio) View com dados de contratos equivalentes a CN9.
+						_cQury := " SELECT *										    "
+						_cQury += " FROM RM.PROT_CN9"+ _cAliasRM
+						_cQury += " WHERE	CODCOLIGADA 		= '"+ AllTrim(_cColig) + "'	"
+						_cQury += " AND RA 						= '"+ AllTrim(_cRa)    + "'	"
+						_cQury += " AND CODCONTRATO 			= '"+ AllTrim(_cCtrRM) + "'	"
+						_cQury += " AND IDPERLET 				=  "+ AllTrim(_cIdPLe) + " "
+						//_cQury += " AND TURMA                = '"+ Alltrim(_cCdTur) + "' "
+
+						DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQury),'TMPN9',.T.,.F.)
+
+						If .Not. TMPN9->(Eof())
+							fChIni(AllTrim(TMPN9->CN9_FILIAL) + AllTrim(TMPN9->TURMA) + AllTrim(Str(TMPN9->CODCOLIGADA)), "I")
+						EndIf
+
+						//Walmir Junior	2019/09/02 - Melhoria na lï¿½gica do controle de tentativa de exclusï¿½o de cronograma deletado.
+						_lDAp := .F.
+
+						DbSelectArea("CNV")
+						DbSetOrder(1)
+						If DbSeek(_cFilCt + _cNumCtr)
+
+							DbSelectArea("CNW")
+							DbSetOrder(1)
+							If DbSeek(_cFilCt + _cNumCtr)
+
+								//While !(cAlias)->(Eof()) .And. (cAlias)->CODFILIAL + cCodCon == CNW->CNW_FILIAL + CNW->CNW_CONTRA
+								While !CNW->(Eof()) .And. _cFilCt + _cNumCtr == CNW->CNW_FILIAL + CNW->CNW_CONTRA
+
+									IF !EMPTY(TMPCTO->CODTURMA) .AND. AllTrim(CNW->CNW_XCODTU) != AllTrim(TMPCTO->CODTURMA)
+										CNW->(DbSkip())
+										nCNWIt++
+										LOOP
+									ENDIF
+
+									//Walmir Junior 18/12/2018 - Validaï¿½ï¿½o para deletar apenas se nï¿½o houver apropriaï¿½ï¿½o.
+									IF EMPTY(CNW->CNW_DTLANC) .AND. CNW->CNW_FLGAPR = '2' .AND. AllTrim(CNW->CNW_XCODTU) == AllTrim(TMPCTO->CODTURMA) // .AND. ( EMPTY(TMPCTO->CODTURMA) .OR. AllTrim(CNW->CNW_XCODTU) == AllTrim(TMPCTO->CODTURMA) )
+										If RecLock("CNW",.F.)
+											CNW->(DbDelete())
+											CNW->(MsUnlock())
+										EndIf
+										_lDAp := Iif(_lDAp, .T., .F.)
+										nCNWDl ++
+									ELSE
+										_lDAp := .T.
+									ENDIF
+
+									nCNWIt++
+
+									CNW->(DbSkip())
+								EndDo
+
+							EndIf
+
+							If !_lDAp
+								_oGrOcr:EXCOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,'CTB', 26)
+								//Walmir Junior 04/01/2019 -	Mudanï¿½a da exclusï¿½o do cabeï¿½alho para apï¿½s exclusï¿½o dos itens, para assim
+								//								evitar a exclusï¿½o do cabeï¿½alho quando houver item de cronograma apropriado.
+
+								If nCNWIt < nCNWDl
+
+									If RecLock("CNV",.F.)
+										CNV->(DbDelete())
+										CNV->(MsUnlock())
+									EndIf
+
+									_cMsg := "PF - SF06A14X: ContratoRM: " + AllTrim(_cCtrRM) + " - Excluido da CNV"
+									ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  _cMsg)
+
+								EndIf
+
+								_cMsg := "PF - SF06A14X: ContratoRM: " + AllTrim(_cCtrRM) + " Turma: " + _cCdTur + " - Excluido da CNW"
+								ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  _cMsg)
+
+								_lOk  := .T.
+
+								If  nCNWIt < nCNWDl
+									_cMsg := 'PF - SF06A14X - IMPRMExc: Cancelamento do contrato realizada com sucesso!'
+								else
+									_cMsg := 'PF - SF06A14X - IMPRMExc: ROTINA DE EXCLUSÃƒO DE INÃ�CIO DE TURMAS REALIZADO COM SUCESSO'
+								endif
+
+								Self:FGRVSTRM(_nSeq,_cColig,_cRa,_cCtrRM,_cIdPLe,_lOk,_cMsg,_nOpc,_cCdTur)
+
+								//Walmir Junior 17/05/2018 - Envio do alerta de exclusï¿½o do inï¿½cio da turma.
+								_cChTrm	:= AllTrim(TMPCN9->CN9_FILIAL) + AllTrim(TMPCN9->TURMA) + AllTrim(Str(TMPCN9->CODCOLIGADA))
+								fChIni(_cChTrm, "D")
+								If _cColig == "3" .AND. fVldEml(_cChTrm, "D")
+									_aMsg := Self:PREPEMAIL(AllTrim(_cCtrRM), "D")
+									//Preencheu a mensagem do email?
+									If _aMsg[3]
+										//Walmir Junior 03/08/2018 - Controle de Filial para execucao da rotina de envio de e-mail.
+										If TMPCN9->CN9_FILIAL != cFilAnt
+											U_SF0205X(cEmpAnt, TMPCN9->CN9_FILIAL)
+										EndIf
+										//Walmir Junior  03/08/2018 - Obtem novamente o destinatï¿½rio de acordo com a Filial do contrato.
+										_cTo	:= GetMv("MV_XSGEME")
+
+										//Walmir Junior 16/11/2018 - Tratativa para habilitar ou desabilitar envio de email.
+										If _lRMail
+											_lRtEm := U_SFEnvEmail(,_cTo,,,_aMsg[1],_aMsg[2],,.F.)
+										EndIf
+
+										//Walmir Junior  03/08/2018 - Retorna a Filial anterior.
+										U_SF0205X(cEmpAnt, _cFilX)
+
+										//Walmir Junior  03/08/2018 - Retorna ao valor anterior.
+										_cTo	:= GetMv("MV_XSGEME")
+									Else
+										_lRtEm := .F.
+									EndIf
+
+									If _lRtEm
+										//Registra alerta de exclusï¿½o do incio da turma por email.
+										fCtrEm(_cChTrm, "D")
+										//Aviso("Atenï¿½ï¿½o","Email enviado com sucesso!")
+										Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Email enviado com sucesso!")
+									Else
+										//MsgStop("Erro ao enviar email,Verifique!","Erro")
+										Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Erro ao enviar email,Verifique!")
+									EndIf
+								EndIf
+							Else
+								_cMsg := "PF - SF06A14X: ContratoRM: " + AllTrim(_cCtrRM) + " - Cronograma APROPRIADO - Nï¿½o Excluido da CNW"
+								ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  _cMsg)
+
+								_cLogOc := "PF - SF06A14X: Exclui Cronograma: " + AllTrim(_cCtrRM) + " - Cronograma APROPRIADO - Nï¿½o Excluido da CNW"
+								_oGrOcr:GRVOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,_cLogOc,'CTB','2',26,_cCdTur)
+
+								_lOk := .F.
+
+								Self:FGRVSTRM(_nSeq,_cColig,_cRa,_cCtrRM,_cIdPLe,_lOk,_cMsg,_nOpc,_cCdTur)
+							EndIf
+						EndIf
+
+					EndIf
+
+					/*
+					DbSelectArea("CNW")
+					DbSetOrder(1)
+					If DbSeek(_cFilCt + _cNumCtr)					
+						While !CNW->(Eof()) .And. _cFilCt + _cNumCtr == CNW->CNW_FILIAL + CNW->CNW_CONTRA	
+							
+							//-> so ira deletar registros que nao foram apropriados 						
+							If CNW->CNW_FLGAPR == "2" .And. CNW->CNW_DTLANC == SToD("  /  /    ")											
+								If RecLock("CNW",.F.)
+									CNW->(DbDelete())
+									CNW->(MsUnlock())
+								EndIf							
+							EndIf							
+							
+							CNW->(DbSkip())
+						EndDo	
+
+						DbSelectArea("CNV")
+						DbSetOrder(1)
+						If DbSeek(_cFilCt + _cNumCtr)
+							
+							If !lCancel
+							
+								If RecLock("CNV",.F.)
+									CNV->(DbDelete())
+									CNV->(MsUnlock())
+								EndIf
+								
+								_cMsg := "PF - IMPGCTRM: ContratoRM: " + AllTrim(_cCtrRM) + " - Excluido da CNV" 
+								ConOut(_cMsg)
+							
+							EndIf
+												
+						EndIf
+					
+					EndIf
+					*/
+
+					TMPCN9->(DbSkip())
+				EndDo
+
+			EndIf
+
+			TMPCTO->(DbSkip())
+		EndDo
+
+	EndIf
+
+RETURN
+
+/*/{Protheus.doc} GERACRON
+(long_description)
+@type method
+@author j2a.luizjunior
+@since 14/03/2017
+@version 1.0
+/*/
+
+METHOD GERACRON() CLASS SF06A14X
+
+	Local _cAliasRM := ""
+	Local _cConta   := ""
+	Local _cDescri	:= ""
+	//Local _cClvl    := ""
+	Local _cNumCron := ""
+	Local _cNumCtr  := ""
+	Local _nOpc		:= 3 		//Inclusao
+	Local _nCont    := 0
+	Local _cRevisa 	:= Space(TamSX3('CN9_REVISA')[1])
+	Local _cNumPla	:= StrZero(1,TamSX3('CNA_NUMERO')[1])
+	Local cTo     	:= GetMv("MV_XSGEME")
+	Local cAssunto  := ""//GetMv("MV_XSUBJ")
+	Local cMsg      := ""//GetMv("MV_XMSG")
+	Local _cXCTRRM  := ""
+	Local dDTIni    := CToD( "  /  /    ")
+	Local dDtFim    := CToD( "  /  /    ")
+	Local nValIni   := CN9->CN9_VLINI
+	Local j, nX
+
+	//Walmir Junior 10/05/2018 - Tratativa para envio de e-mail por Turma.
+	Local _cTrmEm	:= ""
+	Local _cChTrm	:= ""
+	Local _lEml		:= .F.
+
+	//Walmir Junior 03/08/2018 - Controle de Filial para Envio de Email.
+	Local _cFilX	:= cFilAnt
+
+	//Daniel Castro 24/08/2021 - Controle de Turma
+	Local _cCdTur	:= ""
+
+	//Walmir Junior 25/05/2021 - Implementaï¿½ï¿½o para atender Combo.
+	_cCodTrm		:= ""
+	_lExstCr		:= .F.
+
+
+
+
+	Private _cColJob := "0"
+
+	//Walmir Junior 27/01/2020 - Com base na filial de execuï¿½ï¿½o, seta variï¿½vel de coligada.
+	If "03MT" == SubStr(cFilAnt,1,4)
+		_cColJob := "3"
+	ElseIf "02MT" == SubStr(cFilAnt,1,4)
+		_cColJob := "2"
+	EndIf
+
+	_cAliasRM       := GetNewPar("MV_XSGEABD", "") //"@RMSGE"
+
+	If Select('TMPCTO') > 0
+		DbSelectArea('TMPCTO')
+		TMPCTO->(DbCloseArea())
+	EndIf
+	//Walmir Junior 07/05/2018 - (Comentï¿½rio) View com dados de contratos com ou sem cronograma.
+	_cQuery := " SELECT * 								   "
+	_cQuery += " FROM   RM.ZMD_INT_PRT_CTO_CTB" + _cAliasRM
+	_cQuery += " WHERE  STS_RM_INC   = 1				   " //Incluï¿½do no RM
+	_cQuery += " AND    Coalesce(STS_PROT_INC,0) <> 2	   " //Nï¿½o integrado com protheus
+	_cQuery += " AND    Coalesce(STS_RM_CANC,0)  <> 1	   " //Nï¿½o cancelado no RM
+	_cQuery += " AND CODCOLIGADA 	= " + _cColJob + " 		"
+	//_cQuery += " AND    CODCONTRATO              = '50898'   " //TESTE ISOLADO CONTRATO
+
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPCTO',.T.,.F.)
+
+	If .Not. TMPCTO->(Eof())
+
+		While .Not. TMPCTO->(Eof())
+
+			_nCont++
+			_nSeq   := TMPCTO->(SEQ)
+			_cColig := cValToChar(TMPCTO->(CODCOLIGADA))
+			_cRa    := AllTrim(TMPCTO->(RA))
+			_cCtrRM := AllTrim(TMPCTO->(CODCONTRATO))
+			_cIdPLe := cValToChar(TMPCTO->(IDPERLET))
+			_cCdTur	:= Alltrim(TMPCTO->(CODTURMA))
+
+			//Walmir Junior 25/05/2021 - Implementação para atender Combo.
+			_cCodTrm := cValToChar(TMPCTO->(CODTURMA))
+			_cCodTrm := AllTrim(Iif(_cCodTrm == 'null' .or. AllTrim(_cCodTrm) == '0', '', _cCodTrm))
+
+			If _nCont > 1
+				ConOut(Replicate("-",30))
+			EndIf
+
+			If Select('TMPCN9') > 0
+				DbSelectArea('TMPCN9')
+				TMPCN9->(DbCloseArea())
+			EndIf
+			//Walmir Junior 07/05/2018 - (Comentï¿½rio) View com dados de contratos equivalentes a CN9.
+			_cQuery := " SELECT *										    "
+			_cQuery += " FROM RM.PROT_CN9"+ _cAliasRM
+			_cQuery += " WHERE	CODCOLIGADA 			= '"+ _cColig + "'	"
+			_cQuery += " AND RA 						= '"+ _cRa    + "'	"
+			_cQuery += " AND CODCONTRATO 				= '"+ _cCtrRM + "'	"
+			_cQuery += " AND IDPERLET 					=  "+ _cIdPLe
+
+			DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPCN9',.T.,.F.)
+
+			If .Not. TMPCN9->(Eof())
+
+				While .Not. TMPCN9->(Eof())
+
+					//Walmir Junior 10/05/2018 - Tratativa para envio de e-mail por Turma.
+					_cChTrm	:= AllTrim(TMPCN9->CN9_FILIAL) + AllTrim(TMPCN9->TURMA) + AllTrim(Str(TMPCN9->CODCOLIGADA))
+					If !(_cChTrm $ _cTrmEm)
+						_lEml	:= .T.
+						_cTrmEm	+= ";" + _cChTrm
+					Else
+						_lEml	:= .F.
+					EndIf
+
+					_aDadosCNV	:= {}
+					_aDadosCNW	:= {}
+
+					_cFilCt     := TMPCN9->(CN9_FILIAL)
+					_cColig     := cValToChar(TMPCN9->(CODCOLIGADA))
+					_cRa        := AllTrim(TMPCN9->(RA))
+					_cCtrRM     := PADR(AllTrim(TMPCN9->(CODCONTRATO)),TamSX3('CN9_XCTRRM')[1],Space(TamSX3('CN9_XCTRRM')[1]))
+					_cIdPLe     := cValToChar(TMPCN9->(IDPERLET))
+					_cCodPg     := TMPCN9->(CN9_CONDPG)
+					_cChvRM     := 'SF06A14X: Coligada: '+ _cColig + ' / Ra: '+ _cRa + ' / CtrRM: '+ AllTrim(_cCtrRM) + ' / IdPerLet: ' + _cIdPLe
+
+					_lOk        := .T.
+
+					ConOut(_cChvRM)
+
+					/* 3 - Valido Contrato */
+					DbSelectArea('CN9')
+					CN9->( DbOrderNickName('CN9RMGCT') ) //CN9_FILIAL+CN9_XCTRRM+CN9_XCOLRM
+					CN9->( DbGotop() )
+					If .Not. CN9->( DbSeek( _cFilCt +  _cCtrRM + _cColig ) )
+						_cMsg := "PF - SF06A14X: ContratoRM: " + AllTrim(_cCtrRM) + " - Nao foi integrado ao Protheus - Invalido"
+						ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  _cMsg)
+
+						_cLogOc := "PF - SF06A14X: Gera Cronograma: " + AllTrim(_cCtrRM) + " - Nao foi integrado ao Protheus - Invalido"
+						_oGrOcr:GRVOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,_cLogOc,'CTB','2',23,_cCdTur)
+
+						TMPCN9->(DbSkip())
+						Loop
+						//Return(Self)
+					Else
+						//dDTIni   := CN9->CN9_XDTINI
+						//dDtFim   := CN9->CN9_XDTFIM
+						//nValIni  := CN9->CN9_VLINI
+						_cRevisa := CN9->CN9_REVISA
+						_cNumCtr := CN9->CN9_NUMERO
+						_cMsg    := "PF - SF06A14X: ContratoRM: " + AllTrim(_cCtrRM) + " - Ja integrado - Valido"
+						ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  _cMsg)
+						_cXCTRRM := Iif(CN9->CN9_XCTRRM == " ", TMPCN9->(CODCONTRATO),CN9->CN9_XCTRRM)
+
+						//Recupero a classe de valor do cliente
+						_cClvl := Posicione("SA1", 1, xFilial("SA1") + CN9_CLIENT + CN9_LOJACL, "A1_CLVL")
+
+						_oGrOcr:EXCOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,'CTB', 23)
+					EndIf
+
+					CN9->(DbCloseArea())
+
+					/*	7 - Valido Itens Plan. Contrato (CNB)	*/		
+					If Select('TMPCNB') > 0
+						DbSelectArea('TMPCNB')
+						TMPCNB->( DbCloseArea() )
+					EndIf
+					//Walmir Junior 07/05/2018 - (Comentï¿½rio) View com dados de contratos CNB.
+					_cQuery := " SELECT *											"
+					_cQuery += " FROM RM.PROT_CNB" + _cAliasRM
+					_cQuery += " WHERE	CODCOLIGADA 	=  "+ _cColig
+					_cQuery += " 		AND RA 			= '"+ _cRa +"'      		"
+					_cQuery += " 		AND CODCONTRATO = '"+ Alltrim(_cCtrRM) + "'	"
+					_cQuery += " 		AND IDPERLET 	=  "+ _cIdPLe
+
+					DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPCNB',.T.,.F.)
+
+					If .Not. TMPCNB->( Eof() )
+
+						While .Not. TMPCNB->(Eof())
+							_cConta 	:= PADR(AllTrim(TMPCNB->(CNB_CONTA)),TamSX3('CT1_CONTA')[1],Space(TamSX3('CT1_CONTA')[1]))
+							TMPCNB->(DbSkip())
+						EndDo
+
+					EndIf
+
+					/*	8 - Gravar Cronograma Contabil	*/		
+					aAdd(_aDadosCNV, _cFilCt	)
+					aAdd(_aDadosCNV, _cRevisa   )
+					aAdd(_aDadosCNV, _cNumPla   )
+					aAdd(_aDadosCNV, 1			)
+					aAdd(_aDadosCNV, _cConta	)
+					aAdd(_aDadosCNV, '1'		)//1=Mensal;2=Quinzenal;3=Diario
+					aAdd(_aDadosCNV, 30 		)//Dias entre as parcelas
+
+					//Itens
+					If Select('TMPCNW') > 0
+						DbSelectArea('TMPCNW')
+						TMPCNW->( DbCloseArea() )
+					EndIf
+					//Walmir Junior 07/05/2018 - (Comentï¿½rio) View com dados compatï¿½vel com CNW.
+					_cQuery := " SELECT *												    "
+					_cQuery += " FROM RM.PROT_CNW"                  + _cAliasRM
+					_cQuery += " WHERE	CODCOLIGADA 			=  "+ _cColig
+					_cQuery += " AND RA 						= '"+ _cRa +"' 		        "
+					_cQuery += " AND CODCONTRATO 				= '"+ Alltrim(_cCtrRM) + "'	"
+					_cQuery += " AND IDPERLET 					=  "+ _cIdPLe
+					//Walmir Junior 25/05/2021 - Implementaï¿½ï¿½o para atender Combo.
+					If !Empty(_cCodTrm)
+						_cQuery += " AND CODTURMA 					=  '" + _cCodTrm + "' "
+					EndIf
+
+					DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPCNW',.T.,.F.)
+
+					If .Not. TMPCNW->( Eof() )
+
+						_nContCNW	:= 0
+						_nCont 		:= 0
+
+						While .Not. TMPCNW->( Eof() )
+
+							_nContCNW++
+
+							_cConta  := PADR(AllTrim(TMPCNW->(CNW_CONTA)) 	,TamSX3('CT1_CONTA') [1],Space(TamSX3('CT1_CONTA') [1]))
+							_cCusto	 := PADR(AllTrim(TMPCNW->(CNW_CC))    	,TamSX3('CTT_CUSTO') [1],Space(TamSX3('CTT_CUSTO') [1]))
+							_cItemCt := PADR(AllTrim(TMPCNW->(CNW_ITEMCT))	,TamSX3('CTD_ITEM')  [1],Space(TamSX3('CTD_ITEM')  [1]))
+							_cProdt  := PADR(AllTrim(TMPCNW->CNW_XPRODU)	,TamSX3('B1_XPRDSGE')[1],Space(TamSX3('B1_XPRDSGE')[1]))
+							_cCdTurma:= PADR(AllTrim(TMPCNW->CODTURMA)		,TamSX3('CNW_XCODTU')[1],Space(TamSX3('CNW_XCODTU')[1]))
+
+							DbSelectArea('SB1')
+							SB1->(DbOrderNickName("SB1RMGCT"))
+							SB1->(DbGoTop())
+							SB1->(DbSeek(xFilial('SB1') + _cProdt + _cColig))
+
+							_cCodPro 	:= SB1->B1_COD
+
+							SB1->(DbCloseArea())
+
+							_aParcelas := fCondCont(TMPCNW->CNW_VLTOT,SToD(TMPCNW->CNW_DTINI),SToD(TMPCNW->CNW_DTFIN))
+
+							//fCondCont(nValIni,dDTIni,dDtFim)
+
+							For j := 1 to Len(_aParcelas)
+
+								//_cDtPr := StoD(cValToChar(Year(_aParcelas[j][1])) + StrZero(Month(_aParcelas[j][1]),2) + StrZero(28,2))
+								_cDtPr := _aParcelas[j][1]
+								_nVlrP := _aParcelas[j][2]
+								_cParc := StrZero(j,TamSX3('CNW_PARCEL')[1])
+								_cComp := StrZero(Month(_cDtPr),2) + '/' + cValToChar(Year(_cDtPr))
+								_cHist := "Parc: "+ _cParc + " - Compt: "+ _cComp
+
+								aAdd(_aDadosCNW, { _cFilCt		 ,;
+									_cRevisa ,;
+									_cParc	 ,;
+									_cComp	 ,;
+									_cDtPr	 ,;
+									_nVlrP	 ,;
+									_cHist	 ,;
+									'2'		 ,; 			//1=Sim;2=Nao
+								_cCusto	 ,;
+									_cItemCt ,;
+									_cClvl	 ,;
+									_cCodPro ,;
+									_cConta  ,;
+									_cCtrRM	 ,;
+									_cCdTurma })
+
+							Next
+
+							TMPCNW->(DbSkip())
+						EndDo
+
+					Else
+
+						_lOk  := .F.
+						_cMsg := "PF - SF06A14X: Nao existe dados na view - PROT_CNW"
+						ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  _cMsg)
+
+						Self:FGRVSTRM(_nSeq,_cColig,_cRa,_cCtrRM,_cIdPLe,_lOk,_cMsg,_nOpc,_cCdTur)
+
+						TMPCN9->( DbSkip() )
+						Loop
+
+					EndIf
+
+					TMPCNW->(DbCloseArea())
+
+					//_cNumCron := Self:GetNumCNW()
+					//_cNumCtr  := GetSXeNum('CN9', 'CN9_NUMERO')
+
+					DbSelectArea("CNV")
+					DbSetOrder(1)
+					If !DbSeek(_cFilCt + _cNumCtr)
+						_cNumCron := Self:GetNumCNW()
+						If RecLock('CNV', .T.)
+							CNV->CNV_FILIAL := _aDadosCNV[1]
+							CNV->CNV_NUMERO := _cNumCron
+							CNV->CNV_CONTRA := _cNumCtr
+							CNV->CNV_REVISA := _aDadosCNV[2]
+							CNV->CNV_PLANIL := _aDadosCNV[3]
+							CNV->CNV_TXMOED := _aDadosCNV[4]
+							CNV->CNV_CONTA  := _aDadosCNV[5]
+							CNV->CNV_PERIOD := _aDadosCNV[6]	//1=Mensal;2=Quinzenal;3=Diario
+							CNV->CNV_DIAPAR := _aDadosCNV[7]	//Dias entre as parcelas
+							CNV->CNV_XCTBIL := "S"
+							CNV->(MsUnlock())
+							ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'PF - SF06A14X: Gravou Cronograma Contabil - CNV')
+
+							For nX := 1 To Len(_aDadosCNW)
+
+								DbSelectArea("CNW")
+								DbSetOrder(1)
+								If !DbSeek(_aDadosCNW[nX][01] + _cNumCtr + _aDadosCNW[nX][02] + _cNumCron + _aDadosCNW[nX][03])
+
+									If RecLock('CNW', .T.)
+										CNW->CNW_FILIAL := _aDadosCNW[nX][01]
+										CNW->CNW_CONTRA := _cNumCtr
+										CNW->CNW_REVISA := _aDadosCNW[nX][02]
+										CNW->CNW_NUMERO := _cNumCron
+										CNW->CNW_PARCEL := _aDadosCNW[nX][03]
+										CNW->CNW_COMPET := _aDadosCNW[nX][04]
+										CNW->CNW_DTPREV := _aDadosCNW[nX][05]
+										CNW->CNW_VLPREV := _aDadosCNW[nX][06]
+										CNW->CNW_HIST   := _aDadosCNW[nX][07]
+										CNW->CNW_FLGAPR := _aDadosCNW[nX][08]
+										CNW->CNW_CC     := _aDadosCNW[nX][09]
+										CNW->CNW_ITEMCT := _aDadosCNW[nX][10]
+										CNW->CNW_CLVL   := _aDadosCNW[nX][11]
+										CNW->CNW_XPRODU := _aDadosCNW[nX][12]
+										CNW->CNW_XCONTA := _aDadosCNW[nX][13]
+										CNW->CNW_XCTRRM := _aDadosCNW[nX][14]
+										CNW->CNW_XCODTU := _aDadosCNW[nX][15]
+										CNW->(MsUnlock())
+									EndIf
+
+								EndIf
+
+							Next nX
+							ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'PF - SF06A14X: Gravou Parcelas do Cronograma Contabil - CNW')
+						EndIf
+					Else
+						_lExstCr := .T.
+						//_cNumCron := Self:GetNumCNW(.T.)
+						_cNumCron := CNV->CNV_NUMERO
+
+						//Se jï¿½ tem o cronograma e precisa adicionar demais do combo.
+						For nX := 1 To Len(_aDadosCNW)
+
+/* 							DbSelectArea("CNW")
+							DbSetOrder(1)
+							If !DbSeek(_aDadosCNW[nX][01] + _cNumCtr + _aDadosCNW[nX][02] + _cNumCron  + _aDadosCNW[nX][03] ) */
+
+
+								_cQry := "SELECT MAX(CNW_PARCEL) PARCEL"
+								_cQry += " FROM " +RetSqlTab("CNW")
+								_cQry += " WHERE CNW_CONTRA = '" + _cNumCtr + "' "
+								_cQry += " AND CNW_REVISA = '" + _aDadosCNW[nX][02] + "' "
+								_cQry += " AND CNW_FILIAL = '" + _aDadosCNW[nX][01] + "' "
+								_cQry += " AND CNW_NUMERO = '" + _cNumCron + "'"
+
+								MPSysOpenQuery( _cQry, 'QRYCNW' )
+
+								If !Empty(QRYCNW->PARCEL)
+									_aDadosCNW[nX][03] := Soma1(QRYCNW->PARCEL)
+								EndIf
+
+								QRYCNW->(dbCloseArea())
+
+							// EndIf
+
+
+//								DbSelectArea("CNW")
+//								DbSetOrder(1)
+//								If !DbSeek(_aDadosCNW[nX][01] + _cNumCtr + _aDadosCNW[nX][02] + _cNumCron + _aDadosCNW[nX][03])						
+
+							If RecLock('CNW', .T.)
+								CNW->CNW_FILIAL := _aDadosCNW[nX][01]
+								CNW->CNW_CONTRA := _cNumCtr
+								CNW->CNW_REVISA := _aDadosCNW[nX][02]
+								CNW->CNW_NUMERO := _cNumCron
+								CNW->CNW_PARCEL := _aDadosCNW[nX][03]
+								CNW->CNW_COMPET := _aDadosCNW[nX][04]
+								CNW->CNW_DTPREV := _aDadosCNW[nX][05]
+								CNW->CNW_VLPREV := _aDadosCNW[nX][06]
+								CNW->CNW_HIST   := _aDadosCNW[nX][07]
+								CNW->CNW_FLGAPR := _aDadosCNW[nX][08]
+								CNW->CNW_CC     := _aDadosCNW[nX][09]
+								CNW->CNW_ITEMCT := _aDadosCNW[nX][10]
+								CNW->CNW_CLVL   := _aDadosCNW[nX][11]
+								CNW->CNW_XPRODU := _aDadosCNW[nX][12]
+								CNW->CNW_XCONTA := _aDadosCNW[nX][13]
+								CNW->CNW_XCTRRM := _aDadosCNW[nX][14]
+								CNW->CNW_XCODTU := _aDadosCNW[nX][15]
+								CNW->(MsUnlock())
+							EndIf
+
+						Next nX
+					EndIf
+
+					/*
+					
+					aMsg := Self:PREPEMAIL(_cXCTRRM)
+					
+					lRet := U_SFEnvEmail(,cTo,,,aMsg[1],aMsg[2],,.F.)
+					
+					If lRet
+						//Aviso("Atenï¿½ï¿½o","Email enviado com sucesso!")
+						Conout("Email enviado com sucesso!")
+					Else
+						//MsgStop("Erro ao enviar email,Verifique!","Erro")
+						Conout("Erro ao enviar email,Verifique!")
+					EndIf
+					
+					*/
+
+					DbSelectArea('CNA')
+					CNA->(DbSetOrder(1)) //CNA_FILIAL+CNA_CONTRA+CNA_REVISA+CNA_NUMERO
+					CNA->(DbGotop())
+					If CNA->( DbSeek( _cFilCt + _cNumCtr + _cRevisa + _cNumPla ) )
+						If RecLock('CNA', .F.)
+							CNA->CNA_CRONCT := _cNumCron
+							CNA->(MsUnlock())
+						EndIf
+						ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'PF - SF06A14X: Gravou o Codigo do Cronograma Contabil - CNA')
+						_oGrOcr:EXCOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,'CTB', 24)
+					Else
+						_cLogOc := "PF - SF06A14X: Gera Cronograma: " + AllTrim(_cCtrRM) + " - Nao gravou o Codigo do Cronograma Contabil - CNA"
+						_oGrOcr:GRVOCORR(_cColig,_cRa,_cCtrRM,_cIdPLe,_cLogOc,'CTB','2', 24,_cCdTur)
+						ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'PF - SF06A14X: Nao gravou o Codigo do Cronograma Contabil - CNA')
+					EndIf
+
+					CNA->(DbCloseArea())
+
+					Self:FGRVSTRM(_nSeq,_cColig,_cRa,_cCtrRM,_cIdPLe,_lOk,_cMsg,_nOpc,_cCdTur)
+
+					//Walmir Junior 10/05/2018 - Tratativa para envio de e-mail por Turma.
+					If _lEml .AND. fVldEml(_cChTrm, "I") .AND. !Empty(_cXCTRRM) .AND. !_lExstCr
+						aMsg := Self:PREPEMAIL(_cXCTRRM, "I")
+						//Preencheu a mensagem do email?
+						If aMsg[3]
+							//Walmir Junior 03/08/2018 - Controle de Filial para execuï¿½ï¿½o da rotina de envio de e-mail.
+							If _cFilCt != cFilAnt
+								U_SF0205X(cEmpAnt, _cFilCt)
+							EndIf
+							//Walmir Junior  03/08/2018 - Obtem novamente o destinatï¿½rio de acordo com a Filial do contrato.
+							cTo	:= GetMv("MV_XSGEME")
+
+							//Walmir Junior 16/11/2018 - Tratativa para habilitar ou desabilitar envio de email.
+							If _lRMail
+								lRet := U_SFEnvEmail(,cTo,,,aMsg[1],aMsg[2],,.F.)
+							EndIf
+
+							//Walmir Junior  03/08/2018 - Retorna a Filial anterior.
+							U_SF0205X(cEmpAnt, _cFilX)
+
+							//Walmir Junior  03/08/2018 - Retorna ao valor anterior.
+							cTo	:= GetMv("MV_XSGEME")
+						Else
+							Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Nï¿½o conseguiu localizar turma")
+							lRet := .F.
+						EndIf
+
+						If lRet
+							//Registra alerta do incio da turma por email.
+							fCtrEm(_cChTrm, "I")
+							//Aviso("Atenï¿½ï¿½o","Email enviado com sucesso!")
+							Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Email enviado com sucesso!")
+						Else
+							//MsgStop("Erro ao enviar email,Verifique!","Erro")
+							Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "Erro ao enviar email,Verifique!")
+						EndIf
+					EndIf
+
+					_cXCTRRM := ""
+
+					TMPCN9->(DbSkip())
+				EndDo
+
+			EndIf
+
+			TMPCTO->(DbSkip())
+		EndDo
+
+	EndIf
+
+RETURN(SELF)
+
+/*
+Walmir Junior 11/05/2018 - Funï¿½ï¿½o para registrar alerta por email.
+*/
+Static Function fCtrEm(_cChvT, _cTip)
+	Local _cDt := subStr(dToS(date()),7,2) + "/" + subStr(dToS(date()),5,2) + "/" + subStr(dToS(date()),1,4)
+
+	DbSelectArea("ZG6")
+	DbSetOrder(1)
+
+	If RecLock("ZG6", .T.)
+		ZG6->ZG6_FILIAL := xFilial("ZG6")
+		ZG6->ZG6_CHVTRM := _cChvT
+		ZG6->ZG6_DATHOR	:= _cDt + " " + TIME()
+		ZG6->ZG6_TPMSG	:= _cTip
+		ZG6->(MsUnlock())
+	EndIf
+
+Return Nil
+
+/*
+Walmir Junior 11/05/2018 - Funï¿½ï¿½o para validar se envia ou nï¿½o o email.
+*/
+Static Function fVldEml(_cChvT, _cTip)
+	Local _lRet := .F.
+	Local _aArea	:= GetArea()
+
+	DbSelectArea("ZG6")
+	DbSetOrder(1)
+	ZG6->(DbGoTop())
+	If !(ZG6->(DBSeek(xFilial("ZG6") + PADR(_cChvT, TAMSX3("ZG6_CHVTRM")[1]) + _cTip)))
+		_lRet := .T.
+	EndIf
+
+	RestArea(_aArea)
+Return _lRet
+
+/*
+Walmir Junior 14/05/2018
+Funï¿½ï¿½o que checa se houve exclusï¿½o do inï¿½cio da turma apï¿½s o alerta de inï¿½cio.
+Se sim, exclui o registro de alerta, para que seja enviado o alerta novamente no novo inï¿½cio.
+*/
+Static Function fChIni(_cChvT, _cTip)
+	Local _cQuery 	:= ""
+	Local _cAliasRM := GetNewPar("MV_XSGEABD", "") //"@RMSGE"
+	Local _lDel		:= .T.
+
+	If Select('TMPZG6') > 0
+		DbSelectArea('TMPZG6')
+		TMPZG6->( DbCloseArea() )
+	EndIf
+
+//Verifica se houve exclusï¿½o do inicio de turma apï¿½s o alerta de inï¿½cio via email.					
+	_cQuery += " Select CASE "
+	_cQuery += "   WHEN CODFILIAL = 1 THEN '03MT0002' "
+	_cQuery += " 	WHEN CODFILIAL = 4 THEN '03MT0003' "
+	_cQuery += " 	WHEN CODFILIAL = 3 THEN '03MT0004' "
+	_cQuery += " 	WHEN CODFILIAL = 5 THEN '03MT0005' "
+	_cQuery += " 	WHEN CODFILIAL = 8 THEN '03MT0007' "
+	_cQuery += " 	WHEN CODFILIAL = 7 THEN '03MT0008' "
+	_cQuery += " 	WHEN CODFILIAL = 6 THEN '03MT0010' "
+	_cQuery += " 	WHEN CODFILIAL = 2 THEN '03MT0012' "
+	_cQuery += " 	WHEN CODFILIAL = 9 THEN '03MT0016' "
+	_cQuery += " END || LTRIM(RTRIM(CODTURMA)) || LTRIM(RTRIM(CAST(CODCOLIGADA AS VARCHAR(20)))) AS CHVTURMA, "
+	_cQuery += " RECCREATEDON "
+	_cQuery += " From RM.ZMD_TURMAS_COMPL_LOG" + _cAliasRM + " INNER JOIN "
+	_cQuery += " " + RetSQLName("ZG6") + " ON D_E_L_E_T_ = ' ' AND ZG6_TPMSG = '" + _cTip + "' "
+	_cQuery += " AND RTRIM(ZG6_CHVTRM) = CASE "
+	_cQuery += "   WHEN CODFILIAL = 1 THEN '03MT0002' "
+	_cQuery += " 	WHEN CODFILIAL = 4 THEN '03MT0003' "
+	_cQuery += " 	WHEN CODFILIAL = 3 THEN '03MT0004' "
+	_cQuery += " 	WHEN CODFILIAL = 5 THEN '03MT0005' "
+	_cQuery += " 	WHEN CODFILIAL = 8 THEN '03MT0007' "
+	_cQuery += " 	WHEN CODFILIAL = 7 THEN '03MT0008' "
+	_cQuery += " 	WHEN CODFILIAL = 6 THEN '03MT0010' "
+	_cQuery += " 	WHEN CODFILIAL = 2 THEN '03MT0012' "
+	_cQuery += " 	WHEN CODFILIAL = 9 THEN '03MT0016' "
+	_cQuery += " END || LTRIM(RTRIM(CODTURMA)) || LTRIM(RTRIM(CAST(CODCOLIGADA AS VARCHAR(20)))) AND "
+	_cQuery += " RECCREATEDON > ZG6_DATHOR "
+	_cQuery += " WHERE ZG6_CHVTRM = '" + _cChvT + "' "
+
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPZG6',.T.,.F.)
+//Se hï¿½ exclusï¿½o posterior ao alerta, deleta o registro do alerta para que haja novo envio.		
+	If !TMPZG6->(Eof())
+		DbSelectArea("ZG6")
+		DbSetOrder(1)
+		ZG6->(DBGoTop())
+		If DbSeek(xFilial("ZG6") + PADR(_cChvT, TAMSX3("ZG6_CHVTRM")[1]) + _cTip) .And. ( ZG6->ZG6_DATHOR < TMPZG6->(RECCREATEDON) .Or. _cTip == "D")
+			If RecLock("ZG6",.F.)
+				ZG6->(DbDelete())
+				ZG6->(MsUnlock())
+			EndIf
+		EndIf
+	EndIf
+
+Return Nil
+
+/** {Protheus.doc} GetNumCNW
+Funcao para pegar a ultimo Numero do Cronograma valido
+@type method
+@author Jose Leite de Barros Neto
+@since 15/01/2016
+@Uso SFIEMT
+*/
+METHOD GETNUMCNW(pAtual) CLASS SF06A14X
+
+	Local _cNumero := ''
+	Local _cQuery  := ''
+
+	Default pAtual := .F.
+
+	If Select('TMP') > 0
+		DbSelectArea('TMP')
+		TMP->( DbCloseArea() )
+	EndIf
+
+	_cQuery := " SELECT MAX(CNW_NUMERO) CNW_NUMERO			"
+	_cQuery += " FROM "+ RetSqlName('CNW')
+
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMP',.T.,.F.)
+
+	DbSelectArea('TMP')
+	TMP->(DbGoTop())
+
+	If Empty(TMP->(CNW_NUMERO))
+		_cNumero := StrZero(1, TamSx3("CNW_NUMERO")[1])
+	ElseIf pAtual
+		_cNumero := StrZero(Val(TMP->(CNW_NUMERO)), TamSx3("CNW_NUMERO")[1])
+	Else
+		_cNumero := StrZero(Val(TMP->(CNW_NUMERO)) + 1, TamSx3("CNW_NUMERO")[1])
+	EndIf
+
+	TMP->(DbCloseArea())
+
+Return(_cNumero)
+
+/*/{Protheus.doc} FGRVSTRM
+(long_description)
+@type method
+@author j2a.luizjunior
+@since 15/03/2017
+@version 1.0
+@param p_nSeq, numeric, (Descriï¿½ï¿½o do parï¿½metro)
+@param p_cColig, character, (Descriï¿½ï¿½o do parï¿½metro)
+@param p_cRa, character, (Descriï¿½ï¿½o do parï¿½metro)
+@param p_cCtrRM, character, (Descriï¿½ï¿½o do parï¿½metro)
+@param p_cIdPLe, character, (Descriï¿½ï¿½o do parï¿½metro)
+@param p_lOk, logical, (Descriï¿½ï¿½o do parï¿½metro)
+@param p_cMsg, character, (Descriï¿½ï¿½o do parï¿½metro)
+@param p_nOpc, numeric, (Descriï¿½ï¿½o do parï¿½metro)
+/*/
+METHOD FGRVSTRM(p_nSeq,p_cColig,p_cRa,p_cCtrRM,p_cIdPLe,p_lOk,p_cMsg,p_nOpc,p_cCodTur) CLASS SF06A14X
+
+	Local _cQuery 	:= ''
+	Local _nStatus 	:= 0
+	Local _cPara	:= GetNewPar('MV_XSGEME','')
+	Local _cAssunt	:= 'Integracao SGE x GCT'
+	Local _cChvRM	:= 'Colig: ' + p_cColig + ' / RA: '+ p_cRa + ' / IdPerLet: '+ p_cIdPLe + ' / CTR: '+ AllTrim(p_cCtrRM)
+	Local _cMsgMail	:= ''
+	Local _cMsg		:= ''
+	Local _cObserv 	:= SubsTr(p_cMsg,1,500) //Walmir Junior 17/10/2018 - Tratamento para nï¿½o exceder 500 caracteres.
+	Local _lEnviou	:= .F.
+	Default p_nOpc 	:= 3
+
+	If p_lOk
+		_nStatus := 2
+	Else
+		_nStatus := 3
+		_cMsgMail := 'Erro '+ p_cMsg
+	EndIf
+
+	If Valtype(p_cCodTur) == "U"
+		p_cCodTur := ""
+	EndIf
+
+	Begin Transaction
+
+		/*	Gravar Status do Contrato	*/
+		_cQuery := " UPDATE RM.ZMD_INT_PRT_CTO_CTB"+ _cAliasRM
+
+		Do Case
+		Case p_nOpc == 3
+			_cQuery += " SET STS_PROT_INC 	= "+ cValToChar(_nStatus)
+		Case p_nOpc == 5
+			_cQuery += " SET STS_PROT_CANC	= "+ cValToChar(_nStatus)
+		EndCase
+
+		_cQuery += " WHERE	CODCOLIGADA 		=  "+ p_cColig
+		_cQuery += " 		AND RA 				= '"+ p_cRa +"' 				"
+		_cQuery += " 		AND CODCONTRATO 	= '"+ Alltrim(p_cCtrRM) + "'	"
+		_cQuery += " 		AND IDPERLET 		=  "+ p_cIdPLe
+
+		//Daniel Castro 23/08 - InclusÃ£o de Turmas
+		If !Empty(p_cCodTur)
+			// p_cCodTur := "'" + StrTran( p_cCodTur, "|", "','" )
+			// p_cCodTur := SubStr(p_cCodTur,1, Len(p_cCodTur) -2)
+
+			_cQuery += " 	AND CODTURMA	= '" + Alltrim(p_cCodTur) + "'"
+		EndIf
+
+		If (TCSQLExec(_cQuery) < 0)
+			Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "SF06A14X: fGrvStRM - TCSQLError() " + TCSQLError())
+		Else
+			ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'SF06A14X: Gravou tabela de Status - RM.ZMD_INT_PRT_CTO')
+		EndIf
+
+		_cQuery := "SELECT MAX(SEQ)+1 SEQ FROM RM.ZMD_INT_PRT_CTO_CTB_HIST" + _cAliasRM
+
+		If (TCSQLExec(_cQuery) < 0)
+			Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "IMPF040: SF06A14X - TCSQLError() " + TCSQLError())
+		Else
+			DbUseArea(.T.,"TOPCONN",TcGenQry(,,_cQuery),'TMPSEQ',.T.,.F.)
+			_nNewSeq := TMPSEQ->(SEQ)
+			TMPSEQ->(DbCloseArea())
+		EndIf
+
+		_cQuery := " INSERT INTO RM.ZMD_INT_PRT_CTO_CTB_HIST"+ _cAliasRM
+		_cQuery += " (SEQ, CODCOLIGADA, RA, CODCONTRATO, IDPERLET, DATA, HORA, STS_PROT, OBSERVACAO, CODTURMA) "
+		_cQuery += " VALUES ( "+ cValToChar(_nNewSeq)
+		_cQuery += "         ,"+ p_cColig
+		_cQuery += "         ,'"+ p_cRa +"'
+		_cQuery += "         ,"+ p_cCtrRM
+		_cQuery += "         ,"+ p_cIdPLe
+		_cQuery += "         ,to_char(sysdate, 'DD/MM/YYYY') "
+		_cQuery += "         ,to_char(sysdate, 'HH24:MI:SS')	" //Walmir Junior 03/07/2018 - Correï¿½ï¿½o no formato da data (Anterior: to_char(sysdate, 'HH:MM:SS')).
+		_cQuery += "         ,"+ cValToChar(_nStatus)
+		_cQuery += "         ,'"+ _cObserv +"' "
+		_cQuery += "         ,'"+ Alltrim(p_cCodTur) +"') "
+
+		If (TCSQLExec(_cQuery) < 0)
+			Conout("["+ dToC(Date()) + " " + Time() + "] - " +  "PF - SF06A14X: fGrvStRM - TCSQLError() " + TCSQLError())
+		Else
+			ConOut("["+ dToC(Date()) + " " + Time() + "] - " +  'PF - SF06A14X: Gravou tabela de Log - RM.ZMD_INT_PRT_CTO_HIST')
+		EndIf
+
+	End Transaction
+
+RETURN(Nil)
+
+/*/{Protheus.doc} PREPEMAIL
+(long_description)
+@type method
+@author j2a.luizjunior
+@since 11/04/2017
+/*/
+METHOD PREPEMAIL(pXCTRRM, _cTip) CLASS SF06A14X
+
+	Local cXCTRRM  	:= pXCTRRM
+	Local cDesc    	:= ""
+	Local cQuery   	:= ""
+	Local cAlias   	:= GetNextAlias()
+	Local cUndOpe	:= ""
+	Local cNomTur	:= ""
+	Local cPerLet	:= ""
+	Local cCodTur	:= ""
+	Local cDtIni	:= ""
+	Local cDtFim	:= ""
+	Local CPred		:= ""
+	Local CCidPr	:= ""
+	Local cSubJect 	:= ""
+	//Walmir Junior 14/05/2018 - Variï¿½vel para controle do preenchimento da mensagem.
+	Local _lMsg		:= .F.
+
+    /*
+    cQuery += " SELECT DISTINCT B.CODTURMA                                              "
+    cQuery += " FROM STURMA"     + _cAliasRM+" B,                                       "
+    cQuery += " SMATRICPL"       + _cAliasRM+" C,                                       "
+    cQuery += " SCONTRATO"       + _cAliasRM+" D,                                       "
+    cQuery += " ZMD_INT_PRT_FIN" + _cAliasRM+" E,                                       "
+    cQuery += " SPARCELA"        + _cAliasRM+" F                                        "    
+    cQuery += " WHERE 1=1                                                               " 
+    cQuery += " AND B.CODCOLIGADA         = C.CODCOLIGADA                               " 
+    cQuery += " AND B.CODFILIAL           = C.CODFILIAL                                 "
+    cQuery += " AND B.CODTURMA            = C.CODTURMA                                  " 
+    cQuery += " AND B.IDPERLET            = C.IDPERLET                                  "
+    cQuery += " AND C.CODCOLIGADA         = D.CODCOLIGADA                               "
+    cQuery += " AND C.IDPERLET            = D.IDPERLET                                  "
+    cQuery += " AND C.IDHABILITACAOFILIAL = D.IDHABILITACAOFILIAL                       "
+    cQuery += " AND C.RA                  = D.RA                                        "
+    cQuery += " AND D.CODCOLIGADA         = E.CODCOLIGADA                               "
+    cQuery += " AND D.RA                  = E.RA                                        " 
+    cQuery += " AND D.CODCONTRATO         = E.CODCONTRATO                               "
+    cQuery += " AND D.IDPERLET            = E.IDPERLET                                  "
+    cQuery += " AND D.CODCOLIGADA         = F.CODCOLIGADA                               "
+    cQuery += " AND D.RA                  = F.RA                                        "
+    cQuery += " AND D.CODCONTRATO         = F.CODCONTRATO                               "
+    cQuery += " AND D.IDPERLET            = F.IDPERLET                                  "
+    cQuery += " AND NOT EXISTS (SELECT ''                                               "
+    cQuery += "                 FROM SLAN"+ _cAliasRM+" G                               " 
+	cQuery += "                             WHERE 1=1                                   " 
+	cQuery += "                             AND F.CODCOLIGADA = G.CODCOLIGADA           "
+	cQuery += "                             AND F.IDPARCELA = G.IDPARCELA)              "
+    cQuery += " AND B.CODCOLIGADA = 3                                                   "
+    cQuery += " AND D.CODCONTRATO = '" + cXCTRRM + "'                                   " 
+    cQuery += " AND D.DTCANCELAMENTO IS NULL                                            "
+    */
+
+	cQuery += " SELECT DISTINCT G.NOME, B.CODTURMA, B.NOME As NOME_TURMA, TO_CHAR(B.DTINICIAL) AS DTINICIAL, TO_CHAR(B.DTFINAL) AS DTFINAL, SP.CODPERLET, 	"
+	cQuery += " 	NVL(S.NOME,' ') AS PREDIO, NVL(S.CIDADE,' ') AS CIDADE_PREDIO			"
+	cQuery += " FROM RM.STURMA" + _cAliasRM + " B											"
+	cQuery += " INNER JOIN RM.SMATRICPL" + _cAliasRM + " C ON B.CODCOLIGADA         = C.CODCOLIGADA		"
+	cQuery += " 	AND B.CODFILIAL           = C.CODFILIAL									"
+	cQuery += " 	AND B.CODTURMA            = C.CODTURMA									"
+	cQuery += " 	AND B.IDPERLET            = C.IDPERLET									"
+	cQuery += " INNER JOIN RM.SCONTRATO" + _cAliasRM + " D ON C.CODCOLIGADA         = D.CODCOLIGADA		"
+	cQuery += " 	AND C.IDPERLET            = D.IDPERLET									"
+	cQuery += " 	AND C.IDHABILITACAOFILIAL = D.IDHABILITACAOFILIAL						"
+	cQuery += " 	AND C.RA                  = D.RA										"
+	/*
+	Franklin B. Oliveira - 29/05/2018 - Remoï¿½ï¿½o de trecho nï¿½o utilizado.
+	cQuery += " INNER JOIN ZMD_INT_PRT_FIN@RMSGE E ON D.CODCOLIGADA         = E.CODCOLIGADA	"
+	cQuery += " 	AND D.RA                  = E.RA										"
+	cQuery += " 	AND D.CODCONTRATO         = E.CODCONTRATO								"
+	cQuery += " 	AND D.IDPERLET            = E.IDPERLET									"
+	cQuery += " INNER JOIN SPARCELA@RMSGE F ON D.CODCOLIGADA         = F.CODCOLIGADA		"
+	cQuery += " 	AND D.RA                  = F.RA										"
+	cQuery += " 	AND D.CODCONTRATO         = F.CODCONTRATO								"
+	cQuery += " 	AND D.IDPERLET            = F.IDPERLET									"
+	*/
+	cQuery += " INNER JOIN RM.GFILIAL" + _cAliasRM + " G ON G.CODCOLIGADA         = B.CODCOLIGADA			"
+	cQuery += " 	AND G.CODFILIAL           = B.CODFILIAL									"
+	cQuery += " INNER JOIN RM.SPLETIVO" + _cAliasRM + " SP ON SP.CODCOLIGADA        = B.CODCOLIGADA		"
+	cQuery += " 	AND SP.IDPERLET           = B.IDPERLET 									"
+	cQuery += " 	AND SP.CODFILIAL          = B.CODFILIAL									"
+	cQuery += " LEFT JOIN RM.SPREDIO" + _cAliasRM + " S ON S.CODCOLIGADA         = B.CODCOLIGADA			"
+	cQuery += " 	AND S.CODPREDIO           = B.CODPREDIO									"
+	cQuery += " 	AND S.CODFILIAL          = B.CODFILIAL									"
+	cQuery += " WHERE 1=1																	"
+	//Walmir Junior 21/05/2018 - Remoï¿½ï¿½o Provisï¿½ria por nï¿½o trazer informaï¿½ï¿½es para email.
+	/*
+	cQuery += " AND NOT EXISTS (SELECT ''													"
+	cQuery += "                FROM SLAN@RMSGE G											"
+	cQuery += "                           WHERE 1=1											"
+	cQuery += "                           AND F.CODCOLIGADA = G.CODCOLIGADA					"
+	cQuery += "                           AND F.IDPARCELA = G.IDPARCELA)					"
+	*/
+	cQuery += " AND B.CODCOLIGADA = 3														"
+	cQuery += " AND D.CODCONTRATO = '" + AllTrim(cXCTRRM) + "'								"
+	cQuery += " AND D.DTCANCELAMENTO IS NULL												"
+
+	DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAlias,.T.,.F.)
+
+	While !(cAlias)->(Eof())
+
+		cUndOpe	:= (cAlias)->NOME
+		cNomTur := (cAlias)->NOME_TURMA
+		cPerLet	:= (cAlias)->CODPERLET
+		cCodTur := (cAlias)->CODTURMA
+		cDtIni	:= (cAlias)->DTINICIAL
+		cDtFim	:= (cAlias)->DTFINAL
+		CPred	:= (cAlias)->PREDIO
+		CCidPr	:= (cAlias)->CIDADE_PREDIO
+
+		(cAlias)->(DbSkip())
+	EndDo
+
+	If _cTip == "I"
+		cSubJect := "SENAI | Inicio de Turma"
+
+		//cDesc    := "Turma: "+ cCodTur +" iniciada"
+		//cDesc    += CRLF
+		cDesc    += "<b>TURMA INICIADA</b>"                        	+ "<br>" +;
+			"<b>Unidade Operacional: </b>" + cUndOpe       	+ "<br>" +;
+			"<b>Turma: "               + AllTrim(cCodTur)	+ " - " + AllTrim(cNomTur) + "</b><br>" +;
+			"<b>Perï¿½odo Letivo: </b>"      + cPerLet       	+ "<br>" +;
+			"<b>Data Inicial: </b>"        + dToC(sToD(cDtIni))		+ "<br>" +;
+			"<b>Data Final: </b>"          + dToC(sToD(cDtFim))
+
+		If !Empty(CPred) .And. !Empty(CCidPr)
+			cDesc    += "<br>" + "<b>Local de Realizaï¿½ï¿½o:</b> " + CPred + "/" + CCidPr
+		EndIf
+	ElseIf  _cTip == "D"
+		cSubJect := "SENAI | Exclusï¿½o de Inï¿½cio de Turma"
+
+		//cDesc    := "Turma: "+ cCodTur +" iniciada"
+		//cDesc    += CRLF
+		cDesc    += "<b>[EXCLUSï¿½O] INï¿½CIO DE TURMA EXCLUï¿½DO</b>"  	+ "<br>" +;
+			"<b>Unidade Operacional: </b>" + cUndOpe     	+ "<br>" +;
+			"<b>Turma: "               + AllTrim(cCodTur)	+ " - " + AllTrim(cNomTur) + "</b><br>" +;
+			"<b>Perï¿½odo Letivo: </b>"      + cPerLet      	+ "<br>" +;
+			"<b>Data Inicial: </b>"        + dToC(sToD(cDtIni))		+ "<br>" +;
+			"<b>Data Final: </b>"          + dToC(sToD(cDtFim))
+
+		If !Empty(CPred) .And. !Empty(CCidPr)
+			cDesc    += "<br>" + "<b>Local de Realizaï¿½ï¿½o:</b> " + CPred + "/" + CCidPr
+		EndIf
+	EndIf
+
+	//Walmir Junior 14/05/2018
+	_lMsg := Iif(Empty(cUndOpe + cCodTur), .F., .T.)
+
+RETURN{cSubJect,cDesc,_lMsg}
+
+/*/{Protheus.doc} fCondCont
+Funcao que calcula o valor de cada parcela proporcionalizando a quantidade de dias no mes
+tendo uma data de inicio e fim, a proporção sempre utiliza no maximo 30 dias,
+meses que possuem 31 dias, considera 30 dias para a proporção
+
+Utiliza sempre o dia 30 para data de rrevisao (vencimento), definido juntamente com a Elaine e Rubia da FIEMT
+
+@author j2a.caiolima
+@since 13/07/2017
+@param _nValor, Numerico, Valor a ser parcelado
+@param _dIni  , Data    , Data de inicio das parcelas
+@param _dFim  , Data    , Data de fim das parcelas
+@return Array, Retorna um array contendo as parcelas, coluna 1 -> Data, coluna 2 Valor
+/*/
+Static Function fCondCont(_nValor, _dIni, _dFim)
+	
+	Local _aRet     := {}
+	Local _nDiaMax  := 30 // dias maximo a considerar por mes
+	Local _nDias    := 0 // quantidade de dias entre o inicio e o fim, considera no maximo 30 dias por mes
+	Local _nDiaVenc := 30 // sempre usa esse dia pra vencimento, caso o mes nao tenha esse dia usa o ultimo dia
+	Local _dAux     := _dIni
+	Local _aMeses   := {} // array com o anomes da parcela, o dia de vencimento da parcela, e a quantidade de dias a considerar do mes
+	Local _nValDia  := 0
+	Local _nz       := 0
+	
+	/*Alert(_nValor)
+	Alert(_dIni)
+	Alert(_dFim)*/
+	
+	While _dAux <= _dFim
+	
+		/*
+		_nAnosMes := (Year(_dAux) * 12) + Month(_dAux)
+		_nPos := aScan(_aMeses, {|x| x[1] == _nAnosMes } )
+		If _nPos > 0
+			If _aMeses[_nPos,3] < _nDiaMax
+				_aMeses[_nPos,3] += 1
+				_nDias++
+			EndIf
+		Else
+			_dDTVenc := LastDay(_dAux) // ultimo dia do mes 
+			If Day(_dDTVenc) > _nDiaVenc // pega no maximo o dia definido na variavel
+				_dDTVenc := SToD(SubStr(DToS(_dDTVenc), 1, 6) + StrZero(_nDiaVenc,2))
+			EndIf 
+			
+			Aadd(_aMeses , {_nAnosMes, _dDTVenc , 1} )
+			_nDias++
+		EndIf
+		*/
+
+		_nAnosMes := (Year(_dAux) * 12) + Month(_dAux)
+		_nPos     := aScan(_aMeses, {|x| x[1] == _nAnosMes } )
+		If _nPos = 0
+			//If _aMeses[_nPos,3] < _nDiaMax
+				//_aMeses[_nPos,3] += 1
+				//_nDias++
+			//EndIf
+			//Else
+			_dDTVenc := LastDay(_dAux) // ultimo dia do mes
+			If Day(_dDTVenc) > _nDiaVenc // pega no maximo o dia definido na variavel
+				_dDTVenc := SToD(SubStr(DToS(_dDTVenc), 1, 6) + StrZero(_nDiaVenc,2))
+			EndIf 
+			
+			If _dAux == _dIni  			
+				If AllTrim(Str(Month(_dAux))) == "2"
+					//->Calcula Bissexto
+					nAno := Year(dDataBase,4)
+					lBissexto := If(nAno%4==0,.T.,.F.)
+					If lBissexto
+						nCalD := (LastDay(_dAux) - _dAux ) + 2
+					Else
+						nCalD := (LastDay(_dAux) - _dAux ) + 3
+					EndIf											
+				Else
+					If Last_Day(_dAux) = 31
+						//nCalD := (LastDay(_dAux) - _dAux ) -1
+						nCalD := (LastDay(_dAux) - _dAux )						
+						If nCalD = 0
+							nCalD := 1
+						EndIf						
+					Else
+						nCalD := (LastDay(_dAux) - _dAux ) + 1
+					EndIf
+				EndIf									
+			ElseIf SubStr(DToS(_dAux),1,6) == SubStr(DToS(_dFim),1,6)
+				nCalD := Day(_dFim)		
+			Else
+				nCalD := 30
+			EndIf
+			
+			Aadd(_aMeses , {_nAnosMes, _dDTVenc , nCalD} )
+			
+			_nDias += nCalD 
+		EndIf
+		
+		
+		_dAux := _dAux + 1
+	EndDo
+	
+	If _nDias > 0
+	
+		_nValDia := _nValor / _nDias
+		
+		_nDec := TamSX3("CNW_VLPREV")[2]
+		For _nz:= 1 to Len(_aMeses)
+			Aadd(_aRet, {_aMeses[_nz,2] , Round(_aMeses[_nz,3] * _nValDia, _nDec) } )
+		Next
+		
+		// como colocou o valor arrendondado, trata pra jogar o valor que "sobrar" na ultima parcela
+		_nValTotal := 0
+		aEval(_aRet, {|x,y| _nValTotal += x[2] } )
+		If _nValTotal <> _nValor
+			_aRet[Len(_aRet) , 2] += _nValor - _nValTotal
+		EndIf
+		
+	EndIf
+	
+	/*Aviso("VarInfo", VarInfo("_aMeses",_aMeses,,.F.) , {"ok"},3 )
+	Aviso("VarInfo", VarInfo("_aRet",_aRet,,.F.) , {"ok"},3 )*/
+	
+Return(_aRet)

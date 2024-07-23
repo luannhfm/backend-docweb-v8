@@ -1,0 +1,89 @@
+#INCLUDE "PROTHEUS.CH"
+
+/*/{Protheus.doc} F70GRSE1
+O ponto de entrada F70GRSE1 é chamado após a baixa do título a receber. 
+Neste momento o SE1 está posicionado e recebe como primeiro parâmetro 
+o código da ocorrência, caso, seja uma baixa proveniente do CNAB.
+@author Microsiga
+@version 1.0
+@param cOcorr, Caracter, Código da ocorrência do retorno do CNAB
+@type User function
+@see https://tdn.totvs.com.br/display/public/mp/F70GRSE1+-+Referente+a+baixa+proveniente+do+CNAB+--+34779
+@history 08/09/2019, Franklin de Brito de Oliveira, removido tratativa na SE5.
+/*/
+User Function F70GRSE1()
+
+	Local _cArea := GetArea()        
+	Local _cArea1  := GetArea()        
+	Local nTotalLcto  := 0
+	Local nHdlPrv   	:= 0
+	Local cArquivo  	:= ""
+	Local cLote     	:= LoteCont("FIN")
+	Local cProg     	:= "FINA070" 
+	Local cLP			:= GetNewPar("SI_LPRATBX", "001" )
+	Local cLP1			:= GetNewPar("SI_LPBX", "003" )
+	Local nReg
+	Local nHdlPrv := HeadProva(cLote,cProg,Subs(cUsuario,7,6),@cArquivo) //Cabeçalho do Lançamento
+
+	IF  !IsInCallStack("U_SIESBA23") .and.  !IsInCallStack("U_SICFGA01") /*Rotina ESB*//*Rotina CARGA*/  
+		SZZ->(dbSetOrder(1))
+		IF SZZ->(dbSeek(XFilial("SZZ")+"FINA070"))
+			If !Empty(SE1->E1_XIDESB)    //Ana: Envia a baixa somente de titulos recebidos via integração.
+				MsgRun('Enviando pacote para ESB. Aguarde...',, {|| U_SIESBA23() } )
+			Endif	          
+		ENDIF	
+
+	ENDIF  
+			
+	//Inicio Processo de Contabilização da Baixa por Rateio
+	//ANA: Precisa Chamar ponto de Lançamento PCO?                            
+	If nHdlPrv > 0
+		AGH->(dbSetOrder(1)) //AGH_FILIAL+AGH_NUM+AGH_SERIE+AGH_FORNEC+AGH_LOJA+AGH_ITEMPD+AGH_ITEM                                                                                            
+		If AGH->((dbSeek( xFilial("AGH") + SE1->E1_NUM + SE1->E1_PREFIXO + SE1->E1_CLIENTE + SE1->E1_LOJA))) //Se houver Rateio para a nota
+			SD2->(dbSetOrder(3)) //D2_FILIAL+D2_DOC+D2_SERIE+D2_CLIENTE+D2_LOJA+D2_COD+D2_ITEM                                                                                                     
+			If SD2->((dbSeek( xFilial("SD2") + SE1->E1_NUM + SE1->E1_PREFIXO + SE1->E1_CLIENTE + SE1->E1_LOJA)))
+				While SD2->(!Eof()) .and. xFilial("SD2") == SD2->D2_FILIAL .and. ;
+					SE1->E1_NUM == SD2->D2_DOC .And. SE1->E1_PREFIXO == SD2->D2_SERIE .and. ;
+					SE1->E1_CLIENTE == SD2->D2_CLIENTE .And. SE1->E1_LOJA == SD2->D2_LOJA			 				 			
+					AGH->(dbSetOrder(2)) //AGH_FILIAL+AGH_NUM+AGH_SERIE+AGH_ITEMPD+AGH_ITEM                                                                                                               
+					AGH->((dbSeek( xFilial("AGH") + SD2->D2_DOC + SD2->D2_SERIE + SD2->D2_ITEM)) )
+					While AGH->(!Eof()) .and. xFilial("AGH") == AGH->AGH_FILIAL .and. ;
+						AGH->AGH_NUM == SD2->D2_DOC .and. AGH->AGH_SERIE == SD2->D2_SERIE .and. ;
+						AGH->AGH_ITEMPD == SD2->D2_ITEM
+						
+						_cArea1 := GetArea()    
+						nReg := AGH->(RecNo()) //Salva posicionamento antes de chamar LP
+						
+						//Chama Lançamento Especifico                       
+						nTotalLcto += DetProva(nHdlPrv,cLP,cProg,cLote)
+						
+						RestArea(_cArea1) 
+						AGH->(dbSetOrder(2)) //AGH_FILIAL+AGH_NUM+AGH_SERIE+AGH_ITEMPD+AGH_ITEM                                                                                                               
+						AGH->(dbGoTo(nReg)) //Retorna ao registro posicionado antes da chamada do LP
+						AGH->(dbSkip())
+					End                
+					SD2->(dbSkip())
+				End                                                                                             
+				//Chamada de Lançamento para contabilizar somente o Total
+				nTotalLcto += DetProva(nHdlPrv,cLP1,cProg,cLote)	        	        
+			Endif                                                
+		Endif     
+		
+		// Rodape do lancamento gerando os totais.
+		If nHdlPrv > 0
+			Rodaprova(nHdlPrv,nTotalLcto)
+			If nTotalLcto > 0
+				nTotalLcto := 0
+				//Cria transacao para garantir atualizacao do documento
+				Begin Transaction
+				cA100Incl(cArquivo,nHdlPrv,3,cLote,.T.,.F.)    
+				End Transaction
+			Endif	
+		EndIf
+	Endif
+
+	//Fim Processo de Contabilização da Baixa por Rateio
+
+	RestArea(_cArea)
+
+Return()

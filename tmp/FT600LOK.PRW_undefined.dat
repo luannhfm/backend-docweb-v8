@@ -1,0 +1,114 @@
+#Include 'Protheus.ch'
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <FT600LOK>
+  Ponto de Entrada: Programa FATA600.PRW, Valida as Linhas da Proposta 
+  Comercial.
+
+@author<Jonas Nascimento>
+@since<21/09/2015>
+@version<
+   -----------------------------------------------------------------------
+	#001 07/10/2015 - Jonas Nascimento J2A
+	-> Proposta Comercial c/ Produto genérico ou marcada como sem produto 
+	   só devem ser permitido para clientes do tipo Pessoa Juridica.
+   -----------------------------------------------------------------------
+	#002 16/10/2015 - Jonas Nascimento J2A
+	-> Implementações para atender a VENDA BALCAO
+	-> Validar quantidade informada pelo usuário [ADZ_QTDVEN] com a 
+	   quantidade de Vagas Disponíveis no SIGE. 
+	     Válido ADZ_QTDVEN <= QtdVagasDispSIGE
+	     inválido ADZ_QTDVEN > QtdVagasDispSIGE.
+	   - Fonte [SN7330X.prw] contém a função [fLstTurm()].
+   -----------------------------------------------------------------------
+	 Antonio Dantas                                           11/11/2015 
+	 Implementa obrigatoriedade no preenchento do campo do Codigo da  
+	 Viabilidade [ADZ_XVIABI], caso a proposta seja SENAI e o produto 
+	 Generico. 
+   -----------------------------------------------------------------------
+     Antonio Dantas                                           11/12/2015
+     Ajustes do Processo de Viabilidade: Desvincula do Produto da
+     proposta de venda e vincula ah Oportunidade.
+   -----------------------------------------------------------------------
+>
+@receive<Nil>
+@return
+<  _lReturn (L) - (.t.) - Tudo OK; (.f.) - Informacao da Linha Invalida
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function FT600LOK()
+Local _lReturn 		:= .T.
+//+------------------------------------------------------------------+
+//| Chamada a Funcao [fVldPrdG()], descrita logo abaixo, responsavel |
+//|	por: Efetuar o tratamento para Produtos genéricos; Sendo         |
+//|	Obrigatório o preenchimento da descrição complementar do produto.|
+//+------------------------------------------------------------------+
+_lReturn 	:= fVldPrdG()
+Return _lReturn
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldPrdG>
+	Tratamento para produtos genéricos, sendo obrigatório o preenchimento da
+	descrição complementar do produto.
+
+@author<Jonas Nascimento>
+@since<21/09/2015>
+@version<Nil>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function fVldPrdG()
+Local _lReturn 		:= .T.
+Local _cProdsGer	:= SuperGetMv("MV_XPRGENE",,"")	//Produtos genéricos
+Local _aHeardNew	:= aClone(aHeader)
+Local _aColsNew		:= aClone(aCols)
+Local _nP01			:= aScan(_aHeardNew,{|X| UPPER(AllTrim(X[2]))=="ADZ_PRODUT"})
+Local _nP02			:= aScan(_aHeardNew,{|X| UPPER(AllTrim(X[2]))=="ADZ_XDESC"})
+Local _nP03			:= aScan(_aHeardNew,{|X| UPPER(AllTrim(X[2]))=="ADZ_XTURMA"})
+//+------------------------------------------------------------------+
+//| Antonio Dantas                                        11/12/2015 |
+//| Ajustes do Processo de Viabilidade: Desvincula do Produto da     |
+//| proposta de venda e vincula ah Oportunidade.                     |
+//+------------------------------------------------------------------+
+//&&-- Local _nP04			:= aScan(_aHeardNew,{|X| UPPER(AllTrim(X[2]))=="ADZ_XVIABI"})
+//--
+Local _cCodProd		:= _aColsNew[N,_nP01]
+Local _cDescGene	:= _aColsNew[N,_nP02]
+Local _cTurmaSIG	:= _aColsNew[N,_nP03] //Código da Turma no SIGE.
+Local _lCliJurid	:= .F.
+//+------------------------------------------------------------------+
+//| Antonio Dantas                                        11/12/2015 |
+//| Ajustes do Processo de Viabilidade: Desvincula do Produto da     |
+//| proposta de venda e vincula ah Oportunidade.                     |
+//+------------------------------------------------------------------+
+//&&-- Local _cCodViab		:= _aColsNew[N,_nP04] //Código da Turma no SIGE.
+//&&--  Local _lCliJurid	:= U_f03CliPJ(AD1->AD1_CODCLI, AD1->AD1_LOJCLI) //#001
+If Substr(cFilAnt,1,4) == "03MT"
+	_lCliJurid	:=  Posicione("SA1",1,FwxFilial("SA1")+AD1->AD1_CODCLI+AD1->AD1_LOJCLI,"A1_PESSOA") == "J"
+Endif 
+If _lCliJurid	//Somente SENAI e Cliente PJ
+	//#001
+	If _cCodProd $ _cProdsGer
+		If Empty(Alltrim(_cDescGene))
+			Aviso(FunName()+"/"+ProcName(),"Produto ["+AllTrim(_cCodProd)+"] é genérico, a descrição complementar é OBRIGATORIA! Campo Des Prod Gen [ADZ_XDESC]",{"OK"})
+			_lReturn := .F.
+		Endif
+	Else
+		If !Empty(Alltrim(_cDescGene))
+			Aviso(FunName()+"/"+ProcName(),"Produto ["+AllTrim(_cCodProd)+"] não é genérico!"+CRLF+"Remova a descrição do campo Des Prod Gen [ADZ_XDESC].",{"OK"})
+			_lReturn := .F.
+		Endif
+	Endif
+	//#002
+	If _lReturn .AND. !Empty(_cTurmaSIG)
+		_lReturn := U_fLstTurm( , _cTurmaSIG) 
+	Endif
+Endif
+Return _lReturn

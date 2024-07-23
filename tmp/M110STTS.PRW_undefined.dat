@@ -1,0 +1,258 @@
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³M110STTS  ºAutor  ³Microsiga           º Data ³  06/14/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Ponto de entrada para enviar solicitação para aprovação.   º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³CNI                                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+#Include "Protheus.ch"
+#Include "Topconn.ch"
+
+User Function M110STTS()
+ 
+Local cNum     := PARAMIXB[1]
+Local nOpc     := PARAMIXB[2] // Não utilizado.
+Local lCopia   := PARAMIXB[3]
+
+Local _cFil
+Local _cQry    := ""
+Local _lBlq    := PARAMIXB[4] //Envio de WF na copia ou bloqueio da SC
+Local _nTotSC  := 0
+Local _aArea   := GetArea()
+Local _aAreaC1 := SC1->(GetArea())
+Local _aAreaCR := SCR->(GetArea())
+Local _aAreaAL := SAL->(GetArea())
+Local _cAlias  := GetNextAlias()
+
+Local oDlg
+Local oRadio
+Local nOpca  := 1
+Local nRadio := 1 //Alt por Edu em 17/01/14 para atribuir valor
+Local cCadastro := "Envio para Aprovação"
+
+Local lPrjCni    := FindFunction("PRJCNI")
+
+SC1->(dbSetOrder(1))
+
+//If lPrjCni Comentado por Alexandre Manini
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³Tratamento Envio WF - Adic. por Edu em 04/03/14³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	If (Inclui .or. Altera) .And. !lCopia     
+		//Adic. por Edu em 17/04/14 para corrigir erro ambiente
+		//__cInternet := IIF(Type("__cInternet")=="U", "" ,__cInternet)
+		
+        ////////////////////////////////////////////////////////////////////////////////////////////////////
+        // 22/07/2019 - Paulo Schwind
+		// Estava ocorrendo ERRO ao acessar a tela de Pedido de Compras, logo apos incluir uma SC e ir diretamente para a tela de Pedido de Compra 
+		// enviar para aprovação, por este ponto de entrada.
+		// Provavelemente, nunca haviam testado criar a SC, enviar e Acessar a tela de Pedidos de Compra pois, 
+		// Solicitantes e Compradores são usuários diferentes.
+		//
+		// A variável __cInternet havia sido redefinida como caractere e verificando em fonte padrao da Totvs, 
+		// a mesma é declarada como Nil.
+		// O Problema foi corrigido em conjunto com o analista Rafael Karczevski - J2A
+        //////////////////////////////////////////////////////////////////////////////////////////////////// 
+        		
+		__cInternet := IIF(Type("__cInternet")=="U", Nil,__cInternet)
+		nRadio :=  IIF(AllTrim(__cInternet) == "AUTOMATICO", 1, nRadio)
+
+		//Cria tela Aprovacao Envio WF
+		If AllTrim(__cInternet) <> "AUTOMATICO"
+		
+			DEFINE MSDIALOG oDlg FROM  94,1 TO 250,293 TITLE OemToAnsi(cCadastro) PIXEL STYLE DS_MODALFRAME STATUS  
+			oDlg:lEscClose  := .F.			
+			
+			@ 09,15 Say OemToAnsi("Envio para Aprovação") SIZE 150,7 OF oDlg PIXEL
+			
+			@ 22,07 TO 55, 140 OF oDlg  PIXEL
+			
+			@ 30,10 Radio 	oRadio VAR nRadio;
+			ITEMS "Somente Salvar",;
+			"Salvar e Enviar WF";
+			3D SIZE 100,10 OF oDlg PIXEL
+			
+			DEFINE SBUTTON FROM 65,115 TYPE 1 ENABLE OF oDlg ACTION (nOpca := 1, oDlg:End())
+			
+			ACTIVATE MSDIALOG oDlg NOMODAL CENTERED ON INIT (nOpca := 1, .F.)	// Zero nOpca caso para saida com ESC
+					
+			// Adic. por Edu (DOIT) em 19/03/14
+			If SC1->(dbSeek(xFilial("SC1")+cNum)) //.And. SC1->C1_APROV == 'W'
+
+				While SC1->(!EOF()) .And. SC1->(C1_FILIAL+C1_NUM) == xFilial("SC1")+cNum
+					RecLock("SC1", .F.)
+					SC1->C1_XWFSTAT := AllTrim(Str(nRadio))
+					SC1->C1_XSTTR	:= Space(TamSX3("C1_XSTTR")[1])
+					If nRadio == 1
+						SC1->C1_APROV := "W"	// Pendente de envio do WF
+					Else
+						SC1->C1_APROV := "B"	// Bloqueado
+					Endif
+					SC1->(MsUnLock())
+					SC1->(DbSkip())
+				End                               
+                
+                // Incluído por Peder Munksgaard (Do.it Sistemas) em 18/07/2014.
+                
+                SC1->(dbSeek(xFilial("SC1")+cNum))
+                
+                If SC1->C1_APROV == 'W'    // Verifico se está pendente de envio para Workflow e removo registros de aprovação
+                   
+                   _lBlq := .F.
+                                   				
+				   dbSelectArea("SCR")
+				   SCR->(dbSetOrder(1))
+				   If SCR->(dbSeek(SC1->(C1_FILIAL+"SC"+C1_NUM)))
+				   
+				      While SCR->(!Eof()) .And. Alltrim(SCR->(CR_FILIAL+"SC"+CR_NUM)) == Alltrim(SC1->(C1_FILIAL+"SC"+C1_NUM))
+				         
+				         Reclock("SCR",.F.)
+				         Replace CR_OBS With "[M110STTS] DEL.SOM.SALVAR"
+		                 SCR->(dbDelete())
+		                 SCR->(MsUnlock())
+		                 				           				         				         
+				         SCR->(dbSkip())
+				      
+				      End
+				   
+				   Endif
+				                              // Chamar a criação da SCR quando salvar e enviar workflow
+				Elseif SC1->C1_APROV  == 'B'  // Verifico se está bloqueado e se o conceito de Unidade de Aprovação for
+				                              // utilizado, então deleto registros divergentes referentes a aprovação.
+
+                   _lBlq := .T.
+                   
+				   dbSelectArea("SCR")
+				   SCR->(dbSetOrder(2))
+				   If SCR->(!dbSeek(SC1->(C1_FILIAL+"SC"+C1_NUM)))
+				                          
+                      _nTotSC := _f110TotSC(SC1->C1_NUM)
+                   				                              
+                      MaAlcDoc({SC1->C1_NUM,"SC",_nTotSC,,,SC1->C1_XGRPAPR,,1,1,SC1->C1_EMISSAO},,1)
+                      
+                   Endif
+
+                   _cQry := " SELECT * FROM " + RetSqlName("SC1") + " C11                          " + CRLF
+                   _cQry += " LEFT JOIN     " + RetSqlName("SAL") + " AL1                          " + CRLF
+                   _cQry += "        ON AL1.AL_COD = C11.C1_XGRPAPR                                " + CRLF
+                   _cQry += " LEFT JOIN " + RetSqlName("SCR") + " CR1                              " + CRLF
+                   _cQry += "        ON CR1.CR_FILIAL = C11.C1_FILENT                              " + CRLF
+                   _cQry += "        AND CR1.CR_NUM   = C11.C1_NUM                                 " + CRLF
+                   _cQry += "        AND CR1.CR_TIPO  = 'SC'                                       " + CRLF
+                   _cQry += "        AND CR1.CR_USER  = AL1.AL_USER                                " + CRLF
+                   _cQry += " WHERE   C11.D_E_L_E_T_ <> '*'                                        " + CRLF
+                   _cQry += " AND     AL1.D_E_L_E_T_ <> '*'                                        " + CRLF
+                   _cQry += " AND     AL1.AL_XUNIDAP <> '" + Space(TamSX3("AL_XUNIDAP")[1]) + "'   " + CRLF
+                   _cQry += " AND     C11.C1_FILENT   = '" + SC1->C1_FILENT + "'                   " + CRLF
+                   _cQry += " AND     C11.C1_NUM      = '" + SC1->C1_NUM    + "'                   " + CRLF   
+      
+                   _cQry := ChangeQuery(_cQry)
+      
+                   If Select((_cAlias)) > 0 
+                      (_cAlias)->(dbCloseArea())
+                   Endif
+      
+                   TcQuery _cQry Alias (_cAlias) New
+      
+                   While (_cAlias)->(!Eof())
+      
+                      If (_cAlias)->AL_XUNIDAP <> SC1->C1_FILIAL
+         
+                         _cQry := "UPDATE " + RetSqlName("SCR") + " SET CR_OBS = '[MT110STTS]DEL.XUNIDAP.FILENT', D_E_L_E_T_ = '*' " + CRLF
+                         _cQry += "WHERE CR_FILIAL = '" + (_cAlias)->CR_FILIAL + "'" + CRLF
+                         _cQry += "AND   CR_NUM    = '" + (_cAlias)->CR_NUM    + "'" + CRLF
+                         _cQry += "AND   CR_TIPO   = '" + (_cAlias)->CR_TIPO   + "'" + CRLF
+                         _cQry += "AND   CR_USER   = '" + (_cAlias)->CR_USER   + "'" + CRLF                       
+                       
+                         TcSqlExec(_cQry)
+                         TcSqlExec("COMMIT")
+            
+                      Endif
+         
+                      (_cAlias)->(dbSkip())
+         
+                   End
+                                                                                               				                             				      				   
+                Endif
+                	
+                // Fim Inclusão.
+                		   
+				// Trecho removido por Peder Munksgaard (Do.it Sistemas) em 16/07/2014
+				/*	
+				// Incluído por Joao Carlos - 22/04/2014				
+				SCR->(dbSetOrder(1))
+				SCR->(dbSeek(XFilial("SCR")+"SC"+cNum))
+				While SCR->(!Eof()) .and. SCR->CR_FILIAL == XFilial("SCR") .and. Alltrim(SCR->CR_NUM) == Alltrim(cNum) .and. SCR->CR_TIPO == "SC"
+					If SCR->CR_STATUS == "03" .or. SCR->CR_STATUS == "04"
+   					RecLock("SCR",.F.)
+	 					SCR->CR_STATUS := "02"
+            			SCR->CR_DATALIB := Ctod("  /  /  ")
+            			SCR->CR_OBS := ""
+            			SCR->CR_USERLIB := ""
+            			SCR->CR_LIBAPRO := ""
+            			SCR->CR_VALLIB := 0
+						SCR->(MsUnLock())
+					Endif
+					SCR->(dbSkip())
+				End							
+			   // --------------------------------------
+			   */
+			   
+			Endif
+						
+		Endif
+	Endif
+
+	//Envia solicitação para aprovação
+	If INCLUI .Or. lCopia .Or. (ALTERA .And. _lBlq) //Caio.Santos - FSW - 14/02/2012 - Envio de WF na copia ou bloqueio da SC
+		
+		U_SIC28LNP(cNum,lCopia)
+				
+		//Alt. por Edu (DOIT) em 15/04/14
+		If nRadio == 2 // Salvar e Enviar para Workflow
+			U__fWF_SC(cNum,lCopia)
+		Endif	
+		
+		//Exclusao
+	ElseIf (!INCLUI .and. !ALTERA)
+		
+		//Exclui Log dos Processos
+//		COMA080(SC1->C1_NUM,SC1->C1_ITEM,"COI_DTHSOL","COI_USOL",.T.,/*cUser*/,"COI_DOCSC")
+		COMA080(SC1->C1_NUM,SC1->C1_ITEM,"COI",{},"COI_DTHSOL","COI_USOL",.T.,/*cUser*/,"COI_DOCSC",SC1->C1_NUM)
+		
+	EndIf
+	
+//EndIf Comentado por Alexandre Manini
+
+RestArea(_aAreaAL)
+RestArea(_aAreaCR)
+RestArea(_aAreaC1)
+RestArea(_aArea)
+
+Return Nil
+
+Static Function _f110TotSC(_cNumSC)
+Local _cArea   := GetArea()
+Local _nRet    := 0
+Local _cQuery  := ""
+Local _cArqTRB := CriaTrab(nil,.f.)
+
+_cQuery := "SELECT SUM(C1_QUANT*C1_VUNIT) TOTAL FROM "+RetSqlName("SC1")+" WHERE D_E_L_E_T_ = ' ' "
+_cQuery += "AND C1_NUM = '"+_cNumSC+"' AND C1_FILIAL = '"+XFilial("SC1")+"' "
+_cQuery := ChangeQuery(_cQuery)
+
+dbUseArea(.T.,"TOPCONN",TCGenQry(,,_cQuery),_cArqTRB,.t.,.t.)
+
+_nRet := (_cArqTRB)->TOTAL
+
+(_cArqTRB)->(dbCloseArea())
+RestArea(_cArea)
+Return(_nRet)

@@ -1,0 +1,426 @@
+#Include 'Protheus.ch'
+#INCLUDE "TOPCONN.CH"
+
+
+User Function SF06A70X(_cCnpj)
+
+
+	Local aHeaders 		:= {}
+	Local cPath 		:= "/fiemt/empresas-participantes"
+	Local oRestClient 	:= FWRest():New(cUrl)
+	Local cResult		:= ""
+	Local cErro			:= ""
+	Local oJsonA
+	Local oJsonB
+	Local array			:= {}
+	Local lRet
+	
+	aAdd( aHeaders, "Accept: application/json" )
+	aAdd( aHeaders, "Authorization: " + cToken )
+	oRestClient:SetPath( cPath + "?cnpj="+_cCnpj+"" )
+	If oRestClient:Get(aHeaders)
+		cResult := DecodeUTF8( oRestClient:GetResult() )
+		oJsonA := JsonObject():New()
+		oJsonA:fromJson(cResult)
+
+		array:= oJsonA:GetNames()
+
+		oJsonB := JsonObject():new()
+		oJsonB := oJsonA:GetJsonObject(ARRAY[1])
+
+		If lTela
+			Processa({|| lRet := PrintJson(oJsonB)}, "Incluindo Cliente ...")
+		else
+			lRet := PrintJson(oJsonB)
+		EndIf
+
+		FreeObj(oJsonA)
+		FreeObj(oJsonB)
+		FreeObj(oRestClient)
+
+	else
+		cResult := DecodeUTF8( AllTrim(oRestClient:GetResult()) )
+		cErro := DecodeUTF8( AllTrim(oRestClient:GetLastError()) )
+		FreeObj(oRestClient)
+
+		aAdd(aLog ,cResult + CRLF + cErro )
+	EndIf
+
+Return(lRet)
+
+//==============================================================================================
+
+Static function PrintJson(jsonObj)
+
+	local names
+	local lenJson
+
+	Private _lStPag := ""
+	Private _nVlPg  := ""
+	Private _cParcel	:= .F.
+	Private _nVlPar := ""
+	Private _cId	:= 0
+	Private _cDtPg	:= ""
+
+	lenJson := len(jsonObj)
+
+	names := jsonObj:GetNames()
+
+	If lTela
+		Processa({|| lRet := Cabec(jsonObj[names[2]])}, "Reunindo informações do cliente")
+	else
+		lRet := Cabec(jsonObj[names[2]])
+	EndIf
+
+return(lRet)
+
+//======================================
+Static Function Cabec(jsonObj)
+
+	Local x
+	Local names
+	Local ender
+
+	Private cNome
+	Private cRSocial
+	Private cCep
+
+	For x := 1 to len(jsonObj)
+
+		//Array com cabelho
+		names := jsonObj[x]:GetNames()
+
+		cNome := jsonObj[x][names[1]]
+		cRSocial := jsonObj[x][names[16]]
+
+		//Array com endereço
+		ender :=jsonObj[x][names[6]]:GetNames()
+
+		cCep 	:= jsonObj[x][names[6]][ender[1]]
+		cIbgeUF := jsonObj[x][names[6]][ender[2]]
+		cLogra 	:= jsonObj[x][names[6]][ender[3]]
+		cBairro := jsonObj[x][names[6]][ender[4]]
+		cIbeCid := jsonObj[x][names[6]][ender[5]]
+
+	Next x
+
+
+	If lTela
+		Processa({|| lRet := Grava()}, "Criando Cliente")
+	else
+		lRet :=  Grava()
+	EndIf
+
+
+Return(lRet)
+
+//================================================
+
+Static Function Grava()
+
+	Local lRet := .T.
+	Local aCliente	:= {}
+
+	aadd( aCliente ,{"A1_TIPO",      "F"     , Nil }   ) // Tipo
+	aadd( aCliente ,{"A1_PESSOA",    Iif(Len(_cCnpj) = 13, "F","J" ), Nil } )// Tipo Pessoa
+	aadd( aCliente ,{"A1_CGC",       _cCnpj  , Nil }   ) // CNPJ/CPF
+	aadd( aCliente ,{"A1_NOME",      cRSocial, Nil }   ) // Nome
+	aadd( aCliente ,{"A1_NREDUZ",    cNome  , Nil } 	) // Nome reduz.
+	aadd( aCliente ,{"A1_END",       cLogra  , Nil } 	) // Endereco
+	aadd( aCliente ,{"A1_EST",       GetAdvFVal("CC2","CC2_EST", xFilial("CC2") + cIbeCid, 3) , Nil } ) // Estado
+	aadd( aCliente ,{"A1_COD_MUN",   cIbeCid , Nil }) // Codigo Municipio Cobrança
+	aadd( aCliente ,{"A1_MUN",   	 GetAdvFVal("CC2","CC2_MUN", xFilial("CC2") + cIbeCid, 3) , Nil } ) // Codigo Municipio
+	aadd( aCliente ,{"A1_MUNC",   	 GetAdvFVal("CC2","CC2_MUN", xFilial("CC2") + cIbeCid, 3) , Nil } ) // Codigo Municipio
+	aadd( aCliente ,{"A1_ESTC",      GetAdvFVal("CC2","CC2_EST", xFilial("CC2") + cIbeCid, 3) , Nil } ) // Estado Cobrança
+	aadd( aCliente ,{"A1_ENDCOB",    cLogra  , Nil }	) // Endereco de Cobrança
+	aadd( aCliente ,{"A1_BAIRRO",    cBairro , Nil }   ) // Bairro
+	aadd( aCliente ,{"A1_BAIRROC",   cBairro , Nil }   ) // Bairro Cobrança
+	aadd( aCliente ,{"A1_CEP",       cCep  , Nil }     ) // CEP
+	aadd( aCliente ,{"A1_CEPC",      cCep   , Nil }    ) // CEP CObrança
+
+	lMsErroAuto := .F.
+	MSExecAuto({|x,y| mata030(x,y)},aCliente,3)
+
+	If lMsErroAuto
+		aAdd(aLog ,MostraErro("/dirdoc", "error.log"))
+		RollbackSx8()
+		lRet := .F.
+	else
+		cMsg := MostraErro("/dirdoc", "error.log")
+		If Empty(cMsg)
+			aAdd(aLog ,"Cliente com CNPJ " + _cCnpj + " incluido com sucesso!")
+			lRet := .T.
+		else
+			aAdd(aLog ,Alltrim(cMsg))
+			lRet := .F.
+			Gravacli( @lRet , @alog , aCliente  )
+		EndIf
+	EndIf
+
+RETURN(lRet)
+
+/*/{Protheus.doc} GrvPros
+	(Funcao para qualificar Suspect para Prostpect )
+	@type  Function
+	@author Jorge Elias Tavares da Silva
+	@since 07/06/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+	/*/
+Static Function GrvPros(_cCnpj,nRecACH)
+Local lRet := .T.
+Local cF3Prosp 		:= ""
+Local cLojaACH      := ""
+Local lOpp			:= .F.
+Local lOpRap 	    := .T.
+Local aAreaACH		:= ACH->(GetArea())
+Local cMsg1 := ""
+
+DbSelectArea("ACH")
+ACH->(DbSetOrder(2))
+DbSeek( xFilial("ACH") + PadR(_cCnpj, TamSx3("ACH_CGC")[1] ) )
+If ACH->(Found())
+	nRecACH := ACH->(Recno())
+EndIf
+RestArea(aAreaACH)
+
+	If nRecACH <> 0
+
+		ACH->(DbGoto(nRecACH))
+
+		cF3Prosp 	:= ACH->ACH_CODIGO
+		cLojaACH    := ACH->ACH_LOJA
+
+		IF	SuperGetMv( "MV_CNVOPOR" , .F. , .F. ) == .T.
+			lOpRap := .F.
+			lOpp   := .T.
+		EndIf	 
+		If ACH->ACH_MSBLQL == '1'
+			cMsg1 := "Este Suspect não pode ser convertida pois está inativa."
+			aAdd(aLog , cMsg1 )
+			lRet := .F.	
+		ElseIf ACH->ACH_STATUS == '6'
+			cMsg1 := "Este Suspect ja foi convertido para prospect."
+			aAdd(aLog , cMsg1 )		
+			lRet := .F.	
+		EndIf
+
+		DbSelectArea("AO3")
+		AO3->(DbSetOrder(1))	// AO3_FILIAL+AO3_CODUSR
+		AO3->(DbSeek(xFilial("AO3")+RetCodUsr()))
+
+		If lRet
+			lRet := TK341Oportu(cF3Prosp, cLojaACH, lOpp) 
+		EndIf
+		
+	EndIf
+	If lRet 
+		aAdd(aLog , "Suspect " + _cCnpj + " qualificado como Prospect " )
+	else
+		If Empty(cMsg1)
+			aAdd(aLog , "Suspect NAO qualificado como Prospect, por favor verifique a rotina " )
+		Endif 
+	Endif
+
+Return lRet
+
+/*/{Protheus.doc} GrvCli
+	(Grava cliente atraves do Prospect )
+	@type  Static Function
+	@author Jorge Elias Tavares da Silva
+	@since 08/06/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+/*/
+Static Function GrvCli( nRecACH ,lPosic ,_cCnpj , aCliente  )
+Local lRet := .F.
+Local aAreaSUS := SUS->(GetArea())
+Local aAreaACH := ACH->(GetArea())
+Local aAreaSA1 := SA1->(GetArea())
+Local cChave   := ""
+
+DEFAULT nRecACH  :=  0
+DEFAULT lPosic	   := .F. 
+DEFAULT _cCnpj   := ""
+DEFAULT aCliente := {}
+
+SA1->(DbSetOrder(1))
+
+If lPosic
+	SUS->(DbSetOrder(4))
+	cChave := xFilial("SUS") + PadR(_cCnpj, TamSx3("ACH_CGC")[1] )  //Posiciona atraves no Prospect atraves do CNPJ para gravar o cliente.
+ElseIf nRecACH > 0 
+	SUS->(DbSetOrder(1))
+	ACH->(DBGOTO( nRecACH )) // encontra Prospect atraves do Suspect(Tabela ACH)
+	cChave :=  xFilial("ACH") + ACH->(ACH_CODPRO+ACH_LOJPRO)  
+Endif
+
+If SUS->( DbSeek( cChave ) ) //SUS - Tabela Prospect 
+	SUS->(DbSetOrder(1))
+	If Len(aCliente) > 0 
+		AtProsp(aCliente)
+	EndIf
+	If !(SA1->( DbSeek( xFilial("SA1")+ SUS->(US_CODCLI + US_LOJACLI) ) ) )
+
+		lRet := &("StaticCall(SF73A02F, fIncCli)")  // Cadastra prospect como cliente(Rotina da FIEMT pronta para 
+													// cadastrar cliente )
+	
+		If lRet .and. SA1->( DbSeek( xFilial("SA1")+ SUS->(US_CODCLI + US_LOJACLI) ) ) 
+			If SA1->A1_XASSSIN == "S"
+				_lSind := .T.
+			EndIf
+		EndIf
+	
+	else
+		
+		If SA1->A1_XASSSIN == "S"
+			_lSind := .T.
+		EndIf
+
+	EndIf
+
+EndIf
+
+If lRet 
+	aAdd(aLog , "Atualização do Prospect para Cliente CNPJ " + ACH->ACH_CGC  )
+Endif
+
+RestArea(aAreaSUS)
+RestArea(aAreaACH)
+RestArea(aAreaSA1)
+
+Return lRet
+
+/*/{Protheus.doc} Gravacli
+	(Grava Prospect e cliente )
+	@type  Static Function
+	@author user
+	@since 27/06/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+/*/
+Static Function Gravacli( lRet , alog, aCliente  )
+Local nRecACH := 0 
+
+	If valtype( atail(alog) ) == "C"
+		If "CNPJ POSSUI SUSPECT CADASTRADO" $ atail(alog)
+			Processa({|| lRet := GrvPros(_cCnpj,@nRecACH) }, "Processa Suspect ...")	
+			Processa({|| lRet := GrvCli(nRecACH, .F. , _cCnpj  , aCliente  )}, "Processa Prospect ...")	
+		ElseIf "CNPJ POSSUI PROSPECT CADASTRADO" $ atail(alog)
+			Processa({|| lRet := GrvCli( NIL  , .T. , _cCnpj , aCliente )}, "Processa Prospect ...")
+		EndIf
+	EndIf
+
+Return
+
+/*/{Protheus.doc} AtProsp
+	(Atualiza o prospect , tabela SUS com os dados da integracao)
+	@type  Static Function
+	@author user
+	@since 04/07/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+/*/
+Static Function AtProsp(aCliente)
+
+Local aVetor := {}
+Local aAux := {}
+Local nx := 0
+Local aAreaSUS := SUS->(GetArea())
+PRIVATE lMsErroAuto := .F.
+
+fclient(@aAux, aCliente)
+
+For nx := 1 To Len(aAux)
+	aAdd (aVetor, 	{ aAux[nx, 01]/*campos*/ 		,aAux[nx, 02] /*conteudo*/  	,Nil} )
+Next nx
+
+MSExecAuto({|x,y| TMKA260(x,y)},aVetor,4) //3- Inclusão, 4- Alteração, 5- Exclusão
+
+	If lMsErroAuto
+		aAdd(aLog ,MostraErro("/dirdoc", "error.log"))
+		RollbackSx8()
+		lRet := .F.
+	else
+		cMsg := MostraErro("/dirdoc", "error.log")
+		If Empty(cMsg)
+			aAdd(aLog ,"Prospect com CNPJ " + _cCnpj + " atualizado com sucesso!")
+			lRet := .T.
+		else
+			aAdd(aLog ,Alltrim(cMsg))
+			lRet := .F.
+			
+		EndIf
+	EndIf
+RestArea(aAreaSUS)
+Return 
+
+ /*/{Protheus.doc} fclient
+	(long_description)
+	@type  Function
+	@author user
+	@since 04/07/2022
+	@version version
+	@param param_name, param_type, param_descr
+	@return return_var, return_type, return_description
+	@example
+	(examples)
+	@see (links_or_references)
+	/*/
+Static Function fclient(aAux,aCliente)
+	
+Local nPos := 0 
+
+aAdd(aAux, { "US_COD",   SUS->US_COD 	} )
+aAdd(aAux, { "US_LOJA",  SUS->US_LOJA 	} )
+
+nPos := aScan(aCliente,  { |x| x[1] == "A1_TIPO"     } ) 
+aAdd(aAux, { "US_TIPO",  aCliente[nPos][2] } )
+nPos := aScan(aCliente,  { |x| x[1] == "A1_PESSOA"   } ) 
+aAdd(aAux,  { "US_PESSOA",  aCliente[nPos][2] } )
+nPos := aScan(aCliente,  { |x| x[1] == "A1_CGC"      } ) 
+aAdd(aAux,  { "US_CGC",  aCliente[nPos][2] } )			
+nPos := aScan(aCliente,  { |x| x[1] == "A1_NOME"     } ) 
+aAdd(aAux,  { "US_NOME",  Subs(aCliente[nPos][2] , 1,  tamSX3("US_NOME")[1]) } )
+nPos := aScan(aCliente,  { |x| x[1] == "A1_NREDUZ"   } ) 
+aAdd(aAux,  { "US_NREDUZ", Subs(aCliente[nPos][2] , 1,  tamSX3("US_NREDUZ")[1])   } )
+nPos := aScan(aCliente,  { |x| x[1] == "A1_END"      } ) 
+aAdd(aAux,  { "US_END", Subs(aCliente[nPos][2] , 1,  tamSX3("US_END")[1])  } )
+nPos := aScan(aCliente,  { |x| x[1] == "A1_EST"      } ) 
+aAdd(aAux,  { "US_EST",  aCliente[nPos][2] } )
+nPos := aScan(aCliente,  { |x| x[1] == "A1_COD_MUN"  } ) 
+aAdd(aAux,  { "US_COD_MUN",  aCliente[nPos][2] } )
+nPos := aScan(aCliente,  { |x| x[1] == "A1_MUN"      } ) 
+aAdd(aAux,  { "US_MUN",  Subs(aCliente[nPos][2] , 1,  tamSX3("US_MUN")[1]) } )
+nPos := aScan(aCliente,  { |x| x[1] == "A1_MUNC"     } ) 
+aAdd(aAux,  { "US_XMUNC",  Subs(aCliente[nPos][2] , 1,  tamSX3("US_XMUNC")[1]) } ) 
+nPos := aScan(aCliente,  { |x| x[1] == "A1_ESTC"     } ) 
+aAdd(aAux,  { "US_XESTC",  aCliente[nPos][2] } )
+nPos := aScan(aCliente,  { |x| x[1] == "A1_ENDCOB"   } ) 
+aAdd(aAux,  { "US_XENDCOB",  aCliente[nPos][2] } )
+nPos := aScan(aCliente,  { |x| x[1] == "A1_BAIRRO"   } ) 
+aAdd(aAux,  { "US_BAIRRO",  Subs(aCliente[nPos][2] , 1,  tamSX3("US_BAIRRO")[1]) } )
+nPos := aScan(aCliente,  { |x| x[1] == "A1_BAIRROC"  } ) 
+aAdd(aAux,  { "US_XBAIRRO",  Subs(aCliente[nPos][2] , 1,  tamSX3("US_XBAIRRO")[1]) } )
+nPos := aScan(aCliente,  { |x| x[1] == "A1_CEP"      } ) 
+aAdd(aAux,  { "US_CEP",  aCliente[nPos][2] } )
+nPos := aScan(aCliente,  { |x| x[1] == "A1_CEPC"     } ) 
+aAdd(aAux,  { "US_XCEPC",  aCliente[nPos][2] } )
+
+Return

@@ -1,0 +1,152 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} FT300TDOK
+Ponto de Entrada executado na confirmacao da oportunidade.
+Manipula a validação de todo o formulário da oportunidade de venda.
+
+@author 	Jose Leite de Barros Neto
+@since 	24/07/2015
+@version 	1.0
+@return 	_lReturn, Logico, Retorna T ou F
+
+@see 
+http://tdn.totvs.com/pages/releaseview.action?pageId=126718689
+/*/
+User Function FT300TDOK()
+	Local _lReturn	:= .T.
+	Local _aAreaAtu	:= GetArea()
+	Local _aAreaADY	:= ADY->(GetArea())
+	
+	_lReturn := ValidaProp()
+	
+	/* Valida Contatos da Oportunidade */
+	If _lReturn
+		_lReturn := fVldContat()
+	EndIf
+	
+	/* Validação de campos  */
+	If _lReturn
+		_lReturn := fVldCpos()
+	EndIf
+	
+	/* 26/09/2017 - Jose Leite - CSI
+		Tratamento para Contrato de Venda - Valida cliente na receita
+	*/
+	If _lReturn
+		_lReturn := u_SF73E08J(M->AD1_CODCLI,M->AD1_LOJCLI)
+	EndIf
+	
+	RestArea(_aAreaADY)
+	RestArea(_aAreaAtu)
+	
+Return( _lReturn )
+
+
+/** {Protheus.doc} ValidaProp
+Funcao que realiza validacao de oportunidade x proposta
+
+@author: 	Jose Leite de Barros Neto
+@since: 	24/07/2015
+@Uso: 		SFIEMT
+*/
+Static Function ValidaProp()
+	
+	Local lRetorno := .T.
+	
+	If M->AD1_STATUS == 'E' .OR. M->AD1_STATUS == 'F'
+			
+		DbSelectArea('ADY')
+		ADY->( DbSetOrder(2) ) //ADY_FILIAL+ADY_OPORTU+ADY_REVISA+ADY_PROPOS
+		ADY->( DbGotop() )
+		If ADY->( DbSeek( AD1->AD1_FILIAL + AD1->AD1_NROPOR + AD1->AD1_REVISA ) )
+			lRetorno := .T.
+		Else
+			lRetorno := .F.
+			MsgInfo("Não existe proposta para essa oportunidade, logo, não pode ser finalizada como ganha. Favor Verificar!","Atenção")
+		EndIf
+		
+		ADY->( DbCloseArea() )
+		
+	EndIf
+	
+Return( lRetorno )
+
+/** {Protheus.doc} fVldContat
+Funcao que realiza validacao dos contatos do cliente como representante.
+	Deve ser informado pelo menos um Representante [AD9_XREPRE = '1']
+
+@author: 	Jonas Nascimento
+@since: 	08/09/2015
+@Uso: 		SFIEMT
+*/
+/*+-----------------------------------------------------------------------
+	Franklin B. Oliveira - 21/06/2016: Adicionado validação para 
+	considerado apenas itens NÃO deletados.
+/*+-----------------------------------------------------------------------*/
+Static Function fVldContat()
+	Local _lRet 	:= .T.
+	Local _nPosCont	:= aScan(aHeader4, {|x|AllTrim(x[2])=="AD9_XREPRE"})
+	Local _nCont	:= 0
+	Local _aCols	:= {}//aClone(aCols4)
+	Local _nLenaHdr	:= Len(aHeader4)
+	Local _cMsgErro	:= "Representante do Cliente não definido!"+CRLF+CRLF
+		  _cMsgErro += "Defina pelo menos um Representante."
+		  _cMsgErro += " Na aba Contatos campo Representante, marque Sim para os representante(s) que irão assinar o Contrato."
+	
+	If oGetDad4 != Nil
+		_aCols	:= aClone(oGetDad4:aCols)
+	EndIf
+	
+	If Len(_aCols) > 0
+		For _nCont := 1 To Len(_aCols)
+			//If _aCols[_nCont,_nPosCont] == "1"
+			If (_aCols[_nCont,_nPosCont] == "1") .And. (_aCols[_nCont, _nLenaHdr + 1] == .F.)
+				_lRet		:= .T.
+				_cMsgErro	:= ""
+				Exit
+			Else
+				_lRet := .F.
+			EndIf
+		Next _nCont
+	Else
+		_lRet := .F.
+	EndIf
+
+	If !_lRet
+		Aviso(FunName()+"/"+ProcName(), _cMsgErro, {"OK"})
+	EndIf
+
+Return _lRet
+/*/{Protheus.doc} fVldCpos
+	Função para validação específica de campos
+
+@author Franklin Brito Oliveira
+@since 18/02/2016
+
+@return _lRet, Lógico, Se falso, não permite confirmar.
+/*/
+Static Function fVldCpos()
+
+Local _lRet		:= .T.
+Local _cMsgErro	:= ""
+
+	//Validação do campo AD1_XDIAPG para entidade SESI
+	If Substr(cFilAnt,1,4) == '02MT'
+		If M->AD1_XDIAPG = 0
+			_cMsgErro	:= "Dia de pagamento não informado"+CRLF+CRLF
+			_cMsgErro 	+= "Defina o dia de pagamento."
+			
+			Aviso(FunName()+"/"+ProcName(), _cMsgErro, {"OK"})
+			
+			_lRet	:= .F.
+		ElseIf M->AD1_XDIAPG < 0 .Or. M->AD1_XDIAPG > 31 
+			_cMsgErro	:= "Dia de pagamento informado é inválido"+CRLF+CRLF
+			_cMsgErro 	+= "Defina um dia de pagamento válido."
+			
+			Aviso(FunName()+"/"+ProcName(), _cMsgErro, {"OK"})
+			
+			_lRet	:= .F.
+		EndIf
+	EndIf
+
+Return _lRet

@@ -1,0 +1,364 @@
+#Include 'Protheus.ch'
+#Include "Topconn.CH"
+
+/*/{Protheus.doc} SF0405F
+	Rotina para integração SGE x Estoque Protheus.
+
+@author franklin.oliveira
+@since 16/05/2016
+@version undefined
+@param aParam, array, parâmetros para execução.
+@type function
+/*/
+User Function SF0405F(aParam)
+
+Local aCposCab		:= {}
+Local aCposDet		:= {}
+Local aDadosSCP		:= {}
+Local aAux 			:= {}
+Local cCodCur		:= ""
+Local cCodDis		:= ""
+Local cDesDis		:= ""
+Local cCodTur		:= ""
+Local cCodMat		:= ""
+Local cNomAlu		:= ""
+Local cNomPro		:= ""
+Local cCC			:= ""
+Local cAliasSIGE	:= GetNextAlias()
+Local cAliasItens	:= GetNextAlias()
+Local cQuery		:= ""
+Local cSgeABD		:= AllTrim(GetNewPar("MV_XSGEABD", ""))
+Local nTotRegs		:= 0
+Local nQuant		:= 0
+Local nHErp			:= AdvConnection()
+Local nDiasLimite	:= SuperGetMV("MV_XDSLMSG")
+Local nX			:= 0
+Local lContinua		:= .T.
+
+	conout(Replicate("-", 20))
+	conout("SF0405F: Inicio da rotina de integração SGE x Protheus Estoque")
+	conout("SF0405F: Empresa Logada: " +  cEmpAnt)
+	conout("SF0405F: Filial Logada: " +  xFilial("ZE0"))
+	
+	If Empty(cSgeABD)
+		conout("SF0405F: Não foi possível executar a rotina. Verifique o parâmetro MV_XSGEABD.")
+		Return
+	EndIf
+
+	cQuery	:= "SELECT	" + CRLF
+	cQuery	+= "	CODIGO_CURSO,	" + CRLF
+	cQuery	+= "	CURSO_DISCIPLINA,	" + CRLF
+	cQuery	+= "	NOME_DISCIPLINA,	" + CRLF
+	cQuery	+= "	NOME_PROFESSOR,	" + CRLF
+	cQuery	+= "	CENTRO_CUSTO,	" + CRLF
+	cQuery	+= "	CODIGO_TURMA	" + CRLF
+	cQuery	+= "FROM 	" + CRLF
+	cQuery	+= "	RM.SOLICITA_MATERIAL" + cSgeABD + CRLF 
+	cQuery	+= "WHERE	" + CRLF
+	cQuery	+= "	SITUACAO = 'S'	" + CRLF
+	cQuery	+= "	AND FILIAL = '" + xFilial("ZE0") + "'	" + CRLF
+	cQuery	+= "	AND DATA_REGISTRO >= '" + DToS(dDataBase - nDiasLimite) + "'	" + CRLF
+	cQuery	+= "GROUP BY	" + CRLF
+	cQuery	+= "	CODIGO_CURSO,	" + CRLF
+	cQuery	+= "	CURSO_DISCIPLINA,	" + CRLF
+	cQuery	+= "	NOME_DISCIPLINA,	" + CRLF
+	cQuery	+= "	NOME_PROFESSOR,	" + CRLF
+	cQuery	+= "	CENTRO_CUSTO,	" + CRLF
+	cQuery	+= "	CODIGO_TURMA	" + CRLF
+	cQuery	+= "ORDER BY " + CRLF
+	cQuery	+= "	CODIGO_CURSO,		" + CRLF
+  	cQuery	+= "	CURSO_DISCIPLINA,	" + CRLF
+  	cQuery	+= "	CODIGO_TURMA		" + CRLF
+	
+	cQuery := ChangeQuery(cQuery)
+	
+	dbUseArea(.T., "TOPCONN", TcGenQry( , , cQuery), cAliasSIGE, .T., .F.)
+	
+	dbEval( {|x| nTotRegs++ }, , {|| (cAliasSIGE)->( !EoF() )} )
+	
+	Conout("SF0405F: Registros pendentes encontrados: " + Str(nTotRegs))
+	
+	(cAliasSIGE)->( DbGoTop() )
+	
+	/*
+	|Varro item a item agrupado por Curso + Disciplina + Turma
+	*/
+	While !(cAliasSIGE)->( EoF() )
+		lContinua := .T.
+		/*
+		|Preencho com espaço caso o tamanho do campo no SIGE seja menor
+		|do que no Protheus.
+		*/
+		cCodCur	:= PadR(CvalToChar( (cAliasSIGE)->CODIGO_CURSO 		), TamSX3("ZE0_CODCUR")[1]	, ' ')
+		cCodDis	:= PadR(CvalToChar( (cAliasSIGE)->CURSO_DISCIPLINA	), TamSX3("ZE0_CODDIS")[1]	, ' ')
+		cDesDis	:= PadR(CvalToChar( (cAliasSIGE)->NOME_DISCIPLINA	), TamSX3("ZE0_DESDIS")[1]	, ' ')
+		cCodTur	:= PadR(CvalToChar( (cAliasSIGE)->CODIGO_TURMA 		), TamSX3("ZE0_CODTUR")[1]	, ' ')
+		cNomPro	:= PadR(CvalToChar( (cAliasSIGE)->NOME_PROFESSO		), TamSX3("ZE0_NOMPRO")[1]	, ' ')
+		cCC		:= PadR(CvalToChar( (cAliasSIGE)->CENTRO_CUSTO 		), TamSX3("ZE0_CC")[1]		, ' ')
+
+		/*
+		|Verifico os itens ativos da amarração disciplina X produto
+		*/
+		DbSelectArea("ZZB")
+		DbSetOrder(1)
+		If ZZB->( DbSeek(xFilial("ZZB") + cCodCur + cCodDis) )
+			nItmSeq := 0
+			
+			While !ZZB->( EoF() ) .And. ZZB->ZZB_FILIAL + ZZB->ZZB_CODCUR + ZZB->ZZB_CODDIS == xFilial("ZZB") + cCodCur + cCodDis .And. lContinua
+				If ZZB->ZZB_STATUS == '1' //Cadastro ativo
+					/*
+					|'limpo' variáveis para não acumular dados
+					*/
+					aCposDet	:= {}
+					aDadosSCP	:= {}
+					aAux		:= {}
+					nQuant		:= 0
+					aCposCab	:= {}
+					nItmSeq++
+				
+					//Campos de cabeçalho, tabela ZE0
+					aAdd( aCposCab, { 'ZE0_FILIAL' 	, xFilial("ZE0") 				} )
+					aAdd( aCposCab, { 'ZE0_CODCUR'	, cCodCur						} )
+					aAdd( aCposCab, { 'ZE0_CODDIS'	, cCodDis						} )
+					aAdd( aCposCab, { 'ZE0_DESDIS'	, cDesDis						} )
+					aAdd( aCposCab, { 'ZE0_CODTUR'	, cCodTur						} )
+					aAdd( aCposCab, { 'ZE0_ITMSEQ'	, StrZero(nItmSeq, 3)			} )
+					aAdd( aCposCab, { 'ZE0_NUMSA'	, Space(TAMSX3('ZE0_NUMSA')[1])	} )
+					aAdd( aCposCab, { 'ZE0_NOMPRO'	, cNomPro						} )
+					aAdd( aCposCab, { 'ZE0_STSSOL'	, 'A' 							} )
+					aAdd( aCposCab, { 'ZE0_CC'		, cCC							} )
+					aAdd( aCposCab, { 'ZE0_USRETI'	, Space(TAMSX3('ZE0_USRETI')[1])} )
+										
+					/*
+					|Seleciono alunos, tabela ZE1
+					*/
+					cQuery	:= "SELECT	" + CRLF
+					cQuery	+= "	MATRICULA,	" + CRLF
+					cQuery	+= "	NOME_ALUNO	" + CRLF
+					cQuery	+= "FROM	" + CRLF
+					cQuery	+= "	RM.SOLICITA_MATERIAL" + cSgeABD + CRLF
+					cQuery	+= "WHERE	" + CRLF
+					cQuery	+= "	FILIAL           	 = '" + xFilial("ZE0") + "'	" + CRLF
+					cQuery	+= "	AND SITUACAO = 'S'	" + CRLF
+					cQuery	+= "	AND CODIGO_CURSO     = '" + AllTrim(cCodCur) + "'	" + CRLF
+					cQuery	+= "	AND CURSO_DISCIPLINA = '" + AllTrim(cCodDis) + "'	" + CRLF
+					cQuery	+= "	AND NOME_DISCIPLINA  = '" + AllTrim(cDesDis) + "'	" + CRLF
+					cQuery	+= "	AND NOME_PROFESSOR   = '" + AllTrim(cNomPro) + "'	" + CRLF
+					cQuery	+= "	AND CENTRO_CUSTO     = '" + AllTrim(cCC) 	 + "'	" + CRLF
+					cQuery	+= "	AND CODIGO_TURMA     = '" + AllTrim(cCodTur) + "'	" + CRLF
+			
+					cQuery := ChangeQuery(cQuery)
+					
+					dbUseArea(.T., "TOPCONN", TcGenQry( , , cQuery), cAliasItens, .T., .F.)
+					
+					While !(cAliasItens)->( EoF() )			
+						cCodMat	:= PadR(CvalToChar( (cAliasItens)->MATRICULA 		), TamSX3("ZE1_CODMAT")[1]	, ' ')
+						cNomAlu	:= PadR(CvalToChar( (cAliasItens)->NOME_ALUNO 		), TamSX3("ZE1_NOMALU")[1]	, ' ')
+						
+						aAux := {}
+						aAdd( aAux, { 'ZE1_FILIAL'	, xFilial("ZE1")	 			} )
+						aAdd( aAux, { 'ZE1_CODCUR'	, cCodCur 						} )
+						aAdd( aAux, { 'ZE1_CODDIS'	, cCodDis 						} )
+						aAdd( aAux, { 'ZE1_CODTUR'	, cCodTur 						} )
+						aAdd( aAux, { 'ZE1_ITMSEQ'	, StrZero(nItmSeq, 3)			} )
+						aAdd( aAux, { 'ZE1_NUMSA'	, Space(TAMSX3('ZE0_NUMSA')[1]) } )
+						aAdd( aAux, { 'ZE1_STSENT'	, '2' 							} )
+						aAdd( aAux, { 'ZE1_CODMAT'	, cCodMat						} )
+						aAdd( aAux, { 'ZE1_NOMALU'	, cNomAlu 						} )
+						aAdd( aCposDet, aAux )
+						
+						nQuant++
+						
+						(cAliasItens)->( DbSkip() )
+					EndDo
+					
+					(cAliasItens)->( DbCloseArea() )
+										
+					/*
+					|Verifico se já existe uma requisição para a turma/Disciplina
+					*/
+					DbSelectArea("ZE0")
+					DbSetOrder(1)
+					If ZE0->(DbSeek( xFilial("ZE0") +  cCodCur + cCodDis + cCodTur ))
+						aAux := {}
+						/*
+						|Verifico se existe uma S.A. ativa com o mesmo produto
+						*/
+						While !ZE0->( EoF() ) .And. (xFilial("ZE0") +  cCodCur + cCodDis + cCodTur == ZE0->ZE0_FILIAL + ZE0->ZE0_CODCUR + ZE0->ZE0_CODDIS + ZE0->ZE0_CODTUR)
+							If !(ZE0->ZE0_STSSOL $ "B")
+								DbSelectArea("SCP")
+								DbSetOrder(2)
+								If SCP->(DbSeek( xFilial("SCP") +  ZZB->ZZB_CODPRO + ZE0->ZE0_NUMSA ))
+									/*
+									|Verifico se existem alunos que não receberam o produto
+									*/
+									DbSelectArea("ZE1")
+									DbSetOrder(3)
+									
+									For nX := 1 To len(aCposDet)
+										If .Not. ZE1->(DbSeek( ZE0->ZE0_FILIAL + ZE0->ZE0_CODCUR + ZE0->ZE0_CODDIS + ZE0->ZE0_CODTUR +  ZE0->ZE0_ITMSEQ + ZE0->ZE0_NUMSA + aCposDet[nX][9][2] ));
+											.And. (Empty(aAux) .Or. (aScan( aAux, { |x| AllTrim( x[08][02] ) == AllTrim( aCposDet[nX][08][02] ) } ) == 0))
+											aAdd(aAux, aCposDet[nX])
+										EndIf
+									Next nX
+									/*
+									|Após identificar alunos que não receberam material, adiciono os dados na variavel aCposDet;
+									|Se todos os alunos receberam material, não incluo os registros.
+									*/
+									If !Empty(aAux)
+										aCposDet := aAux
+									Else
+										lContinua := .F.
+									EndIf
+								EndIf
+							EndIf
+							
+							ZE0->( DbSkip() )
+						EndDo
+					EndIf
+					
+					If 	lContinua
+						aDadosSCP := {ZZB->ZZB_CODPRO, nQuant, aCposCab[10][02]}
+											
+						//|Inclui os dados
+						If U_fIncRequis('ZE0', 'ZE1', aCposCab, aCposDet, aDadosSCP, .T.)
+							lContinua := .T.
+						Else
+							lContinua := .F.
+						EndIf						
+					EndIf
+				EndIf
+					
+				ZZB->( DbSkip() )
+			EndDo
+							
+			//Atualizo registros no SIGE com Situação = E
+			If lContinua
+				ConOut("SF0405F: Inclusão da Turma[ " + cCodTur + "] realizada com sucesso.")
+				
+				Begin transaction
+					
+					For nX := 1 To Len (aCposDet)
+						cQuery	:= "UPDATE " + CRLF
+						cQuery	+= "	RM.SOLICITA_MATERIAL" + cSgeABD + CRLF
+						cQuery	+= "SET " + CRLF
+						cQuery	+= "	SITUACAO = 'E'		"	+ CRLF
+						cQuery	+= "WHERE " + CRLF
+						cQuery	+= "	FILIAL 					= '" + xFilial("ZE0") + "'" + CRLF
+						cQuery	+= "	AND CODIGO_CURSO  		= '" + AllTrim(cCodCur) + "'" + CRLF
+						cQuery	+= "	AND CURSO_DISCIPLINA	= '" + AllTrim(cCodDis) + "'" + CRLF
+						cQuery	+= "	AND CODIGO_TURMA    	= '" + AllTrim(cCodTur) + "'" + CRLF
+						cQuery	+= "	AND SITUACAO 			= 'S'	" + CRLF
+						
+						If (TCSQLExec(cQuery) < 0)
+			    			Conout("SF0405F: Não foi possível atualizar registro na tabela SOLICITA_MATERIAL")
+			    			Conout("SF0405F: TCSQLError() " + TCSQLError())
+			    			DisarmTransaction()
+						EndIf
+					Next nX
+				End Transaction
+			EndIf
+			
+		Else
+			cMsg := "Não foi encontrado um Cadastro de amarração para o Curso/Disciplina "
+			cMsg += cCodCur + "/" + cCodDis + "." + CRLF
+			cMsg += "Os registros da turma " + cCodTur + "Não serão importados até que seja corrigido a amarração. "
+			cMsg += "Por favor, verifique."
+			U_F0405FLOG(xFilial("ZE0"), cCodCur, cCodDis, cCodTur, cMsg)
+			Conout("SF0405F: " + "Não foi encontrado um Cadastro de amarração para o Curso/Disciplina [" + cCodCur + "/" + cCodDis + "].")
+		EndIf
+		
+		(cAliasSIGE)->( DbSkip() )
+	EndDo
+	
+	(cAliasSIGE)->( DbCloseArea() )
+		
+	conout("SF0405F: Executada com sucesso. Fim.")
+	conout(Replicate("-", 20))
+			
+Return (Nil)  
+
+/*/{Protheus.doc} Scheddef
+	Função de definição do novo schedule
+
+@author franklin.oliveira
+@since 16/05/2016
+
+@type function
+/*/
+Static Function Scheddef()
+
+Local aParam	:= {}
+Local aOrd		:= {}
+
+	aParam := { "P",;    //Tipo R para relatorio P para processo
+		"ParamDef",;	// Pergunte do relatorio, caso nao use passar ParamDef
+		"ZE0",;  		// Alias
+		aOrd,;   		//Array de ordens
+		""}				//Título (para Relatório)
+
+Return aParam
+
+/*/{Protheus.doc} F0405FLOG
+	Função para envio de log da integração SIGE x Estoque Protheus
+
+@author franklin.oliveira
+@since 16/05/2016
+
+@param pFilial, character, Filial.
+@param pCodCur, character, código do curso.
+@param pCodDis, character, código da disciplina.
+@param pCodTur, character, código da turma.
+@param pMsg, character, mensagem a ser enviada.
+
+@type function
+/*/
+User Function F0405FLOG(pFilial, pCodCur, pCodDis, pCodTur, pMsg)
+
+Local _cPara	:= GetNewPar('MV_XLGSIGP','')
+Local _cAssunt	:= 'Integracao SIGE x Protheus'
+Local _cDescItm	:= 'Filial: ' + pFilial + ' / Curso: ' + pCodCur + ' / Disciplina: ' + pCodDis + ' / Turma: ' + pCodTur
+Local _cMsgMail	:= pMsg
+Local _cMsg		:= '' 
+
+	//+------------------------------------------------------------------+
+	//|  Monta mensagem em HTML para o corpo do E-mail                   |
+	//+------------------------------------------------------------------+
+	_cMsg := '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">' + CRLF
+	_cMsg += '<html lang="pt-br">' + CRLF
+	_cMsg += '<head>' + CRLF
+	_cMsg += '  <meta content="text/html; charset=iso-8859-1" http-equiv="Content-Type" name="GENERATOR">' + CRLF
+	_cMsg := '	<title>Importação SIGE x Protheus</title>' + CRLF
+	_cMsg += '</head>' + CRLF
+	_cMsg += '<body bgproperties="fixed">' + CRLF
+	_cMsg += '	<p class="MsoNormal" style="text-align: left;" align="left">' + CRLF
+	_cMsg += '		<span style="font-family: &quot;Arial&quot;,&quot;sans-serif&quot;;">' + CRLF
+	_cMsg += '			<img id="_x0000_i1030" src="http://gps.totvs.com/workflow/titulo_wf_totvs.png" border="0" height="62" width="760">' + CRLF
+	_cMsg += '		</span>' + CRLF
+	_cMsg += '	</p>' + CRLF
+	_cMsg += '	<td style="padding: 0cm;">' + CRLF
+	_cMsg += '		<p class="MsoNormal" align="left">' + CRLF
+	_cMsg += '			<span style="font-size: 11pt; font-family:&quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(00,00,64);">' + CRLF
+	_cMsg += '					<br>' + CRLF 
+	_cMsg += '					'+ Alltrim(_cDescItm)+'' + CRLF 
+	_cMsg += '					<br>' + CRLF
+	_cMsg += '					<br>' + CRLF
+	_cMsg += '					'+ Alltrim(_cMsgMail)+'' + CRLF
+	_cMsg += '			</span>' + CRLF
+	_cMsg += '		</p>' + CRLF
+	_cMsg += '	</td>' + CRLF
+	_cMsg += '</body>' + CRLF
+	_cMsg += '</html>' + CRLF
+	
+	If !Empty(_cPara)
+		//p_cDe, p_cPara, p_cCC, p_cCCO, p_cAssunto, p_cMsg, p_cAnexo, p_lConLe
+		_lEnviou := U_SFEnvEmail(,_cPara,,,_cAssunt,_cMsg,,, .F.)
+		
+		If .Not. _lEnviou
+			ConOut('SF0405F: Nao foi possivel enviar o e-mail para: '+ _cPara + ', favor verificar!')
+		EndIf
+	Else
+		ConOut('Não há destinatário para receber e-mail de log.')
+	EndIf
+
+Return

@@ -1,0 +1,628 @@
+#Include 'Protheus.ch'
+#Include 'TopConn.ch'
+#Include 'FWPrintSetup.ch'
+#Include 'RptDef.ch'
+
+/*/{Protheus.doc} SF0403X
+	Documento de Devolução e Perda baseado no Documento de saída de Vacinas [SF0403X].
+
+@author	Walmir Gonçalves da Silva Junior
+@since	18/03/2016
+@version 1.0
+
+@return Nil
+
+/*/
+/*---------------------------------------------------------------------------------------/
+Modificações:
+Franklin B. Oliveira                                                            07/04/2017
+	Adicionado as informações de redução de doses.
+/---------------------------------------------------------------------------------------*/
+User Function SF0403X()
+Local aOrdem		:= {"Padrão"}															//Array com ordem de impressão do relatório
+Local aDevice		:= {"DISCO","SPOOL","EMAIL","EXCEL","HTML","PDF"}						//Array com dispositivos para impressão do relatório
+Local cDevice		:= ""																	//Dispositivo selecionado para impressão
+Local cPathDest		:= GetSrvProfString("StartPath","\system\")								//Caminho da pasta \system\
+Local cRelName		:= "SF0403X"															//Nome do relatório
+Local cSession		:= GetPrinterSession()													//Sessão do usuário logado
+Local lAdjust		:= .F.																	//Possibilita ajustes de impressão
+Local nFlags		:= PD_ISTOTVSPRINTER+PD_DISABLEORIENTATION+PD_DISABLEPAPERSIZE			//Opções para setup de impressão
+Local nLocal		:= 1																	//Local de impressão
+Local nOrdem		:= 1																	//Ordem de impressão	
+Local nOrient		:= 1																	//Orientação da impressão
+Local nPrintType	:= 6																	//Tipo da impressora
+Local oPrinter		:= Nil																	//Objeto de impressão			
+Local oSetup		:= Nil																	//Objeto de configuração da impressão
+
+Private nMaxLin		:= 800																	//Numero máximo de linhas
+Private nMaxCol		:= 600																	//Numero máximo de colunas
+Private cAliasPos	:= IIf(ProcName(7) == 'MATA240', "SD3", "SCP")							//Alias posicionado
+Private cCodDoc		:= IIf(cAliasPos == "SCP", SCP->CP_NUM, SD3->D3_DOC)					//Código do documento
+
+Private _cFilCN9	:= SD3->D3_XFILCN9	
+Private _cNumCN9	:= SD3->D3_XNUMCN9
+Private _cRevCN9	:= SD3->D3_XREVCN9
+Private _cRazCli	:= ""
+Private _cCNPJ		:= ""
+Private _dDataMv	:= DToC(Date())
+Private _cTMPerd	:= GetMV("MV_XTMPERD")
+Private _cTMDev		:= fGetTMD()
+Private _cObDevPr	:= ""
+Private _cB1Tp		:= ""
+Private _cProdNIm	:= GetMV("MV_XPRONIM")
+
+	If IsInCallStack("MATA240") .And. !(SD3->D3_TM $ (_cTMPerd + ";" + _cTMDev))
+	
+		Aviso("Atenção!", "Esta é uma rotina exclusiva para TM do tipo devolução e perda.", {"Ok"})
+	
+	Else
+	
+		cSession	:= GetPrinterSession()
+		cDevice	:= If(Empty(fwGetProfString(cSession,"PRINTTYPE","SPOOL",.T.)),"PDF",fwGetProfString(cSession,"PRINTTYPE","SPOOL",.T.))
+		nLocal		:= If(fwGetProfString(cSession,"LOCAL","SERVER",.T.)=="SERVER",1,2 )
+		nPrintType	:= aScan(aDevice,{|x| x == cDevice })     
+	
+		oPrinter	:= FWMSPrinter():New(cRelName, nPrintType, lAdjust, /*cPathDest*/, .T.)
+		oSetup		:= FWPrintSetup():New (nFlags,cRelName)
+	
+		oSetup:SetPropert(PD_PRINTTYPE   	, nPrintType)
+		oSetup:SetPropert(PD_ORIENTATION 	, nOrient)
+		oSetup:SetPropert(PD_DESTINATION 	, nLocal)
+		oSetup:SetPropert(PD_MARGIN			, {0,0,0,0})
+		oSetup:SetPropert(PD_PAPERSIZE		, 2)
+		oSetup:SetOrderParms(aOrdem,@nOrdem)
+	
+		If oSetup:Activate() == PD_OK 
+	
+			oPrinter:lServer			:= oSetup:GetProperty(PD_DESTINATION) == AMB_SERVER	
+			oPrinter:SetDevice(oSetup:GetProperty(PD_PRINTTYPE))
+			oPrinter:SetPortrait()
+			oPrinter:SetPaperSize(oSetup:GetProperty(PD_PAPERSIZE))
+			oPrinter:setCopies(Val(oSetup:cQtdCopia))
+			
+			If oSetup:GetProperty(PD_PRINTTYPE) == IMP_SPOOL
+	
+				oPrinter:nDevice		:= IMP_SPOOL
+				oPrinter:cPrinter		:= oSetup:aOptions[PD_VALUETYPE]
+	
+			Else 
+	
+				oPrinter:nDevice		:= IMP_PDF
+				oPrinter:cPathPDF		:= oSetup:aOptions[PD_VALUETYPE]
+				oPrinter:SetViewPDF(.T.)
+	
+			Endif
+			
+			RptStatus({|lEnd| SF0101FImp(@lEnd,@oPrinter)},"Imprimindo Relatorio...")
+	
+		Else 
+	
+			MsgInfo("Relatório cancelado pelo usuário.")
+			oPrinter:Cancel()
+	
+		EndIf
+	
+		oSetup		:= Nil
+		oPrinter	:= Nil
+		
+	EndIf
+
+Return (Nil)
+
+Static Function fGetTMD()
+Local _cTMRet	:= ""
+Local _aSF5		:= SF5->(GetArea())
+
+DBSelectArea("SF5")
+DBSetOrder(1)
+SF5->(DBGoTop())
+
+While SF5->(!Eof()) 
+	If SF5->F5_TIPO = "D"
+		_cTMRet += 	SF5->F5_CODIGO + ";"
+	EndIf
+	SF5->(DBSkip())
+EndDo
+
+RestArea(_aSF5)
+Return _cTMRet
+
+/*/{Protheus.doc} SF0101FImp
+	Função para impressão do relatório.
+
+@author Franklin de Brito de Oliveira
+@since 26/06/2015
+@version 1.0
+@param lEnd, logico 
+@param oPrinter, objeto, Objeto de impressão
+
+@return Nil
+
+/*/
+//-------------------------------------------------------------------------
+/*
+Modificações:
+	14/10/2015 - Franklin B Oliveira:
+	->Adicionado tratamento para impressão quando o programa de origem for 
+	transferência multipla. 
+
+*/
+//--------------------------------------------------------------------------
+Static Function SF0101FImp(lEnd,oPrinter)
+
+Local nMaxLinha		:= 60												
+Local nLinCount		:= 0
+Local aArea			:= GetArea()
+Local cQuery		:= ""
+Local cCodDoc		:= ""
+
+Private cAliasTMP	:= GetNextAlias()
+Private dDataEmi	:= Iif(Empty(SD3->D3_EMISSAO),dDataBase,SD3->D3_EMISSAO)
+Private nMargDir	:= 15
+Private nMargEsq	:= 20
+Private nColPro		:= nMargEsq+30
+Private nColDes		:= nColPro+100
+Private nColQtd		:= nColDes+360
+Private nLiItm		:= 0
+Private nPag		:= 0
+Private nWidtLin	:= 0
+Private nNumItem	:= 0
+Private nColLeft	:= nMargDir
+Private nColCent	:= nColLeft+270
+Private nColRigh	:= nColCent
+Private oFontA7		:= TFont():New('Arial',,7,.T.)
+Private oFontA12	:= TFont():New('Arial',,12,.T.)
+Private oFontC8		:= TFont():New('Courier new',,8,.T.)
+Private li			:= 10
+	
+cAliasTMP := SelectData()
+
+SetRegua((cAliasTMP)->(LastRec()))
+	 
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Inicia a impressao do relatorio ³ 
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If !(cAliasTMP)->(Eof()) .And. _cB1Tp == "IM"
+	
+	IncRegua()
+	nLiItm		:= 140
+	nLinCount	:= 0
+	nPag++
+	
+	oPrinter:StartPage()
+	CabPagina(@oPrinter)
+	CabItem(@oPrinter)
+	
+
+//	oPrinter:StartPage()
+//	nPag++
+//	CabPagina(@oPrinter)
+//			nLiItm		:= li+50
+//			nLinCount	:= 0
+
+		
+	nWidtLin = 8
+	
+	
+	
+	If !(cAliasTMP)->(Eof())
+		// Imprime os itens
+		li += 20 
+		ImpItem(@oPrinter)
+		
+	EndIf
+		
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Finaliza a pagina se a quantidade de itens for diferente da quantidade ³ 
+	//³ maxima, para evitar que a pagina seja finalizada mais de uma vez.      ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	
+	If nLinCount <> nMaxLinha
+	
+		oPrinter:Line(750,nMargDir, 750, nMaxCol-nMargEsq,, "-2")
+		oPrinter:EndPage()
+	
+	EndIf
+
+ElseIf _cB1Tp != "IM"
+	Aviso("Atenção", "Rotina exclusiva para movimentos com produtos do tipo 'Imunização'.", {"Ok"})
+	Return (Nil)
+Else
+	Aviso("Atenção", "Nenhum registro encontrado, verifique as informações de contrato.", {"Ok"})
+	Return (Nil)
+EndIf
+
+nLiItm += 10
+
+ImpObs((cAliasTMP)->FILIAL+(cAliasTMP)->DOC+(cAliasTMP)->CHAVE+(cAliasTMP)->PROD)
+
+/* Impressão do rodapé - Observação */
+oPrinter:Box(li+nLiItm, nMargDir, li+nLiItm+20 + (MlCount(_cObDevPr) * 7), nMaxCol-nMargEsq)
+oPrinter:SayAlign(li+nLiItm+5, nMargDir+5, "Observação (Perda):"			, oFontA7,  nMaxCol-nMargEsq, 200, 2, 0)
+oPrinter:SayAlign(li+nLiItm+15, nMargDir+5, _cObDevPr						, oFontA7,  nMaxCol-nMargEsq, 200, 2, 0) 
+
+nLiItm += 60
+
+/* Impressão do rodapé - Assinatura */
+oPrinter:Box(li+nLiItm, nColLeft, li+nLiItm+60, nColCent)
+oPrinter:SayAlign(li+nLiItm+5	, nColLeft+1	, "Data: " + DToC( dDataEmi )								, oFontA7, 180, 10, , 0, 1) 
+oPrinter:SayAlign(li+nLiItm+45	, nColLeft		, "Ass./Coren do Enfermeiro(a)"					, oFontA7, 180, 10, , 2, 2) 
+
+/*oPrinter:Box(li+nLiItm, nColCent, li+nLiItm+60, nColRigh)
+oPrinter:SayAlign(li+nLiItm+5	, nColCent+1	, "Data: __/__/__"											, oFontA7, 180, 10, , 0, 1) 
+oPrinter:SayAlign(li+nLiItm+45	, nColCent		, "Ass./Carimbo Dir. Regional/Super./Gerencia/Coord."	, oFontA7, 180, 10, , 2, 2)  */
+
+oPrinter:Box(li+nLiItm, nColRigh, li+nLiItm+60, nMaxCol-nMargEsq)
+oPrinter:SayAlign(li+nLiItm+5	, nColRigh+1	, "Data: __/__/__"											, oFontA7, 180, 10, , 0, 1) 	
+oPrinter:SayAlign(li+nLiItm+45	, nColRigh		, "Ass. e Cargo Responsável Estoque"				, oFontA7, 180, 10, , 2, 2) 	
+
+oPrinter:Print()
+
+(cAliasTMP)->(dbCloseArea())
+RestArea(aArea)
+	
+Return (Nil)
+
+/*/{Protheus.doc} CabPagina
+	Função para impressão do cabeçalho da página
+
+@author Franklin de Brito de Oliveira
+@since 26/06/2015
+@version 1.0
+@param oPrinter, objeto, Objeto de impressão
+
+@return Nil
+
+/*/
+Static Function CabPagina(oPrinter)
+
+Private nCol1Dir	:= 498-nMargDir   
+Private nCol2Dir	:= 540-nMargDir
+
+oPrinter:Box(li+5, nMargDir, li+50, nMargDir+75)
+oPrinter:SayBitmap(li+6, nMargDir+1, "lgrl01.bmp", 70, 40 )
+
+oPrinter:Box(li+5, nMargDir+75, li+50, nCol1Dir-5)
+oPrinter:SayAlign(li+20, nMargDir+200, "Documento de Devolução/Perda", oFontA12, nMaxCol-nMargEsq, 200, 2, 0)
+
+oPrinter:Box(li+5, nCol1Dir-5, li+50, nMaxCol-nMargEsq)
+oPrinter:SayAlign(li+10, nCol1Dir, "Mov. Interno..: "	, oFontA7, 200, 200, , 0)
+oPrinter:SayAlign(li+20, nCol1Dir, "Dt. Emissão.: "		, oFontA7, 200, 200, , 0)
+oPrinter:SayAlign(li+30, nCol1Dir, "Emissor .....: "	, oFontA7, 200, 200, , 0)
+oPrinter:SayAlign(li+40, nCol1Dir, "Folha .........: "	, oFontA7, 200, 200, , 0)
+
+oPrinter:SayAlign(li+10, nCol2Dir+2, RTrim((cAliasTMP)->DOC)				, oFontA7, 200, 200, 0, 0)
+oPrinter:SayAlign(li+20, nCol2Dir+2, RTrim(DToC( dDataEmi ))				, oFontA7, 200, 200, 0, 0)
+oPrinter:SayAlign(li+30, nCol2Dir+2, RTrim(UsrRetName( RetCodUsr() ))	, oFontA7, 200, 200, 0, 0)
+oPrinter:SayAlign(li+40, nCol2Dir+2, RTrim(AllTrim(STR(nPag)))			, oFontA7, 200, 200, 0, 0)
+
+oPrinter:Line(li+50, nMargDir, li+50, nMaxCol-nMargEsq, , "-8")
+
+Return (Nil)
+
+/*/{Protheus.doc} CabItem
+	Função para impressão do cabeçalho dos itens
+
+@author Franklin de Brito de Oliveira
+@since 26/06/2015
+@version 1.0
+@param oPrinter, objeto, Objeto de impressão
+
+@return Nil
+
+/*/
+//-------------------------------------------------------------------------
+/*
+Modificações:
+	14/10/2015 - Franklin B Oliveira:
+	->Adicionado tratamento para impressão da Unidade Destino, quando o programa
+	de origem for transferência multipla.
+
+*/
+//--------------------------------------------------------------------------
+Static Function CabItem(oPrinter)
+
+Local cNomeUnd	:= FWFilialName(cEmpAnt, (cAliasTMP)->FILIAL, 2)
+Local _cNomDes	:= Posicione("CTT",1,xFilial("CTT")+(cAliasTMP)->CC,"CTT_DESC01")
+
+	oPrinter:SayAlign(li+80, nMargDir	, "Data de Emissão"						, oFontC8, 160, 200, , 0)
+	oPrinter:SayAlign(li+90, nMargDir	, _dDataMv						, oFontC8, 160, 200, , 0)
+	
+	/*
+	oPrinter:SayAlign(li+60, nMargDir+300	, "Unidade Destino "		, oFontC8, 160, 200, , 0)
+	oPrinter:SayAlign(li+70, nMargDir+300	, _cNomDes					, oFontC8, 160, 200, , 0)
+	
+	oPrinter:SayAlign(li+90, nMargDir	, "Armazém Cedente "			, oFontC8, 160, 200, , 0)
+	oPrinter:SayAlign(li+100, nMargDir	,(cAliasTMP)->NNR_DESCRI		, oFontC8, 160, 200, , 0)*/
+	oPrinter:SayAlign(li+120, nMargDir	, "Fil Ctr "					, oFontC8, 160, 200, , 0)
+	oPrinter:SayAlign(li+130, nMargDir	,_cFilCN9						, oFontC8, 160, 200, , 0)
+	
+	oPrinter:SayAlign(li+120, nMargDir+50	, "Contrato "					, oFontC8, 160, 200, , 0)
+	oPrinter:SayAlign(li+130, nMargDir+50	,_cNumCN9						, oFontC8, 160, 200, , 0)
+
+	oPrinter:SayAlign(li+120, nMargDir+150	, "Rev "						, oFontC8, 30, 20, , 0)
+	oPrinter:SayAlign(li+130, nMargDir+150	,_cRevCN9						, oFontC8, 30, 20, , 0)
+
+	oPrinter:SayAlign(li+120, nMargDir+180	, "Cliente "				, oFontC8, 160, 10, , 0)
+	oPrinter:SayAlign(li+130, nMargDir+180	,SubStr(_cRazCli,1,30)		, oFontC8, 160, 10, , 0)
+	
+	oPrinter:SayAlign(li+120, nMargDir+450	, "CNPJ "					, oFontC8, 160, 200, , 0)
+	oPrinter:SayAlign(li+130, nMargDir+450	, Transform(_cCNPJ,X3PICTURE("A1_CGC")), oFontC8, 160, 200, , 0)
+		
+	oPrinter:Line(li+140, nMargDir, li+140, nMaxCol-nMargEsq, , "-2")
+
+Return (Nil)
+
+/*/{Protheus.doc} function_method_class_name
+	Função para Seleção dos dados
+
+@author Franklin de Brito de Oliveira
+@since 08/10/2015
+@version 1.00
+
+@return cAliasTMP, Alias com resultado da seleção dos dados
+
+/*/
+//-------------------------------------------------------------------------
+/*
+Modificações:
+	18/03/2016 - Walmir Junior
+*/
+//--------------------------------------------------------------------------
+Static Function SelectData()
+
+cQuery :=" SELECT DISTINCT ADZ_FILIAL, SD3X.D3_FILIAL FILIAL, SD3X.D3_NUMSEQ DOC, SD3X.D3_COD PROD, "	+ CRLF 
+cQuery +=" SD3X.D3_XFILCN9 XFILCN9, SD3X.D3_XNUMCN9 XNUMCN9, SD3X.D3_XREVCN9 XREVCN9, SD3X.D3_CC CC, " 	+ CRLF
+cQuery +=" SD3X.D3_XCLIENT XCLIENT, SD3X.D3_XCLILJ XCLILJ, SD3X.D3_XRAZCLI XRAZCLI, ADZ_TPALDO, " 	+ CRLF
+cQuery +=" ( SELECT SUM(ADZ.ADZ_QTDVEN)" 	+ CRLF
+cQuery +=" FROM "+ RetSqlName("SD3") +" SD3 INNER JOIN" 	+ CRLF
+cQuery +=" 	"+ RetSqlName("CN9") +"	CN9 ON SD3.D3_XFILCN9 = CN9.CN9_FILIAL AND SD3.D3_XNUMCN9 = CN9.CN9_NUMERO AND SD3.D3_XREVCN9 = CN9.CN9_REVISA AND CN9.D_E_L_E_T_ = ' ' INNER JOIN " 	+ CRLF
+cQuery +=" 	"+ RetSqlName("AD1") +" AD1 ON CN9.CN9_FILIAL = AD1.AD1_FILIAL AND CN9.CN9_XOPORT = AD1.AD1_NROPOR AND CN9.CN9_XREVOP = AD1.AD1_REVISA AND AD1.D_E_L_E_T_ = ' ' INNER JOIN " 	+ CRLF
+cQuery +=" 	"+ RetSqlName("ADY") +" ADY ON ADY.ADY_FILIAL = AD1.AD1_FILIAL AND AD1.AD1_NROPOR = ADY.ADY_OPORTU AND ADY.D_E_L_E_T_ = ' ' INNER JOIN " 	+ CRLF
+cQuery +=" 	"+ RetSqlName("ADZ") +" ADZ ON AD1.AD1_FILIAL = ADZ.ADZ_FILIAL AND ADY.ADY_PROPOS = ADZ.ADZ_PROPOS AND ADY.ADY_PREVIS = ADZ.ADZ_REVISA AND ADZ.D_E_L_E_T_ = ' ' " 	+ CRLF
+cQuery +=" WHERE ADY.ADY_STATUS = 'B' " 	+ CRLF
+cQuery +=" 	AND ADZ.ADZ_PRODUT NOT IN ("+ _cProdNIm +") " 	+ CRLF
+cQuery +=" 	AND SD3.D3_NUMSEQ	= '"	+ SD3->D3_NUMSEQ	+ "') As SLDCONTR, " 	+ CRLF
+cQuery +=" ( SELECT SUM(ADZ.ADZ_XQTDDO)" 	+ CRLF
+cQuery +=" FROM "+ RetSqlName("SD3") +" SD3 INNER JOIN" 	+ CRLF
+cQuery +=" 	"+ RetSqlName("CN9") +"	CN9 ON SD3.D3_XFILCN9 = CN9.CN9_FILIAL AND SD3.D3_XNUMCN9 = CN9.CN9_NUMERO AND SD3.D3_XREVCN9 = CN9.CN9_REVISA AND CN9.D_E_L_E_T_ = ' ' INNER JOIN " 	+ CRLF
+cQuery +=" 	"+ RetSqlName("AD1") +" AD1 ON CN9.CN9_FILIAL = AD1.AD1_FILIAL AND CN9.CN9_XOPORT = AD1.AD1_NROPOR AND CN9.CN9_XREVOP = AD1.AD1_REVISA AND AD1.D_E_L_E_T_ = ' ' INNER JOIN " 	+ CRLF
+cQuery +=" 	"+ RetSqlName("ADY") +" ADY ON ADY.ADY_FILIAL = AD1.AD1_FILIAL AND AD1.AD1_NROPOR = ADY.ADY_OPORTU AND ADY.D_E_L_E_T_ = ' ' INNER JOIN " 	+ CRLF
+cQuery +=" 	"+ RetSqlName("ADZ") +" ADZ ON AD1.AD1_FILIAL = ADZ.ADZ_FILIAL AND ADY.ADY_PROPOS = ADZ.ADZ_PROPOS AND ADY.ADY_PREVIS = ADZ.ADZ_REVISA AND ADZ.D_E_L_E_T_ = ' ' " 	+ CRLF
+cQuery +=" WHERE ADY.ADY_STATUS = 'B' " 	+ CRLF
+cQuery +=" 	AND ADZ.ADZ_PRODUT NOT IN ("+ _cProdNIm +")  " 	+ CRLF
+cQuery +=" 	AND SD3.D3_NUMSEQ	= '"	+ SD3->D3_NUMSEQ	+ "') As REDCONTR, " 	+ CRLF
+cQuery +=" SD3X.D3_TM, SD3X.D3_EMISSAO EMISSAO, SB1.B1_TIPO, SD3X.D3_CHAVE CHAVE, " + CRLF
+cQuery +=" ( SELECT Coalesce(Sum(SD3.D3_QUANT),0) FROM "+ RetSqlName("SD3") +" SD3 INNER JOIN " + CRLF
+cQuery +="		"+ RetSqlName("SF5") +" SF5 ON SF5.F5_CODIGO = SD3.D3_TM AND SF5.F5_TIPO = 'R' AND SF5.F5_CODIGO <> '"+ _cTMPerd +"' " + CRLF
+cQuery +="    WHERE SD3.D3_XFILCN9 = SD3X.D3_XFILCN9 " + CRLF
+cQuery +="    AND   SD3.D3_XNUMCN9 = SD3X.D3_XNUMCN9 " + CRLF
+cQuery +="    AND   SD3.D3_XREVCN9 = SD3X.D3_XREVCN9 " + CRLF
+cQuery +="    AND   SD3.D3_FILIAL  = SD3X.D3_FILIAL " + CRLF
+cQuery +="    AND   SD3.D3_DOC = SD3X.D3_DOC " + CRLF
+cQuery +="    AND   SD3.D_E_L_E_T_ = ' ' " + CRLF
+cQuery +="    AND   SD3.D3_ESTORNO = ' ' " + CRLF
+cQuery +="	) As SLDSAIDA, " + CRLF
+// Walmir Junior - 15/042016 - Diferença Perda/Dev
+/*cQuery +=" Case When SD3X.D3_TM = "+ _cTMPerd +" Then "
+cQuery +="  ( SELECT Coalesce(Sum(SD3.D3_QUANT),0) FROM "+ RetSqlName("SD3") +" SD3 INNER JOIN " + CRLF
+cQuery +=" 		"+ RetSqlName("SF5") +" SF5 ON SF5.F5_CODIGO = SD3.D3_TM AND SF5.F5_CODIGO = '"+ _cTMPerd +"' " + CRLF
+cQuery +="    WHERE SD3.D3_XFILCN9 = SD3X.D3_XFILCN9 " + CRLF
+cQuery +="    AND   SD3.D3_XNUMCN9 = SD3X.D3_XNUMCN9 " + CRLF
+cQuery +="    AND   SD3.D3_XREVCN9 = SD3X.D3_XREVCN9 " + CRLF
+cQuery +="    AND   SD3.D_E_L_E_T_ = ' ' " + CRLF
+cQuery +="    AND   SD3.D3_NUMSEQ <> SD3X.D3_NUMSEQ " + CRLF
+cQuery +="   ) Else " + CRLF
+
+cQuery +=" 	( SELECT Coalesce(Sum(SD3.D3_QUANT),0) FROM "+ RetSqlName("SD3") +" SD3  INNER JOIN " + CRLF
+cQuery +=" 		"+ RetSqlName("SF5") +" SF5 ON SF5.F5_CODIGO = SD3.D3_TM AND SF5.F5_TIPO = 'D' AND SF5.F5_CODIGO <> '"+ _cTMPerd +"' " + CRLF
+cQuery +="    WHERE SD3.D3_XFILCN9 = SD3X.D3_XFILCN9 " + CRLF
+cQuery +="    AND   SD3.D3_XNUMCN9 = SD3X.D3_XNUMCN9 " + CRLF
+cQuery +="    AND   SD3.D3_XREVCN9 = SD3X.D3_XREVCN9 " + CRLF
+cQuery +=" 	  AND   SD3.D_E_L_E_T_ = ' ' " + CRLF
+cQuery +="    AND   SD3.D3_NUMSEQ <> SD3X.D3_NUMSEQ " + CRLF
+cQuery +="  ) End As SLDDEVPERD, " + CRLF*/
+// Walmir Junior - 15/042016 - Fim diferença Perda/Dev
+cQuery +=" Case When SD3X.D3_TM = "+ _cTMPerd +" Then ( SELECT Coalesce(Sum(SD3.D3_QUANT),0) FROM "+ RetSqlName("SD3") +" SD3  INNER JOIN " + CRLF
+cQuery +=" 		"+ RetSqlName("SF5") +" SF5 ON SF5.F5_CODIGO = SD3.D3_TM AND SF5.F5_TIPO = 'D' AND SF5.F5_CODIGO <> '"+ _cTMPerd +"' " + CRLF
+cQuery +="    WHERE SD3.D3_XFILCN9 = SD3X.D3_XFILCN9 " + CRLF
+cQuery +="    AND   SD3.D3_XNUMCN9 = SD3X.D3_XNUMCN9 " + CRLF
+cQuery +="    AND   SD3.D3_XREVCN9 = SD3X.D3_XREVCN9 " + CRLF
+cQuery +="    AND   SD3.D3_FILIAL  = SD3X.D3_FILIAL " + CRLF
+cQuery +="    AND   SD3.D3_DOC = SD3X.D3_DOC " + CRLF
+cQuery +=" 	  AND   SD3.D_E_L_E_T_ = ' ' " + CRLF
+cQuery +="    AND   SD3.D3_ESTORNO = ' ' " + CRLF
+cQuery +="  ) Else " + CRLF
+cQuery +="  SD3X.D3_QUANT End As SLDDEV, " + CRLF
+cQuery +=" (( SELECT Coalesce(Sum(SD3.D3_QUANT),0) FROM "+ RetSqlName("SD3") +" SD3 INNER JOIN " + CRLF
+cQuery +=" 		"+ RetSqlName("SF5") +" SF5 ON SF5.F5_CODIGO = SD3.D3_TM AND SF5.F5_TIPO = 'R' AND SF5.F5_CODIGO <> '"+ _cTMPerd +"' " + CRLF
+cQuery +="     WHERE SD3.D3_XFILCN9 = SD3X.D3_XFILCN9 " + CRLF
+cQuery +="     AND   SD3.D3_XNUMCN9 = SD3X.D3_XNUMCN9 " + CRLF
+cQuery +="     AND   SD3.D3_XREVCN9 = SD3X.D3_XREVCN9 " + CRLF
+cQuery +="    AND   SD3.D3_FILIAL  = SD3X.D3_FILIAL " + CRLF
+cQuery +="	   AND   SD3.D3_DOC = SD3X.D3_DOC " + CRLF
+cQuery +="     AND   SD3.D_E_L_E_T_ = ' ' " + CRLF
+cQuery +="    AND   SD3.D3_ESTORNO = ' ' " + CRLF
+cQuery +="   ) - " + CRLF 
+cQuery +=" ( SELECT Coalesce(Sum(SD3.D3_QUANT),0) FROM "+ RetSqlName("SD3") +" SD3  INNER JOIN " + CRLF
+cQuery +=" 		"+ RetSqlName("SF5") +" SF5 ON SF5.F5_CODIGO = SD3.D3_TM AND SF5.F5_TIPO = 'D' AND SF5.F5_CODIGO <> '"+ _cTMPerd +"' " + CRLF
+cQuery +="    WHERE SD3.D3_XFILCN9 = SD3X.D3_XFILCN9 " + CRLF
+cQuery +="    AND   SD3.D3_XNUMCN9 = SD3X.D3_XNUMCN9 " + CRLF
+cQuery +="    AND   SD3.D3_XREVCN9 = SD3X.D3_XREVCN9 " + CRLF
+cQuery +="    AND   SD3.D3_FILIAL  = SD3X.D3_FILIAL " + CRLF
+cQuery +="    AND   SD3.D3_DOC = SD3X.D3_DOC " + CRLF
+cQuery +="    AND   SD3.D_E_L_E_T_ = ' ' " + CRLF
+cQuery +="    AND   SD3.D3_ESTORNO = ' ' " + CRLF
+cQuery +="   ) " + CRLF
+/* 
+//cQuery +="   ) - " + CRLF
+cQuery +=" ( SELECT Coalesce(Sum(SD3.D3_QUANT),0) FROM "+ RetSqlName("SD3") +" SD3 INNER JOIN " + CRLF
+cQuery +=" 		"+ RetSqlName("SF5") +" SF5 ON SF5.F5_CODIGO = SD3.D3_TM AND SF5.F5_CODIGO = '"+ _cTMPerd +"' " + CRLF
+cQuery +="    WHERE SD3.D3_XFILCN9 = SD3X.D3_XFILCN9 " + CRLF
+cQuery +="    AND   SD3.D3_XNUMCN9 = SD3X.D3_XNUMCN9 " + CRLF
+cQuery +="    AND   SD3.D3_XREVCN9 = SD3X.D3_XREVCN9 " + CRLF
+cQuery +="    AND   SD3.D3_FILIAL  = SD3X.D3_FILIAL " + CRLF
+cQuery +="    AND   SD3.D3_DOC = SD3X.D3_DOC " + CRLF
+cQuery +="    AND   SD3.D_E_L_E_T_ = ' ' " + CRLF
+cQuery +="   ) "*/
+cQuery += " ) As SLDAPLIC, " + CRLF
+
+cQuery +=" Case When SD3X.D3_TM != "+ _cTMPerd +" Then  ( SELECT Coalesce(Sum(SD3.D3_QUANT),0) FROM "+ RetSqlName("SD3") +" SD3 INNER JOIN " + CRLF
+cQuery +=" 		"+ RetSqlName("SF5") +" SF5 ON SF5.F5_CODIGO = SD3.D3_TM AND SF5.F5_CODIGO = '"+ _cTMPerd +"' " + CRLF
+cQuery +="    WHERE SD3.D3_XFILCN9 = SD3X.D3_XFILCN9 " + CRLF
+cQuery +="    AND   SD3.D3_XNUMCN9 = SD3X.D3_XNUMCN9 " + CRLF
+cQuery +="    AND   SD3.D3_XREVCN9 = SD3X.D3_XREVCN9 " + CRLF
+cQuery +="    AND   SD3.D3_FILIAL  = SD3X.D3_FILIAL " + CRLF
+cQuery +="    AND   SD3.D3_DOC = SD3X.D3_DOC " + CRLF
+cQuery +="    AND   SD3.D_E_L_E_T_ = ' ' " + CRLF
+cQuery +="    AND   SD3.D3_ESTORNO = ' ' " + CRLF
+cQuery +="   ) Else " + CRLF
+cQuery +="	 SD3X.D3_QUANT End As SLDPERDI " + CRLF
+cQuery +=" FROM "+ RetSqlName("SD3") +" SD3X INNER JOIN " + CRLF
+cQuery +=" 		"+ RetSqlName("SB1") +" SB1 ON SB1.B1_FILIAL = '"+ xFilial("SB1") +"' AND SB1.B1_COD = SD3X.D3_COD AND SB1.D_E_L_E_T_ = ' ' LEFT JOIN " + CRLF 
+cQuery +=" 		"+ RetSqlName("CN9") +"	CN9 ON SD3X.D3_XFILCN9 = CN9.CN9_FILIAL AND SD3X.D3_XNUMCN9 = CN9.CN9_NUMERO AND SD3X.D3_XREVCN9 = CN9.CN9_REVISA AND CN9.D_E_L_E_T_ = ' ' LEFT JOIN " + CRLF
+cQuery +=" 		"+ RetSqlName("AD1") +" AD1 ON CN9.CN9_FILIAL = AD1.AD1_FILIAL AND CN9.CN9_XOPORT = AD1.AD1_NROPOR AND CN9.CN9_XREVOP = AD1.AD1_REVISA AND AD1.D_E_L_E_T_ = ' ' LEFT JOIN " + CRLF
+cQuery +=" 		"+ RetSqlName("ADY") +" ADY ON ADY.ADY_FILIAL = AD1.AD1_FILIAL AND AD1.AD1_NROPOR = ADY.ADY_OPORTU AND ADY.D_E_L_E_T_ = ' ' LEFT JOIN " + CRLF
+cQuery +=" 		"+ RetSqlName("ADZ") +" ADZ ON AD1.AD1_FILIAL = ADZ.ADZ_FILIAL AND ADY.ADY_PROPOS = ADZ.ADZ_PROPOS AND ADY.ADY_PREVIS = ADZ.ADZ_REVISA AND ADZ.D_E_L_E_T_ = ' ' " + CRLF 
+cQuery +=" WHERE  " + CRLF
+cQuery +="		SD3X.D3_FILIAL	= '"	+ SD3->D3_FILIAL	+ "' AND " + CRLF
+cQuery +="		SD3X.D3_NUMSEQ	= '"	+ SD3->D3_NUMSEQ	+ "' AND " + CRLF
+cQuery +="		SD3X.D3_CHAVE	= '"	+ SD3->D3_CHAVE		+ "' AND " + CRLF
+cQuery +="		SD3X.D3_COD		= '"	+ SD3->D3_COD		+ "' AND " + CRLF
+cQuery +="		SD3X.D3_ESTORNO = ' ' " + CRLF
+//cQuery +="		ADY.ADY_STATUS = 'B'  " + CRLF
+//cQuery +="		ADZ.ADZ_PRODUT <> '000000000028233' " + CRLF
+cQuery +="Group By ADZ_FILIAL, SD3X.D3_FILIAL, SD3X.D3_NUMSEQ, SD3X.D3_COD,"  + CRLF
+cQuery +="		SD3X.D3_XFILCN9, SD3X.D3_XNUMCN9, SD3X.D3_XREVCN9, SD3X.D3_CC, SD3X.D3_XCLIENT, SD3X.D3_XCLILJ, SD3X.D3_XRAZCLI," + CRLF
+cQuery +="		SD3X.D3_TM, SD3X.D3_EMISSAO, SB1.B1_TIPO, SD3X.D3_CHAVE, SD3X.D3_FILIAL, SD3X.D3_DOC, SD3X.D3_QUANT, ADZ_TPALDO" + CRLF
+
+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",cQuery)
+
+cQuery := ChangeQuery(cQuery)                  
+
+DbUseArea(.T., "TOPCONN", TcGenQry(, , cQuery), cAliasTMP, .T. , .T.)
+
+While !(cAliasTMP)->(Eof())
+	If (cAliasTMP)->B1_TIPO == "IM"
+		If _cB1Tp != "IM"
+			_cB1Tp := (cAliasTMP)->B1_TIPO	
+		EndIf
+		If !Empty((cAliasTMP)->XNUMCN9)
+			_cRazCli	:= (cAliasTMP)->XRAZCLI
+			_cCNPJ		:= POSICIONE("SA1",1,XFILIAL("SA1")+ (cAliasTMP)->XCLIENT+ (cAliasTMP)->XCLILJ, "A1_CGC")
+			_dDataMv	:= DToC(StoD((cAliasTMP)->EMISSAO)) //Transform((cAliasTMP)->EMISSAO, PesqPict( "SD3", "D3_EMISSAO"))
+			Exit
+		EndIf		
+	EndIf
+	(cAliasTMP)->(DBSkip())
+EndDo
+(cAliasTMP)->(DBGoTop())
+Return (cAliasTMP)
+
+/*/{Protheus.doc} ImpObs
+	Função para alimentar a variável de observações da pereda.
+		
+@author Walmir Junior
+@since 21/03/2016
+@version 1.00
+@param _cXFil, _cXNum, _cXRev. Informações do Contrato
+
+@return Nil
+
+/*/
+Static Function ImpObs(_cChvSD3)
+Local _cAlias := GetNextAlias()
+Local _cQuery := ""
+
+If (cAliasTMP)->D3_TM == _cTMPerd
+	_cQuery :="	  SELECT DISTINCT SD3.D3_XJUSPER FROM "+ RetSqlName("SD3") +" SD3 INNER JOIN " + CRLF
+	_cQuery +=" 		"+ RetSqlName("SF5") +" SF5 ON SF5.F5_CODIGO = SD3.D3_TM AND SF5.F5_CODIGO = '"+ _cTMPerd +"' " + CRLF
+	_cQuery +="    WHERE SD3.D3_FILIAL = '"+	SubStr(_cChvSD3,1,8) +"' " + CRLF
+	_cQuery +="    AND   SD3.D3_NUMSEQ = '"+	SubStr(_cChvSD3,9,6) +"' " + CRLF
+	_cQuery +="    AND   SD3.D3_CHAVE = '"+ 	SubStr(_cChvSD3,15,2) +"' " + CRLF
+	_cQuery +="    AND   SD3.D3_COD = '"+		SubStr(_cChvSD3,17,15) +"' " + CRLF
+	_cQuery +="    AND   SD3.D_E_L_E_T_ = ' ' " + CRLF
+	
+	DbUseArea(.T., "TOPCONN", TcGenQry(, , _cQuery), _cAlias, .T. , .T.)
+	
+	While !(_cAlias)->(Eof())
+		If !Empty((_cAlias)->D3_XJUSPER)
+			_cObDevPr := Iif(Empty(_cObDevPr), _cObDevPr + (_cAlias)->D3_XJUSPER, _cObDevPr + CRLF + (_cAlias)->D3_XJUSPER)
+		EndIf
+		(_cAlias)->(DbSkip())
+	EndDo
+EndIf
+
+Return
+
+/*/{Protheus.doc} ImpItem
+	Função para imprimir os itens do relatório, na seguinte ordem:
+	->Caso seja impresso pela rotina de transferência multipla:
+	 *Item	*Produto	*Descrição	*Qtde.	*Valor Un.	*Valor Tot.
+	 
+	 ->Caso seja impresso pela rotina de baixa de SA:
+	 *Item	*Produto	*Descrição	*Qtde.
+	 	
+@author Franklin de Brito de Oliveira
+@since 14/10/2015
+@version 1.00
+@param oPrinter, objeto de impressão instanciado
+
+@return Nil
+
+/*/
+Static Function ImpItem(oPrinter)
+Local _nCnst	:= 20
+Local _nDif		:= 10
+Local _nInc 	:= 0
+
+
+oPrinter:Box(li+nLiItm				, nMargDir		, li+nLiItm+20	, nMargDir+150)
+oPrinter:SayAlign(li+nLiItm+_nDif	, nMargDir+5	, "Contratadas"	, oFontC8, 200, nWidtLin, , 0, 2)
+oPrinter:Box(li+nLiItm				, nMargDir+150	, li+nLiItm+20	, nMargDir+500)
+If (cAliasTMP)->ADZ_TPALDO == '1' //Aditivo
+	oPrinter:SayAlign(li+nLiItm+_nDif	, nMargDir+170	, AllTrim(Str((cAliasTMP)->SLDCONTR + (cAliasTMP)->REDCONTR))		, oFontC8, 200, nWidtLin, , 0, 2)
+Else
+	oPrinter:SayAlign(li+nLiItm+_nDif	, nMargDir+170	, AllTrim(Str((cAliasTMP)->SLDCONTR - (cAliasTMP)->REDCONTR))		, oFontC8, 200, nWidtLin, , 0, 2)
+EndIf
+
+_nInc := _nCnst
+oPrinter:Box(li+nLiItm+_nInc			, nMargDir		, li+nLiItm+_nInc+20, nMargDir+150)
+oPrinter:SayAlign(li+nLiItm+_nInc+_nDif	, nMargDir+5	, "Retiradas"	, oFontC8, 200, nWidtLin, , 0, 2)
+oPrinter:Box(li+nLiItm+_nInc			, nMargDir+150	, li+nLiItm+_nInc+20, nMargDir+500)
+oPrinter:SayAlign(li+nLiItm+_nInc+_nDif	, nMargDir+170	, AllTrim(Str((cAliasTMP)->SLDSAIDA))			, oFontC8, 200, nWidtLin, , 0, 2)
+
+_nInc := _nCnst*2
+oPrinter:Box(li+nLiItm+_nInc			, nMargDir		, li+nLiItm+_nInc+20, nMargDir+150)
+oPrinter:SayAlign(li+nLiItm+_nInc+_nDif	, nMargDir+5	, "Aplicadas"	, oFontC8, 200, nWidtLin, , 0, 2)
+oPrinter:Box(li+nLiItm+_nInc			, nMargDir+150	, li+nLiItm+_nInc+20, nMargDir+500)
+oPrinter:SayAlign(li+nLiItm+_nInc+_nDif	, nMargDir+170	, AllTrim(Str((cAliasTMP)->SLDAPLIC))		, oFontC8, 200, nWidtLin, , 0, 2)
+
+/*_nInc := _nCnst*3
+oPrinter:Box(li+nLiItm+_nInc			, nMargDir		, li+nLiItm+_nInc+20, nMargDir+150)
+oPrinter:SayAlign(li+nLiItm+_nInc+_nDif	, nMargDir+5	, Iif ((cAliasTMP)->D3_TM == _cTMPerd, "Perdas Anteriores", "Devoluções Anteriores") , oFontC8, 200, nWidtLin, , 0, 2)
+oPrinter:Box(li+nLiItm+_nInc			, nMargDir+150	, li+nLiItm+_nInc+20, nMargDir+500)
+oPrinter:SayAlign(li+nLiItm+_nInc+_nDif	, nMargDir+105	, Str((cAliasTMP)->SLDDEVPERD)			, oFontC8, 200, nWidtLin, , 0, 2)
+*/
+_nInc := _nCnst*3
+oPrinter:Box(li+nLiItm+_nInc			, nMargDir		, li+nLiItm+_nInc+20, nMargDir+150)
+oPrinter:SayAlign(li+nLiItm+_nInc+_nDif	, nMargDir+5	, "Devolvidas"	, oFontC8, 200, nWidtLin, , 0, 2)
+oPrinter:Box(li+nLiItm+_nInc			, nMargDir+150	, li+nLiItm+_nInc+20, nMargDir+500)
+oPrinter:SayAlign(li+nLiItm+_nInc+_nDif	, nMargDir+170	, AllTrim(Str((cAliasTMP)->SLDDEV))			, oFontC8, 200, nWidtLin, , 0, 2)
+
+/*_nInc := _nCnst*5
+oPrinter:Box(li+nLiItm+_nInc			, nMargDir		, li+nLiItm+_nInc+20, nMargDir+120)
+oPrinter:SayAlign(li+nLiItm+_nInc+_nDif	, nMargDir+5	, "Perdas Anteriores"	, oFontC8, 200, nWidtLin, , 0, 2)
+oPrinter:Box(li+nLiItm+_nInc			, nMargDir+120	, li+nLiItm+_nInc+20, nMargDir+500)
+oPrinter:SayAlign(li+nLiItm+_nInc+_nDif	, nMargDir+105	, Str((cAliasTMP)->SLDPERANT)			, oFontC8, 200, nWidtLin, , 0, 2)
+*/
+_nInc := _nCnst*4
+oPrinter:Box(li+nLiItm+_nInc			, nMargDir		, li+nLiItm+_nInc+20, nMargDir+150)
+oPrinter:SayAlign(li+nLiItm+_nInc+_nDif	, nMargDir+5	, "Perdidas"	, oFontC8, 200, nWidtLin, , 0, 2)
+oPrinter:Box(li+nLiItm+_nInc			, nMargDir+150	, li+nLiItm+_nInc+20, nMargDir+500)
+oPrinter:SayAlign(li+nLiItm+_nInc+_nDif	, nMargDir+170	, AllTrim(Str((cAliasTMP)->SLDPERDI))			, oFontC8, 200, nWidtLin, , 0, 2)
+
+nLiItm := 300
+
+Return (Nil)

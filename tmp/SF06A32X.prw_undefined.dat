@@ -1,0 +1,249 @@
+#INCLUDE 'TOTVS.CH'
+
+/*/{Protheus.doc} SF06A32X
+    @description Solicitação de geração de boletos
+    @type User Function
+    @author Rafael Karczevski
+    @since 23/07/2019
+    @version 1.0
+    /*/
+User Function SF06A32X()
+
+    Local cPerg := "SF06A32X"
+    Local lTdasFil := .F.
+    Private cFilSql := " "
+
+    fCriaSx1(cPerg)
+    If Pergunte(cPerg)
+		If !( Empty(MV_PAR07) .AND. Empty(MV_PAR08) )
+            If MV_PAR01 = 1	
+                aSelFil := AdmGetFil(@lTdasFil,.F.,"SE1")
+                While Len(aSelFil) = 0
+                    aSelFil := AdmGetFil(@lTdasFil,.F.,"SE1")
+                EndDo		
+                cParam  := GetRngFil( aSelFil, "SE1" )
+                cFilSql := " E1_FILIAL " +	cParam +" AND "
+            EndIf	
+            cFilSql := "%" + cFilSql + "%"
+			u_SF632XA()
+		Else
+	        Alert("É necessário definir as datas de emissão para apresentação da rotina.","[Fonte: SF06A32X]")
+		EndIf
+	EndIf
+
+Return
+
+/*/{Protheus.doc} SF632XA
+    @description Monta o Dialog para apresentação dos dados
+    @type User Function
+    @author Rafael Karczevski
+    @since 23/07/2019
+    @version 1.0
+    /*/
+User Function SF632XA()
+
+    //Declaração de cVariable dos componentes
+    Local nOpc  := GD_INSERT+GD_DELETE+GD_UPDATE
+    Local aSize := MsAdvSize(.f.)
+
+    Private aHoGrid := {}
+    Private cGetDtA := MV_PAR07
+    Private cGetDtD := MV_PAR06
+    Private cGetDtR := Date()
+    Private noGrid  := 0
+    Private oProcess
+
+    //Declaração de Variaveis Private dos Objetos
+    SetPrvt("oDlg","oPanel1","oSay1","oSay2","oSay3","oGrid","oGetDtR","oGetDtA","oGetDtD","oBtnCanc","oBtnConf")
+
+    //Definicao do Dialog e todos os seus componentes.
+    oDlg       := MSDialog():New( 0,0,800,1000,"Solicitação de Emissão de boleto",,,.F.,,,,,,.T.,,,.T. )
+    oDlg:lMaximized := .t.
+    oPanel1    := TPanel():New( aSize[1], aSize[2], "", oDlg,,.F.,.F.,,,aSize[3], aSize[4],.T.,.F. )
+    oSay1      := TSay():New( aSize[1] + 4,004,             {||"Data de recebimento da Solicitação"},oPanel1,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,088,008)
+    oSay2      := TSay():New( aSize[1] + 4, aSize[3] - 132, {||"Emissão de:"},oPanel1,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,032,008)
+    oSay3      := TSay():New( aSize[1] + 4, aSize[3] - 64,  {||"Emissão até:"},oPanel1,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,032,008)
+    oGrid      := DbGrid():Create(028, aSize[2] + 4, aSize[4] - 20, aSize[3] - 4,nOpc,'AllwaysTrue()','AllwaysTrue()',,{},0,99,'AllwaysTrue()','','AllwaysTrue()',oPanel1,MHoGrid(),{},1,1,,,,,.t.,.f.,,.f.,.t.,' ')
+    oGetDtR    := TGet():New( aSize[1] + 12, 004            ,{|u| If(PCount()>0,cGetDtR:=u,cGetDtR)},oPanel1,060,008,'@D',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","cGetDtR",,)
+    oGetDtA    := TGet():New( aSize[1] + 12, aSize[3] - 64  ,{|u| If(PCount()>0,cGetDtA:=u,cGetDtA)},oPanel1,060,008,'@D',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","cGetDtA",,)
+    oGetDtA:lReadOnly := .t.
+    oGetDtD    := TGet():New( aSize[1] + 12, aSize[3] - 132 ,{|u| If(PCount()>0,cGetDtD:=u,cGetDtD)},oPanel1,060,008,'@D',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","cGetDtD",,)
+    oGetDtD:lReadOnly := .t.
+    oBtnCanc   := TButton():New( aSize[4] - 18, aSize[3] - 42,"Cancelar" ,oPanel1,{|| oDlg:End() },037,012,,,,.T.,,"",,,,.F. )
+    oBtnConf   := TButton():New( aSize[4] - 18, aSize[3] - 84,"Confirmar",oPanel1,{|| Processa( {|| SF632XC()}, "Aguarde...", "Analisando titulos e gravando informações...", .t. )  },037,012,,,,.T.,,"",,,,.F. )
+
+    oDlg:Activate(,,,.T.,,,Processa( {|| u_SF632XB()}, "Carregando...", "Estamos carregando os dados necessários", .t. ))
+
+Return
+
+/*/{Protheus.doc} SF632XB
+    @description Responsavel por alimentar o grid
+    @type User Function
+    @author Rafael Karczevski
+    @since 23/07/2019
+    @version 1.0
+    /*/
+User Function SF632XB()
+
+    Local cAlias := GetNextAlias()
+    Local nRegs := 0
+    Local nCnt := 0
+
+    oGrid:Limpar()
+
+    BeginSql Alias cAlias
+        SELECT
+            E1_FILIAL, E1_PREFIXO, E1_NUM, E1_PARCELA, E1_CLIENTE, E1_LOJA, E1_NOMCLI, E1_EMISSAO, E1_VENCTO, E1_VALOR, E1_TIPO
+        FROM %Table:SE1% SE1
+        WHERE 
+            %Exp:cFilSql%
+            E1_EMISSAO BETWEEN %Exp:MV_PAR06% AND %Exp:MV_PAR07%
+            AND E1_PREFIXO BETWEEN %Exp:MV_PAR02% AND %Exp:MV_PAR03%
+            AND E1_NUM BETWEEN %Exp:MV_PAR04% AND %Exp:MV_PAR05%
+            AND SUBSTR(E1_FILIAL,5,4) = '0001'
+            AND E1_TIPO = 'BOL'
+            AND E1_SALDO > 0
+            AND NOT EXISTS(
+                SELECT 1 FROM %Table:ZEF% ZEF WHERE
+                    ZEF_FILIAL      = E1_FILIAL
+                    AND ZEF_PREFIX  = E1_PREFIXO
+                    AND ZEF_NUM     = E1_NUM
+                    AND ZEF_PARCEL  = E1_PARCELA
+                    AND ZEF_TIPO    = E1_TIPO
+                    AND ZEF_EMISSA  = E1_EMISSAO
+                    AND ZEF_CLIENT  = E1_CLIENTE
+                    AND ZEF_LOJA    = E1_LOJA
+                    AND ZEF_DTSLEM  <> ' '
+                    AND ZEF.%NotDel%
+            )
+            AND SE1.%NotDel%
+        ORDER BY E1_FILIAL, E1_PREFIXO, E1_NUM, E1_PARCELA, E1_CLIENTE, E1_LOJA
+    EndSql
+    (cAlias)->(dbGoTop())
+    (cAlias)->(dbEval({|| nRegs++ }))
+    (cAlias)->(dbGoTop())
+
+    ProcRegua(nRegs)
+
+    While !(cAlias)->(eof())
+        nCnt++
+        IncProc("Selecionando Registros: " + cValToChar(nCnt) + " de " + cValToChar(nRegs) )
+        oGrid:AddLinha()
+        oGrid:SetColuna("E1_FILIAL" , (cAlias)->(E1_FILIAL) + " - " + AllTrim(Posicione("SM0",1, cempant +(cAlias)->(E1_FILIAL), "M0_FILIAL")) )
+        oGrid:SetColuna("E1_PREFIXO", (cAlias)->(E1_PREFIXO))
+        oGrid:SetColuna("E1_NUM"    , (cAlias)->(E1_NUM)    )
+        oGrid:SetColuna("E1_PARCELA", (cAlias)->(E1_PARCELA))
+        oGrid:SetColuna("E1_CLIENTE", (cAlias)->(E1_CLIENTE) + " - " + (cAlias)->(E1_LOJA) + " - " + (cAlias)->(E1_NOMCLI)) // E1_CLIENTE, E1_LOJA, E1_NOMCLI
+        oGrid:SetColuna("E1_EMISSAO", sToD((cAlias)->(E1_EMISSAO)))
+        oGrid:SetColuna("E1_VENCTO" , sToD((cAlias)->(E1_VENCTO) ))
+        oGrid:SetColuna("E1_VALOR"  , (cAlias)->(E1_VALOR)  )
+        (cAlias)->(DbSkip())
+    EndDo
+
+    oGrid:GoTop()
+    oGrid:Refresh()
+    (cAlias)->(DbCloseArea())
+Return
+
+/*/{Protheus.doc} SF632XC
+    @description Salva os dados dos titulos marcados
+    @type Static Function
+    @author Rafael Karczevski
+    @since 24/07/2019
+    @version 1.0
+    /*/
+Static Function SF632XC
+
+    Local nX    := 0
+    Local nCnt  := 0
+    Local lExst := .F.
+    Local cFilG := ''
+    Local cPrfG := ''
+    Local cNumG := ''
+    Local cPrcG := ''
+    Local cTipG := 'BOL'
+    
+    dbSelectArea("ZEF")
+    ZEF->(DbSetOrder(1))
+    ProcRegua(oGrid:GetQtdLinha(.F.,.F.))
+
+    For nX := 1 to oGrid:GetQtdLinha(.F.,.F.)
+        nCnt++
+        IncProc("Analisando linhas: " + cValToChar(nCnt) + " de " + cValToChar(oGrid:GetQtdLinha(.F.,.F.)) )
+        If oGrid:Marcado(nX)
+            cFilG := SubStr(oGrid:GetColuna('E1_FILIAL',nx,' '),1,8)
+            cPrfG := oGrid:GetColuna('E1_PREFIXO',nx,' ')
+            cNumG := oGrid:GetColuna('E1_NUM',nx,' ')
+            cPrcG := oGrid:GetColuna('E1_PARCEL',nx,' ')
+            //ZEF_FILIAL+ZEF_PREFIX+ZEF_NUM+ZEF_PARCEL+ZEF_TIPO
+            lExst := ZEF->(MsSeek( cFilG+cPrfG+cNumG+cPrcG+cTipG ))
+            RecLock("ZEF", !lExst)
+                ZEF->ZEF_FILIAL := cFilG
+                ZEF->ZEF_PREFIX := cPrfG
+                ZEF->ZEF_NUM    := cNumG
+                ZEF->ZEF_PARCEL := cPrcG
+                ZEF->ZEF_TIPO   := cTipG
+                ZEF->ZEF_CLIENT := SubStr(oGrid:GetColuna('E1_CLIENTE',nx,' '),1,9)
+                ZEF->ZEF_LOJA   := SubStr(oGrid:GetColuna('E1_CLIENTE',nx,' '),13,4)
+                ZEF->ZEF_EMISSA := oGrid:GetColuna('E1_EMISSAO',nx,' ')
+                ZEF->ZEF_DTSLEM := cGetDtR
+            ZEF->(MsUnlock())
+        EndIf
+    Next nX
+    ZEF->(DbCloseArea())
+    
+    Processa( {|| u_SF632XB()}, "Aguarde...", "Atualizando o grid...", .t. )
+
+Return
+
+/*/{Protheus.doc} MHoGrid
+    @description Criação do cabeçalho da grid
+    @type Static Function
+    @author Rafael Karczevski
+    @since 24/07/2019
+    @version 1.0
+    @return aHoGrid, Array, Array com o cabeçalho da grid
+    /*/
+Static Function MHoGrid()
+
+    Aadd(aHoGrid 	,{"Filial"		,"E1_FILIAL"	,TRIM(X3PICTURE("E1_FILIAL"))	,TamSX3("E1_FILIAL" )[1]	,90	                        ,"" ,"","C",""  ,""})
+    Aadd(aHoGrid 	,{"Prefixo"	    ,"E1_PREFIXO"	,TRIM(X3PICTURE("E1_PREFIXO"))	,TamSX3("E1_PREFIXO")[1]	,TamSX3("E1_PREFIXO")[2]	,"" ,"","C",""  ,""})
+    Aadd(aHoGrid 	,{"Titulo"		,"E1_NUM"   	,TRIM(X3PICTURE("E1_NUM"))	    ,TamSX3("E1_NUM"    )[1]	,TamSX3("E1_NUM"    )[2]	,"" ,"","C",""  ,""})
+    Aadd(aHoGrid 	,{"Parcela"		,"E1_PARCELA"	,TRIM(X3PICTURE("E1_PARCELA"))	,TamSX3("E1_PARCELA")[1]	,TamSX3("E1_PARCELA")[2]	,"" ,"","C",""  ,""})
+    Aadd(aHoGrid 	,{"Cliente"		,"E1_CLIENTE"	,TRIM(X3PICTURE("E1_CLIENTE"))	,TamSX3("E1_CLIENTE")[1]	,40	                        ,"" ,"","C",""  ,""})
+    Aadd(aHoGrid 	,{"Emissão"		,"E1_EMISSAO"	,TRIM(X3PICTURE("E1_EMISSAO"))	,TamSX3("E1_EMISSAO")[1]	,10                         ,"" ,"","C",""  ,""})
+    Aadd(aHoGrid 	,{"Vencimento"	,"E1_VENCTO"	,TRIM(X3PICTURE("E1_VENCTO"))	,TamSX3("E1_VENCTO" )[1]	,10                         ,"" ,"","C",""  ,""})
+    Aadd(aHoGrid 	,{"Valor"		,"E1_VALOR" 	,TRIM(X3PICTURE("E1_VALOR"))	,TamSX3("E1_VALOR"  )[1]	,TamSX3("E1_VALOR"  )[2]	,"" ,"","C",""  ,""})
+    //Aadd(aHoGrid 	,{"Saldo"		,"E1_SALDO" 	,TRIM(X3PICTURE("E1_SALDO"))	,TamSX3("E1_SALDO"  )[1]	,TamSX3("E1_SALDO"  )[2]	,"" ,"","C",""  ,""})
+    //Aadd(aHoGrid 	,{"Titulo"		,"ADY_PREVIS"	,TRIM(X3PICTURE("ADY_PREVIS"))	,TamSX3("ADY_PREVIS")[1]	,TamSX3("ADY_PREVIS")[2]	,"" ,"","C",""  ,""})    
+
+Return aHoGrid 
+
+/*/{Protheus.doc} fCriaSx1
+	Função responsável por criar arquivo de perguntas,
+	da rotina de recebimento de solicitação de boletos.
+@author Rafael Karczevski
+@since 23/07/2019
+@param _cPerg, Caracter, Nome do arquivo de perguntas
+/*/
+Static Function fCriaSx1(p_cPerg)
+
+	Local aHelp	:= {}
+	
+	AAdd(aHelp, {{"Seleciona Filiais?, Se selecionar não, o relatório ira considerar todas as filiais."				}, {""}, {""}})
+	AAdd(aHelp, {{"Informe o prefixo inicial."              }, {""}, {""}})
+	AAdd(aHelp, {{"Informe o prefixo final."                }, {""}, {""}})
+	AAdd(aHelp, {{"Informe o numero do titulo inicial"  	}, {""}, {""}})
+	AAdd(aHelp, {{"Informe o numero do titulo final"      	}, {""}, {""}})
+	AAdd(aHelp, {{"Emissão De"	        				    }, {""}, {""}})
+	AAdd(aHelp, {{"Emissão Ate"			        		    }, {""}, {""}})
+
+	u_SFPutSx1( p_cPerg, "01","Seleciona Filial?    		"    , "", "", "mv_ch1", "N",1                          , 0, 0, "C","", ""	    , "", "", "mv_par01","Sim","Si","Yes","","Nao","No","No","","","","","","","","",""                       , aHelp[1,1], aHelp[1,2], aHelp[1,3], "")
+	u_SFPutSx1( p_cPerg, "02","Prefixo de?					"    , "", "", "mv_ch2", "C",3							, 0, 0, "G","", ""		, "", "", "mv_par02", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[2,1], aHelp[2,2], aHelp[2,3], "")
+	u_SFPutSx1( p_cPerg, "03","Prefixo Até?					"    , "", "", "mv_ch3", "C",3							, 0, 0, "G","", ""		, "", "", "mv_par03", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[3,1], aHelp[3,2], aHelp[3,3], "")
+	u_SFPutSx1( p_cPerg, "04","Titulo De?					"    , "", "", "mv_ch4", "C",TamSX3("E1_NUM")[1]    	, 0, 0, "G","", ""	    , "", "", "mv_par04", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[4,1], aHelp[4,2], aHelp[4,3], "")
+	u_SFPutSx1( p_cPerg, "05","Titulo Até?					"    , "", "", "mv_ch5", "C",TamSX3("E1_NUM")[1]    	, 0, 0, "G","", ""	    , "", "", "mv_par05", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[5,1], aHelp[5,2], aHelp[5,3], "")
+	u_SFPutSx1( p_cPerg, "06","Emissao de?	    			"    , "", "", "mv_ch6", "D",8							, 0, 0, "G","", ""		, "", "", "mv_par06", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[6,1], aHelp[6,2], aHelp[6,3], "")
+	u_SFPutSx1( p_cPerg, "07","Emissao Até?	    			"    , "", "", "mv_ch7", "D",8							, 0, 0, "G","", ""		, "", "", "mv_par07", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""                      , aHelp[7,1], aHelp[7,2], aHelp[7,3], "")
+	
+Return (Nil)

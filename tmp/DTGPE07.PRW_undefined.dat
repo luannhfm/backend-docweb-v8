@@ -1,0 +1,538 @@
+#include "PROTHEUS.CH"
+
+//-- Diretivas indicando as colunas para Matriz de Verbas
+#define MN_QTDCOL	 4
+
+#define MN_MARCA    1
+#define MN_FILIAL  	2
+#define MN_MAT   	3
+#define MN_NOME  	4
+                                                   	
+/*/f/
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+<Descricao> : Manutenção de Horas Rateadas
+<Autor> : Fábrica DOIT SP
+<Data> : 16/05/2014
+<Parametros> : Nil
+<Retorno> : Nil
+<Processo> : FIEMT – Folha de Pagamento
+<Tipo> : 
+<Obs> : 
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+*/
+
+User Function DTGPE07()
+
+//-- Dialog
+Local oDlg
+Local oPanel
+Local nItem,nLine,nPos
+
+//-- Controle de dimensoes de objetos
+Local aObjects	    := {}
+Local aInfo		    := {}
+Local aPosObj	    := {}  
+Local aSize		    := {}
+Local lOk		    := .F.
+Local oOk          := LoadBitMap(GetResources(),"LBOK")
+Local oNo          := LoadBitMap(GetResources(),"LBNO")
+Local nX := 0
+Local nL := 0
+
+Private aItens     := {}
+Private aBotoes    := {}
+
+Private oCodFunc   := Nil
+Private oNomeFunc  := Nil
+Private oHorasMes  := Nil
+Private oMesBase   := Nil
+Private oAnoBase   := Nil
+
+Private oMarcaTudo := Nil
+Private oListItens := Nil
+Private aTitItens  := {}
+
+Private aMesBase   	:= {}
+Private aAnoBase   	:= {}
+Private cCodFunc   	:= Space(6)
+Private cNomeFunc  	:= ''
+Private cMesBase   	:= ""
+Private cPeriodo	:= GETMV("MV_FOLMES")
+Private cAnoBase   	:= SUBSTR(cPeriodo,1,4) //StrZero( Year( dDataBase ), 4 )  
+Private nHrsMesTot 	:= ''   
+Private nTotPerc	:= 0  
+Private nTotTrab	:= 0
+Private nTotHor		:= 0
+Private nHrMes    	:= 0
+
+Private lMarcaTudo := .F.
+
+Private nDiaCorte	:= Day(DATE())
+Private aEmpLog		:= FWEmpLoad( .T. ) 
+Private aEmpAux		:= {}
+Private cEmpresas	:= '('
+Private nPos		:= 0
+Private cAux		:= '' 
+
+//alterado srs
+Private cStatu
+Private cAplic := "                                                  "
+
+For nX:= 1 To Len(aEmpLog)                                   
+
+  If substr(aEmpLog[nX][3],1,2) <> cAux
+  	cAux := aEmpLog[nX][3]
+  	AADD(aEmpAux,cAux)
+  EndIf
+Next 
+For nX := 1 to Len(aEmpAux)
+	cEmpresas += "'"+aEmpAux[nX]+"'," 
+Next
+
+cEmpresas := SubStr(cEmpresas,1,(Len(cEmpresas)-1))+")"
+
+//---------------------------------
+//
+//--------------------------------------------------
+
+Aadd( aTitItens, ""                )
+Aadd( aTitItens, "Filial"          )
+Aadd( aTitItens, "Matricula"       )
+Aadd( aTitItens, "Nome"			   )
+
+//---------------------------------
+//
+//--------------------------------------------------
+
+For nL := 2000 To Year( dDataBase )
+
+   Aadd( aAnoBase, Str( nL, 4 ) )
+
+Next
+
+//-- Dimensoes padroes
+aSize   := MsAdvSize()
+AAdd( aObjects, { 100, 020, .T., .F., .T. } )
+AAdd( aObjects, { 100, 100, .T., .T. } )
+AAdd( aObjects, { 100, 020, .F., .F. } )
+aInfo   := { aSize[ 1 ], aSize[ 2 ], aSize[ 3 ], aSize[ 4 ], 5, 5 }
+aPosObj := MsObjSize( aInfo, aObjects,.T.)
+
+MsgRun( "Aguarde, selecionando informações...",, {|| GPE07Qry()} )
+
+If .T.
+
+	aBotoes := { }
+
+	DEFINE MSDIALOG oDlg TITLE "Manutenção de Estrutura de Rateio" FROM aSize[7],00 TO aSize[6],aSize[5] PIXEL
+		
+		//005,005 Say "Matrícula:"                                           Of oDlg Pixel
+		//@ 013,005 MsGet oCodFunc   Var cCodFunc   When .T. 			     Size 030,07 Of oDlg Pixel
+
+		//@ 005,045 Say "Funcionário:"                                         Of oDlg Pixel
+		//@ 013,045 MsGet oNomeFunc   Var cNomeFunc When .F.	      Size 300,07 Of oDlg Pixel
+
+		//@ 013,045 Button "Filtrar"                               Size 040,11 Of oDlg Pixel Action ( GPE07Qry(.T.,cCodFunc) )
+
+      //------------------ Documentos
+      
+     //	-----Alterado por Sergio
+		@ 005,005 SAY 'Campo' PIXEL SIZE 30,9 Of oDlg
+		@ 012,005 MSCOMBOBOX oGet2 VAR cStatu ITEMS{"M=MATRICULA","N=NOME"} SIZE 052, 010 OF oDlg COLORS 0, 16777215 PIXEL
+		
+		@ 005,070 SAY 'Consulta' PIXEL SIZE 40,9 Of oDlg
+		@ 012,070 MSGET oGet3 VAR cAplic SIZE 150, 010 Picture "@!" OF oDlg COLORS 0, 16777215 PIXEL
+		//@ 012,070 MSGET cAplic SIZE 150,11 OF oDlg PIXEL PICTURE "@!"
+		@ 012,230 BUTTON "Pesquisar" SIZE 070, 010 PIXEL OF oDlg ACTION (MsgRun( "Aguarde, selecionando informações...",, {|| GPE07Qry()} )) 
+
+		aPosObj[2,1] += 5
+
+		oFolder := TFolder():NEW( aPosObj[2,1],004, { "Funcionários" },, oDlg, 1,,, .t.,, aPosObj[2,4],aPosObj[3,3] )
+		
+	/*	-----Alterado por Sergio
+		@ 005,005 SAY 'Campo' PIXEL SIZE 30,9 Of oDlg
+		@ 012,005 MSCOMBOBOX oGet2 VAR cStatu ITEMS{"M=MATRICULA","N=NOME"} SIZE 052, 010 OF oDlg COLORS 0, 16777215 PIXEL
+		
+		@ 005,070 SAY 'Consulta' PIXEL SIZE 40,9 Of oDlg
+		//@ 012,070 MSGET oGet3 VAR cAplic SIZE 150, 010 Picture "@!" OF oDlg COLORS 0, 16777215 PIXEL
+		@ 012,070 MSGET cAplic SIZE 150,11 OF oDlg PIXEL PICTURE "@!";
+		*/
+		
+		//@ 005,045 Say "Funcionário:"                                         Of oFolder Pixel
+		//@ 005,005 CHECKBOX oMarcaTudo Var lMarcaTudo PROMPT "Marcar/Desmarcar todos os registros..." Size 168, 08 On CLICK( GPE04Todos( lMarcaTudo ) ) OF  oFolder:aDialogs[1] PIXEL
+
+		@ 020,005 LISTBOX oListItens Fields HEADER;
+			  aTitItens[01],;
+			  aTitItens[02],;
+			  aTitItens[03],;
+			  aTitItens[04] SIZE ( aPosObj[2,4] - 30 ), ((aPosObj[2,3]-aPosObj[2,1])-15) OF oFolder:aDialogs[1] PIXEL 
+			
+		oListItens:bLDblClick := { || GPE07Todos( .F., oListItens:nAT ) }
+		oListItens:SetArray( aItens )
+		oListItens:bLine   := { || {       Iif( aItens[ oListItens:nAT,MN_MARCA  ], oOk, oNo )   ,;
+										                aItens[ oListItens:nAT,MN_FILIAL ]               ,;
+										                aItens[ oListItens:nAT,MN_MAT    ]               ,;
+										                aItens[ oListItens:nAT,MN_NOME   ]}}
+										                
+	//ACTIVATE MSDIALOG oDlg ON INIT EnchoiceBar( oDlg, {|| oDlg:End() }, {|| oDlg:End() },, aBotoes )                                                                                
+
+    //	@ 263,520 BUTTON "Rateio" SIZE 045, 012 OF oDlg  ACTION ( IIF( aItens[ oListItens:nAT, 1 ]=.T. , U_DTGPE04(aItens[ oListItens:nAT, 2 ],aItens[ oListItens:nAT, 3 ]),MSGALERT("Selecione um funcionário!"))) PIXEL
+	//	@ 263,570 BUTTON "Sair  " SIZE 045, 012 OF oDlg  ACTION oDlg:End() PIXEL
+		
+	//_nLinBt := aSize[6] - (aSize[6]*0.6)
+	
+		
+	//@ _nLinBt ,520 BUTTON "Rateio" SIZE 045, 012 OF oDlg  ACTION (U_DTGPE04(aItens[ oListItens:nAT, 2 ],aItens[ oListItens:nAT, 3 ])) PIXEL
+   // @ 263,570 BUTTON "Sair  " SIZE 045, 012 OF oDlg  ACTION oDlg:End() PIXEL
+    
+	//SetKey(VK_F5,{|| U_DTGPE04(aItens[ oListItens:nAT, 2 ],aItens[ oListItens:nAT, 3 ])})
+
+	ACTIVATE MSDIALOG oDlg ON INIT EnchoiceBar( oDlg, {||IIF( aItens[ oListItens:nAT, 1 ]=.T. , U_DTGPE04(aItens[ oListItens:nAT, 2 ],aItens[ oListItens:nAT, 3 ]),MSGALERT("Selecione um funcionário!"))},{||oDlg:End()},,)
+
+EndIf
+ 
+Return .T.
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ GPE07QRY        ³ Marcelo Coutinho    º Data ³  16/05/14    º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³                                                             º±±
+±±º          ³                                                             º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ DTGPE07                                                     º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function GPE07QRY( lFiltro )
+Local cAliasQry  := GetNextAlias()
+Local aAreaAtu   := GetArea()
+Local cQuery     := ''
+Local nDelItens  := Len( aItens )
+
+Local nSizeCTT   := 4
+Local nSizeCTD   := 4   
+
+Local nI := 0
+Default lFiltro  := .F.
+
+   
+
+//--------------------------------------
+//
+//-----------------------------------------------------------
+
+For nI := 1 To nDelItens
+
+    aDel( aItens, nI )
+Next
+
+aSize( aItens, 0 )
+
+//--------------------------------------
+//                                                            
+//-----------------------------------------------------------                      
+
+dDataAux := ctod('01/'+Substr(cPERIODO,5,2)+'/'+SUBSTR(cPeriodo,1,4))
+cDataAux :=dtos(dDataAux)
+
+cQuery :=        "Select RA_FILIAL, RA_MAT, RA_NOME "
+cQuery += CRLF + "  From " + RetSqlName("SRA")
+cQuery += CRLF + " Where RA_FILIAL IN "+cEmpresas+" AND RA_XTPRAT = '2' AND (RA_SITFOLH <>'D' OR RA_DEMISSA >= '"+cDataAux+"')" 
+	If( cStatu = 'N' .AND. !Empty(cAplic))
+		cQuery += CRLF + " AND  RA_NOME LIKE '"+AllTrim(cAplic)+"%' "
+	EndIf	
+	If(cStatu = 'M' .AND. !Empty(cAplic))
+		cQuery += CRLF + " AND  RA_MAT = '"+AllTrim(cAplic)+"' "
+	EndIf
+		
+cQuery += CRLF + "  and D_E_L_E_T_ = ' ' "
+cQuery += CRLF + " Order By RA_FILIAL,RA_NOME "
+
+cQuery := ChangeQuery( cQuery )
+
+dbUseArea( .T., "TOPCONN", TCGenQry(,,cQuery), cAliasQry, .T., .T. )     
+
+//--------------------------------------
+//
+//-----------------------------------------------------------
+
+While (cAliasQry)->(!Eof())
+
+	Aadd( aItens, Array( MN_QTDCOL ) )
+
+	nPosItens := Len( aItens )
+
+	aItens[nPosItens][MN_MARCA  ] := .F.
+	aItens[nPosItens][MN_FILIAL ] := (cAliasQry)->( RA_FILIAL  )
+	aItens[nPosItens][MN_MAT    ] := (cAliasQry)->( RA_MAT )
+	aItens[nPosItens][MN_NOME   ] := (cAliasQry)->( RA_NOME)
+	
+	(cAliasQry)->(dbSkip())
+End
+
+If Len( aItens ) == 0
+
+   Aadd( aItens, Array( MN_QTDCOL ) )
+
+	aItens[Len( aItens )][MN_MARCA  ] := .F.
+	aItens[Len( aItens )][MN_FILIAL ] := ""
+	aItens[Len( aItens )][MN_MAT    ] := ""
+	aItens[Len( aItens )][MN_NOME   ] := ""
+EndIf
+
+(cAliasQry)->(dbCloseArea())
+
+RestArea(aAreaAtu)
+
+Return NIL
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ GPE04Todos  ºAutor  ³ Marcelo Coutinho   º Data ³  16/05/14 º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Marca / Desmarca Todos                                      º±±
+±±º          ³                                                             º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ DTGPE04                                                     º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function GPE07Todos( lMarca, nPosMarca )
+
+Local nX := 0
+Default lMarca    := .F.
+Default nPosMarca := 0
+
+For nX := 1 To Len( aItens )
+
+	If nPosMarca # nX
+
+		aItens[nX][MN_MARCA] := lMarca
+
+	ElseIf nPosMarca > 0
+
+		aItens[nPosMarca][MN_MARCA] := !aItens[nPosMarca][MN_MARCA]
+
+	EndIf
+Next
+
+oListItens:Refresh()
+     
+Return .T.
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³ GPE04Todos  ºAutor  ³ Marcelo Coutinho   º Data ³  16/05/14 º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Marca / Desmarca Todos                                      º±±
+±±º          ³                                                             º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ DTGPE04                                                     º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+Static Function GPE04Opc(cOpc)
+
+Local oDlg
+Local oMes
+Local oAno
+Local oCC
+Local oCCDesc
+Local oItem
+Local oItemDesc
+Local oHrMes
+Local oHrAloc
+Local oPerc
+
+Local cMes      := SUBSTR(cPERIODO,5,2) //StrZero(  Month( dDataBase   ), 2 )
+Local cAno      := SUBSTR(cPERIODO,1,4) //StrZero(   Year( dDataBase   ), 4 )  
+Local cItem     :=   Space( TamSX3( "CTD_ITEM"  )[1] )
+Local cCCDesc   := ""
+Local cItemDesc := ""
+Local nHrAloc   := 0
+Local nPerc     := 0
+Local cMesAno   := ""
+Local nTotComp  := 1
+Local nExclui   := 0
+Local nAltera   := 0 
+
+Local cTitulo   := Iif( cOpc == "I", "Inclusão", Iif( cOpc == "A", "Alteração", "Exclusão" ) ) + " de itens para Rateio" 
+
+Local nI := 0
+Private cCC       :=   Space( TamSX3( "CTT_CUSTO" )[1] )
+
+If lMarcaTudo .And. cOpc # "I"
+
+	For nI := 1 To Len( aItens)
+
+      cMesAno := aItens[ nI ][ MN_ANO ] + aItens[ nI ][ MN_MES ]
+
+		If aItens[ nI ][ MN_MARCA ]
+
+			If cOpc == "E"
+
+				nExclui += 1
+
+			ElseIf cOpc == "A"
+
+				nAltera += 1
+
+			EndIf
+
+		EndIf
+
+		If nI < Len( aItens )
+
+			If cMesAno # aItens[ ( nI + 1 ) ][ MN_ANO ] + aItens[ ( nI + 1 ) ][ MN_MES ] .And. aItens[ nI ][ MN_MARCA ]
+
+            nTotComp += 1
+
+			EndIf
+		EndIf
+	Next
+
+	If nTotComp > 1
+	
+		If cOpc == "E" .And. nExclui > 0
+
+			Alert( "Para Excluir vários registros, é necessário que estejam na mesma competência (Mês/Ano)!" )
+
+			Return .T.
+
+		ElseIf cOpc == "A"
+
+			Alert( "Para Alterar, é necessário que os registros estejam filtrados em uma única competência (Mês/Ano)!" )
+
+			Return .T.
+
+		EndIf
+
+	Else
+	
+		If cOpc == "A" .And. nAltera > 0
+
+			Alert( "Para opção Alterar, é necessário que apenas um registro esteja selecionado!" )
+
+			Return .T.
+
+		EndIf
+
+	EndIf
+
+EndIf
+
+If cOpc # "I" .And. Ascan( aItens, { |x| x[ MN_MARCA ] == .T. } ) = 0
+
+	Alert( "Selecione um registro para " + Iif( cOpc == "E", "Exclusão!", "Alteração!" ) )
+
+   Return .T.
+
+EndIf
+
+If cOpc == "A"
+
+	nPos := Ascan( aItens, { |x| x[MN_MARCA] == .T. } )
+
+	If nPos > 0
+
+		cMes      := aItens[ nPos ][ MN_MES     ]
+		cAno      := aItens[ nPos ][ MN_ANO     ]
+		cCC       := aItens[ nPos ][ MN_CC      ]
+		cCCDesc   := aItens[ nPos ][ MN_DESCCC  ]
+		cItem     := aItens[ nPos ][ MN_ITEM    ]
+		cItemDesc := aItens[ nPos ][ MN_DESCITE ]
+		nHrMes    := aItens[ nPos ][ MN_HRMES   ]
+		nHrAloc   := aItens[ nPos ][ MN_HORAS   ]
+		nPerc     := aItens[ nPos ][ MN_PERCEN  ]
+
+	EndIf
+EndIf
+
+//-------------------------------------------------------
+//
+//------------------------------------------------------------------------------
+
+If cOpc # "E"
+	
+	U_DTGPE07ChkPerc("I")
+    
+ 	nHrMes := IIF(nHrsMesTot=0,SRA->RA_HRSMES,nHrsMesTot)
+ 	
+	DEFINE MSDIALOG oDlg FROM 000,000 TO 250,540 PIXEL TITLE cTitulo
+
+		oPanel := tPanel():New( 003, 003, "", oDlg,,,,, CLR_WHITE, 265, 105, .T.) 
+	
+		@ 005, 005 SAY "Mês"                                                                                                                               SIZE 030, 009 OF oPanel PIXEL
+		@ 013, 005 MSGET oMes      VAR cMes          WHEN .F.                                                                                              SIZE 020, 010 OF oPanel PIXEL
+
+		@ 005, 040 SAY "Ano"                                                                                                                               SIZE 030, 009 OF oPanel PIXEL
+		@ 013, 040 MSGET oAno      VAR cAno          WHEN .F.                                                                                              SIZE 050, 010 OF oPanel PIXEL
+	
+		@ 030, 005 SAY "Centro de Custo"                                                                                                                   SIZE 100, 009 OF oPanel PIXEL
+		@ 038, 005 MSGET oCC       VAR cCC           F3 "CTA1"        VALID ( cCCDesc   := GPE04Psq( "C", cCC   ), oCCDesc:Refresh(),   !Empty(cCCDesc))   SIZE 050, 010 OF oPanel PIXEL
+		@ 038, 060 MSGET oCCDesc   VAR cCCDesc       WHEN .F.                                                                                              SIZE 200, 010 OF oPanel PIXEL
+
+		@ 055, 005 SAY "Item Contábil"                                                                                                                     SIZE 100, 009 OF oPanel PIXEL
+		@ 063, 005 MSGET oItem     VAR cItem         F3 "CTA2"        VALID ( cItemDesc := GPE04Psq( "I", cItem ), oItemDesc:Refresh(), !Empty(cItemDesc)) SIZE 050, 010 OF oPanel PIXEL
+		@ 063, 060 MSGET oItemDesc VAR cItemDesc     WHEN .F.                                                                                              SIZE 200, 010 OF oPanel PIXEL
+
+		@ 080, 005 SAY "Horas Mês"                                                                                                                         SIZE 100, 009 OF oPanel PIXEL
+		IF SRA->RA_CATFUNC = 'M'
+			@ 088, 005 MSGET oHrMes    VAR nHrMes    PICTURE "999.99"  WHEN .F.																			   SIZE 030, 010 OF oPanel PIXEL
+		ELSE                                                       
+			@ 088, 005 MSGET oHrMes    VAR nHrMes    PICTURE "999.99"     																					   SIZE 030, 010 OF oPanel PIXEL
+		ENDIF
+
+		@ 080, 065 SAY "Horas Alocadas"                                                                                                                    SIZE 100, 009 OF oPanel PIXEL
+		@ 088, 065 MSGET oHrAloc   VAR nHrAloc       PICTURE "999.99"   VALID ( nPerc := ROUND(( nHrAloc * 100 / nHrMes ),2), oHrAloc:Refresh(), (nHrAloc <= nHrMes .AND. nHrAloc > 0) )    SIZE 030, 010 OF oPanel PIXEL
+
+		@ 080, 130 SAY "Percentual (%)"                                                                                                                    SIZE 100, 009 OF oPanel PIXEL
+		@ 088, 130 MSGET oPerc     VAR nPerc         When .F.                                                                                              SIZE 040, 010 OF oPanel PIXEL
+
+
+		@ 110,205 BUTTON "Rateio" SIZE 045, 012 OF oDlg  ACTION oDlg:End() PIXEL
+		@ 110,235 BUTTON "Sair  " SIZE 045, 012 OF oDlg  ACTION oDlg:End() PIXEL
+
+	ACTIVATE MSDIALOG oDlg CENTERED
+
+Else
+
+	If MsgYesNo( "Confirma a Exclusão do(s) registro(s) selecionado(s)?" )
+
+ 		GPE04Atu( "E" )
+
+	EndIf
+
+EndIf
+     
+Return 
+
+/*ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+<Descricao> : Rotina para controle de versao
+<Data> : 24/05/2014
+<Parametros> : Nenhum
+<Retorno> : cRet
+<Processo> : Controle de versao
+<Tipo> (Menu,Trigger,Validacao,Ponto de Entrada,Genericas,Especificas ) : V
+<Autor> : Doit Sistemas
+<Obs> :
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+*/
+
+User Function DTGPE07V()
+
+Local cRet := ""
+cRet := "20140523"
+ 
+Return cRet     

@@ -1,0 +1,89 @@
+#INCLUDE "PROTHEUS.CH"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SIESBA29   ºAutor  ³Microsiga          º Data ³  22/05/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Receptor de EAI - Transferencia entre Localicazões         º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ MP 11.5 - Sistema Industria                                º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+
+User Function SIESBA29(_cXML)
+Local _cError    := ""
+Local _cWarning  := ""
+Local _cDelimit  := "_"
+Local aStru      := {}
+Local _lInput    := GetRemoteType() == -1 //-1 = sem remote/ 0 = delphi/ 1 = QT windows/ 2 = QT Linux
+Default _cXML    := ""
+
+IF !_lInput // Chamada via ESB/EAI
+	Return()
+ENDIF
+
+//Gera o Objeto XML com a estrutura recebida
+oXml := XmlParser(_cXML, _cDelimit, @_cError, @_cWarning)
+
+//Verifica se a estrutura foi criada
+IF !(Empty(_cError) .and. Empty(_cWarning))
+	Return()
+ENDIF
+
+_nOperac := Val(oXml:_ATFA010:_OPERATION:TEXT)
+_cIDESB  := IIF(Type("oXml:_ATFA010:_SN1MASTER:_N1_XIDESB:REALNAME") <> "U",&("oXml:_ATFA010:_SN1MASTER:_N1_XIDESB:_VALUE:TEXT"),"")
+
+// Verifica se mensagem trata-se de Produto x Fornecedor
+IF Type('oXml:_ATFA010:_SN1MASTER') == "U"
+	_cMotivo := "Mensagem invalida para a rotina ATFA010 - Transferencia de Localizacao"
+	// Gera XML de retorno
+	U_SIXMLMSG("ATFA010","Transferencia entre locais",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+	Return()
+ENDIF                                             
+
+_cCBASE  := IIF(Type("oXml:_ATFA010:_SN1MASTER:_N1_CBASE") == "U","",oXml:_ATFA010:_SN1MASTER:_N1_CBASE:_VALUE:TEXT)
+_cITEM   := IIF(Type("oXml:_ATFA010:_SN1MASTER:_N1_ITEM") == "U","",oXml:_ATFA010:_SN1MASTER:_N1_ITEM:_VALUE:TEXT)
+_cLOCAL  := IIF(Type("oXml:_ATFA010:_SN1MASTER:_N1_LOCAL") == "U","",oXml:_ATFA010:_SN1MASTER:_N1_LOCAL:_VALUE:TEXT)
+
+// Verifica faltam campos do cabecalho
+IF Empty(_cCBASE) .or. Empty(_cITEM) .or. Empty(_cLOCAL)
+	_cMotivo := "Alguns campos do cabecalho nao foram informados. Verifique!"
+	// Gera XML de retorno
+	U_SIXMLMSG("ATFA010","Transferencia entre locais",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+	Return()
+ENDIF
+
+_cCBASE := Padr(_cCBASE,TamSX3("N1_CBASE")[1])
+_cITEM	:= Padr(_cITEM,TamSX3("N1_ITEM")[1])
+_cLOCAL := Padr(_cLOCAL,TamSX3("N1_LOCAL")[1])
+
+SNL->(dbSetOrder(1))
+IF !SNL->(dbSeek(XFilial("SNL")+_cLOCAL))
+	_cMotivo := "Codigo de localizacao informado nao localizado. Verifique!"
+	// Gera XML de retorno
+	U_SIXMLMSG("ATFA010","Transferencia entre locais",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+	Return()
+ENDIF
+
+SN1->(dbSetOrder(1))
+IF !SN1->(dbSeek(XFilial("SN1")+_cCBASE+_cITEM))
+	_cMotivo := "O ativo informado nao foi localizado. Verifique!"
+	// Gera XML de retorno
+	U_SIXMLMSG("ATFA010","Transferencia entre locais",Alltrim(Str(_nOperac)),_cIDESB,"1",_cMotivo)
+	Return()
+ELSE
+	RecLock("SN1",.f.)
+	SN1->N1_LOCAL  := _cLOCAL                
+	SN1->N1_XIDESB := _cIDESB
+	SN1->(msUnlock())
+	// Gera XML de retorno
+	U_SIXMLMSG("ATFA010","Transferencia entre locais",Alltrim(Str(_nOperac)),_cIDESB,"0","")
+	
+ENDIF
+
+Return()

@@ -1,0 +1,2966 @@
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE 'RWMAKE.CH'
+#INCLUDE "TOPCONN.CH"
+#INCLUDE 'FONT.CH'
+#INCLUDE 'COLORS.CH'
+#INCLUDE "PARMTYPE.CH"
+#INCLUDE "TBICONN.CH"
+/*/
+	+--------------------------------------------------------------------------+
+	|{Protheus.doc}<SN0699X>                                                   |
+	|Conjunto de rotinas e funcoes destinadas a atender/Dar Suporte as demais  |
+	|rotina das customizacoes do PRONATEC.                                     |
+	|                                                                          |
+	|@Author<Antonio Dantas>                                                   |
+	|@since<20/03/2014>                                                        |
+	|@version                                                                  |
+	|	<                                                                      |
+	|    -------------------------------------------------------------------   |
+	|     Antonio Dantas                                         29/07/2014    |
+	|     Correção do erro na Gravação do campo [ZP7_XTIPO - Tipp de Pag.],    |
+	|     sera considerado NESTE MOMENTO informação PROVENIENTE do SEGI        |
+	|     PARA [TIPO_PGTO - Tipo de Pgto]. HOJE este TIPO DE PAGAMENTO esta    |
+	|     relacionado ao codido do CONVENIO no PROTHES.                        |
+	|     Porem, no futuro deve VIR do SIGE informação do CONVENIO que sera    |
+	|     utilizaro, uma vez que, pode haver MAIS DE UM TIPO DE PAGAMETNO      |
+	|     para o MESMO CONVENIO.                                               |
+	|    -------------------------------------------------------------------   |
+	|	>                                                                      |
+	|@return<Nil>,<Nil>                                                        |
+	|                                                                          |
+	|@example                                                                  |
+	|<Nil>                                                                     |
+	|                                                                          |
+	|@see                                                                      |
+	|<Nil>                                                                     |
+	+-----------+--------------------------------------------------------------+
+	|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
+	+-----------+--------------------------------------------------------------+
+/*/
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<ViewSige>                                                  |
+| Rotina de integracao SIGE x PROTHEUS, importa informacoes das Matriculas |
+| do SIGE para Protheus relacionados as Matriculas para pagamento do       |
+| PRONATEC dentro de um determinado periodo fornecido como argumento.      |
+|  IMPORTANTE:                                                             |
+|   Esta rotina considera "neste ponto" quando de sua chamada o PERIODO,   |
+|   CALENDARIO, SESSAO estao criadas e posicionadas como referencia para   |
+|   importacao das Matriculas e imput nas tabelas do protheus.             |
+|                                                                          |
+|     Imputa dados nas seguintes Tabelas:                                  |
+|        [ZP0] - ALUNOS                                                    |
+|        [ZP7] - MATRICULAS A PAGAR DA SESSAO                              |
+|                                                                          |
+|    ATENCAO:                                                              |
+|    --------                                                              |
+|    Para utilizar a faciliade verifique o criacao e declaracao do         |
+|    parametro: Repositorio de Logs do Pronatec                            |
+|    MV_XLOGPRO  = "\Pronatec\Logs\"                                       |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<20/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@Receive                                                                  |
+|<   _cTpImpor (c) - "A" - Abertura de Sessao                              |
+|                    "C" - Correcoes de Mastriculas                        |
+|    _dDataINI (d) - Data inicial do Periodo a Consultar                   |
+|    _dDataFim (d) - Data Final do Periodo a Consultar                     |
+|      _cPerio (c) - Codigo do Perido                                      |
+|      _cCaled (c) - Seguencia do Calendario do Periodo                    |
+|      _cSessa (c) - Codigo da Sessao                                      |
+|    _nVlrHora (c) - Valor da Hora prevista para Sessao                    |
+|   _lLoadGrid (L) - DEFAULT (.T.)	Implementa infomacoes da               |
+|                    Matriculas em Grid                                    |
+|>                                                                         |
+|@return                                                                   |
+|<   _lReturn  (L) - (.T.) - A consulta encontrou dados                    |
+|                    (.F.) - A consulta NAO encontrou dados.               |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|@review                                                                   |
+|<>                                                                        |
+|@Author<>                                                                 |
+|@since<>                                                                  |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function ViewSige(_cTpImpor,_dDataINI,_dDataFim,_cPerio,_cSeg,_cSessa,_nVlrHora,_lLoadGrid)
+Local _lReturn 		:= .T. 
+Local _nPos 		:= 0   
+Local _nCtaREG		:= 0
+Local _nCtaNEW		:= 0  
+Local _nCtaECV		:= 0  
+Local _nCtaCPF		:= 0    
+Local _nCount		:= 0
+Local _aFilds		:= {}
+Local _nCtaA 		:= 0  
+Local _nTLin 		:= 0
+Local _lPreCad 		:= .F.  
+Local _lCPF_OK 		:= .F.  
+Local _lNoFirstT	:= .F.
+Local _cOcorCPF 	:= ""
+Local _cUnOper		:= ""      
+Local _cCPF 		:= ""
+Local _lAchou 		:= .F.   
+Local _cSIGE_TP 	:= ""   
+Local _cCtraRegr	:= Nil 
+Local _ChrBreak		:= Chr(13)+Chr(10)  
+Local _nVlrPgto		:= 0.00   
+Local _cTextLOG		:= ""    
+Local _cNewStat 	:= "B"
+Local _cPathRoot	:= GetNewPar("MV_XLOGPRO","\Pronatec\Logs\")   
+Local _cCCustoUN	:= ""
+Private _nRegs		:= 0
+Private _cFileLog	:= CriaTrab(Nil,.F.)
+Private _nHdl_log	:= fCreate(_cPathRoot + cFilAnt + "_" + FunName()+"_"+ProcName()  + _cFileLog+"_LOG.txt")  
+Private _aDeParaUN	:=	{	{"1","03MT0002"	,"Senai Cuiaba"				,"13030106            "	} ,;
+								{"2","03MT0012"	,"Escola da Construção"	,"13030109            "	} ,;
+								{"3","03MT0004"	,"Varzea Grande"			,"13030105            "	} ,;
+								{"4","03MT0003"	,"Rondopolis"				,"13030107            "	} ,;
+								{"5","03MT0005"	,"Barra do Garças"			,"13030113            "	} ,;
+								{"6","03MT0010"	,"Juína"						,"13030111            "	} ,;
+							 	{"7","03MT0008"	,"Cáceres"					,"13030110            "	} ,;
+								{"8","03MT0007"	,"Sinop"						,"1303010801          "	} ,;
+								{"9","03MT0016"	,"Nova Mutum"				,"1303010801          "	} ,; // Confirmar
+								{"01","01"		,"J2A"							,"99999999999         "	}} 
+Private _cAliasRM := GetNewPar("MV_XSGEABD", "")
+
+//-- Apresenta informacoes das matriculas na Grid da Tela
+DEFAULT _lLoadGrid	:= .T.
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Monta cabecalho do Lod de Importacao                                     |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_cTextLOG := "#RELATORIO DE LOG - MATRICULAS A PAGAR DA SESSAO - "+DTOC(date())+" as "+time()+CHR(13)+CHR(10) 
+_cTextLOG += "       Periodo: "+_cPerio+CHR(13)+CHR(10) 
+_cTextLOG += "Seg de Calend.: "+_cSeg+CHR(13)+CHR(10) 
+_cTextLOG += "        Sessao: "+_cSessa+CHR(13)+CHR(10) 
+_cTextLOG += "  Per. de Pgto: "+DTOC(_dDataFim)+" ate "+DTOC(_dDataINI)+CHR(13)+CHR(10) 
+fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Identifica o Codigo correspondete da Unidade Operacional no SIGE   |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_nPos := aScan(_aDeParaUN,{|x| x[2]==cFilAnt})
+If _nPos > 0
+	_cUnOper := _aDeParaUN[_nPos,1]
+Else                                                 	
+	Aviso(FunName()+"/"+ProcName(),"Unidade Operacional não Idenficada no De Para de Filiais, Favor Verificar com Administrador do Sistema!",{"OK"})
+	_lReturn := .F.
+	Return _lReturn
+Endif	
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Defini o CENTRO DE CUSTO da Unidade                                |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_cCCustoUN	:= _aDeParaUN[_nPos,4]
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Executa consulta SQL na base SIGE para importar informcoes.        |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If _lReturn .and. Iif(_lReturn,u_GetMatric(_cUnOper,_dDataINI,_dDataFim),.f.)
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Loop na Tabela de Matriculas para Gravar as informacoes nas        |
+	//| respectivas tabelas do Prothes                                     |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	//-- Numero de registros a processar [] foi inicializado na funcao [GetMatric()]
+	ProcRegua(_nRegs)
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Reposiciona o ponteiro para inicio do arquivo temporario.        |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	TRBMAT->(dbGoTop()) 
+	Do While TRBMAT->(!eof())    
+		_nCtaREG++
+		If _nCtaREG == 1
+			//-- Apresenta um Cabecalho
+			_cTextLOG :=	PadR("Tp SIGE" 	,TamSx3("ZP1_XSIGE")[1])+";"+;
+							PadR("Evento" 	,TamSx3("ZP7_XEVENT")[1])+";"+;
+							PadR("Matricula",TamSx3("ZP7_XMATRI")[1])+";"+;
+							PadR("Codigo" 	,TamSx3("ZP0_XCOD")[1])+";"+;
+							PadR("Nome"		,TamSx3("ZP0_XNOME")[1])+";"+;
+							PadR("CPF" 		,TamSx3("ZP0_XCPF")[1])+";"+;
+							PadR("Dt Nasc." ,TamSx3("ZP0_XDTNAS")[1])+";"+;
+							PadR("Tip Pgto" ,1	)+";"+;
+							PadR("Ocorr,"	,40	)+CHR(13)+CHR(10)
+			fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+		Endif
+		//-- Implementa Termometro
+		IncProc("Total de Registros:"+Alltrim(Transform(_nRegs,"@E 999,999,999"))+"|  Lidos:"+Alltrim(Transform(_nCtaREG,"@E 999,999,999")))   
+		_lCPF_OK 	:= .T.
+		_lPreCad 	:= .F.
+		_cCPF 		:= PadR(Alltrim(TRBMAT->ZP0_XCPF),TamSX3("ZP0_XCPF")[1])
+		_cOcorCPF 	:= ""
+		_cCtraRegr	:= Nil
+		_cNewStat 	:= "B"
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Se CPF estiver em branco                                           |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		If Alltrim(Alltrim(TRBMAT->ZP0_XCPF)) == ""
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//| Se nao for valido, grava no LOG                                    |
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			_cTextLOG := 	TRBMAT->ZP1_XSIGE+";"+;
+							TRBMAT->ZP7_XEVENT+";"+;
+							TRBMAT->ZP7_XMATRI+";"+;
+							TRBMAT->ZP0_XCOD+";"+;
+							TRBMAT->ZP0_XNOME+";"+;
+							TRBMAT->ZP0_XCPF+";"+;
+							DTOC(TRBMAT->ZP0_XDTNAS)+";"+;
+							TRBMAT->TIPO_PGTO+";"+;	
+							"CPF em Branco. INVALIDO."+_ChrBreak
+			fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+			_nCtaECV++
+			TRBMAT->(dbskip())
+			Loop
+		Endif 
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//|                                                                    |
+		//|  [ZP1 - CONVENIOS] - Valida o Convenio Informado no SIGE           |
+		//|                                                                    |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Valida o Convenio de Pagamento                                     |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		_cSIGE_TP := PadR(Alltrim(TRBMAT->TIPO_PGTO),TamSX3("ZP1_XSIGE")[1])  
+		dbSelectArea("ZP1")
+		ZP1->(dbSetOrder(4)) 	 			//--  Cod Convenio
+		If !(ZP1->(dbSeek(FwxFilial("ZP1")+_cSIGE_TP)))
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//| Se nao for valido, grava no LOG                                    |
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			_cTextLOG := 	TRBMAT->ZP1_XSIGE+";"+;
+							TRBMAT->ZP7_XEVENT+";"+;
+							TRBMAT->ZP7_XMATRI+";"+;
+							TRBMAT->ZP0_XCOD+";"+;
+							TRBMAT->ZP0_XNOME+";"+;
+							TRBMAT->ZP0_XCPF+";"+;
+							DTOC(TRBMAT->ZP0_XDTNAS)+";"+;
+							TRBMAT->TIPO_PGTO+";"+;	
+							"CODIGO DE CONVÊNCIO:("+TRBMAT->TIPO_PGTO+") INVALIDO."+_ChrBreak
+			fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+			_nCtaECV++
+			TRBMAT->(dbskip())
+			Loop
+		Else 
+			_lPreCad := Iif(ZP1->ZP1_XPRECA=="S",.t.,.f.)
+		Endif
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Se o Convenio exige pre-cadasto, verifica se o Beneficiario esta   |
+		//| devidamente Cadastrato.                                            |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		If _lPreCad   
+			dbSelectArea("ZP3")					//-- Conveniados
+			ZP3->(dbSetOrder(1)) 	 			//-- CPF+Convenio
+			If !(ZP3->(dbSeek(FwxFilial("ZP3")+TRBMAT->ZP0_XCPF+ZP1->ZP1_XCONV)))
+				_lCPF_OK 	:= .F. 
+				_cOcorCPF 	:= "MATRICULA não Conveniada!"+CHR(13)+CHR(10)
+			Else
+				If ZP3->ZP3_XSTATU != "C" 		//-- C=Conveniado
+					_lCPF_OK 	:= .F. 
+					_cOcorCPF 	:= "Conveniado inregular!"+CHR(13)+CHR(10)
+				Endif
+			Endif 
+		Endif 
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Se o Beneficiario nao estiver cadastrato, ou se o cadastro nao     |
+		//| estiver OK, gera LOG                                               |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		If !_lCPF_OK
+			_cTextLOG := 	TRBMAT->ZP1_XSIGE+";"+;
+							TRBMAT->ZP7_XEVENT+";"+;
+							TRBMAT->ZP7_XMATRI+";"+;
+							TRBMAT->ZP0_XCOD+";"+;
+							TRBMAT->ZP0_XNOME+";"+;
+							TRBMAT->ZP0_XCPF+";"+;
+							DTOC(TRBMAT->ZP0_XDTNAS)+";"+;
+							TRBMAT->TIPO_PGTO+";"+;
+							_cOcorCPF+" "+_ChrBreak
+			fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+			_nCtaCPF++
+		Endif   
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Regras de excecao prevista na MI044 para este processo:            |
+		//| 1) Quando o aluno (CPF) possuir duas matriculas ativas no mesmo    |
+		//|    periodo de pagamento, mesmo que em unidades curriculares        |
+		//|    diferentes, ou ainda;                                           |
+		//| 2) Aluno com matricula ativa em dois eventos em andamento          |
+		//|    concomitantemente.                                              |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		_cCtraRegr := fCtraRegr(_cCPF,TRBMAT->ZP7_XMATRI,_cPerio, TRBMAT->EVENT_INI, TRBMAT->EVENT_FIM)
+		If _cCtraRegr != Nil 
+			_cTextLOG :=	TRBMAT->ZP1_XSIGE+";"+;
+							TRBMAT->ZP7_XEVENT+";"+;
+							TRBMAT->ZP7_XMATRI+";"+;
+							TRBMAT->ZP0_XCOD+";"+;
+							TRBMAT->ZP0_XNOME+";"+;
+							TRBMAT->ZP0_XCPF+";"+;
+							DTOC(TRBMAT->ZP0_XDTNAS)+";"+;
+							TRBMAT->TIPO_PGTO+";"+;
+							_cCtraRegr+" "+_ChrBreak
+			fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+			_nCtaCPF++
+			TRBMAT->(dbskip())
+			Loop
+		Endif
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//|                                                                    |
+		//|  [ZP0 - ALUNOS] - Trata as informacoes da tabela de Alunos         |
+		//|                                                                    |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Trata o cadasro do Aluno, se ja existe atualiza os dados, se nao   |
+		//| inclui o registro                                                  |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		dbSelectArea("ZP0")
+		ZP0->(dbSetOrder(1)) 	 			//--  CPF do Aluno 
+		_lAchou := (ZP0->(dbSeek(FwxFilial("ZP0")+_cCPF)))
+		ZP0->(RecLock("ZP0",!_lAchou))
+		If !_lAchou
+			Replace ZP0->ZP0_FILIAL	With FWxFilial("ZP0")	 			//-- Filial
+			Replace ZP0->ZP0_XCOD	With TRBMAT->ZP0_XCOD	 			//-- Codigo  
+			_nCtaNEW++
+		Endif 
+		Replace	ZP0->ZP0_XNOME	With TRBMAT->ZP0_XNOME		//-- Nome
+		Replace	ZP0->ZP0_XCPF	With TRBMAT->ZP0_XCPF		//-- CPF
+		Replace	ZP0->ZP0_XRG	With TRBMAT->ZP0_XRG		//-- Identidade
+		Replace	ZP0->ZP0_XDTNAS	With TRBMAT->ZP0_XDTNAS		//-- Nascimento
+		Replace	ZP0->ZP0_XMAE	With TRBMAT->ZP0_XMAE		//-- Nome da Mae
+		Replace	ZP0->ZP0_XENDER	With TRBMAT->ZP0_XENDER		//-- Endereco
+		Replace	ZP0->ZP0_XNR	With ""						//-- Numero
+		Replace	ZP0->ZP0_XLOGRA	With ""						//-- Logradouro
+		Replace	ZP0->ZP0_XCOMPL	With TRBMAT->ZP0_XCOMPL		//-- Complemento
+		Replace	ZP0->ZP0_XBAIRR	With TRBMAT->ZP0_XBAIRR		//-- Bairro
+		Replace	ZP0->ZP0_XCIDAD	With TRBMAT->ZP0_XCIDAD		//-- Cidade
+		Replace	ZP0->ZP0_XUF	With TRBMAT->ZP0_XUF		//-- UF
+		Replace	ZP0->ZP0_XCEP	With TRBMAT->ZP0_XCEP		//-- CEP
+		Replace	ZP0->ZP0_XTEL1	With TRBMAT->ZP0_XTEL1		//-- Telefone 1
+		Replace	ZP0->ZP0_XTEL2	With TRBMAT->ZP0_XTEL2		//-- Telefone 2
+		Replace	ZP0->ZP0_XMAIL	With TRBMAT->ZP0_XMAIL		//-- E-mail
+		Replace	ZP0->ZP0_XNASCI	With TRBMAT->ZP0_XNASCI		//-- Nascionalida
+		Replace	ZP0->ZP0_XNATUR	With TRBMAT->ZP0_XNATUR		//-- Naturalidade
+		Replace	ZP0->ZP0_XUFNAT	With TRBMAT->ZP0_XUFNAT		//-- UF Naturalid
+		Replace	ZP0->ZP0_XBCO	With TRBMAT->ZP0_XBCO		//-- Banco
+		Replace	ZP0->ZP0_XAGENC	With TRBMAT->ZP0_XAGENC		//-- Agencia
+		Replace	ZP0->ZP0_XDVAGE	With TRBMAT->ZP0_XDVAGE		//-- DV Agencia
+		Replace	ZP0->ZP0_XCTA	With TRBMAT->ZP0_XCTA		//-- C. Corrente
+		Replace	ZP0->ZP0_XDVCTA	With TRBMAT->ZP0_XDVCTA		//-- DV CTA
+		Replace	ZP0->ZP0_XOPBCO	With TRBMAT->ZP0_XOPBCO		//-- Cod Operacao
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Antonio Dantas                                             04/06/2014 |
+		//| Removemos a pedido de Guilherme uma vez que o NUMERO dos Cartoes sera |
+		//| Imputado em Rotina Proprio no Protheus, deprezamos o Numero que       | 
+		//| provem do sistema Legado [SIGE].                                      |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		&&-- Replace	ZP0->ZP0_XCARTA	With TRBMAT->ZP0_XCARTA		//-- Nr Cartao
+		Replace	ZP0->ZP0_XCPFRE	With TRBMAT->ZP0_XCPFRE		//-- CPF Responsa
+ 		ZP0->(MsUnLock())   
+ 		ZP0->(dbCommit())
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//|  [ZP7 - MATRICULAS A PAGAR DA SESSAO] - GRAVA                      |
+		//|                                                                    |
+		//| ATENCAO:                                                           |
+		//| Considera ao chegar neste ponto que ja tenha sido criado o Periodo,|
+		//| calendario e sessao. Criar as matriculas e preparar para rotina de |
+		//| liberacao depois, geracao do Arquivo de Remessa ou Pagamento       |
+		//| Manual, conforme o Tipo [ZP1->ZP1_XTIPO].	                       |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		If ZP1->ZP1_XTIPO != "3"
+			_nVlrPgto := _nVlrHora * TRBMAT->ZP7_XQTDE				
+		Endif       
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Na importacao dos dados da Matricula, verifica:                       |
+		//| Se a operacao for "correcao de Matricular para remessas anteriormente |
+		//| rejeitadas pelo convenio (Instituicao Pagadora)", altera a Matricula  |
+		//| existente com os novos dados para reenvio.                            |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		_lAchou := .F.
+		If _cTpImpor == "C"
+			dbSelectArea("ZP7")
+			ZP7->(dbSetOrder(1)) 	 			//-- Cod Periodo+Calendario+Cod Sessao+Matricula+Data da Geração  
+			_lAchou := (ZP7->(dbSeek(FWxFilial("ZP7")+_cPerio+_cSeg+_cSessa+TRBMAT->ZP7_XMATRI)))  
+			If _lAchou
+				//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+				//| A modificao so afeta a Matricular rejeitadas em remessas Anteriores   |
+				//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+				_cNewStat := Iif(ZP7->ZP7_XSTATU=="R","C",ZP7->ZP7_XSTATU)
+				&&-- If ZP7->ZP7_XSTATU != "R"
+				&&-- 	TRBMAT->(dbskip())
+				&&-- 	Loop
+				&&-- Endif 
+				If _cNewStat == "C"
+					_cTextLOG := 	TRBMAT->ZP1_XSIGE+";"+;
+									TRBMAT->ZP7_XEVENT+";"+;
+									TRBMAT->ZP7_XMATRI+";"+;
+									TRBMAT->ZP0_XCOD+";"+;
+									TRBMAT->ZP0_XNOME+";"+;
+									TRBMAT->ZP0_XCPF+";"+;
+									DTOC(TRBMAT->ZP0_XDTNAS)+";"+;
+									TRBMAT->TIPO_PGTO+";"+;
+									"Situação CORRIGIDA."+_ChrBreak
+					fWrite(_nHdl_Log,_cTextLOG,Len(_cTextLOG)) != Len(_cTextLOG)
+				Endif 
+			Else 	
+				TRBMAT->(dbskip())
+				Loop
+			Endif
+		Endif 
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Antonio Dantas                                             16/05/2014 |
+		//| Implementa Regra de Controle de Pagamento da NOVA SESSAO, sendo:      |
+		//| * Se ja existem sessoes anteriores para este CALENDARIO DE PAGAMENTO, |
+		//|   em que ha Matriculas que ja foram PAGAS, nao seram incluidas nesta  |
+		//|   sessao.                                                             |
+		//|   - Entao; Para NOVAS SESSOES do mesmo calendario SO SERAO INCLUIDAS  |
+		//|     matriculas que NAO FORAM LIBERADAS PARA PAGAMENTO nas sessoes     |
+		//|     anteriores deste CALENDARIO e que conseguentimento NAO FORAM      |
+		//|     PAGAS AINDA .                                                     |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		If _cTpImpor == "A"
+			If fTemSess(_cPerio,_cSeg,_cSessa)
+				If fCheckSs(_cPerio,_cSeg,_cSessa,TRBMAT->ZP7_XMATRI)
+					TRBMAT->(dbskip())
+					Loop
+				Endif 
+			Endif
+		Endif 			
+		ZP7->(RecLock("ZP7",!_lAchou))    
+		If !_lAchou
+			Replace ZP7->ZP7_FILIAL	With FWxFilial("ZP7")				//-- Filial
+			Replace ZP7->ZP7_XPERIO	With _cPerio 						//-- Cod Periodo
+			Replace ZP7->ZP7_XSEG	With _cSeg   						//-- Calendario
+			Replace ZP7->ZP7_XSESSA	With _cSessa  						//-- Cod Sessao
+			Replace ZP7->ZP7_XDATAG	With dDataBase						//-- Data Geracao
+			Replace ZP7->ZP7_XEVENT	With TRBMAT->ZP7_XEVENT				//-- Evento
+			Replace ZP7->ZP7_XALUNO	With ZP0->ZP0_XCOD					//-- Cod Aluno
+			Replace ZP7->ZP7_XCPF	With ZP0->ZP0_XCPF					//-- CPF
+			Replace ZP7->ZP7_XUSERI	With __cUserId						//-- Inclui
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//| Antonio Dantas                                             21/07/2014 |
+			//| Conforme solicitacao de GUILHERME o Vinculo de Correcao nao modifica  |
+			//| a Quantidade e Valor que seram pagos.                                 |
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			Replace ZP7->ZP7_XQTDE	With TRBMAT->ZP7_XQTDE		  	 	//-- Quantidade
+			Replace ZP7->ZP7_XVALOR	With _nVlrPgto	  					//-- Vlr Benefic  
+		Else
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//| Antonio Dantas                                             22/07/2014 |
+			//| Conforme solicitacao de GUILHERME o Vinculo de Correcao MODIFICA      |
+			//| a Quantidade e Valor que seram pagos CASO a Matricula NAO SE ENCONTRE |
+			//| nas seguintes condicoes: E=Remessa Gerada;                            |
+			//| O=Ordem de Pagamento Agendada; P=Pago                                 |
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If !(ZP7->ZP7_XSTATU $ "E#O#P") 
+				Replace ZP7->ZP7_XQTDE	With TRBMAT->ZP7_XQTDE		  	//-- Quantidade
+				Replace ZP7->ZP7_XVALOR	With _nVlrPgto	  				//-- Vlr Benefic  
+			Endif 
+		Endif 	
+		Replace ZP7->ZP7_XDESEV	With ""	  				   				//-- Descricao
+		Replace ZP7->ZP7_XMODAL	With TRBMAT->ZP7_XMODAL					//-- Codigo da Modalidade 
+		Replace ZP7->ZP7_XDESMO	With TRBMAT->ZP7_XDESMO					//-- Descricao da Modalidade 
+		Replace ZP7->ZP7_XATECN	With TRBMAT->ZP7_XATECN					//-- Codigo da Area Tecnica 
+		Replace ZP7->ZP7_XDESAT	With TRBMAT->ZP7_XDESAT			 		//-- Descricao da Area Tecnologica 
+		Replace ZP7->ZP7_XCURSO	With TRBMAT->ZP7_XCURSO					//-- Codigo do Curso
+		Replace ZP7->ZP7_XDESCS	With TRBMAT->ZP7_XDESCS					//-- Descricao do Curso 
+		Replace ZP7->ZP7_XTURNO	With TRBMAT->ZP7_XTURNO					//-- Turno 
+		Replace ZP7->ZP7_XMATRI	With TRBMAT->ZP7_XMATRI					//-- Matricula   
+		Replace ZP7->ZP7_XIDCID With TRBMAT->ZP7_XIDCID					//-- //-- Codigo do Estado + Codigo da Cidade IBGE
+		Replace ZP7->ZP7_XNOME	With ZP0->ZP0_XNOME						//-- Nome     
+		//+------------------------------------------------------------------------------+
+		//| Antonio Dantas                                                    29/10/2014 |
+		//| Correção do erro na Gravação do campo [ZP7_XTIPO - Tipo de Pagamento], sera  |
+		//| considerado NESTE MOMENTO informação PROVENIENTE do SEGI PARA [TIPO_PGTO -   |
+		//| Tipo de Pgto]. HOJE este TIPO DE PAGAMENTO esta relacionado ao codido do     |
+		//| CONVENIO no PROTHES.                                                         |
+		//| Porem, no futuro deve VIR do SIGE informação do CONVENIO que sera utilizaro, |
+		//| uma vez que, pode haver MAIS DE UM TIPO DE PAGAMETNO para o MESMO CONVENIO.  |
+		//+------------------------------------------------------------------------------+
+		//&&-- Replace ZP7->ZP7_XTPORI With ZP1->ZP1_XTIPO 					//-- Tp Convenio (DA ORIGEM)
+		//&&-- Replace ZP7->ZP7_XTIPO 	With ZP1->ZP1_XTIPO 				//-- Tp Convenio
+		Replace ZP7->ZP7_XTPORI With _cSIGE_TP 				  			//-- Tp Convenio (DA ORIGEM)
+		Replace ZP7->ZP7_XTIPO 	With _cSIGE_TP 				  			//-- Tp Convenio
+		//&&-- 		
+		Replace ZP7->ZP7_XCONVE	With ZP1->ZP1_XCONV 					//-- Convenio
+		Replace ZP7->ZP7_XDESCO	With ZP1->ZP1_XDESCR					//-- Desc Conv 
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Antonio Dantas                                             09/07/2014 |
+		//| Ajuste na Rotina para incluir informacao de CENTRO DE CUSTO e ITEM    |
+		//| CONTABIL para as matriculas, no futuro estas informacoes deveram vir  |
+		//| na importacao do SIGE.                                                |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		Replace ZP7->ZP7_XCCUST	With _cCCustoUN							//-- Centro de Custo (CTT)
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Antonio Dantas                                             21/07/2014 |
+		//| Ajuste na Rotina para incluir informacao de ITEM CONTABIL para as     |
+		//| matriculas, provinda da consulta ao SIGE.                             |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		&&-- Replace ZP7->ZP7_XITCTA	With u_fGetCcta(TRBMAT->ZP7_XMODAL,TRBMAT->ZP7_XATECN)		//-- Item Contabil   (CTD)
+		Replace ZP7->ZP7_XITCTA	With TRBMAT->ZP7_XITCTA					//-- Item Contabil   (CTD)
+		//--
+		Replace ZP7->ZP7_XUNREF	With "Horas"							//-- Referencia
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Antonio Dantas                                             21/07/2014 |
+		//| Conforme solicitacao de GUILHERME o Vinculo de Correcao não modifica  |
+		//| a Quantidade e Valor que seram pagos.                                 |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		&&-- Replace ZP7->ZP7_XQTDE	With TRBMAT->ZP7_XQTDE		  	 	//-- Quantidade
+		&&-- Replace ZP7->ZP7_XVALOR	With _nVlrPgto	  				//-- Vlr Benefic  
+		&&-- fim 
+		Replace ZP7->ZP7_XNRREF	With ZP0->ZP0_XNRREF					//-- Nr de Referencia 
+		Replace ZP7->ZP7_XCARTA	With ZP0->ZP0_XCARTA					//-- Nr Cartao     
+		Replace ZP7->ZP7_XEVINI	With TRBMAT->EVENT_INI					//-- Inicio do Evento
+		Replace ZP7->ZP7_XEVFIM	With TRBMAT->EVENT_FIM					//-- Termino do Evendo 
+		Replace ZP7->ZP7_XSITMA	With TRBMAT->ZP7_XSITMA					//-- Situacao do Matriculado
+		Replace ZP7->ZP7_XSTATU	With _cNewStat							//-- Situacao 
+		Replace ZP7->ZP7_XTUSGE	With Alltrim(TRBMAT->ZP7_XTUSGE)										//-- Turma no SGE
+		Replace ZP7->ZP7_XMTSGE	With Alltrim(TRBMAT->ZP7_XMATRI)										//-- Matricula no SGE
+		Replace ZP7->ZP7_XRASGE	With Alltrim(TRBMAT->ZP7_XRASGE) 											//-- RA no SGE 
+ 		ZP7->(MsUnLock())
+		ZP7->(dbCommit()) 
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Nao considera o Primeiro Registro como Inclussao na GRID, pois ja existe um      |
+		//| registro em Branco que sera modificado                                           |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+    	If _lLoadGrid
+			If _lNoFirstT
+				_oMdlMat:AddLine()
+			Endif		
+			_lNoFirstT	:= .T.
+			_nCount		:= ZP7->(FCount())
+			_nCtaA 		:= 0
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//| Gera [_aColsNEW], que sera apresentado ao operador. Devera obrigatoriamente ser  |
+			//| definida PRIVATE na funcao que chamou                                            |
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			For _nCtaA := 1 to _nCount
+				_oMdlMat:LoadValue(ZP7->(FieldName(_nCtaA)),ZP7->(FieldGet(_nCtaA)))
+			Next _nCtaA
+		Endif	
+		TRBMAT->(dbskip())  
+	Enddo
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Indica que terminou todas as importacoes de forma OK, deve ser inicializada      |
+	//| PRIVATE na funcao que chamou.                                                    |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_lViewOK := .T.   
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Antonio Dantas                                                        01/08/2014 |
+	//| Implementa rotina para geracao [VIEW] que sera utiliza para consulta no [SIGE].  |
+	//| Cria VIEW com Matriculas existentes na [ZP7 - Matriculas a Pagar] totalizado 	 |
+	//| [Garga horaria PAGA] e [Valor total Pago], considerando as matriculas com STATUS |
+	//| iguais a E=Remessa Gerada; O= OP Agendadas; P=Pago. 	                         |
+	//| DEVOLVE [MATRICULA],[TOTAL_CARGA_HORA_PAGA] e  [TOTAL_VALOR_PAGO]	             |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	If _lViewOK
+		If !fTemView()
+			fCriaView()	
+		Endif 
+	Endif 	
+Endif    
+If Select("TRBMAT")>0
+	TRBMAT->(DbCloseArea())
+Endif  
+//-- ****************************************************************
+//--    Fecha o Arquivo de Log
+//-- ****************************************************************
+fClose(_nHdl_Log) 
+If Aviso(FunName()+"/"+ProcName(),"Importação encerrada. Deseja imprimir o arquivo de Log ["+_cFileLog+"_LOG.txt] neste momento?", {"Sim","Não"}) == 1
+	u_SN069BX(_cPathRoot + cFilAnt + "_" + FunName()+"_"+ProcName()  + _cFileLog+"_LOG.txt")
+Endif    
+Return _lReturn
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<GetMatric>                                                 |
+| Cria Tabela Temporaria com informacoes das MATRICULAS de um determinado  |
+| periodo providas do SIGE:                                                |
+| Executa no banco de Dados do MS-SQL/SIGE a partir do banco de dados      |
+| ORACLE/Protheus Stored procedure:[SP_PRONATEC_AGENDAMENTO], GENTILMENTE  |
+| CEDIDA pelo SESI/HENRIQUE AUGUSTO.                                       |
+| ATENCAO:                                                                 |
+| --------                                                                 |
+| Esta rotina cria uma tabela temporaria [TRBMAT], com informacoes das     |
+| Matriculas encontradas pela consulta, que deve ser fechada ao final da   |
+| utilizacao.                                                              |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<20/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@Receive                                                                  |
+|<   _cUnOper  (c) - Codigo da Unidade Operacional do SIGE, correlato      |
+|                    ao codigo da Filial (cFilAnt) Protheus.               |
+|    _dDataINI (d) - Data inicial do Periodo a Consultar                   |
+|    _dDataFim (d) - Data Final do Periodo a Consultar                     |
+|>                                                                         |
+|@return                                                                   |
+|<   _lReturn  (L) - (.T.) - A consulta encontrou dados                    |
+|                    (.F.) - A consulta NAO encontrou dados.               |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|@review                                                                   |
+|<>                                                                        |
+|@Author<>                                                                 |
+|@since<>                                                                  |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function GetMatric(_cUnOper,_dDataINI,_dDataFim)
+Local _cQuery 		:= ""   
+Local _lReturn 		:= .F.
+Local _ChrBreak		:= Chr(13)+Chr(10)    
+Local _cdataINI		:= ""   
+Local _cdataFIM		:= ""         
+Local _cConexao  	:= GetNewPar("MV_XDBNOME","MSSQL/sigepro")
+Local _cServer 		:= GetNewPar("MV_XSRVEND","clutop01")
+Local _nPorta 		:= GetNewPar("MV_XSRVPOR",7890)
+Local _nHndDBA		:= 0   
+Local _aMatrics 	:= {}
+Private _aFildsTR	:= {}   
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//|  Defini a estura da tabela temporaria das Matriculas             |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+Aadd( _aFildsTR, {"ZP1_XSIGE"	,"C"  ,TamSX3("ZP1_XSIGE")[1] 	,TamSX3("ZP1_XSIGE")[2] 	} )
+Aadd( _aFildsTR, {"ZP0_XCOD"	,"C"  ,TamSX3("ZP0_XCOD")[1]	,TamSX3("ZP0_XCOD")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XNOME"	,"C"  ,TamSX3("ZP0_XNOME")[1]	,TamSX3("ZP0_XNOME")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XCPF"	,"C"  ,TamSX3("ZP0_XCPF")[1]	,TamSX3("ZP0_XCPF")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XRG"		,"C"  ,TamSX3("ZP0_XRG")[1]		,TamSX3("ZP0_XRG")[2]		} )
+Aadd( _aFildsTR, {"ZP0_XDTNAS"	,"D"  ,TamSX3("ZP0_XDTNAS")[1]	,TamSX3("ZP0_XDTNAS")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XMAE"	,"C"  ,TamSX3("ZP0_XMAE")[1]	,TamSX3("ZP0_XMAE")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XENDER"	,"C"  ,TamSX3("ZP0_XENDER")[1]	,TamSX3("ZP0_XENDER")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XNR"		,"C"  ,TamSX3("ZP0_XNR")[1]		,TamSX3("ZP0_XNR")[2]		} )
+Aadd( _aFildsTR, {"ZP0_XLOGRA"	,"C"  ,TamSX3("ZP0_XLOGRA")[1]	,TamSX3("ZP0_XLOGRA")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XCOMPL"	,"C"  ,TamSX3("ZP0_XCOMPL")[1]	,TamSX3("ZP0_XCOMPL")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XBAIRR"	,"C"  ,TamSX3("ZP0_XBAIRR")[1]	,TamSX3("ZP0_XBAIRR")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XCIDAD"	,"C"  ,TamSX3("ZP0_XCIDAD")[1]	,TamSX3("ZP0_XCIDAD")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XUF"		,"C"  ,TamSX3("ZP0_XUF")[1]		,TamSX3("ZP0_XUF")[2]		} )
+Aadd( _aFildsTR, {"ZP0_XCEP"	,"C"  ,TamSX3("ZP0_XCEP")[1]	,TamSX3("ZP0_XCEP")[2]	} )
+Aadd( _aFildsTR, {"ZP7_XIDCID"	,"C"  ,TamSX3("ZP7_XIDCID")[1]	,TamSX3("ZP7_XIDCID")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XTEL1"	,"N"  ,TamSX3("ZP0_XTEL1")[1]	,TamSX3("ZP0_XTEL1")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XTEL2"	,"N"  ,TamSX3("ZP0_XTEL2")[1]	,TamSX3("ZP0_XTEL2")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XMAIL"	,"C"  ,TamSX3("ZP0_XMAIL")[1]	,TamSX3("ZP0_XMAIL")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XNASCI"	,"C"  ,TamSX3("ZP0_XNASCI")[1]	,TamSX3("ZP0_XNASCI")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XNATUR"	,"C"  ,TamSX3("ZP0_XNATUR")[1]	,TamSX3("ZP0_XNATUR")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XUFNAT"	,"C"  ,TamSX3("ZP0_XUFNAT")[1]	,TamSX3("ZP0_XUFNAT")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XBCO"	,"C"  ,TamSX3("ZP0_XBCO")[1]	,TamSX3("ZP0_XBCO")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XAGENC"	,"C"  ,TamSX3("ZP0_XAGENC")[1]	,TamSX3("ZP0_XAGENC")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XDVAGE"	,"C"  ,TamSX3("ZP0_XDVAGE")[1]	,TamSX3("ZP0_XDVAGE")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XCTA"	,"C"  ,TamSX3("ZP0_XCTA")[1]	,TamSX3("ZP0_XCTA")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XDVCTA"	,"C"  ,TamSX3("ZP0_XDVCTA")[1]	,TamSX3("ZP0_XDVCTA")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XOPBCO"	,"C"  ,TamSX3("ZP0_XOPBCO")[1] ,TamSX3("ZP0_XOPBCO")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XCARTA"	,"C"  ,TamSX3("ZP0_XCARTA")[1]	,TamSX3("ZP0_XCARTA")[2]	} )
+Aadd( _aFildsTR, {"ZP0_XCPFRE"	,"C"  ,TamSX3("ZP0_XCPFRE")[1]	,TamSX3("ZP0_XCPFRE")[2]	} )
+Aadd( _aFildsTR, {"ZP7_XEVENT"	,"C"  ,TamSX3("ZP7_XEVENT")[1]	,TamSX3("ZP7_XEVENT")[2]	} )
+Aadd( _aFildsTR, {"ZP7_XDESEV"	,"C"  ,TamSX3("ZP7_XDESEV")[1]	,TamSX3("ZP7_XDESEV")[2]	} )
+Aadd( _aFildsTR, {"ZP7_XMODAL"	,"C"  ,TamSX3("ZP7_XMODAL")[1]	,TamSX3("ZP7_XMODAL")[2]	} )  
+Aadd( _aFildsTR, {"ZP7_XDESMO"	,"C"  ,TamSX3("ZP7_XDESMO")[1]	,TamSX3("ZP7_XDESMO")[2]	} )  
+Aadd( _aFildsTR, {"ZP7_XATECN"	,"C"  ,TamSX3("ZP7_XATECN")[1]	,TamSX3("ZP7_XATECN")[2]	} )
+Aadd( _aFildsTR, {"ZP7_XDESAT"	,"C"  ,TamSX3("ZP7_XDESAT")[1]	,TamSX3("ZP7_XDESAT")[2]	} )
+Aadd( _aFildsTR, {"ZP7_XTURNO"	,"C"  ,TamSX3("ZP7_XTURNO")[1]	,TamSX3("ZP7_XTURNO")[2]	} )
+Aadd( _aFildsTR, {"ZP7_XMATRI"	,"C"  ,TamSX3("ZP7_XMATRI")[1]	,TamSX3("ZP7_XMATRI")[2]	} )   
+Aadd( _aFildsTR, {"ZP7_XCURSO"	,"C"  ,TamSX3("ZP7_XCURSO")[1]	,TamSX3("ZP7_XCURSO")[2]	} )
+Aadd( _aFildsTR, {"ZP7_XDESCS"	,"C"  ,TamSX3("ZP7_XDESCS")[1]	,TamSX3("ZP7_XDESCS")[2]	} )
+Aadd( _aFildsTR, {"ZP7_XSITMA"	,"C"  ,TamSX3("ZP7_XSITMA")[1]	,TamSX3("ZP7_XSITMA")[2]	} )   
+Aadd( _aFildsTR, {"ZP7_XQTDE"	,"N"  ,TamSX3("ZP7_XQTDE")[1]	,TamSX3("ZP7_XQTDE")[2]	} )
+Aadd( _aFildsTR, {"EVENT_INI"	,"D"  ,8	,0	} )
+Aadd( _aFildsTR, {"EVENT_FIM"	,"D"  ,8	,0	} )
+Aadd( _aFildsTR, {"TIPO_PGTO"	,"C"  ,1	,0	} )
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Antonio Dantas                                             21/07/2014 |
+//| Ajuste na Rotina para incluir informacao de ITEM CONTABIL para as     |
+//| matriculas, provinda da consulta ao SIGE.                             |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+Aadd( _aFildsTR, {"ZP7_XITCTA"	,"C"  ,TamSX3("ZP7_XITCTA")[1]	,TamSX3("ZP7_XITCTA")[2]	} )
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Jose Leite - CSI                                           22/11/2016 |
+//| Ajuste na Rotina para incluir informacao de dados do SGE - RM         |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+Aadd( _aFildsTR, {"ZP7_XTUSGE"	,"C"  ,TamSX3("ZP7_XTUSGE")[1]	,TamSX3("ZP7_XTUSGE")[2]	} )
+Aadd( _aFildsTR, {"ZP7_XMTSGE"	,"C"  ,TamSX3("ZP7_XMTSGE")[1]	,TamSX3("ZP7_XMTSGE")[2]	} )
+Aadd( _aFildsTR, {"ZP7_XRASGE"	,"C"  ,TamSX3("ZP7_XRASGE")[1]	,TamSX3("ZP7_XRASGE")[2]	} )
+
+If Select("TRBMAT") > 0
+	DbSelectArea("TRBMAT")
+	TRBMAT->(DbCloseArea())
+EndIf
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//|  Cria e abre arquivo trabalho [TRB_REC] que sera a referencia    |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_cArqTEMP := CriaTrab(_aFildsTR,.t.)
+dbUseArea(.t.,__LocalDriver,_cArqTEMP,"TRBMAT",.f.,.f.)   
+DbSelectArea("TRBMAT")
+TRBMAT->(dbGoTop()) 
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Estabelece a conexão via TCLINK com SIGE                           |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If Empty(_cAliasRM)
+	_nHndDBA := TcLink(_cConexao,_cServer,_nPorta)  
+	If _nHndDBA <> 0
+		Aviso(FunName()+"/"+ProcName(),"Erro ("+Strzero(_nHndDBA,4)+") ao tentar conectar no SIGE...",{"OK"})
+	EndIf   
+EndIf
+ 
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Converte DATAS fornecidas como argumento para formato [AAAA-MM-DD] |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+&&-- _cdataINI	:=	Strzero(year(_dDataINI),4)+"-"+Month2Str(_dDataINI)+"-"+Day2Str(_dDataINI)
+&&-- _cdataFIM	:= 	Strzero(year(_dDataFIM),4)+"-"+Month2Str(_dDataFIM)+"-"+Day2Str(_dDataFIM)
+_cdataINI	:=	DTOS(_dDataINI)
+_cdataFIM	:= 	DTOS(_dDataFIM)
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//|  Monta consulta para Matriculas que sera executado na base do SIGE |
+//| Jose Leite - 12/01/2017													 |
+//| Se nao busca dados no SGE - RM                                     |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_cQuery := ""
+If Empty(_cAliasRM)
+	_cQuery += "Exec SP_PRONATEC_AGENDAMENTO '"+_cUnOper+"','"+_cdataINI+"','"+_cdataFIM+"';"+_ChrBreak
+Else
+	_cQuery += " SELECT * FROM RM.TEMP_AGENDAMENTO_PRONATEC"+ _cAliasRM + " TEMP_PRONATEC"+ _ChrBreak
+	_cQuery += " INNER JOIN "+ _ChrBreak
+  	_cQuery += " (SELECT "+ _ChrBreak
+   _cQuery += " COUNT(TEMP_INTERNO.MATRICULA) AS TOTAL_MATRICULA, "+ _ChrBreak 
+   _cQuery += " TEMP_INTERNO.MATRICULA, "+ _ChrBreak
+   _cQuery += " TEMP_INTERNO.UNIDADE_PROTHEUS, "+ _ChrBreak
+   _cQuery += "    TEMP_INTERNO.DATA_TERMINO_PROCESSAMENTO "+ _ChrBreak
+   _cQuery += "  FROM "+ _ChrBreak
+   _cQuery += "    RM.TEMP_AGENDAMENTO_PRONATEC"+ _cAliasRM + " TEMP_INTERNO "+ _ChrBreak
+   _cQuery += "  GROUP BY "+ _ChrBreak
+   _cQuery += "    TEMP_INTERNO.MATRICULA, "+ _ChrBreak
+   _cQuery += "    TEMP_INTERNO.UNIDADE_PROTHEUS, "+ _ChrBreak
+   _cQuery += "    TEMP_INTERNO.DATA_TERMINO_PROCESSAMENTO) TEMP_DUP ON TEMP_DUP.MATRICULA = TEMP_PRONATEC.MATRICULA "+ _ChrBreak
+   _cQuery += "                                                      AND TEMP_DUP.DATA_TERMINO_PROCESSAMENTO = TEMP_PRONATEC.DATA_TERMINO_PROCESSAMENTO "+ _ChrBreak
+   _cQuery += "                                                      AND TEMP_DUP.UNIDADE_PROTHEUS = TEMP_PRONATEC.UNIDADE_PROTHEUS "+ _ChrBreak
+	_cQuery += " WHERE "+ _ChrBreak
+  	_cQuery += " TEMP_PRONATEC.UNIDADE_PROTHEUS = '"+ cFilAnt  +"'"+ _ChrBreak
+	_cQuery += " AND TEMP_PRONATEC.DATA_TERMINO_PROCESSAMENTO = '"+ _cdataFIM+"' "+ _ChrBreak
+	_cQuery += " AND TEMP_PRONATEC.HORAS > 0 "+ _ChrBreak
+	_cQuery += " AND TEMP_DUP.TOTAL_MATRICULA = 1 "+ _ChrBreak
+	//_cQuery += " AND CENTR_RESP <> ' '"+ _ChrBreak
+EndIf
+//Wjr MSSQL_cQuery += "Select * From AlunoSIGE"+_ChrBreak
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Grava o Resultado da Query para consulta                         |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TRSIGE")>0
+	TRSIGE->(DbCloseArea())
+Endif  
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TRSIGE",.t.,.t.)       
+TRSIGE->(dbGoTop()) 
+Do While (TRSIGE->(!eof()))
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Inicializa o contador de Registro, declarado na funcao que chamou|
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_nRegs++
+	TRBMAT->(RecLock("TRBMAT",.t.))
+	Replace TRBMAT->ZP1_XSIGE	With cValToChar(Val(TRSIGE->UOP_ID))		  				//-- Codigo do Unidade Operacional (Filial) 
+	Replace TRBMAT->ZP0_XCOD		With Strzero(TRSIGE->ALUN_ID,TamSX3("ZP0_XCOD")[1])	//-- Codigo
+	Replace TRBMAT->ZP0_XNOME	With AllTrim(TRSIGE->ALUN_NOME)								//-- Nome
+	Replace TRBMAT->ZP0_XCPF		With TRSIGE->ALUN_CPF 										//-- CPF
+	Replace TRBMAT->ZP0_XRG		With TRSIGE->ALUN_IDENTIDADE   								//-- Identidade
+	Replace TRBMAT->ZP0_XDTNAS	With TRSIGE->DATA_NASCIMENTO  								//-- Nascimento
+	Replace TRBMAT->ZP0_XMAE		With AllTrim(TRSIGE->MAE_ALUNO)								//-- Nome da Mae
+	Replace TRBMAT->ZP0_XENDER	With AllTrim(TRSIGE->ENDERECO)								//-- Endereco
+	Replace TRBMAT->ZP0_XNR		With "" 															//-- Numero
+	Replace TRBMAT->ZP0_XLOGRA	With "" 															//-- Logradouro
+	Replace TRBMAT->ZP0_XCOMPL	With AllTrim(TRSIGE->COMPLEMENTO)							//-- Complemento
+	Replace TRBMAT->ZP0_XBAIRR	With AllTrim(TRSIGE->BAIRRO) 								//-- Bairro
+	Replace TRBMAT->ZP0_XCIDAD	With "" //--TRSIGE->CIDADE 									//-- Cidade
+	Replace TRBMAT->ZP0_XUF		With TRSIGE->ESTADO 											//-- UF
+	Replace TRBMAT->ZP0_XCEP		With AllTrim(TRSIGE->CEP)									//-- CEP      
+	Replace TRBMAT->ZP7_XIDCID	With "510340"  													//-- Codigo do Estado + Codigo da Cidade IBGE - Tem que ser definido por Henmrique 
+	Replace TRBMAT->ZP0_XTEL1	With Val(TRSIGE->TELEFONE1)  								//-- Telefone 1
+	Replace TRBMAT->ZP0_XTEL2	With Val(TRSIGE->TELEFONE2) 								//-- Telefone 2
+	Replace TRBMAT->ZP0_XMAIL	With AllTrim(TRSIGE->EMAIL)									//-- E-mail
+	Replace TRBMAT->ZP0_XNASCI	With AllTrim(TRSIGE->NACIONALIDADE)						//-- Nascionalida
+	Replace TRBMAT->ZP0_XNATUR	With Upper(FwNoAccent(AllTrim(TRSIGE->CIDADE_NATURAL))) //-- Naturalidade
+	Replace TRBMAT->ZP0_XUFNAT	With TRSIGE->ESTADO_NATURAL 								//-- UF Naturalid
+	&&-- Replace TRBMAT->ZP0_XBCO	With Strzero(TRSIGE->BANCO,3)							//-- Banco
+	Replace TRBMAT->ZP0_XAGENC	With TRSIGE->AGENCIA 											//-- Agencia
+	Replace TRBMAT->ZP0_XDVAGE	With ""															//-- TRSIGE->DV_AGENCIA 	//-- DV Agencia
+	Replace TRBMAT->ZP0_XCTA		With TRSIGE->CONTA_CORRENTE 								//-- C. Corrente
+	Replace TRBMAT->ZP0_XDVCTA	With ""															//-- TRSIGE->DV_CONTA_CORRENTE 							//-- DV CTA
+	Replace TRBMAT->ZP0_XOPBCO	With TRSIGE->OPERACAO_CONTA 								//-- Cod Operacao
+	&&-- ***********************************************************
+	&&--  Antonio Dantas                                 04/06/2014
+	&&--  Removemos a pedido de Guilherme uma vez que o NUMERO dos 
+	&&--  Cartoes sera Imputado em Rotina Proprio no Protheus, 
+	&&--  deprezamos o Numero que provem do sistema Legado [SIGE].
+	&&-- ***********************************************************
+	&&-- Replace TRBMAT->ZP0_XCARTA	With TRSIGE->NUMEROPLASTICO 											//-- Nr Cartao
+	Replace TRBMAT->ZP0_XCPFRE	With TRSIGE->CPF_PAGAMENTO 													//-- CPF Responsa
+	Replace TRBMAT->ZP7_XEVENT	With Strzero(Val(TRSIGE->EVENTO),TamSX3("ZP7_XEVENT")[1]) 			//-- Evento
+	Replace TRBMAT->ZP7_XDESEV	With AllTrim(TRSIGE->NOME_EVENTO) 											//-- Descricao do Evento 
+	Replace TRBMAT->ZP7_XMODAL	With Strzero(TRSIGE->MODALIDADE,TamSX3("ZP7_XMODAL")[1])			//-- Modalidade   
+	Replace TRBMAT->ZP7_XDESMO	With TRSIGE->MODA_DESCRICAO 												//-- Descricao da Modalidade 
+	Replace TRBMAT->ZP7_XATECN	With Strzero(TRSIGE->COD_AREA_TEC,TamSX3("ZP7_XATECN")[1])			//-- Codigo da Area Tecnologica 
+	Replace TRBMAT->ZP7_XDESAT	With TRSIGE->AREA_OCUPACIONAL												//-- Descricao da Area Tecnologica 
+	Replace TRBMAT->ZP7_XCURSO	With Strzero(Val(TRSIGE->EVENTO),TamSX3("ZP7_XCURSO")[1])			//-- Codigo do Curso
+	Replace TRBMAT->ZP7_XDESCS	With TRSIGE->NOME_EVENTO														//-- Descricao do Curso 
+	Replace TRBMAT->ZP7_XTURNO	With TRSIGE->TURNO																//-- Descricao do Turno (Matutino, Verpertino, Diurno, Noturno)
+	Replace TRBMAT->ZP7_XMATRI	With AllTrim(TRSIGE->MATRICULA)												//-- Matricula    
+	Replace TRBMAT->ZP7_XSITMA	With TRSIGE->STATUS_MATRICULA												//-- Situacao do Matriculado
+	Replace TRBMAT->ZP7_XQTDE	With TRSIGE->HORAS 															//-- Quantidade
+	Replace TRBMAT->EVENT_INI	With TRSIGE->INICIO_EVENTO										  			//-- Inicio do Evento
+	Replace TRBMAT->EVENT_FIM	With TRSIGE->TERMINO_EVENTO			  							 			//-- Final do Evento
+	//Wjr Teste de Implementação
+	Replace TRBMAT->TIPO_PGTO	With Alltrim(cValToChar(TRSIGE->TIPO_PAGAMENTO)) 						//-- Tipo de Pagamento (Defini o Convenio)
+	//Wjr MSSQL Replace TRBMAT->TIPO_PGTO	With Alltrim(cValToChar(Val(TRSIGE->TIPO_PAGAMENTO))) 				//-- Tipo de Pagamento (Defini o Convenio)
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Antonio Dantas                                             21/07/2014 |
+	//| Ajuste na Rotina para incluir informacao de ITEM CONTABIL para as     |
+	//| matriculas, provinda da consulta ao SIGE.                             |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	Replace TRBMAT->ZP7_XITCTA	With Alltrim(TRSIGE->CENTR_RESP) 											//-- Tipo de Pagamento (Defini o Convenio)
+	/* Jose Leite - CSI - 22/11/2016
+		Gravar dados referente ao SGE - RM
+	*/
+	Replace TRBMAT->ZP7_XTUSGE	With Alltrim(TRSIGE->TURMA_SGE)												//-- Turma no SGE
+	Replace TRBMAT->ZP7_XMTSGE	With Alltrim(TRSIGE->MATRICULA)												//-- Matricula no SGE
+	Replace TRBMAT->ZP7_XRASGE	With Alltrim(TRSIGE->RA_SGE) 												//-- RA no SGE
+	TRBMAT->(MsUnlock())  
+	TRSIGE->(dbSkip()) 
+	_lReturn := .T.
+Enddo	    
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Desconecta TCLINK: Banco do SIGE                                 |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If _nHndDBA > 0
+	TcUnlink(_nHndDBA)
+EndIf
+
+If Select("TRSIGE")>0
+	TRSIGE->(DbCloseArea())
+Endif  
+
+Return _lReturn
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fIncPend>                                                  |
+|Vincula a Sessao Indicada nos parametros, as Matriculas PENDENTES das     |
+|sessoes anteriores.                                                       |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<15/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@Receive                                                                  |
+|<                                                                         |
+|  _cPeriodo (c) - Codigo do Periodo                                       |
+|      _cSeg (c) - Seguencia (Calendario)                                  |
+|   _cSessao (c) - Codigo da Sessao                                        |
+|>                                                                         |
+|@return                                                                   |
+|<   _lReturn  (L) - (.T.) - Inclusoes ocorreram com sucesso               |
+|                    (.F.) - Não Houve Inclusoes                           |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fIncPend(_cPeriodo,_cSeg,_cSessao,_cTpTran)
+Local _lTudoOK 		:= .F.
+Local _cQuery 		:= ""  
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+Local _cChvORIGEM 	:= ""  
+Local _nCampos 		:= 0
+Local _nCtaA   		:= 0      
+Local _aValues		:= {} 
+Local _nQtde		:= 0   
+Local _lTransOK 	:= .f.
+//-- 
+_cQuery := ""
+_cQuery += "Select * From "+RetSqlName("ZP7")+" "+_ChrBreak
+_cQuery += "Where D_E_L_E_T_ = ' ' "+_ChrBreak
+_cQuery += "and ZP7_FILIAL = '"+FwxFilial("ZP7")+"' "+_ChrBreak
+_cQuery += "and ZP7_XPERIO = '"+_cPeriodo+"'"+_ChrBreak
+_cQuery += "and ZP7_XSEG = '"+_cSeg+"'"+_ChrBreak
+_cQuery += "and ZP7_XSESSA < '"+_cSessao+"'"+_ChrBreak
+_cQuery += "and ZP7_XSTATU = '"+_cTpTran+"' "+_ChrBreak
+_cQuery += "Order by ZP7_FILIAL, ZP7_XPERIO, ZP7_XSEG, ZP7_XSESSA, ZP7_XMATRI "+_ChrBreak
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Grava o Resultado da Query para consulta                         |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TMPR")>0
+	TMPR->(DbCloseArea())
+Endif      
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPR",.t.,.t.)  
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Seleciona a Tabela temporaria e Inicia Loop para Tratar os Dados |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+dbSelectArea("TMPR")
+TMPR->(dbGoTop())    
+If TMPR->(Eof()) .and. TMPR->(Bof()) 
+	Aviso(FunName()+"/"+ProcName(),"Não existem Matriculas Pendentes em sessões ateriores a serem vinculadas!",{"OK"})
+Else   
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Inclui as Matriculas na Sessao Atual, Marca na Sessao anterior   |
+	//| Como Transferida para Proxima Sessao                             |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	ProcRegua(0)
+	Begin Transaction
+		Do While TMPR->(!eof())     
+			_nQtde++
+			IncProc("Transferido: "+Alltrim(Transform(_nQtde,"@E 999,999,999")))   
+			//-- **********************************************************************
+			//--   
+			//--   Modifica a Matricula no DESTINO
+			//--   
+			//-- **********************************************************************
+			ZP7->(RecLock("ZP7",.t.))
+			Replace ZP7->ZP7_FILIAL	With TMPR->ZP7_FILIAL
+			//&&
+			Replace ZP7->ZP7_XPERIO With _cPeriodo
+			Replace ZP7->ZP7_XSEG   With _cSeg
+			Replace ZP7->ZP7_XSESSA With _cSessao
+			//&&
+			Replace ZP7->ZP7_XMATRI	With TMPR->ZP7_XMATRI
+			Replace ZP7->ZP7_XNOME	With TMPR->ZP7_XNOME
+			Replace ZP7->ZP7_XCPF		With TMPR->ZP7_XCPF
+			Replace ZP7->ZP7_XCONVE	With TMPR->ZP7_XCONVE
+			Replace ZP7->ZP7_XDESCO	With TMPR->ZP7_XDESCO
+			Replace ZP7->ZP7_XEVINI	With StoD(TMPR->ZP7_XEVINI)
+			Replace ZP7->ZP7_XEVFIM	With StoD(TMPR->ZP7_XEVFIM)
+			Replace ZP7->ZP7_XTURNO	With TMPR->ZP7_XTURNO
+			Replace ZP7->ZP7_XDATAG	With StoD(TMPR->ZP7_XDATAG)
+			Replace ZP7->ZP7_XEVENT	With TMPR->ZP7_XEVENT
+			Replace ZP7->ZP7_XDESCS	With TMPR->ZP7_XDESCS
+			Replace ZP7->ZP7_XMODAL	With TMPR->ZP7_XMODAL
+			Replace ZP7->ZP7_XDESMO	With TMPR->ZP7_XDESMO
+			Replace ZP7->ZP7_XUNREF	With TMPR->ZP7_XUNREF
+			Replace ZP7->ZP7_XQTDE	With TMPR->ZP7_XQTDE
+			Replace ZP7->ZP7_XVALOR	With TMPR->ZP7_XVALOR
+			Replace ZP7->ZP7_XSITMA	With TMPR->ZP7_XSITMA
+			Replace ZP7->ZP7_XATECN	With TMPR->ZP7_XATECN
+			Replace ZP7->ZP7_XDESAT	With TMPR->ZP7_XDESAT
+			Replace ZP7->ZP7_XCURSO	With TMPR->ZP7_XCURSO
+			Replace ZP7->ZP7_XDESEV	With TMPR->ZP7_XDESEV
+			Replace ZP7->ZP7_XCARTA	With TMPR->ZP7_XCARTA
+			Replace ZP7->ZP7_XNRREF	With TMPR->ZP7_XNRREF
+			Replace ZP7->ZP7_XALUNO	With TMPR->ZP7_XALUNO
+			Replace ZP7->ZP7_XIDCID	With TMPR->ZP7_XIDCID
+			Replace ZP7->ZP7_XTPORI	With TMPR->ZP7_XTPORI
+			Replace ZP7->ZP7_XTIPO	With TMPR->ZP7_XTIPO
+			Replace ZP7->ZP7_XUSERI	With TMPR->ZP7_XUSERI
+			Replace ZP7->ZP7_XCHVOR 	With TMPR->ZP7_XPERIO+TMPR->ZP7_XSEG+TMPR->ZP7_XSESSA
+			Replace ZP7->ZP7_XCCUST	With TMPR->ZP7_XCCUST
+			Replace ZP7->ZP7_XITCTA	With TMPR->ZP7_XITCTA
+			Replace ZP7->ZP7_XSTATU 	With "B"     
+			Replace ZP7->ZP7_XTUSGE	With Alltrim(TMPR->ZP7_XTUSGE)												
+			Replace ZP7->ZP7_XMTSGE	With Alltrim(TMPR->ZP7_XMATRI)												
+			Replace ZP7->ZP7_XRASGE	With Alltrim(TMPR->ZP7_XRASGE) 												
+			//&&
+			ZP7->(MsUnLock())
+			ZP7->(dbCommit())
+			TMPR->(dbSkip())
+	      	_lTransOK := .t.
+		Enddo
+	End Transaction
+	TMPR->(dbCloseArea())
+	//+----------------------------------------------------------------------------+	
+	//| Apos ter efetuado a gravação dos registros a transferir para nova sessão   |
+	//| se a transferencia foi OK. Modifica os STATUS das matriculas nas sessoes   |
+	//| de Origem.                                                                 |
+	//+----------------------------------------------------------------------------+	
+	If _lTransOK
+		_cQuery := ""
+		_cQuery += "Update "+RetSqlName("ZP7")+" set ZP7_XSTOLD = '"+_cTpTran+"', ZP7_XSTATU = 'T', ZP7_XCHVDE = '"+_cPeriodo+_cSeg+_cSessao+"' "+_ChrBreak
+		_cQuery += "Where D_E_L_E_T_ = ' ' "+_ChrBreak
+		_cQuery += "and ZP7_FILIAL = '"+FwxFilial("ZP7")+"' "+_ChrBreak
+		_cQuery += "and ZP7_XPERIO = '"+_cPeriodo+"'"+_ChrBreak
+		_cQuery += "and ZP7_XSEG = '"+_cSeg+"' "+_ChrBreak
+		_cQuery += "and ZP7_XSESSA < '"+_cSessao+"'"+_ChrBreak
+		_cQuery += "and ZP7_XSTATU = '"+_cTpTran+"' "+_ChrBreak
+		TCSqlExec(_cQuery)
+		TcSqlExec("COMMIT")
+	Endif 
+	Aviso(FunName()+"/"+ProcName(),"Transfência de matriculas (Pendentes) das sessões anteriores concluida com sucesso. "+Alltrim(Transform(_nQtde,"@E 999,999,999"))+" matriculas Transferidas!",{"OK"})
+Endif 
+Return _lTudoOK
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<xSendMsg>                                                  |
+|Rotina que busca os liberadores e que Gera mensagem de Matriculas aos     |
+|mesmos.                                                                   |
+|																		   |
+|@Author<Antonio Dantas>                                                   |
+|@since<12/04/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<   _dDataINI (d) - Data inicial do Periodo a Consultar                   |
+|    _dDataFim (d) - Data Final do Periodo a Consultar                     |
+|      _cPerio (c) - Codigo do Periodo                                     |
+|        _cSeg (c) - Seguencia da Calendario                               |
+|      _cSessa (c) - Codigo da Sessao                                      |
+|>                                                                         |
+|@return                                                                   |
+|<   _lReturn  (L) - (.T.) - A consulta encontrou dados                    |
+|                    (.F.) - A consulta NAO encontrou dados.               |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+User Function xSendMsg(_dDataINI,_dDataFIM,_cPerio,_cSeg,_cSessa)
+Local _nCtaA 		:= 0
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+Local _cQuery		:= ""
+Local _cTMPAlias	:= GetNextAlias() 
+Local _aProvador	:= {}   
+Local _aModals		:= {}  
+Local _aMsgs 		:={	"Solic de Liberacao de Pgto Matr Pronatec, em "+DTOC(dDataBase),;
+						"MATRICULAS A PAGAR PRONATEC - Solicitação de Liberação para pagamento.",;    
+						"Estão disponíveis para liberação de pagamentos as Matriculas conforme seguem:" }
+_cQuery := ""
+_cQuery += " Select Distinct ZP7_XMODAL,ZP7_XDESMO, ZP7_XATECN, ZP7_XDESAT, ZP7_XCURSO, ZP7_XDESCS, ZP7_XTURNO "+_ChrBreak
+_cQuery += " From "+RetSqlName("ZP7")+" "+_ChrBreak
+_cQuery += " where ZP7_FILIAL = '"+FwxFilial("ZP7")+"' "+_ChrBreak
+_cQuery += " and D_E_L_E_T_ <> '*' "+_ChrBreak
+_cQuery += " and ZP7_XPERIO = '"+_cPerio+"'"+_ChrBreak
+_cQuery += " and ZP7_XSEG = '"+_cSeg+"'"+_ChrBreak
+_cQuery += " and ZP7_XSESSA = '"+_cSessa+"'"+_ChrBreak
+_cQuery += " order by ZP7_XMODAL,ZP7_XDESMO, ZP7_XATECN, ZP7_XDESAT, ZP7_XCURSO, ZP7_XDESCS, ZP7_XTURNO "+_ChrBreak
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Grava o Resultado da Query para consulta                         |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select(_cTMPAlias)>0
+	(_cTMPAlias)->(DbCloseArea())
+Endif  
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),_cTMPAlias,.t.,.t.)  
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Seleciona a Tabela temporaria e Inicia Loop para Tratar os Dados |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+dbSelectArea(_cTMPAlias)
+(_cTMPAlias)->(dbGoTop())
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Monta array conm as Modalidades, Areas e Turno a serem liberados |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+Do While (_cTMPAlias)->(!eof())
+	aAdd(_aModals,{	(_cTMPAlias)->ZP7_XMODAL	,;
+					(_cTMPAlias)->ZP7_XDESMO	,; 
+					(_cTMPAlias)->ZP7_XATECN	,; 
+					(_cTMPAlias)->ZP7_XDESAT	,; 
+					(_cTMPAlias)->ZP7_XCURSO	,; 
+					(_cTMPAlias)->ZP7_XDESCS	,; 
+					(_cTMPAlias)->ZP7_XTURNO	} )  
+	(_cTMPAlias)->(dbSkip())
+Enddo
+(_cTMPAlias)->(dbCloseArea())
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Idenfica o Aprovador para Modalidade, Area Tec., Turno           |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_aProvador := fGetProv()
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Chama a funcao de Remessa de e-mail para os Aprovadores          |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_nCtaA := 0
+For _nCtaA := 1 To Len(_aProvador)
+	u_xfSedMail(_aProvador[_nCtaA],_aMsgs,_aModals,_cPerio,_cSeg,_cSessa) 	
+Next  
+Return .t.  
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGetProv>                                                  |
+|Idenfica os Aprovador para Modalidade, Area Tec., Turno                   |
+|																		   |
+|@Author<Antonio Dantas>                                                   |
+|@since<14/04/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive<Nil>                                                             |
+|@return                                                                   |
+|<   _aAprovs (a) - _aAprovs[N,1] - e-mail do Aprovador                    |
+|                   _aAprovs[N,2] - Nome (Apelido) do Aprovador            |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGetProv()
+Local _aArea		:= GetArea() 
+Local _cModais		:= ""
+Local _cAreTecs		:= ""
+Local _cTurnos 		:= "" 
+Local _cNomeTo		:= ""
+Local _cMailTo 		:= ""
+Local _aAprovs		:= {}
+dbSelectArea("ZPC")				//-- Liberadores
+ZPC->(dbSetOrder(1))			//-- Filial + Usuario/Liberador
+ZPC->(dbSeek(FwxFilial("ZPC")))
+Do While ZPC->(!Eof()) .and. ZPC->ZPC_FILIAL == FwxFilial("ZPC")
+	aAdd(_aAprovs,{UsrRetMail(ZPC->ZPC_XUSER),UsrRetName(ZPC->ZPC_XUSER)})
+	ZPC->(dbSkip())
+Enddo
+RestArea(_aArea)
+Return _aAprovs
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<xGetVal>                                                   |
+|Rotina para fazer o Preenchimento automatico de campos em uma Grid        |
+|Como Funciona:                                                            |
+| Finalidade: Inicializar automaticamento um campo qualquer da Grid de     |
+| "Detalhe" Itens do Lancamento com valore pre-determinados, provindo de   |
+| qualquer outros campos.                                                  |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<28/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<   _cLabelFor (c) - Nome do FormLabel de Origem                          |
+|     _cDominio (c) - Nome do Campo (Dominio)                              |
+|>                                                                         |
+|@return                                                                   |
+|<      _xValor (x) - Valor Qualquer conforme a necessidade                |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function xGetVal(_cLabelFor,_cDominio)
+Local _oModel		:= FWModelActive()
+Local _oModelGet 	:= _oModel:GetModel(_cLabelFor)
+Private _xValor		:= _oModelGet:GetValue(_cDominio) 
+Return _xValor
+                
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<VldCalend>                                                 |
+| Valida a Data de Pagamento Informada no Formulario de Calendario - ZP5   |
+|@Author<Antonio Dantas>                                                   |
+|@since<31/03/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<     _dDtPgto (c) - Data de Pagamento do Calendario                      |
+|>                                                                         |
+|@return                                                                   |
+|<     _lReturn (l) - (.t.) Modificacao permitida                          |
+|                     (.f.) Modificao Recusada (O Motivo sera apresentado  |
+|                           ao usuario em mensagem na tela).               |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function VldCalend(_dDtPgto)   
+Local _lReturn 		:= .t.
+Local _oModel		:= FWModelActive()
+If INCLUI .OR. ALTERA    
+	If _dDtPgto < dDataBase
+		Aviso(FunName()+"/"+ProcName(),"A data do Calendário obrigatoriamente não pode ser menor que hoje!",{"OK"})
+		_lReturn := .f.
+	Endif 
+Endif
+Return _lReturn  
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<xfSedMail>                                                 |
+|funcao de Remessa de e-mail para os Aprovadores                           |
+|																		   |
+|@Author<Antonio Dantas>                                                   |
+|@since<14/04/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<   _aProvador (a) - _aProvador[N,1] - e-mail do Aprovador                |
+|                     _aProvador[N,2] - Codigo do Aprovador                |    
+|        _aMsgs (a) - _aMsgs[1] - Assunto: Apresentado no E-mail           |
+|                     _aMsgs[2] - Titulo da Mensagem                       |
+|                     _aMsgs[3] - Mensagem do Corpo do E-mail              |
+|      _aModals (a) - _aModals[N,1] - Codigo da Modalidade                 |
+|                     _aModals[N,2] - Descricao da Modalidade              |
+|                     _aModals[N,3] - Codigo da Area Tecnilogica           |
+|                     _aModals[N,4] - Descricao da Area Tecnilogica        |
+|                     _aModals[N,5] - Turno                                |
+|       _cPerio (c) - Codigo do Periodo                                    |
+|         _cSeg (c) - Seguencia da Calendario                              |
+|       _cSessa (c) - Codigo da Sessao                                     |
+|>                                                                         |
+|@return                                                                   |
+|<   _lReturn  (L) - (.T.) - A consulta encontrou dados                    |
+|                    (.F.) - A consulta NAO encontrou dados.               |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+User Function xfSedMail(_aProvador,_aMsgs,_aModals,_cPerio,_cSeg,_cSessa)
+Local _cMens 		:= ""
+Local _cWAssunto 	:= _aMsgs[1]
+Local _cWTitulo		:= _aMsgs[2]
+Local _cWfMens		:= _aMsgs[3]
+Local _cWEmpresa 	:= ""
+Local _cWFilial		:= ""
+Local _cEMailDes	:= _aProvador[1]
+Local _cWfAprov		:= _aProvador[2]   
+Local _nCtaA 		:= 0 
+//-- **********************************************
+//--   Identifa a Empresa/Filial 
+//-- **********************************************
+dbSelectArea("SM0")  											//-- Tabela de Empresas
+SM0->(dbSetOrder(1))
+SM0->(dbSeek(cEmpAnt+cFilAnt))  								//-- posiciona o ponteiro da tabeça EMPRESA (SigaMat.emp) na empesa ATUAL
+_cWEmpresa 	:= "("+cEmpAnt+") "+RTrim(SM0->M0_NOME)			//-- Identifica Empresa 
+_cWFilial	:= "("+cFilAnt+") "+RTrim(SM0->M0_FILIAL) 			//-- Identifica Filial 
+_cMens := ""
+_cMens += ' <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"> '
+_cMens += ' <html xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns:m="http://schemas.microsoft.com/office/2004/12/omml" xmlns="http://www.w3.org/TR/REC-html40" lang="pt-br"> '
+_cMens += ' <head> '
+_cMens += '   <title>Protheus 11> Pronatec</title> '
+_cMens += ' </head> '
+_cMens += ' <body style="" lang="PT-BR" link="#efefef" vlink="#cccccc"> '
+_cMens += ' <div class="WordSection1"> '
+_cMens += ' <div align="center"> '
+_cMens += ' <table class="MsoNormalTable" style="width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760"> '
+_cMens += '   <tbody> '
+_cMens += '     <tr style="height: 0.75pt;"> '
+_cMens += '       <td style="padding: 0cm; width: 100%; height: 0.75pt;" width="100%"> '
+_cMens += '       <p class="MsoNormal" style="text-align: center;" align="center"><span style="font-family: &quot;Arial&quot;,&quot;sans-serif&quot;;"><img id="_x0000_i1030" src="http://gps.totvs.com/workflow/titulo_wf_totvs.png" border="0" height="62" width="760"></span></p> '
+_cMens += '       </td> '
+_cMens += '     </tr> '
+_cMens += '   </tbody> '
+_cMens += ' </table> '
+_cMens += ' </div> '
+_cMens += ' <div align="center"> '
+_cMens += ' <table class="MsoNormalTable" style="width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760"> '
+_cMens += '   <tbody> '
+_cMens += '     <tr style="height: 2.25pt;"> '
+_cMens += '       <td style="padding: 7.5pt 0cm 0cm; height: 2.25pt;"> '
+_cMens += '       <p class="MsoNormal" style="" align="left"><span style="font-size: 13pt; font-family: &quot;Verdana&quot;,&quot;sans-serif&quot;; color: rgb(32, 38, 100);">'+_cWTitulo+'<o:p></o:p></span></p> '
+_cMens += '       </td> '
+_cMens += '     </tr> '
+_cMens += '   </tbody> '
+_cMens += ' </table> '
+_cMens += ' </div> '
+_cMens += ' <div align="center"> '
+_cMens += ' <table class="MsoNormalTable" style="width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760"> '
+_cMens += '   <tbody> '
+_cMens += '     <tr style="height: 2.25pt;"> '
+_cMens += '       <td style="padding: 7.5pt 0cm 0cm; width: 570pt; height: 2.25pt;" width="200"> '
+_cMens += '       <p class="MsoNormal" style="text-align: left;" align="right"><span style="font-size: 10pt; font-family: &quot;Verdana&quot;,&quot;sans-serif&quot;; color: rgb(33, 38, 100);">'+_cWEmpresa+'/'+_cWFilial+'<o:p></o:p></span></p> '
+_cMens += '       </td> '
+_cMens += '     </tr> '
+_cMens += '   </tbody> '
+_cMens += ' </table> '
+_cMens += ' <p class="MsoNormal"><o:p>&nbsp;</o:p></p> '
+_cMens += ' <table class="MsoNormalTable" style="width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760"> '
+_cMens += '   <tbody> '
+_cMens += '     <tr style="height: 2.25pt;"> '
+_cMens += '       <td style="padding: 7.5pt 0cm 0cm; width: 570pt; height: 2.25pt;" width="200"> '
+_cMens += '       <p class="MsoNormal" style="text-align: left;" align="right"><span style="font-size: 08pt; font-family: &quot;Verdana&quot;,&quot;sans-serif&quot;; color: rgb(33, 38, 100);">Sr(a). '+_cWfAprov+'<o:p></o:p></span></p> '
+_cMens += '       </td> '
+_cMens += '     </tr> '
+_cMens += '   </tbody> '
+_cMens += ' </table> '
+_cMens += ' <table class="MsoNormalTable" style="width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760"> '
+_cMens += '   <tbody> '
+_cMens += '     <tr style="height: 2.25pt;"> '
+_cMens += '       <td style="padding: 7.5pt 0cm 0cm; width: 570pt; height: 2.25pt;" width="200"> '
+_cMens += '       <p class="MsoNormal" style="text-align: left;" align="right"><span style="font-size: 08pt; font-family: &quot;Verdana&quot;,&quot;sans-serif&quot;; color: rgb(33, 38, 100);">'+_cWfMens+'<o:p></o:p></span></p> '
+_cMens += ' 	  <p class="MsoNormal"><o:p>&nbsp;</o:p></p> '
+_cMens += '       </td> '
+_cMens += '     </tr>  '
+_cMens += '   </tbody> '
+_cMens += ' </table> '
+_cMens += ' </div> '
+_cMens += ' <div align="center"> '
+_cMens += ' <table class="MsoNormalTable" style="background: rgb(164, 194, 222) none repeat scroll 0% 50%; -moz-background-clip: initial; -moz-background-origin: initial; -moz-background-inline-policy: initial; width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760"> '
+_cMens += '   <tbody> '
+_cMens += '     <tr style=""> '
+_cMens += '       <td style="padding: 0.75pt;"> '
+_cMens += '       <p class="MsoNormal" align="left"><span style="font-size: 9pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: white;" '
+_cMens += ' 	  >Matriculas<o:p></o:p></span></p> '
+_cMens += '       </td> '
+_cMens += '     </tr> '
+_cMens += '     <tr style=""> ' 
+_cMens += '       <td style="padding: 0.75pt;"> '
+_cMens += '       <table class="MsoNormalTable" style="background: white none repeat scroll 0% 50%; -moz-background-clip: initial; -moz-background-origin: initial; -moz-background-inline-policy: initial; width: 100%;" border="0" cellpadding="0" cellspacing="0" width="100%"> '
+_cMens += '         <tbody> '
+_cMens += '           <tr style=""> '
+_cMens += '             <td style="padding: 0cm; width: 50.0pt;" nowrap="nowrap" width="150"> '
+_cMens += '             <p class="MsoNormal" align="left"><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);">Período:<o:p></o:p></span></p> '
+_cMens += '             </td> '
+_cMens += '             <td style="padding: 0cm;"> '
+_cMens += '             <p class="MsoNormal" align="left"><strong><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);">'+_cPerio+'</span></strong><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);"><o:p></o:p></span></p> '
+_cMens += '             </td> '
+_cMens += ' 			<td style="padding: 0cm; width: 30.0pt;" nowrap="nowrap" width="150"> '
+_cMens += '             <p class="MsoNormal" align="left"><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);">Calendário:<o:p></o:p></span></p> '
+_cMens += '             </td> '
+_cMens += '             <td style="padding: 0cm;"> '
+_cMens += '             <p class="MsoNormal" align="left"><strong><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);">'+_cSeg+'</span></strong><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);"><o:p></o:p></span></p> '
+_cMens += '             </td> '
+_cMens += ' 		  </tr> '
+_cMens += '           <tr style=""> '
+_cMens += '             <td style="padding: 0cm;" nowrap="nowrap"> '
+_cMens += '             <p class="MsoNormal" align="left"><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);">Sessão:<o:p></o:p></span></p> '
+_cMens += '             </td> ' 
+_cMens += '             <td style="padding: 0cm;"> '
+_cMens += '             <p class="MsoNormal" align="left"><strong><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);">'+_cSessa+'</span></strong><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);"><o:p></o:p></span></p> '
+_cMens += '             </td> '
+_cMens += ' 		  	<td style="padding: 0cm; width: 50.0pt;" nowrap="nowrap" width="150"> '
+_cMens += '             <p class="MsoNormal" align="left"><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);">Pagamento:<o:p></o:p></span></p> '
+_cMens += '             </td> '
+_cMens += '             <td style="padding: 0cm;"> ' 
+_cMens += '             <p class="MsoNormal" align="left"><strong><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);">'+DTOC(dDataBase)+'</span></strong><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);"><o:p></o:p></span></p> '
+_cMens += '             </td> '
+_cMens += ' 		  </tr> '
+_cMens += '         </tbody> '
+_cMens += '       </table> '
+_cMens += '       </td> '
+_cMens += '     </tr> '
+_cMens += '   </tbody> '
+_cMens += ' </table> '
+_cMens += ' </div> '
+_cMens += ' <!-- Grid para Modalidades/Areas Tecnologicas e Turmas --> '
+_cMens += ' <p class="MsoNormal"><o:p>&nbsp;</o:p></p> '
+_cMens += ' <div align="center"> '
+_cMens += '   <table width="760" border="1" id="tblItens" rules="groups"> '
+_cMens += ' 	<tr class="alternate"> '
+_cMens += ' 	  <th width="900"  bgcolor="#A4C2DE"><div align="center" class="style30">MODALIDADES & ÁREA TECNOLÓGICAS</div></th> '
+_cMens += ' 	</tr> '
+_cMens += '   </table> '
+_cMens += ' </div> '
+_cMens += ' <div align="center"> '
+_cMens += '   <table width="760" border="1" id="tblItens" rules="groups"> '
+_cMens += ' 	<tr class="alternate"> '
+_cMens += ' 	  <th width="240" bgcolor="#A4C2DE"><div align="left" class="style30">Modalidade</div></th> '
+_cMens += ' 	  <th width="240" bgcolor="#A4C2DE"><div align="left" class="style30">Área Tecnológica</div></th> '
+_cMens += ' 	  <th width="240" bgcolor="#A4C2DE"><div align="left" class="style30">Curso</div></th> '
+_cMens += ' 	  <th width="40" bgcolor="#A4C2DE"><div align="left" class="style30">Turno</div></th> '
+_nCtaA 	:= 0 
+For _nCtaA := 1 To Len(_aModals)
+	_cMens += ' 	</tr> '
+	_cMens += ' 	<tr class="style_conteudo"> '
+	_cMens += ' 	  <td class="alternate" ><div align="left" class="style23">'+_aModals[_nCtaA,1]+' - '+Substr(_aModals[_nCtaA,2],1,30)+'</div></td> '
+	_cMens += ' 	  <td class="alternate" ><div align="left" class="style23">'+_aModals[_nCtaA,3]+' - '+Substr(_aModals[_nCtaA,4],1,30)+'</div></td> '
+	_cMens += ' 	  <td class="alternate" ><div align="left" class="style23">'+_aModals[_nCtaA,5]+' - '+Substr(_aModals[_nCtaA,6],1,30)+'</div></td> '
+	_cMens += ' 	  <td class="alternate" ><div align="left" class="style23">'+_aModals[_nCtaA,7]+'</div></td> '
+	_cMens += ' 	</tr> '
+Next _nCtaA
+_cMens += '   </table> '
+_cMens += ' </div> '
+_cMens += ' <!-- Grid para Modalidades/Areas Tecnologicas e Turmas:FIM --> '
+_cMens += ' <p class="MsoNormal"><o:p>&nbsp;</o:p></p> '
+_cMens += ' <div align="center"> '
+_cMens += ' <table class="MsoNormalTable" style="width: 570pt;" border="0" cellpadding="0" cellspacing="0" width="760"> '
+_cMens += '   <tbody> '
+_cMens += '     <tr style=""> '
+_cMens += '       <td style="padding: 0cm;"> '
+_cMens += '       <p class="MsoNormal" style="text-align: center;" align="center"> '
+_cMens += ' 	  <em><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);" '
+_cMens += ' 	  >&copy;2009 TOTVS S/A - TDI-Tecnologia da Informação, desenvolvimento e Infra-estrutura</span></em><i><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);"><br> '
+_cMens += '       <em><span style="font-family: &quot;Arial&quot;,&quot;sans-serif&quot;;">Mensagem gerada automaticamente pelo Protheus Workflow.</span></em></span></i><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);"><o:p></o:p></span></p> '
+_cMens += '       <p class="MsoNormal" style="text-align: center;" align="center"> '
+_cMens += ' 	 <em><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);" '
+_cMens += ' 	  >Por favor, não responda a este e-mail.</span></em><i><span style="font-size: 8.5pt; font-family: &quot;Arial&quot;,&quot;sans-serif&quot;; color: rgb(32, 29, 132);"><br><o:p></o:p></span></p> '
+_cMens += '       </td> '
+_cMens += '     </tr> '
+_cMens += '   </tbody> '
+_cMens += ' </table> '
+_cMens += ' </div> '
+_cMens += ' <p class="MsoNormal"><o:p>&nbsp;</o:p></p> '
+_cMens += ' </div> '
+_cMens += ' </body> '
+_cMens += ' </html> '
+//-- ******************************************
+//--    Finaliza o Processo                    
+//-- ******************************************
+//ACSendMail(,,,,_cEMailDes,_cWAssunto,_cMens)
+U_SFEnvEmail( , _cEMailDes, , , _cWAssunto, _cMens)
+Return .t.
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCtraRegr>                                                 |
+|Funcao especifica para validar as Regras de excecao prevista na MI044     |
+|para o processo de Importacao de Matriculas, conforme segue:              |
+| 1) Quando o aluno (CPF) possuir duas matriculas ativas no mesmo periodo  |
+|    de pagamento, mesmo que em unidades curriculares diferentes, ou ainda;|
+| 2) Aluno com matricula ativa em dois eventos em andamento                |
+|    concomitantemente.                                                    |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<14/04/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<      _cCPF (c) - CPF do Aluno vinculado a Matricula                     |
+|    _cMatric (c) - Matricula                                              |
+|     _cPerio (c) - Codigo do Periodo                                      |
+|>                                                                         |
+|@return<Nil>                                                              |
+|< _cCtraRegr (c) - Decricao da Ocorrencia de Contrariedade de Regras      |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fCtraRegr(_cCPF,_cMatric,_cPerio, _dEVINI, _dEVFIM)
+Local _aArea		:= GetArea() 
+Local _nCtaA 		:= 0
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+Local _cQuery		:= ""
+Local _cCtraRegr	:= Nil 
+Local _cDataINI 	:= ""
+Local _cDataFIN  	:= ""
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Identifica o Periodo Atual                                         |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+dbSelectArea("ZP4")			//-- Periodo 
+ZP4->(dbSetOrder(1))		//-- Codigo
+ZP4->(dbSeek(FwxFilial("ZP4")+_cPerio))
+_cDataINI	:= DTOS(ZP4->ZP4_XDTINI)
+_cDataFIN 	:= DTOS(ZP4->ZP4_XDTFIM)
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Identifica os Periodos em que o CPF foi Incluido                   |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_cQuery := ""
+_cQuery += " Select ZP4.ZP4_FILIAL, ZP4.ZP4_XCOD, ZP4.ZP4_XDTINI, ZP4.ZP4_XDTFIM, "+_ChrBreak
+_cQuery += " ZP7.ZP7_FILIAL, ZP7.ZP7_XPERIO, ZP7.ZP7_XSEG, ZP7.ZP7_XSESSA, ZP7.ZP7_XCPF, ZP7.ZP7_XMATRI, ZP7.ZP7_XNOME, ZP7.ZP7_XSTATU, "+_ChrBreak
+_cQuery += " ZP7.ZP7_XMODAL, ZP7.ZP7_XDESMO, ZP7.ZP7_XATECN, ZP7.ZP7_XDESAT, ZP7.ZP7_XCURSO, ZP7.ZP7_XDESCS, ZP7.ZP7_XTURNO "+_ChrBreak
+_cQuery += " From "+RetSqlName("ZP7")+" ZP7 "+_ChrBreak
+_cQuery += " Inner Join "+RetSQLName("ZP4")+" ZP4 on ZP4.ZP4_FILIAL = ZP7.ZP7_FILIAL and ZP4.ZP4_XCOD = ZP7_XPERIO"+_ChrBreak
+_cQuery += " Where ZP7.D_E_L_E_T_ <> '*'  "+_ChrBreak
+_cQuery += " and ZP7.ZP7_XCPF = '"+_cCPF+"' "+_ChrBreak   
+_cQuery += " and ZP7.ZP7_XMATRI <> '"+_cMatric+"' "+_ChrBreak
+_cQuery += " and ZP7.ZP7_XSTATU <> 'x' "+_ChrBreak
+//Wjr Adicionado o critério de período de curso.
+_cQuery += " and ( '" + dToS(_dEVINI) + "' Between ZP7.ZP7_XEVINI And ZP7.ZP7_XEVFIM" +_ChrBreak
+_cQuery += " or '" + dToS(_dEVFIM) + "' Between ZP7.ZP7_XEVINI And ZP7.ZP7_XEVFIM )" +_ChrBreak
+// Pensamos no controle do Turno, mas consideramos essesso de controle.
+//_cQuery += " and ZP7.ZP7_XTURNO <> '" + _cTurno + "' " +_ChrBreak
+_cQuery += " order by ZP4.ZP4_FILIAL, ZP4.ZP4_XCOD, ZP4.ZP4_XDTINI, ZP4.ZP4_XDTFIM "
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Grava o Resultado da Query para consulta                         |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TMPZ")>0
+	TMPZ->(DbCloseArea())
+Endif  
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPZ",.t.,.t.)      
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Seleciona a Tabela temporaria e Inicia Loop para Tratar os Dados |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+dbSelectArea("TMPZ")
+TMPZ->(dbGoTop())
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Monta array conm as Modalidades, Areas e Turno a serem liberados |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ      
+Do While TMPZ->(!eof())
+	//-- Se o termino e depois do inicio do periodo atual 
+	If TMPZ->ZP4_XDTFIM >= _cDataINI
+		//-- O Inicio e antes do fim do periodo atual 
+		If TMPZ->ZP4_XDTINI <= _cDataFIN 
+			_cCtraRegr	:= "CPF "+Alltrim(_cCPF)+" Em Outro Curso: "
+			_cCtraRegr	+= DTOC(STOD(TMPZ->ZP4_XDTINI))+" ate "+DTOC(STOD(TMPZ->ZP4_XDTFIM))
+			_cCtraRegr	+= ", fil.: "+TMPZ->ZP4_FILIAL
+			_cCtraRegr	+= ", mat.: "+Alltrim(TMPZ->ZP7_XMATRI)
+			//-- Para Reduzio o Tamanho da Mensagrem de Erro
+			&&-- _cCtraRegr	+= ", modal.: "+TMPZ->ZP7_XMODAL+"-"+TMPZ->ZP7_XDESMO
+			&&-- _cCtraRegr	+= ", area Tecn.: "+TMPZ->ZP7_XATECN+"-"+TMPZ->ZP7_XDESAT
+			&&-- _cCtraRegr	+= ", curso.: "+TMPZ->ZP7_XCURSO+"-"+TMPZ->ZP7_XDESCS
+			&&-- _cCtraRegr	+= ", turno.: "+TMPZ->ZP7_XTURNO
+	   		//-- Sai do Loop na Primeira ocorrencia 
+			Exit
+		Endif 
+	Endif 
+	TMPZ->(dbSkip())
+Enddo  
+TMPZ->(DbCloseArea())
+RestArea(_aArea)
+Return _cCtraRegr         
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCrArqIn>                                                  |
+|Rotina de Leitura do arquivo INI "LAYOUT" de geracao do Arquivo de Remessa|
+|e Leitura do Arquivo de Retorno. Verifica configuracoes no cabecalho do   |
+|arquivos especifico.                                                      |
+|                                                                          |
+|Rotina Gentilmente cedida por [FABIO OLIVEIRA PINTO]                      |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<23/04/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<   _cAqrCfg (c) - Path e Nome do Arquivo de Configuracao                 |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<  _aArqIni (a) - Layout e regras para motagem do Arquivo de Remessa      |
+|    _aArqIni[N,1] - (c) Seguencia da Sessao [Cabecao, Detalhe, Rodape...] |
+|    _aArqIni[N,2] - (c) Numero de Vezes da ocorrencia                     |
+|    _aArqIni[N,3] - (L) Condicao do Loop interno                          |
+|    _aArqIni[N,4,1] - (L) Seguencia do Campo "Informacao" no Arquivo      |
+|    _aArqIni[N,4,2] - (c) Informacao que sera Impressa                    |
+|    _aArqIni[N,5] - (c) Controle da Seguencia                             |
+|    _aArqIni[N,6] - (c) Tabela de Referencia                              |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+User Function fCrArqIn(_cAqrCfg)
+Local _aArqIni 	:= {}
+Local _nHdl		:= 0
+Local _lOK		:= .t.
+Local _cSecao	:= ""
+Local _cSecAux	:= ""
+Local _cLoop	:= " "
+Local _aLin		:= {}
+Local _lSai		:= .F.    
+Local _cTexto 	:= ""
+Local _cVez		:= ""
+Local _cCond	:= ""
+Local _cLoop	:= ""
+Local _cLin		:= ""
+Local _cForm	:= ""
+Local _cChvIni 	:= ""
+Local _cChvFim 	:= ""
+_nHdl := fOpen(_cAqrCfg,68)
+If _nHdl = -1
+	Aviso(FunName()+"/"+ProcName(),"Não foi Possivel Abrir o Arquivo de Layout!",{"OK"})
+	_lOK := .f.
+EndIf
+If _lOK 
+	FT_FUse(_cAqrCfg)
+	FT_FGOTOP()
+	Do While !FT_FEof()
+		_cTexto := Upper(AllTrim(FT_FReadln()))
+		//-- Despreza as linhas de Comentario 
+		If SubString(_cTexto,1,1) = ";"
+			FT_FSkip()
+			Loop
+		EndIf
+		//-- Despreza as Linhas em Branco 
+		If AllTrim(_cTexto) = ""
+			FT_FSkip()
+			Loop
+		EndIf
+		//-- Idenfifica a Abertura e Encerramento da Sessao
+		If SubString(_cTexto,1,1) == "[" .And. SubString(_cTexto,5,1) == "]"
+			_cSecao		:= _cTexto
+			_cSecAux	:= _cTexto
+		EndIf
+		_cLoop	:= " "
+		_aLin	:= {}
+		_lSai	:= .F.
+		Do While !FT_FEof() .And. _cSecao == _cSecAux
+			_cTexto := UPPER(AllTrim(FT_FReadln()))
+			//-- Despreza as linhas de Comentario 
+			If SubString(_cTexto,1,1) = ";"
+				FT_FSkip()
+				Loop
+			EndIf
+			If AllTrim(_cTexto) = ""
+				FT_FSkip()
+				Loop
+			EndIf
+			If SubString(_cTexto,1,1) == "[" .And. SubString(_cTexto,5,1) == "]" .And. _lSai
+				Exit
+			ElseIf SubString(_cTexto,1,4) == "NVEZ"
+				_cVez	:= SubString(_cTexto,6,Len(_cTexto)-5)
+			ElseIf SubString(_cTexto,1,5) == "LCOND"
+				_cCond	:= SubString(_cTexto,7,Len(_cTexto)-6)
+			ElseIf SubString(_cTexto,1,5) == "CLOOP"
+				_cLoop	:= SubString(_cTexto,7,Len(_cTexto)-6)
+			ElseIf AllTrim(_cTexto) != "" .And. SubString(_cTexto,1,1) != "[" .And. SubString(_cTexto,5,1) != "]"
+				_cLin	:= SubString(_cTexto,1,3)
+				_cForm	:= SubString(_cTexto,5,Len(_cTexto)-4)
+				aADD(_aLin, {_cLin, _cForm} )
+			EndIf
+			_lSai	:= .T.
+			FT_FSkip()
+		EndDo
+		If !Empty(_cSecao) .And. !Empty(_cVez) .And. !Empty(_cCond) .And. !Empty(_aLin)
+			aADD( _aArqIni, {_cSecao, _cVez, _cCond, _aLin, "  ", _cLoop} )
+			_cChvIni := " "
+			_cChvFim := " "
+		EndIf
+	EndDo
+	fClose(_nHdl)   
+Endif 
+Return _aArqIni    
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fAjustSt>                                                  |
+|Ajusta a estrutura da array resultado da LEITURA do Arquivo de Layout de  |
+|Retorno.																   |
+|@Author<Antonio Dantas>                                                   |
+|@since<29/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@Receive                                                                  |
+|<   _aLayout (a) - Array com a Esturura como foi criada na Leitura do     |
+|                   Arquivo de Layout                                      |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _aNewLay (a) - Nova Esturura Ajustada                                 |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+User Function fAjustSt(_aLayout)
+Local _aNewLay	:= {}
+Local _aStruc	:= {}
+Local _nCtaA	:= 0    
+For _nCtaA := 1 To Len(_aLayout)    
+	//-- *********************************************************************
+	//--   A T E N C A O:  Nao remover a redundacia. 
+	//--   A RENDUNDANCIA na escrita das Linhas abaixo E proposital. 
+	//--   Inesplicavelmente [ _aStruc ] so assume o valor da Macro 
+	//--   Substituicao &(), apos a segunda passada e NAO ADIANTA SUBSTITUIR 
+	//--   POR EVAL(), tentamos isso tambem. 
+	//-- *********************************************************************
+	_aStruc		:= &(_aLayout[_nCtaA,2])
+	_aStruc		:= &(_aLayout[_nCtaA,2]) 
+	_aLayout[_nCtaA,2] := _aStruc
+Next _nCtaA               
+_aNewLay	:= aClone(_aLayout) 
+Return _aNewLay
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<VldTpCta>                                                  |
+|Valida a conta informada para pagamento do Pronatec, a partir do condigo  |
+|SIGE informado.                                                           |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<28/04/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<   _cCtaSIGE (c) - Codigo da Conta Sige                                  |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<    _lReturn (L) - (.T.) Conta Selecionada OK; (.F.) Conta INVALIDA      |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+User Function VldTpCta(_cCtaSIGE)
+Local _lReturn 		:= .t.
+Local _aArea		:= GetArea() 
+dbSelectArea("ZP1")
+ZP1->(dbSetOrder(4))			//-- Cod SIGE
+If (ZP1->(dbseek(FwxFilial("ZP1")+PadR(_cCtaSIGE,TamSX3("ZP1_XSIGE")[1]))))
+	//-- Tipo do Convenio: 2=Pagamento Manual
+	If ZP1->ZP1_XTIPO != "2"
+		Aviso(FunName()+"/"+ProcName(),"Selecione uma conta de tipo: [PAGAMENTO MANUAL], qualquer outra será invalida!",{"OK"})
+		_lReturn := .F.
+	Endif 	
+	//-- Situação Do Convenio:A=Ativo
+	If ZP1->ZP1_XSTATU != "A"
+		Aviso(FunName()+"/"+ProcName(),"Conta não Ativa!",{"OK"})
+		_lReturn := .F.
+	Endif 	
+Endif 
+RestArea(_aArea)
+Return _lReturn   
+
+	
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fAErros>                                                   |
+|Rotina que devolve Array com as Mensagem de erro de retorno para Arquivos |
+|de remessa.                                                               |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<26/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<    _cBanco (c) - Codigo do Banco                                        |
+|  _cConvenio (c) - Codigo do Convenio                                     |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _aErros (a) - Array com os Codigo e Mensagem de Erro                  |
+|        _aErros[N,1] (n) - Codigo do ERRO                                 |
+|        _aErros[N,1] (n) - Tipo:[1-Header],[2-Detalhe] e [3-Trailler]     |
+|        _aErros[N,1] (c) - Mensagem de Erro                               |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+User Function fAErros(_cBanco,_cConvenio)
+Local _aErros 		:= {} 
+Local _cPathRoot	:= GetNewPar("MV_XERRPGT","\Pronatec\Layouts\Pagto\Erros\")   
+Local _cArqErros	:= Alltrim(_cBanco)+Alltrim(_cConvenio)+"ERROS.INI"
+Local _cAqrCfg		:= _cPathRoot+_cArqErros
+Local _nHdl			:= 0
+Local _lOK			:= .t.
+Local _cTexto 		:= ""
+_nHdl := fOpen(_cAqrCfg,68)
+If _nHdl = -1 
+	Aviso(FunName()+"/"+ProcName(),"Não foi Possivel Abrir o Arquivo de Parametros das Mensagens de Erro!",{"OK"})
+	_lOK := .f.
+	_aErros := {"NOERRO"}
+EndIf
+If _lOK 
+	FT_FUse(_cAqrCfg)
+	FT_FGOTOP()
+	Do While !FT_FEof()
+		_cTexto := Upper(AllTrim(FT_FReadln()))
+		//-- Despreza as linhas de Comentario 
+		If SubString(_cTexto,1,1) == ";"
+			FT_FSkip()
+			Loop
+		EndIf
+		//-- Despreza as Linhas em Branco 
+		If AllTrim(_cTexto) == ""
+			FT_FSkip()
+			Loop
+		EndIf
+        //-- Captura a linha a ser lida 
+		_aStruc		:= &(_cTexto)
+		_aStruc		:= &(_cTexto) 
+		aadd(_aErros, _aStruc )
+		FT_FSkip()
+	Enddo
+	fClose(_nHdl) 
+Endif	  
+Return _aErros   
+
+
+
+/*
+Funcao para ser usada no inicializador padrao e validacao de usuario dos campos ZP5_XDTINI e ZP5_XDTFIN
+Inicializa o campo ini como um dia a mais da data fim anterior
+inicializa o campo fim como 30 dias a mais da data ini atual
+
+Autor: Caio Lima - J2A Consultoria 
+Data: 02/06/2014
+*/
+User Function fIVCal(_cTipo,_cCampo,_lFinal)
+Local _xRet
+Local _oModel		:= FWModelActive()
+Local _oMdlSes		:= _oModel:GetModel("ZP5DETAIL")	//-- Sessao
+Local _aHearSes 	:= _oMdlSes:aHeader
+Local _aColsSes		:= _oMdlSes:aCols  
+Local _nPosSes		:= _oMdlSes:NLine	
+Local _nPF 			:= aScan(_aHearSes, {|x| AllTrim(x[2]) == "ZP5_FILIAL" } )
+Local _nPDtIni 		:= aScan(_aHearSes, {|x| AllTrim(x[2]) == "ZP5_XDTINI" } )
+Local _nPDtFim 		:= aScan(_aHearSes, {|x| AllTrim(x[2]) == "ZP5_XDTFIN" } )
+Local _nPStat 		:= aScan(_aHearSes, {|x| AllTrim(x[2]) == "ZP5_XSTATU" } )
+Local _nCont 		:= 0
+Local _cStatus		:= "" 
+Local _dDtPerIni 	:= CTOD("  /  /  ")
+Local _dDtPerFim 	:= CTOD("  /  /  ")
+Default _lFinal := .F.
+If UPPER(_cTipo) == "I" // Executada a partir do inicializador padrao
+	If UPPER(_cCampo) == "INI"
+		IF _nPosSes > 0
+			_xRet := _aColsSes[_nPosSes , _nPDtFim] + 1
+		Else
+			_xRet := U_XGETVAL("ZP4MASTER","ZP4_XDTINI")
+		EndIf
+	Else
+		IF _nPosSes > 0
+			_xRet := _aColsSes[_nPosSes , _nPDtFim] + 31
+		Else
+			_xRet := U_XGETVAL("ZP4MASTER","ZP4_XDTFIM")
+		EndIf
+	EndIf
+ElseIf UPPER(_cTipo) == "V" // executada a partir da validacao do campo
+	_xRet := .T.
+	If UPPER(_cCampo) == "INI"
+		If _lFinal
+			_dDtIni := _aColsSes[_nPosSes,_nPDtIni]
+		Else
+			_dDtIni := M->ZP5_XDTINI
+		EndIf
+		_dDtFim := _aColsSes[_nPosSes,_nPDtFim]
+		
+		For _nCont := 1 To Len(_aColsSes)
+			If _nCont = _nPosSes
+			Else
+				If _lFinal
+					If (	(_dDtIni >= _aColsSes[_nCont,_nPDtIni] .AND. _dDtIni <= _aColsSes[_nCont,_nPDtFim]) .OR.;
+							(_aColsSes[_nCont,_nPDtIni] >= _dDtIni .AND. _aColsSes[_nCont,_nPDtIni] <= _dDtFim) .OR.;
+							(_aColsSes[_nCont,_nPDtFim] >= _dDtIni .AND. _aColsSes[_nCont,_nPDtFim] <= _dDtFim)   ) .AND.;
+							_aColsSes[_nCont,_nPF] == FwxFilial("ZP5")
+						Alert("As datas dos calendários não podem ser coincidentes")
+						_xRet := .F.
+					EndIf
+				Else
+					If (_dDtIni >= _aColsSes[_nCont,_nPDtIni] .AND. _dDtIni <= _aColsSes[_nCont,_nPDtFim]) .AND. _aColsSes[_nCont,_nPF] == FwxFilial("ZP5")
+						Alert("As datas dos calendários não podem ser coincidentes")
+						_xRet := .F.
+					EndIf
+				EndIf
+			EndIf
+			If !_xRet
+				exit
+			EndIf
+		Next
+	Else
+		//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+		//| Antonio Dantas                                      22/08/2014 |
+		//| Inicializa variaveis com Data do Periodo Inicial/Final.        |
+		//| Nao permite que as datas do intervalo do caledario Sejam       |
+		//| superior ou inferios as datas definidas nos Calendarios.       |
+		//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+		_dDtPerIni := U_XGETVAL("ZP4MASTER","ZP4_XDTINI")
+		_dDtPerFim := U_XGETVAL("ZP4MASTER","ZP4_XDTFIM")
+		If _lFinal
+			_dDtFim := _aColsSes[_nPosSes,_nPDtFim]
+		Else
+			_dDtFim := M->ZP5_XDTFIN
+		EndIf
+		_dDtIni := _aColsSes[_nPosSes,_nPDtIni]
+		
+		If _dDtFim <= _dDtIni .AND. _aColsSes[_nCont,_nPF] == FwxFilial("ZP5")
+			Alert("A data fim deve ser maior que a data inicio.")
+			_xRet := .F.
+		EndIf
+		
+		For _nCont := 1 To Len(_aColsSes)
+			If _nCont = _nPosSes
+			Else
+				If _lFinal
+					If ((_dDtFim >= _aColsSes[_nCont,_nPDtIni] .AND. _dDtFim <= _aColsSes[_nCont,_nPDtFim]) .OR.;
+						(_aColsSes[_nCont,_nPDtIni] >= _dDtIni .AND. _aColsSes[_nCont,_nPDtIni] <= _dDtFim) .OR.;
+						(_aColsSes[_nCont,_nPDtFim] >= _dDtIni .AND. _aColsSes[_nCont,_nPDtFim] <= _dDtFim) ) .AND.;
+						_aColsSes[_nCont,_nPF] == FwxFilial("ZP5")
+						Alert("As datas dos calendários não podem ser coincidentes")
+						_xRet := .F.
+					EndIf
+				Else
+					If (_dDtFim >= _aColsSes[_nCont,_nPDtIni] .AND. _dDtFim <= _aColsSes[_nCont,_nPDtFim]) .AND. _aColsSes[_nCont,_nPF] == FwxFilial("ZP5")
+						Alert("As datas dos calendários não podem ser coincidentes")
+						_xRet := .F.
+					EndIf
+				EndIf
+			EndIf
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//| Antonio Dantas                                      22/08/2014 |
+			//| Validao as datas iniciais dos calendarios com Relacao as Datas |
+			//| impostas na definicao do Preriodo                              |
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If _aColsSes[_nCont,_nPDtIni] < _dDtPerIni
+				Aviso(FunName()+"/"+ProcName(),"Data inicial informada para calendário é invalida! A Data ["+DTOC(_aColsSes[_nCont,_nPDtIni])+"] e menor que a definina para periodo que inicia em ["+DTOC(_dDtPerIni)+"].",{"OK"})
+				_xRet := .F.
+			EndIf
+			//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+			//| Antonio Dantas                                      22/08/2014 |
+			//| Validao as datas Finais dos calendarios com Relacao as Datas   |
+			//| impostas na definicao do Preriodo                              |
+			//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+			If _aColsSes[_nCont,_nPDtFim] > _dDtPerFim
+				Aviso(FunName()+"/"+ProcName(),"Data final informada para calendário é invalida! A Data ["+DTOC(_aColsSes[_nCont,_nPDtFim])+"] e maior que a definina como final do periodo ["+DTOC(_dDtPerFim)+"].",{"OK"})
+				_xRet := .F.
+			EndIf
+		Next
+	EndIf
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Antonio Dantas                               20/06/2014 ³
+	//³                                                         ³
+	//³ Ajustes: Nao permite modificar a data do Calendarios    ³
+	//³ com MOVIMENTACAO realizada "Apos o viculo de Matriculas ³
+	//³ em qualquer sessao                                      ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	_cStatus := _aColsSes[_nPosSes,_nPStat] 
+	If _cStatus != "A"
+		Aviso(FunName()+"/"+ProcName(),"Calendário com Movimentação, não pode ser modificado!",{"OK"})
+    Endif 
+EndIf
+Return(_xRet)  
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fTemSess>                                                  |
+| Verifica se ja existe SESSOES para o Periodo + Calendario informados     |
+| como parametro.                                                          |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<10/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<      _cPerio (c) - Codigo do Periodo                                    |
+|         _cSeg (c) - Codigo da Seguencia (Calendario)                     |
+|       _cSessa (c) - Codigo Sessao                                        |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<     _lReturn (L) - (.t.) Existem Sessoes vinculadas ao Periodo/Calend.  |
+|                     (.f.) Nao existem Sessoes Vinc. ao Periodo/Calend.   |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fTemSess(_cPerio,_cSeg,_cSessa)
+Local _lReturn 		:= .f.	
+Local _aArea		:= GetArea() 
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+Local _cQuery		:= ""
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Identifica os Periodos em que o CPF foi Incluido                   |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_cQuery := ""
+_cQuery += " Select *From "+RetSqlName("ZP6")+" "+_ChrBreak
+_cQuery += " Where D_E_L_E_T_ <> '*'  "+_ChrBreak
+_cQuery += " and ZP6_FILIAL = '"+FwxFilial("ZP6")+"' "+_ChrBreak
+_cQuery += " and ZP6_XPERIO = '"+_cPerio+"' "+_ChrBreak
+_cQuery += " and ZP6_XSEG = '"+_cSeg+"' "+_ChrBreak
+_cQuery += " and ZP6_XCOD <> '"+_cSessa+"' "+_ChrBreak
+//+-----------------------------------------------------------------+
+//| Antonio Dantas                                       24/11/2014 |
+//| Conforme acordo com Guilherme nesta data o PERIODO jamais sera  |
+//| Encerrado.                                                      |
+//+-----------------------------------------------------------------+
+//&&--  
+&&-- _cQuery += " and ZP6_XSTATU	Not In (' ', 'E') "+_ChrBreak		//--  Incluida e sem Vinculo de Matriculas e ou E=Encerrada
+_cQuery += " and ZP6_XSTATU	Not In (' ') "+_ChrBreak
+_cQuery += " order by ZP6_FILIAL, ZP6_XPERIO, ZP6_XSEG, ZP6_XCOD "
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Grava o Resultado da Query para consulta                         |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TMPZP6")>0
+	TMPZP6->(DbCloseArea())
+Endif  
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPZP6",.t.,.t.)      
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Seleciona a Tabela temporaria e Inicia Loop para Tratar os Dados |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+dbSelectArea("TMPZP6")
+TMPZP6->(dbGoTop())
+If TMPZP6->(!Eof()) .and. TMPZP6->(!Bof())
+	_lReturn := .t.
+Endif
+TMPZP6->(DbCloseArea())
+RestArea(_aArea)
+Return _lReturn
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fVldPer>                                                   |
+| Valido as datas de INICIO e FIM do Periodo informado, nao permite periodo|
+| coincidestes.                                                            |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<15/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<   _dDataINI (d) - Data de Inicio do Periodo                             |
+|    _dDataFIM (d) - data de Termino do Periodo                            |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _lReturn (l) - [.t.] - Se Nao existir periodos coincidentes           |
+|                   [.f.] - Existe Periodo ja cadastrados neste intervalo  |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+User Function fVldPer(_dDataINI,_dDataFIM)
+Local _aArea		:= GetArea() 
+Local _lReturn 		:= .f.                   
+Local _cQuery		:= ""  
+Local _ChrBreak		:= Chr(13)+Chr(10)
+_cQuery	:= ""    
+_cQuery	+= "Select *From "+RetSqlName("ZP4")+" "+_ChrBreak
+_cQuery	+= "where D_E_L_E_T_ <> '*' "+_ChrBreak
+_cQuery	+= "and ZP4_XDTINI >= '"+dtos(_dDataINI)+"'  "+_ChrBreak
+_cQuery	+= "and ZP4_XDTFIM <= '"+dtos(_dDataFIM)+"' "+_ChrBreak
+_cQuery	+= "order by ZP4_XDTINI "+_ChrBreak
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TMPZP4")>0
+	TMPZP4->(DbCloseArea())
+Endif  
+//-- ********************************************************************
+//--    Retorna {TMP} Tabela temporaria com o resultado da Query 
+//-- ********************************************************************
+dbUseArea(.t.,"TOPCONN",TCGENQRY(,,_cQuery),"TMPZP4",.t.,.t.)
+dbSelectArea("TMPZP4")
+TMPZP4->(dbGoTop())
+//-- ********************************************************************
+//--    Nao encontrou nenhuma Remessa em Aberto
+//-- ********************************************************************
+If TMPZP4->(Eof()) .and. TMPZP4->(Bof())
+	_lReturn := .T. 
+Endif
+TMPZP4->(DbCloseArea())
+RestArea(_aArea)
+Return _lReturn    
+ 
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fVldDtZP4>                                                 |
+|Valida as Data de INICIO e FIM do PERIODO no encerramento do FORMULARIO   |
+| coincidestes.                                                            |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<15/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<  _aPARAMIXB (a) - Parametros PADRAO da validacao MVC                    |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _lReturn (l) - [.t.] - Se Nao existir periodos coincidentes           |
+|                   [.f.] - Existe Periodo ja cadastrados neste intervalo  |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+User Function fVldDtZP4(_aPARAMIXB)
+Local _oModel		:= FWModelActivate()
+Local _oStruZP4 	:= _oModel:GetModel("ZP4MASTER")
+Local _dDataINI 	:= _oStruZP4:GetValue("ZP4_XDTINI")
+Local _dDataFIM 	:= _oStruZP4:GetValue("ZP4_XDTFIM")
+Local _lReturn 		:= .t.
+If INCLUI
+	_lReturn := u_fVldPer(_dDataINI,_dDataFIM)
+Endif
+Return _lReturn
+		
+		
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fVldPer>                                                   |
+| Valido as datas de INICIO e FIM do Periodo informado, nao permite periodo|
+| coincidestes.                                                            |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<15/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<   _dDataINI (d) - Data de Inicio do Periodo                             |
+|    _dDataFIM (d) - data de Termino do Periodo                            |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<   _lReturn (l) - [.t.] - Se Nao existir periodos coincidentes           |
+|                   [.f.] - Existe Periodo ja cadastrados neste intervalo  |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+User Function fdtIniZP4()
+Local _aArea		:= GetArea() 
+Local _dDataINI		:= CTOD("  /  /  ")
+Local _cQuery		:= ""  
+Local _ChrBreak		:= Chr(13)+Chr(10)
+_cQuery	:= ""    
+_cQuery	+= "Select ZP4_XDTFIM From "+RetSqlName("ZP4")+" "+_ChrBreak
+_cQuery	+= "where D_E_L_E_T_ <> '*' "+_ChrBreak
+_cQuery	+= "order by ZP4_XDTFIM desc "+_ChrBreak
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TMPZP4")>0
+	TMPZP4->(DbCloseArea())
+Endif  
+//-- ********************************************************************
+//--    Retorna {TMP} Tabela temporaria com o resultado da Query 
+//-- ********************************************************************
+dbUseArea(.t.,"TOPCONN",TCGENQRY(,,_cQuery),"TMPZP4",.t.,.t.)
+dbSelectArea("TMPZP4")
+TMPZP4->(dbGoTop())
+//-- ********************************************************************
+//--    Nao encontrou nenhuma Remessa em Aberto
+//-- ********************************************************************
+If TMPZP4->(!Eof()) .and. TMPZP4->(!Bof())
+	_dDataINI := STOD(TMPZP4->ZP4_XDTFIM)+1
+Else
+	_dDataINI := dDataBase
+Endif
+TMPZP4->(DbCloseArea())
+RestArea(_aArea)
+Return _dDataINI
+		
+	
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCheckSs>                                                   |
+| Implementa Regra de Controle de Pagamento da NOVA SESSAO, sendo:         |
+| * Se ja existem sessoes anteriores para este CALENDARIO DE PAGAMENTO,    |
+|   em que ha Matriculas que ja foram PAGAS, nao seram incluidas nesta     |
+|   sessao.                                                                |
+|   - Entao; Para NOVAS SESSOES do mesmo calendario SO SERAO INCLUIDAS     |
+|     matriculas que NAO FORAM LIBERADAS PARA PAGAMENTO nas sessoes        |
+|     anteriores deste CALENDARIO e que conseguentimento NAO FORAM PAGAS   |
+|     AINDA .                                                              |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<10/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<      _cPerio (c) - Codigo do Periodo                                    |
+|         _cSeg (c) - Codigo da Seguencia (Calendario)                     |
+|       _cSessa (c) - Codigo Sessao                                        |
+|   _cMatricula (c) - Codigo da Matricula                                  |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<  _lReturn (l) (.T.) Ja existe a Matricula no Periodo + Calendario       |
+|                (.f.) Nao existe a Matricula no Periodo + Calendario      |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fCheckSs(_cPerio,_cSeg,_cSessa,_cMatricula)  
+Local _lReturn 		:= .f.
+Local _aArea		:= GetArea() 
+Local _aAreaZP7		:= ZP7->(GetArea())
+dbSelectArea("ZP7")
+ZP7->(dbSetOrder(9))				//-- Periodo+Seg Calendar+Matricula
+If (ZP7->(dbSeek(FwxFilial("ZP7")+_cPerio+_cSeg+_cMatricula)))
+	_lReturn := .t.
+Endif 
+RestArea(_aArea)
+RestArea(_aAreaZP7)
+Return _lReturn  
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fExZP7OK>                                                  |
+|Verifica se a MATRICULAS e "pais" da tabela ZP7 podem ser excluidos       |
+|@Author<Antonio Dantas>                                                   |
+|@since<20/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|< _cChave (a) - Array com os campos e chaves de Pesquiza                  |
+|   _cChave[N,1] (c) - Identificao do Campo Chave                          |
+|   _cChave[N,1] (c) - Chave                                               |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<  _lReturn (l) (.T.) Pode ser Excluido                                   |
+|                (.f.) Nao Pode ser Excluido                               |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+User function fExZP7OK(_cChave,_cNOStatus)
+Local _lExcluiOK 	:= .t.
+Local _cQuery 		:= ""  
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+Local _nCtaA 		:= 0 
+_cQuery := ""
+_cQuery += "Select *From "+RetSqlName("ZP7")+" "+_ChrBreak
+_cQuery += "Where D_E_L_E_T_ = ' ' "+_ChrBreak
+_cQuery += "and ZP7_FILIAL = '"+FwxFilial("ZP7")+"' "+_ChrBreak
+For _nCtaA := 1 to Len(_cChave) 
+	_cQuery += "and "+_cChave[_nCtaA,1]+" = '"+_cChave[_nCtaA,2]+"'"+_ChrBreak
+Next _nCtaA
+If _cNOStatus != Nil 
+	_cQuery += "and ZP7_XSTATU not in ("+_cNOStatus+") "+_ChrBreak
+Endif 	
+_cQuery += "Order by ZP7_FILIAL, ZP7_XPERIO, ZP7_XSEG, ZP7_XSESSA, ZP7_XMATRI "+_ChrBreak
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Grava o Resultado da Query para consulta                         |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TZP7OK")>0
+	TZP7OK->(DbCloseArea())
+Endif      
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TZP7OK",.t.,.t.)  
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Seleciona a Tabela temporaria e Inicia Loop para Tratar os Dados |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+dbSelectArea("TZP7OK")
+TZP7OK->(dbGoTop())    
+If TZP7OK->(!Eof()) .and. TZP7OK->(!Bof()) 
+	//-- Encontrou registros que atendem a condicao, entao NAO PODE EXCLUIR
+	_lExcluiOK := .f.
+Endif 
+TZP7OK->(dbCloseArea())
+Return _lExcluiOK 
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGetCcta>                                                  |
+|Devolve o codigo do Item Contabil a partir de consuilta no SIGE, a partir |
+|do Codigo da Modalidade e Area Tecnologica informada como Paramentros.    |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<08/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<    _cModalid (c) - Codigo da Modalidade                                 |
+|     _cAreaTec (c) - Codigo da Area Tecnologixa                           |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<    _cItemCta (c) - Codigo do Item Contabil                              |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+User Function fGetCcta(_cModalid,_cAreaTec)
+Local _cConexao  	:= GetNewPar("MV_XDBNOME","MSSQL/sigepro")
+Local _cServer 		:= GetNewPar("MV_XSRVEND","clutop01")
+Local _nPorta 		:= GetNewPar("MV_XSRVPOR",7890)
+Local _cALias 		:= GetNextAlias()  
+Local _cItemCta		:= ""    
+Local _nHndDBA		:= 0       
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Estabelece a conexão via TCLINK com SIGE                           |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+_nHndDBA := TcLink(_cConexao,_cServer,_nPorta)  
+//-- Realiza a Consulta em Tabela do SIGE 
+_cSql := ""
+_cSql += " Select CENTRORESPONSABILIDADE From CR5_MT.DBO.CR5_PRODUTOCONTACONTABIL  "+CRLF
+_cSql += " Where "+CRLF
+_cSql += " ID_PRODUTO = '"+_cModalid+"' "+CRLF
+_cSql += " and ID_AREA = '"+_cAreaTec+"' "+CRLF
+If Select(_cALias) > 0
+	(_cALias)->(dbCloseArea())
+Endif
+DbUseArea(.T.,"TOPCONN",TCGenQry(,,ChangeQuery(_cSql)),_cALias,.F.,.F.)
+(_cAlias)->(dbGotop())
+If !(_cAlias)->(Eof()) .and. !(_cAlias)->(Bof())
+	_cItemCta := (_cAlias)->CENTRORESPONSABILIDADE
+EndIf       
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Desconecta TCLINK: Banco do SIGE                                   |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+TcUnlink(_nHndDBA)
+Return _cItemCta
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<MrkTipo>                                                   |
+|Funcao para conrole de selecao das Opcoes de TIPOS DE PAGAMENTO           |
+|                                                                          |
+|@Author<Antonio Dsantas>                                                  |
+|@since<24/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters                                                               |
+|<    l1Elem (L) - Se houve selecao de algum elemento                      |
+|>                                                                         |
+|@return<                                                                  |
+|<  _lReturn (L) - Sempre (.t.)                                            |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI										     			   |
++-----------+--------------------------------------------------------------+
+*/
+User Function MrkTipo(l1Elem)
+Local _MvPar		:= &(Alltrim(ReadVar()))			// Carrega Nome da Variavel do Get em Questao
+Local _MvParDef		:= "123"
+Local _cTitulo		:= "Tipos de Pagamento"				// Alltrim(Left(X5Descri(),20))
+Local _lReturn		:= .T. 
+Local _nTamTip		:= 1						  		//-- Tamanhao da Chave 
+Private aSit		:= {"Ordem de Pagamento","Pagamento Manual","Nao gera Pagamento"}
+Private MvNewPar	:= ""
+Private mvRet 		:= Alltrim(ReadVar())			 	// Iguala Nome da Variavel ao Nome variavel de Retorno
+Static nVezAdt 		:= 0  
+//-- *************************************************************************************************
+//-- Inicializa as Variaveis 
+//-- *************************************************************************************************
+IF F_Opcoes(@_MvPar,_cTitulo,aSit,_MvParDef,,,.f.,_nTamTip,999)  // Chama funcao f_Opcoes
+	MvNewPar	:= ""
+	_nCtaA 		:= 0
+	For _nCtaA := 1 to len(_MvPar) step _nTamTip
+		mvNewPar += substr(_MvPar,_nCtaA,_nTamTip)+";"
+	Next _nCtaA
+	mvNewPar	:= strtran(mvNewPar,replicate("*",_nTamTip)+";","")
+	&MvRet 		:= mvNewPar
+EndIF
+Return _lReturn
+  
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<MrkStat>                                                   |
+|Funcao para conrole de selecao das Opcoes de STATUS da Matricula          |
+|                                                                          |
+|@Author<Antonio Dsantas>                                                  |
+|@since<24/06/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters                                                               |
+|<    l1Elem (L) - Se houve selecao de algum elemento                      |
+|>                                                                         |
+|@return<                                                                  |
+|<  _lReturn (L) - Sempre (.t.)                                            |
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI										     			   |
++-----------+--------------------------------------------------------------+
+*/
+User Function MrkStat(l1Elem)
+Local _MvPar		:= &(Alltrim(ReadVar()))			// Carrega Nome da Variavel do Get em Questao
+Local _MvParDef		:= "BTCLxEORPND"
+Local _cTitulo		:= "Status (Situação da Matricula)"				// Alltrim(Left(X5Descri(),20))
+Local _lReturn		:= .T. 
+Local _nTamTip		:= 1						  		//-- Tamanhao da Chave 
+Private aSit		:={	"Bloqueado p/Remessa    ",;
+						"Transf. p/Prox Sessao  ",;
+						"Corrigido              ",;
+						"Liberado p/Remessa     ",;
+						"Não Liberado p/Remessa ",;
+						"Remessa Gerada         ",;
+						"Ordem de Pgto Agendada ",;
+						"Rejeitado              ",;
+						"Pago                   ",;
+						"Não Pago               ",;
+						"Devolvido              " }
+Private MvNewPar	:= ""
+Private mvRet 		:= Alltrim(ReadVar())			 	// Iguala Nome da Variavel ao Nome variavel de Retorno
+Static nVezAdt 		:= 0  
+//-- *************************************************************************************************
+//-- Inicializa as Variaveis 
+//-- *************************************************************************************************
+IF F_Opcoes(@_MvPar,_cTitulo,aSit,_MvParDef,,,.f.,_nTamTip,999)  // Chama funcao f_Opcoes
+	MvNewPar	:= ""
+	_nCtaA 		:= 0
+	For _nCtaA := 1 to len(_MvPar) step _nTamTip
+		mvNewPar += substr(_MvPar,_nCtaA,_nTamTip)+";"
+	Next _nCtaA
+	mvNewPar	:= strtran(mvNewPar,replicate("*",_nTamTip)+";","")
+	&MvRet 		:= mvNewPar
+EndIF
+Return _lReturn
+
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fRestSes>                                                  |
+| Restaura uma sessão com remessa gerada e retorno processado, desde que   |
+| esta sessão não tenha Gerado FINANCEIRO.                                 |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<15/05/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@Receive                                                                  |
+|<                                                                         |
+|>                                                                         |
+|@return                                                                   |
+|<                                                                         |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fRestSes()
+Local _lReturn 		:= .t. 
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+//--
+Local _cFilial 		:= ZP6->ZP6_FILIAL
+Local _cPeriodo		:= ZP6->ZP6_XPERIO
+Local _cCalenda		:= ZP6->ZP6_XSEG
+Local _cSessao		:= ZP6->ZP6_XCOD
+Local _c6Status		:= ZP6->ZP6_XSTATU
+Local _lfinan		:= .f.
+//--
+Local _cQuery 		:= ""
+Local _nCont			:= 0
+Local _cNomConv		:= ""
+Local _cMsg			:= ""
+Private _cConven	:= Space(TamSX3("ZP1_XCONV")[1])  
+//-- Torna a selecao do Convenio como OBRIGATORIA
+_cConven := fGetConv()  
+If Empty(Alltrim(_cConven))
+	Return .t.
+Endif 
+If ZP6->ZP6_XSTATU == "E"
+	Aviso(FunName()+"/"+ProcName(),"Sessão Encerrada não pode mais ser re-estabelecida!",{"OK"})
+	_lReturn := .F.
+	Return _lReturn
+Endif               
+//+------------------------------------------------------------------------+
+//|Modifica o Status da REMESSA DE PAGAMENTO para Cancelada e Modifica o   |
+//|TIPO DE REMESSA DE "PG" para "XX"                                       |
+//+------------------------------------------------------------------------+
+dbSelectArea("ZPA")
+ZPA->(dbSetOrder(2))									//-- Cod Periodo+Seg Calendar+Cod Sessao+Convenio
+If (ZPA->(DbSeek(_cFilial+_cPeriodo+_cCalenda+_cSessao+_cConven+"PG")))
+    If ZPA->ZPA_XSTATU == "E"
+		Aviso(FunName()+"/"+ProcName(),"A Remessa Deste Convenio Foi Encerrada. Talvez já existem até Matriculas Pagas. Não pode mais ser Reestabelecida a Sessão!", {"OK"})
+		_lReturn := .F.
+		Return _lReturn
+    Endif 
+Endif 
+//-- *******************************************************************
+//--    Trata a existencia de Lançamentos no financeiro
+//-- *******************************************************************
+If u_fTemFin(ZP6->ZP6_FILIAL,ZP6->ZP6_XPERIO,ZP6->ZP6_XSEG,ZP6->ZP6_XCOD,_cConven)
+	Aviso(FunName()+"/"+ProcName(),"SESSÃO não pode ser RESTAURADA. Já existe titulo no financeiro relativo ao retorno!", {"OK"})
+	Return .f.
+Endif
+
+/* 	Jose Leite - CSI - 15/08/2016
+	Tornar a modificacao do status como uma confirmacao (YES/NO) e melhorar a mensagem de informacao.
+*/
+
+If MsgYesNo("Deseja restaurar a Sessão com Remessa?")
+	
+	If Select('TRA') > 0
+		DbSelectArea('TRA')
+		TRA->(DbCloseArea())
+	EndIf
+		
+	_nCont := 0
+	
+	_cQuery := "SELECT COUNT(*) QTDCONT "
+	_cQuery += "FROM "+RetSqlName("ZP7")
+	_cQuery += " Where ZP7_FILIAL 	= '"+_cFilial+"'"	+_ChrBreak
+	_cQuery += "and ZP7_XPERIO 	= '"+_cPeriodo+"'"	+_ChrBreak
+	_cQuery += "and ZP7_XSEG 	= '"+_cCalenda+"'"	+_ChrBreak   
+	_cQuery += "and ZP7_XSESSA 	= '"+_cSessao+"'"	+_ChrBreak  
+	_cQuery += "and ZP7_XCONVE 	= '"+_cConven+"'"	+_ChrBreak  
+	_cQuery += "and ZP7_XSTATU 	in ('E','O','R') " +_ChrBreak
+	_cQuery += "and D_E_L_E_T_ <> '*' "	
+	
+	TcQUERY _cQuery NEW ALIAS 'TMP'
+	
+	DbSelectArea('TMP')
+	TMP->(DbGoTop())
+	
+	_nCont := TMP->QTDCONT
+			
+	TMP->(DbCloseArea())     
+	
+	//+------------------------------------------------------------------------+
+	//|     Modifica o STSTUS da ZP7 - Matricula a Pagar para Liberada         |
+	//+------------------------------------------------------------------------+
+	_cQuery := ""
+	_cQuery += "Update "+RetSqlName("ZP7")+" set ZP7_XSTATU = 'L', "+_ChrBreak
+	_cQuery += "ZP7_XREMES = ' ', "+_ChrBreak
+	_cQuery += "ZP7_XSEGRE = ' ', "+_ChrBreak
+	_cQuery += "ZP7_XIDRET = ' ', "+_ChrBreak
+	_cQuery += "ZP7_XOCORR = ' ', "+_ChrBreak 
+	_cQuery += "ZP7_XTITPG = ' ', "+_ChrBreak 
+	_cQuery += "ZP7_XCHTPG = ' ' "+_ChrBreak 
+	_cQuery += "Where D_E_L_E_T_ <> '*' "+_ChrBreak
+	_cQuery	+= "and ZP7_FILIAL = '"+_cFilial+"'"+_ChrBreak
+	_cQuery	+= "and ZP7_XPERIO = '"+_cPeriodo+"'"+_ChrBreak
+	_cQuery	+= "and ZP7_XSEG = '"+_cCalenda+"'"+_ChrBreak   
+	_cQuery	+= "and ZP7_XSESSA = '"+_cSessao+"'"+_ChrBreak  
+	_cQuery	+= "and ZP7_XCONVE = '"+_cConven+"'"+_ChrBreak  
+	_cQuery	+= "and ZP7_XSTATU in ('E','O','R') " 				//-- E=Remessa Gerada;O=OP Agendada;R=Rejeitado
+	TCSqlExec(_cQuery)
+	TcSqlExec("COMMIT")    
+	//+------------------------------------------------------------------------+
+	//|     Modifica a Status da ZP6- Sessao de Pagamento                      |
+	//+------------------------------------------------------------------------+
+	RecLock("ZP6",.f.)
+	Replace ZP6->ZP6_XSTATU With "L"
+	ZP6->(MsUnLock())
+	ZP6->(dbCommit())
+	Aviso(FunName()+"/"+ProcName(),"Sessão e Matrículas que pertenciam à remessa foram retornadas ao status anterior à geração (LIBERADAS PARA REMESSA).",{"OK"})
+	//+------------------------------------------------------------------------+
+	//|Modifica o Status da REMESSA DE PAGAMENTO para Cancelada e Modifica o   |
+	//|TIPO DE REMESSA DE "PG" para "XX"                                       |
+	//+------------------------------------------------------------------------+
+	dbSelectArea("ZPA")
+	ZPA->(dbSetOrder(2))									//-- Cod Periodo+Seg Calendar+Cod Sessao+Convenio
+	If (ZPA->(DbSeek(_cFilial+_cPeriodo+_cCalenda+_cSessao+_cConven+"PG")))
+		//--  
+		ZPA->(RecLock("ZPA",.f.))
+		Replace ZPA->ZPA_XOCORR	With "Remessa EXCLUIDA pelo Operador ["+UPPER(cUserName)+"], em ["+dtoc(dDataBase)+"-"+Time()+"] - Utilizando Restaura Sessao c/ rem."
+		Replace ZPA->ZPA_XTIPO  	With "XX"
+		Replace ZPA->ZPA_XSTATU 	With "C"
+		ZPA->(MsUnLock())
+		ZPA->(DbCommit())
+	EndIf 
+	
+	_cNomConv := AllTrim(Posicione("ZP1",1,_cFilial+_cConven,"ZP1_XDESCR")) 
+	
+	_cMsg := cValToChar(_nCont) + " matrículas do convênio " + _cConven + " - " + _cNomConv + ", da sessão "+ _cSessao + ", "+ _ChrBreak
+	_cMsg	+= "foram retornadas ao status anterior à geração (LIBERADAS PARA REMESSA). "+ _ChrBreak
+	_cMsg	+= "ATENÇÃO: regularize a situação desta sessão ANTES da abertura da próxima sessão, "+ _ChrBreak
+	_cMsg	+= "pois estas matrículas são consideradas PENDENTES DE PAGAMENTO e poderão ter seu valor "+ _ChrBreak
+	_cMsg	+= "acumulado para pagamento no próximo período."
+	
+	Aviso(FunName()+"/"+ProcName(), _cMsg, {"OK"})
+	
+EndIf
+
+Return _lReturn  
+
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fGetConv>                                                  |
+| Abre interface (Tela) p/operador selecionar ou informar Cod do Convenio  |
+|@Author<Antonio Dantas>                                                   |
+|@since<24/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<   _cConven (c) - Codigo do Convenio Selecionado                         |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fGetConv()
+//-- **********************************************************************
+//--    Declaração de Variaveis Private dos Objetos
+//-- **********************************************************************
+SetPrvt("_oDlgCv","_oSayCv","_oGetCv","_oBtnCvOK","_oBtnESC")      
+dbSelectArea("ZP1")
+ZP1->(dbSetorder(1))
+//-- **********************************************************************
+//--    Definicao do Dialog e todos os seus componentes.
+//-- **********************************************************************
+_oDlgCv		:= MSDialog():New( 202,326,359,699,"Cadastro de Convênios",,,.F.,,,,,,.T.,,,.T. )
+_oSayCv		:= TSay():New( 024,050,{||"Cod. do Convenio:"},_oDlgCv,,,.F.,.F.,.F.,.T.,CLR_BLACK,CLR_WHITE,045,008)
+_oGetCv		:= TGet():New( 021,095,{|u| If(PCount()>0,_cConven:=u,_cConven)}		,_oDlgCv,060,008,"@!"	,{|| Empty(Alltrim(_cConven)) .OR. VldZP1(@_cConven) }	,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"ZP1","_cConven",,)
+_oBtnCvOK	:= TButton():New(048,120,"OK"	,_oDlgCv,{|| _oDlgCv:End() }	,037,012,,,,.T.,,"",,,,.F. )
+_oDlgCv:Activate(,,,.T.) 
+Return _cConven
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<VldZP1>                                                    |
+|Valida o codigo do Convenio passada como argumento                        |
+|@Author<Antonio Dantas>                                                   |
+|@since<24/07/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<  _cConven (c) - Codigo do Convenio que sera validado                    |     
+|                  *Recebida por REFERENCIA para ser modificada na funcao  |
+|>                                                                         |
+|@return                                                                   |
+|<  _lReturn (l) - (.t.) Codigo valido/ (.f.) Codigo Invalido              |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function VldZP1(_cConven)
+Local _aArea	:= GetArea() 
+Local _aAreaZP1	:= ZP1->(GetArea())
+Local _lReturn 	:= .t.
+_cConven := StrZero(Val(_cConven),TamSX3("ZP1_XCONV")[1])
+dbSelectArea("ZP1")
+ZP1->(dbSetOrder(1)) 	//-- Cod Convenio
+If !(ZP1->(dbSeek(FwxFilial("ZP1")+_cConven)))
+	Aviso(FunName()+"/"+ProcName(),"Codigo do Convenio informado é invalido!",{"OK"})
+	_lReturn 	:= .f.
+Endif     
+RestArea(_aArea)
+RestArea(_aAreaZP1)
+Return _lReturn 
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fTemView>                                                  |
+| Rotina que verifica a existencia da VIEW ['VW_MATRICULA_PAGO'], para     |
+| consulta do SIGE dos valores PAGOS as Matriculas ate o presente momento  |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<01/08/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<  _lTem (l) - (.t.) EXISTE/ (.f.) NAO EXISTE                             |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fTemView()
+Local _lTem			:= .f. 
+Local _aArea		:= GetArea()
+Local _cQuery 		:= ""  
+_cQuery := ""
+_cQuery += "Select OBJECT_NAME From User_Objects Where OBJECT_NAME = 'VW_MATRICULA_PAGO' "   
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Grava o Resultado da Query para consulta                         |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+&&-- MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TMPVW")>0
+	TMPVW->(DbCloseArea())
+Endif      
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPVW",.t.,.t.)  
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Seleciona a Tabela temporaria e Inicia Loop para Tratar os Dados |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+dbSelectArea("TMPVW")
+TMPVW->(dbGoTop())    
+If TMPVW->(!Eof()) .and. TMPVW->(!Bof()) 
+	//-- Encontrou registros que atendem a condicao
+	_lTem := .t.
+Endif 
+TMPVW->(dbCloseArea())
+RestArea(_aArea)
+Return _lTem
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fCriaView>                                                 |
+| Implementa rotina para geracao [VIEW] que sera utiliza para consulta no  |
+| [SIGE]. Cria VIEW com Matriculas existentes na [ZP7 - Matriculas a Pagar]| 
+| totalizado [Garga horaria PAGA] e [Valor total Pago], considerando as    |
+| matriculas com STATUS iguais a E=Remessa Gerada; O= OP Agendadas;        |
+| P=Pago.                                                                  |
+| DEVOLVE [MATRICULA],[TOTAL_CARGA_HORA_PAGA] e  [TOTAL_VALOR_PAGO]        |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<01/08/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@receive                                                                  |
+|<>                                                                        |
+|@return                                                                   |
+|<>                                                                        |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+Static Function fCriaView()
+Local _lTem			:= .f. 
+Local _aArea		:= GetArea()
+Local _cQuery 		:= ""  
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+_cQuery := ""
+_cQuery += "CREATE VIEW VW_MATRICULA_PAGO "+_ChrBreak  
+_cQuery += "AS "+_ChrBreak  
+_cQuery += "SELECT	ZP7_XMATRI AS MATRICULA, "+_ChrBreak  
+_cQuery += "      	COALESCE(SUM(ZP7.ZP7_XQTDE),0)  AS TOTAL_CARGA_HORA_PAGA, "+_ChrBreak  
+_cQuery += "      	COALESCE(SUM(ZP7.ZP7_XVALOR),0) AS TOTAL_VALOR_PAGO, "+_ChrBreak
+_cQuery += "			ZP7_XTUSGE TURMA, "+_ChrBreak
+_cQuery += "			ZP7_XMTSGE MATRICULA_SGE, "+_ChrBreak
+_cQuery += "			ZP7_XCPF CPF "+_ChrBreak
+_cQuery += "FROM  "+RetSqlName("ZP7")+" ZP7 "+_ChrBreak
+_cQuery += "WHERE D_E_L_E_T_ <> '*' "+_ChrBreak  
+_cQuery += "      and ZP7_XSTATU in ('E','O','P') "+_ChrBreak    
+_cQuery += "GROUP BY ZP7_FILIAL, "+_ChrBreak
+_cQuery += " TO_NUMBER(REPLACE(ZP7_XMATRI,'r','')), "+_ChrBreak
+_cQuery += " ZP7_XTUSGE, "+_ChrBreak
+_cQuery += " ZP7_XMTSGE "+_ChrBreak
+TCSqlExec(_cQuery)
+TcSqlExec("COMMIT")
+Return
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fRestTra>                                                  |
+| Retorna os STATUS e condições das Matriculas Vinculadas a SESSAO,        |
+| transferidas de Outras sessao por Vinculo de DEVOLVIDAS e Pendentes.     |  
+| Na Exclussao da Sessao                                                   |
+|@Author<Antonio Dantas>                                                   |
+|@since<30/10/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters<_aParam>                                                      |
+|@Receive                                                                  |
+|<   _cFilial (c) - Codigo da Filial                                       |
+|	_cPeriodo (c) - Codigo do periodo                                      |
+|	_cCalenda (c) - Codigo do Calendario                                   |
+|	 _cSessao (c) - Codigo da Sessao que sera EXCLUIDA                     |
+|>                                                                         |
+|@return<Nil>                                                              |
+|<  
+
+|>                                                                         |
++--------------------------------------------------------------------------+
+|Uso        |SENAI 	     												   |
++-----------+--------------------------------------------------------------+
+*/
+User function fRestTra(_cFilial,_cPeriodo,_cCalenda,_cSessao)
+//-- Salva as areas do arquivo corrente e da ZP7 
+Local _aArea		:= GetArea()
+Local _aAreaZP7		:= ZP7->(GetArea())
+//-- 
+Local _lRestOK 		:= .t.
+Local _cQuery 		:= ""  
+Local _ChrBreak		:= Chr(13)+Chr(10)  
+Local _cChvOrig 	:= ""
+//+------------------------------------------------------------------+
+//| Verifica todas as Matriculas TRANSFERIDAS DE OUTRAS SESSOES      |
+//+------------------------------------------------------------------+
+dbSelectArea("ZP7")
+ZP7->(dbSetOrder(6))  		//-- Convenio+Periodo+Seg Calendar+Sessao+Matricula+Chv Origem+Data da Geracao   
+//+------------------------------------------------------------------+
+//| Verifica todas as Matriculas TRANSFERIDAS DE OUTRAS SESSOES      |
+//+------------------------------------------------------------------+
+_cQuery := ""
+_cQuery += "Select Distinct ZP7_FILIAL, ZP7_XCHVOR From "+RetSqlName("ZP7")+" "+_ChrBreak
+_cQuery += "Where D_E_L_E_T_ = ' ' "+_ChrBreak
+_cQuery += "and ZP7_FILIAL = '"+_cFilial+"' "+_ChrBreak
+_cQuery += "and ZP7_XPERIO = '"+_cPeriodo+"' "+_ChrBreak
+_cQuery += "and ZP7_XSEG = '"+_cCalenda+"' "+_ChrBreak
+If _cSessao != ""
+	_cQuery += "and ZP7_XSESSA = '"+_cSessao+"' "+_ChrBreak
+Endif 
+_cQuery += "and ZP7_XCHVOR Not in ('"+Space(TamSX3("ZP7_XCHVOR")[1])+"') "+_ChrBreak
+_cQuery += "Order by ZP7_FILIAL, ZP7_XCHVOR "+_ChrBreak
+//+------------------------------------------------------------------+
+//| Grava o Resultado da Query para consulta                         |
+//+------------------------------------------------------------------+
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TPTRANS")>0
+	TPTRANS->(DbCloseArea())
+Endif      
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TPTRANS",.t.,.t.)  
+//+------------------------------------------------------------------+
+//| Seleciona a Tabela temporaria e Inicia Loop para Tratar os Dados |
+//+------------------------------------------------------------------+
+dbSelectArea("TPTRANS")
+TPTRANS->(dbGoTop())    
+//-- Se Existem registro a serem Modificados 
+If TPTRANS->(!Eof()) .and. TPTRANS->(!Bof())
+	_lRestOK := .f.
+Endif 
+//-- So executa a rotina de modificação e existirem registros a serm modificados 
+If !_lRestOK
+	Begin Transaction
+		Do While TPTRANS->(!Eof())
+			//+---------------------------------------------------------------------+
+			//| Desmontamos a Chave de Origem para consulta, em decorrencia da      |
+			//| diferenciação na composição da consulta entre MSSql para ORACLESql  |
+			//| Também, para ajustamento da rotina a possivel modificações nos      |
+			//| tamanhos dos campos [ZP7_XPERIO - Periodo], [ZP7_XSEG - Calendario] |
+			//| e [ZP7_XSESSA - Sessão]		                                        |
+			//+---------------------------------------------------------------------+
+			//-- Periodo 
+			_cOrPeriod	:= PadR(Alltrim(Substr(TPTRANS->ZP7_XCHVOR,1,TamSX3("ZP7_XPERIO")[1])),TamSX3("ZP7_XPERIO")[1])
+			//-- Calendario 
+			_nPosINICa	:= TamSX3("ZP7_XPERIO")[1]+1
+			_cOrCalend	:= PadR(Alltrim(Substr(TPTRANS->ZP7_XCHVOR,_nPosINICa,TamSX3("ZP7_XSEG")[1])),TamSX3("ZP7_XSEG")[1])
+			//-- Sessão
+			_nPosINISe	:= _nPosINICa+TamSX3("ZP7_XSEG")[1]
+			_cOrSessao	:= PadR(Alltrim(Substr(TPTRANS->ZP7_XCHVOR,_nPosINISe,TamSX3("ZP7_XSESSA")[1])),TamSX3("ZP7_XSESSA")[1])
+			//-- 	
+			_cQuery := ""
+			_cQuery += "Update "+RetSqlName("ZP7")+" set ZP7_XSTATU = ZP7_XSTOLD, ZP7_XCHVDE = ' ' "+_ChrBreak
+			_cQuery += "Where D_E_L_E_T_ = ' ' "+_ChrBreak
+			_cQuery += "and ZP7_FILIAL = '"+TPTRANS->ZP7_FILIAL+"' "+_ChrBreak
+			_cQuery += "and ZP7_XPERIO = '"+_cOrPeriod+"'"+_ChrBreak
+			_cQuery += "and ZP7_XSEG = '"+_cOrCalend+"' "+_ChrBreak
+			_cQuery += "and ZP7_XSESSA = '"+_cOrSessao+"' "+_ChrBreak
+			_cQuery += "and ZP7_XSTATU = 'T' "+_ChrBreak
+			TCSqlExec(_cQuery)
+			TcSqlExec("COMMIT")
+			//--
+			_cQuery := ""
+			_cQuery += "Update "+RetSqlName("ZP7")+" set ZP7_XSTOLD = ' ' "+_ChrBreak
+			_cQuery += "Where D_E_L_E_T_ = ' ' "+_ChrBreak
+			_cQuery += "and ZP7_FILIAL = '"+TPTRANS->ZP7_FILIAL+"' "+_ChrBreak
+			_cQuery += "and ZP7_XPERIO = '"+_cOrPeriod+"'"+_ChrBreak
+			_cQuery += "and ZP7_XSEG = '"+_cOrCalend+"' "+_ChrBreak
+			_cQuery += "and ZP7_XSESSA = '"+_cOrSessao+"' "+_ChrBreak
+			_cQuery += "and ZP7_XSTATU in ('D','C') "+_ChrBreak
+			TCSqlExec(_cQuery)
+			TcSqlExec("COMMIT")
+			//-- 
+			TPTRANS->(dbSkip()) 
+			//-- Executou pelo menos uma modificação
+			_lRestOK := .t.
+		Enddo     
+	End Transaction
+Endif 
+TPTRANS->(dbCloseArea())
+//-- Restaura areas do arquivo corrente e da ZP7 
+RestArea(_aAreaZP7)
+RestArea(_aArea)
+Return _lRestOK
+
+
+
+/*
++--------------------------------------------------------------------------+
+|{Protheus.doc}<fTraNLib>                                                  |
+| Transfere das Sessões Anteriores as MATRICULAS NÃO LIBERADAS             |
+| transferidas de SESSÕES ANTERIORES                                       |
+|                                                                          |
+|@Author<Antonio Dantas>                                                   |
+|@since<10/12/2014>                                                        |
+|@version<Nil>                                                             |
+|                                                                          |
+|@parameters:                                                              |
+|@Receive                                                                  |
+|<                                                                         |
+|  _cPeriodo (c) - Codigo do Periodo                                       |
+|      _cSeg (c) - Seguencia (Calendario)                                  |
+|   _cSessao (c) - Codigo da Sessao                                        |
+|>                                                                         |
+|@return                                                                   |
+|<   _lReturn  (L) - (.T.) - Inclusoes ocorreram com sucesso               |
+|                    (.F.) - Não Houve Inclusoes                           |
+|>                                                                         |
++-----------+--------------------------------------------------------------+
+|Uso        |FIEMT - FederaCAO das Industrias no Estado de Mato Grosso     |
++-----------+--------------------------------------------------------------+
+*/
+User Function fTraNLib(_cPeriodo,_cSeg,_cSessao)
+Local _lTudoOK 		:= .F.
+Local _cQuery 		:= ""  
+Local _ChrBreak		:= Chr(13)+Chr(10)   
+Local _cChvORIGEM 	:= ""  
+Local _nCampos 		:= 0
+Local _nCtaA   		:= 0      
+Local _aValues		:= {} 
+Local _nQtde		:= 0   
+Local _lTransOK 	:= .f.  
+Local _cMatric		:= ""
+//-- 
+_cQuery := ""
+_cQuery += "Select * From "+RetSqlName("ZP7")+" "+_ChrBreak
+_cQuery += "Where D_E_L_E_T_ = ' ' "+_ChrBreak
+_cQuery += "and ZP7_FILIAL = '"+FwxFilial("ZP7")+"' "+_ChrBreak
+_cQuery += "and ZP7_XPERIO = '"+_cPeriodo+"'"+_ChrBreak
+_cQuery += "and ZP7_XSEG = '"+_cSeg+"'"+_ChrBreak
+_cQuery += "and ZP7_XSESSA < '"+_cSessao+"'"+_ChrBreak
+_cQuery += "and ZP7_XSTATU = 'x' "+_ChrBreak       
+_cQuery += "and ZP7_XCHVOR not in ('"+Space(TamSX3("ZP7_XCHVOR")[1])+"')"+_ChrBreak
+_cQuery += "Order by ZP7_FILIAL, ZP7_XPERIO, ZP7_XSEG, ZP7_XSESSA, ZP7_XMATRI "+_ChrBreak
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Grava o Resultado da Query para consulta                         |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+If Select("TMPR")>0
+	TMPR->(DbCloseArea())
+Endif      
+DbUseArea(.t.,"TOPCONN",TcGenQry(,,_cQuery),"TMPR",.t.,.t.)  
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//| Seleciona a Tabela temporaria e Inicia Loop para Tratar os Dados |
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+dbSelectArea("TMPR")
+TMPR->(dbGoTop())    
+If TMPR->(Eof()) .and. TMPR->(Bof()) 
+	Aviso(FunName()+"/"+ProcName(),"Não existem Matriculas (NÃO LIBERADAS, TRANSFERIDAS DE SESS~ES ANTERIORES) em sessões ateriores a serem vinculadas!",{"OK"})
+Else   
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//| Inclui as Matriculas na Sessao Atual, Marca na Sessao anterior   |
+	//| Como Transferida para Proxima Sessao                             |
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	ProcRegua(0)
+	Begin Transaction
+		Do While TMPR->(!eof())     
+			_nQtde++
+			IncProc("Transferido: "+Alltrim(Transform(_nQtde,"@E 999,999,999")))   
+			//-- **********************************************************************
+			//--   
+			//--   Modifica a Matricula No DESTINO
+			//--   
+			//-- **********************************************************************
+			ZP7->(RecLock("ZP7",.t.))
+			Replace ZP7->ZP7_FILIAL	With TMPR->ZP7_FILIAL
+			//&&
+			Replace ZP7->ZP7_XPERIO With _cPeriodo
+			Replace ZP7->ZP7_XSEG   With _cSeg
+			Replace ZP7->ZP7_XSESSA With _cSessao
+			//&&
+			_cMatric 	:= PadR(Alltrim(Substr(TMPR->ZP7_XMATRI,2)),TamSX3("ZP7_XMATRI")[1] )
+			Replace ZP7->ZP7_XMATRI	With _cMatric
+			Replace ZP7->ZP7_XNOME	With TMPR->ZP7_XNOME
+			Replace ZP7->ZP7_XCPF		With TMPR->ZP7_XCPF
+			Replace ZP7->ZP7_XCONVE	With TMPR->ZP7_XCONVE
+			Replace ZP7->ZP7_XDESCO	With TMPR->ZP7_XDESCO
+			Replace ZP7->ZP7_XEVINI	With StoD(TMPR->ZP7_XEVINI)
+			Replace ZP7->ZP7_XEVFIM	With StoD(TMPR->ZP7_XEVFIM)
+			Replace ZP7->ZP7_XTURNO	With TMPR->ZP7_XTURNO
+			Replace ZP7->ZP7_XDATAG	With StoD(TMPR->ZP7_XDATAG)
+			Replace ZP7->ZP7_XEVENT	With TMPR->ZP7_XEVENT
+			Replace ZP7->ZP7_XDESCS	With TMPR->ZP7_XDESCS
+			Replace ZP7->ZP7_XMODAL	With TMPR->ZP7_XMODAL
+			Replace ZP7->ZP7_XDESMO	With TMPR->ZP7_XDESMO
+			Replace ZP7->ZP7_XUNREF	With TMPR->ZP7_XUNREF
+			Replace ZP7->ZP7_XQTDE	With TMPR->ZP7_XQTDE
+			Replace ZP7->ZP7_XVALOR	With TMPR->ZP7_XVALOR
+			Replace ZP7->ZP7_XSITMA	With TMPR->ZP7_XSITMA
+			Replace ZP7->ZP7_XATECN	With TMPR->ZP7_XATECN
+			Replace ZP7->ZP7_XDESAT	With TMPR->ZP7_XDESAT
+			Replace ZP7->ZP7_XCURSO	With TMPR->ZP7_XCURSO
+			Replace ZP7->ZP7_XDESEV	With TMPR->ZP7_XDESEV
+			Replace ZP7->ZP7_XCARTA	With TMPR->ZP7_XCARTA
+			Replace ZP7->ZP7_XNRREF	With TMPR->ZP7_XNRREF
+			Replace ZP7->ZP7_XALUNO	With TMPR->ZP7_XALUNO
+			Replace ZP7->ZP7_XIDCID	With TMPR->ZP7_XIDCID
+			Replace ZP7->ZP7_XTPORI	With TMPR->ZP7_XTPORI
+			Replace ZP7->ZP7_XTIPO	With TMPR->ZP7_XTIPO
+			Replace ZP7->ZP7_XUSERI	With TMPR->ZP7_XUSERI
+			Replace ZP7->ZP7_XCHVOR 	With TMPR->ZP7_XPERIO+TMPR->ZP7_XSEG+TMPR->ZP7_XSESSA
+			Replace ZP7->ZP7_XCCUST	With TMPR->ZP7_XCCUST
+			Replace ZP7->ZP7_XITCTA	With TMPR->ZP7_XITCTA
+			Replace ZP7->ZP7_XSTATU 	With "B"     
+			Replace ZP7->ZP7_XTUSGE	With Alltrim(TMPR->ZP7_XTUSGE)
+			Replace ZP7->ZP7_XMTSGE	With _cMatric
+			Replace ZP7->ZP7_XRASGE	With Alltrim(TMPR->ZP7_XRASGE)
+			//&&
+			ZP7->(MsUnLock())
+			ZP7->(dbCommit())
+			TMPR->(dbSkip())
+	      	_lTransOK := .t.
+		Enddo
+	End Transaction
+	TMPR->(dbCloseArea())
+	//+----------------------------------------------------------------------------+	
+	//| Apos ter efetuado a gravação dos registros a transferir para nova sessão   |
+	//| se a transferencia foi OK. Modifica os STATUS das matriculas nas sessoes   |
+	//| de Origem.                                                                 |
+	//+----------------------------------------------------------------------------+	
+	If _lTransOK
+		_cQuery := ""
+		_cQuery += "Update "+RetSqlName("ZP7")+" set ZP7_XSTOLD = 'x', ZP7_XSTATU = 'T', ZP7_XCHVDE = '"+_cPeriodo+_cSeg+_cSessao+"' "+_ChrBreak
+		_cQuery += "Where D_E_L_E_T_ = ' ' "+_ChrBreak
+		_cQuery += "and ZP7_FILIAL = '"+FwxFilial("ZP7")+"' "+_ChrBreak
+		_cQuery += "and ZP7_XPERIO = '"+_cPeriodo+"'"+_ChrBreak
+		_cQuery += "and ZP7_XSEG = '"+_cSeg+"' "+_ChrBreak
+		_cQuery += "and ZP7_XSESSA < '"+_cSessao+"'"+_ChrBreak
+		_cQuery += "and ZP7_XSTATU = 'x' "+_ChrBreak       
+		_cQuery += "and ZP7_XCHVOR not in ('"+Space(TamSX3("ZP7_XCHVOR")[1])+"')"+_ChrBreak
+		TCSqlExec(_cQuery)
+		TcSqlExec("COMMIT")
+	Endif 
+	Aviso(FunName()+"/"+ProcName(),"Transfência de matriculas (NÃO LIBERADAS, TRANSFERIDAS DE SESS~ES ANTERIORES) das sessões anteriores concluida com sucesso. "+Alltrim(Transform(_nQtde,"@E 999,999,999"))+" matriculas Transferidas!",{"OK"})
+Endif 
+Return _lTudoOK

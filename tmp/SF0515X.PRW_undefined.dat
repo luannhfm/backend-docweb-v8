@@ -1,0 +1,207 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"
+
+/*/{Protheus.doc} SF0515X
+@description rotina responsavel pela impressão do comprovante de pagamento 
+@author j2a.luizjunior
+@since 01/08/2017
+@version 11.0
+@history 08/02/2019, Alan Teles de Oliveira, criado variavel nLine para acrecentar linhas ao Dialog
+@history 26/09/2019, Franklin de Brito de Oliveira, Ajustado TSay "oCPF"
+/*/
+User Function SF0515X
+
+	Local cEstat	:= U_SFGN001A(ProcName(0), "SF0515X")
+	Local aCoors    := FWGetDialogSize(oMainWnd)
+	Local cRotina   := "Impressão de Recibo" 
+	Local nLine		:= 30
+	Local oWindow   := Nil   
+	Local aBotao    := {}
+	Local aTipo     := {"Fisica","Juridica"}
+	Local bChgCBx1	:= {|| oGet2:Picture := fGPctCPF(), oGet2:Refresh()}
+
+	Private cTipo     	:= ""
+	Private cNome     	:= Space(120)
+	Private cCPF      	:= Space(TamSX3("A1_CGC")[1])
+	Private cEndereco	:= Space(200)
+	Private oGet2     	:= Nil
+	
+	oWindow           := MsDialog():New(aCoors[1], aCoors[2], aCoors[3], aCoors[4], cRotina,,, .F.,,,,,, .T.,,, .T.)
+	oWindow:bInit     := {||EnchoiceBar(oWindow,{|| oWindow:End()},{|| oWindow:End()},.F.,aBotao)}
+	
+	oNome             := TSay():New(nLine + 6,010,{|| "Nome"                                          },oWindow,,,.F.,.F.,.F.,.T.,CLR_BLUE,CLR_WHITE,120,008)
+	oGet1             := TGet():New(nLine + 15,010,{|u| If(PCount() > 0 , cNome     := u , cNome      )},oWindow,140,008,'',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","",,)	
+
+	oCPF              := TSay():New(nLine + 6,160,{|| "Tipo:"                                         },oWindow,,,.F.,.F.,.F.,.T.,CLR_BLUE,CLR_WHITE,120,008)
+	oCBox1            := TComboBox():New(nLine + 15,160,{|u| If(PCount() > 0, cTipo := u , cTipo      )},aTipo  ,072,010,oWindow,, bChgCBx1,,CLR_BLACK,CLR_WHITE,.T.,,"",,,,,,,)	
+	
+	oCPF              := TSay():New(nLine + 6,250,{|| "CPF/CNPJ:"                                      },oWindow,,,.F.,.F.,.F.,.T.,CLR_BLUE,CLR_WHITE,120,008)
+	oGet2             := TGet():New(nLine + 15,250,{|u| If(PCount() > 0 , cCPF      := u , cCPF   )},oWindow,080,008,fGPctCPF(),,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,,"cCPF")
+	
+	oEndereco         := TSay():New(nLine + 6,350,{|| "Endereço:"                                     },oWindow,,,.F.,.F.,.F.,.T.,CLR_BLUE,CLR_WHITE,120,008)
+	oGet3             := TGet():New(nLine + 15,350,{|u| If(PCount() > 0 , cEndereco := u , cEndereco  )},oWindow,150,008,'',,CLR_BLACK,CLR_WHITE,,,,.T.,"",,,.F.,.F.,,.F.,.F.,"","",,)	
+	
+	aAdd(aBotao,{"Recibo",{|| ImpRec()},"Imprimir"})
+		
+	oWindow:lEscClose := .T. 
+	oWindow:lCentered := .T.			
+	oWindow:Activate()	
+
+Return
+
+/*/{Protheus.doc} ImpRec
+(long_description)
+@author j2a.luizjunior
+@since 01/08/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ImpRec
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0515X")
+
+	FWMsgRun(,{||Recibo()},"Imprimindo recibo de pagamento...", "Aguarde")
+
+Return	
+
+/*/{Protheus.doc} Recibo
+(long_description)
+@author j2a.luizjunior
+@since 15/08/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function Recibo
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0515X")
+	Local aArea		:= GetArea()
+	Local aImp	   := GetImpWindows(.F.)
+	Local cImpRet  := aImp[1]
+	Local nLin	   := 0
+	Local nCol	   := 0
+	Local nLargura := 200
+	Local oFontGN  := TFont():New( "Arial",,-10,,.T. )				
+	Local oFontObs := TFont():New( "Arial",,-5,,.T.  )
+	Local oFontIte := TFont():New('Courier new',, -7,, .T.)
+	Local cDesc    := "RECIBO" 
+	Local oPrint   := Nil
+	Local cExtenso := AllTrim(Extenso(SL1->L1_VLRTOT,.T.))
+	Local cForma   := Posicione("SL4",1,xFilial("SL4") + SL1->L1_NUM,"L4_FORMA"  )//Posicione("SL4",1,xFilial("SL4") + SL1->L1_NUM,"L4_ADMINIS")
+	Local cBitMap	:= GetNewPar('SF_IMGCLUB', '\system\LogoPark.bmp')
+	Local cDia     := Substr(DToS(SL1->L1_EMISNF),7,2)
+	Local cMes     := Substr(DToS(SL1->L1_EMISNF),5,2)
+	Local cAno     := Substr(DToS(SL1->L1_EMISNF),1,4)	
+	
+	If Empty(SL1->L1_DOC) .And. Empty(SL1->L1_SERIE)
+		Return
+	EndIf
+
+	oPrint := FWMSPrinter():New("Cabeçalho Padrão" ,, .F., /*cStartPath*/, .T.,, @oPrint,cImpRet,.F.,.F.,,)
+	
+	oPrint:SetPortrait()		
+	oPrint:StartPage()
+
+	If .not. Empty(cBitMap)
+		oPrint:SayBitMap(nLin, 85, cBitMap, 40, 53)
+	EndIf
+
+	nLin += 65
+	oPrint:Say(nLin, 90 , cDesc, oFontGN )
+	
+	nLin += 15
+	oPrint:SayAlign(nLin, nCol, "Recebemos de : " + cNome, oFontGN, nLargura, , , 0 )
+	
+	nLin += 23
+	
+	If SubStr(cTipo,1,1) == "J"
+		cMasc := "@R 99.999.999/9999-99"
+	Else
+		cMasc :="@R 999.999.999-99"
+	EndIf
+	
+	oPrint:SayAlign(nLin, nCol, "CNPJ/CPF: " + AllTrim(Transform(cCPF,cMasc))     ,oFontGN, nLargura, , , 0 )
+	
+	nLin += 13
+	oPrint:SayAlign(nLin, nCol, "A importancia de R$ " + AllTrim(Transform(SL1->L1_VLRTOT,PesqPict("SL1","L1_VLRTOT"))) + " ( "+ cExtenso +" ) Reais.",oFontGN,nLargura,,,0) 
+	
+	nLin += 13
+	oPrint:SayAlign(nLin, nCol, "Referente aos serviços relacionados abaixo.", oFontGN,nLargura,,,0) 	
+
+	nLin += 13
+	oPrint:SayAlign(nLin, nCol, Replicate('_', 75), oFontGN, nLargura,,, 0)
+
+	nLin += 13
+	oPrint:SayAlign(nLin, nCol, "Qt.   | Produto" + replicate(' ', 48) + " |       Vlr. (R$)", oFontGN, nLargura,,, 0)
+
+	nLin += 5
+	oPrint:SayAlign(nLin, nCol, Replicate('_', 75), oFontGN, nLargura,,, 0)
+
+	dbSelectArea('SL2')
+	SL2->(dbSetOrder(1))
+	SL2->(dbGoTop())
+	If SL2->(dbSeek(xFilial('SL2') + SL1->L1_NUM))
+		While .not. SL2->(Eof()) .and. (SL2->L2_FILIAL = SL1->L1_FILIAL .and. SL2->L2_NUM = SL1->L1_NUM) 
+			
+			nLin += 10
+			
+			oPrint:SayAlign(nLin, nCol, StrZero(SL2->L2_QUANT, 3) + ' | ' + SubStr(AllTrim(SL2->L2_DESCRI), 1, 30) + Space(30 - Len(SubStr(AllTrim(SL2->L2_DESCRI), 1, 30))) + ' | ' + cValToChar(Transform(SL2->L2_VLRITEM, '@E 999,999.99')), oFontIte, nLargura,,, 0)
+			
+			SL2->(dbSkip())
+
+		End		
+	EndIf
+
+	nLin += 5
+	oPrint:SayAlign(nLin, nCol, Replicate('_', 75), oFontGN, nLargura,,, 0)
+
+	nLin += 13
+	oPrint:SayAlign(nLin, nCol, " junto ao "+ AllTrim(SM0->M0_FILIAL)             ,oFontGN,nLargura,,,0)
+
+	nLin += 13
+	oPrint:SayAlign(nLin, nCol, "Forma de Pagamento: " + cForma                   ,oFontGN,nLargura,,,0)
+
+	nLin += 13
+	oPrint:SayAlign(nLin, nCol, "Obs: Não aceitamos cheques."                     ,oFontGN,nLargura,,,0)
+
+	nLin += 13
+	oPrint:SayAlign(nLin, nCol, AllTrim(SM0->M0_CIDENT) + " " + cDia + " de "  + MesExtenso(Val(cMes)) + " de " +  cAno  ,oFontGN,nLargura,,,0)
+
+	nLin += 40
+	oPrint:SayAlign(nLin, nCol, "________________________________________"        ,oFontGN,nLargura,,,0)
+
+	nLin += 13
+	oPrint:SayAlign(nLin, nCol, "Tesourar/Atendimento "                           ,oFontGN,nLargura,,,0)
+
+	nLin += 13
+	oPrint:SayAlign(nLin, nCol, AllTrim(SM0->M0_FILIAL)                           ,oFontGN,nLargura,,,0)
+
+	nLin += 13
+	oPrint:SayAlign(nLin, nCol, "CNPJ: "+ AllTrim(SM0->M0_CGC)                    ,oFontGN,nLargura,,,0)
+
+	oPrint:Print()			
+	oPrint:EndPage()
+
+	RestArea(aArea)
+
+Return
+
+Static Function fGPctCPF()
+Local cPicture := ""
+
+	If SubStr(cTipo,1,1) == "J"
+		cPicture := "@R 99.999.999/9999-99"
+	Else
+		cPicture :="@R 999.999.999-99"
+	EndIf
+	
+	cCPF := Transform(Space(TamSX3("A1_CGC")[1]), cPicture)
+
+Return cPicture

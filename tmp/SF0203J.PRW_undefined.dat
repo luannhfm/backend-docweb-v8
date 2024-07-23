@@ -1,0 +1,167 @@
+#Include "Protheus.ch"
+#Include "Topconn.ch"
+
+/*/{Protheus.doc} SF0203J
+	
+@author 	Jose Leite de Barros Neto
+@since 		30/04/2014
+@version 	1.0		
+
+@return Nil
+
+@description
+Fonte baseado em BFFI002S
+Utilizado para validar a exclusão de um titulo a pagar (SE2) referente aos impostos variaveis de notas fiscais 
+de Entrada ou Saida.
+
+@example
+
+Impostos variaveis:
+INSS Patronal
+
+/*/
+User Function SF0203J(cTpNf)
+
+	Local 	aArea		:= GetArea()
+	Local 	aAreaSE2	:= SE2->(GetArea())
+	Local 	cEol		:= Char(13)+Char(10) //utilizada na quebra de linha
+	Local _cQuery 	:= ""
+	Local cTpImp
+	
+	Private 	cPref,;	//PREFIXO DO TITULO
+				cNum,;		//NUMERO DO TITULO
+				cParc,;	//PARCELA DO TITULO
+		 		cTipo,;	//TIPO DO TITULO
+	 			cForn,;	//FORNECEDOR DO TITULO
+	 			cLoj,;   	//LOJA DO TITULO
+	 			cNat,;		//NATUREZA DO TITULO
+	 			dEmis,;	//DATA DE EMISSAO
+	 			nVal		//VALOR DO IMPOSTO
+	
+	Private lRet	 := .T. //utilizada no retorno da funcao
+			
+	//Verifico qual o P.E. que foi executado, para definir o tipo de N.F.
+	If cTpNf == 'E'
+		cPref 	:= SF1->F1_SERIE
+		cNum	:= SF1->F1_DOC
+		dEmis	:= SF1->F1_EMISSAO 
+	EndIf 
+	
+	//VERIFICO O TIPO DO IMPOSTO PARA DEFINIR AS INFORMACOES VARIAVEIS
+	//INSS Patronal
+	If lImp := (nVal := Iif(cTpNf == 'E', SF1->F1_VALIMP1, 0)) > 0	
+		
+		cTpImp := 'INSS' 		
+		cTipo	:= GetNewpar('MV_XTIPINS','INS')
+		cForn	:= GetNewpar('MV_XFRNINS','INSS')
+		cLoj	:= GetNewpar('MV_XLOJINS','0000')
+		cNat	:= GetNewpar('MV_XNATINS','INSS')
+		 			
+	EndIf
+	
+	//Se nao tiver nenhum imposto calculado, saio da funcao sem incluir o titulo
+	If !lImp	
+		Return( lRet )
+	EndIf
+	
+	If Select("TRA") > 0
+		DbSelectarea("TRA")
+		DbCloseArea()
+	Endif
+		
+	_cQuery := ""
+	_cQuery += " SELECT E2_FILIAL, E2_PREFIXO, E2_NUM, E2_PARCELA		" 
+	_cQuery += " FROM "+ RETSQLNAME("SE2")
+	_cQuery += " WHERE		E2_FILIAL 	= '"+xFilial("SE2")+"'			"
+	_cQuery += "		AND	 	E2_PREFIXO	= '"+cPref+"'						"
+	_cQuery += "		AND	 	E2_NUM			= '"+cNum+"'							"
+	_cQuery += "		AND	 	E2_TIPO		= '"+cTipo+"'						"
+	_cQuery += "		AND	 	E2_FORNECE	= '"+cForn+"'						"
+	_cQuery += "		AND	 	E2_LOJA		= '"+cLoj+"'							"
+	_cQuery += "		AND	 	E2_NATUREZ	= '"+cNat+"'							"
+	_cQuery += "		AND   E2_EMISSAO  	= '"+DtoS(dEmis)+"'				"
+	_cQuery += "		AND   E2_VALOR 		= "+cValToChar(nVal)
+	_cQuery += "		AND 	D_E_L_E_T_ 	<> '*'									"
+	_cQuery += "	ORDER BY E2_FILIAL, E2_PREFIXO, E2_NUM, E2_PARCELA 	"
+	
+	TCQUERY _cQuery NEW ALIAS "TRA"	
+	
+	cParc	:= TRA->(E2_PARCELA)
+
+	TRA->(DbCloseArea())
+	
+	//verifico se o titulo nao esta baixado
+	DbSelectArea('SE2')
+	SE2->(dbSetOrder(1))
+	SE2->(dbSeek( 	xFilial('SE2')+;
+					Padr(cPref	,TamSx3("E2_PREFIXO")[1])+;
+					Padr(cNum		,TamSx3("E2_NUM")[1])		+;
+					Padr(cParc	,TamSx3("E2_PARCELA")[1])+;
+					Padr(cTipo	,TamSx3("E2_TIPO")[1])	+;
+					Padr(cForn	,TamSx3("E2_FORNECE")[1])+;
+					Padr(cLoj		,TamSx3("E2_LOJA")[1])	;
+				  );
+		  )
+	
+	If SE2->(Found())
+
+		If !(lRet := (Empty(SE2->E2_BAIXA) .AND. (SE2->E2_SALDO = SE2->E2_VALOR)))
+			
+			MsgAlert(	'Atenção! Não é possivel realizar o cancelamento da N.F. '+cNum+cEol+;
+						'Existe um titulo em aberto no contas a pagar, referente aos impostos de: '+cTpImp+cEol+;
+						'Por favor, realize o cancelamento da baixa do titulo: '+cEol+;
+						'Filial: ' 		+ 	xFilial('SE2')	+cEol+;
+						'Prefixo: ' 		+ 	cPref				+cEol+;
+						'Numero: ' 		+ 	cNum				+cEol+;
+						'Parcela: ' 		+ 	cParc				+cEol+;
+						'Tipo: ' 			+ 	cTipo				+cEol+;
+						'Fornecedor: '	+ 	cForn				+cEol+;
+						'Loja: ' 			+ 	cLoj)
+						
+		EndIf
+		
+		//chama a exclusao do titulo
+		ExcTit(cTpImp)
+		
+	EndIf
+								
+	RestArea(aAreaSE2)					
+	RestArea(aArea)
+						
+Return( lRet )
+
+/** {Protheus.doc} ExcTit
+Funcao para excluir o titulo a Pagar no financeiro
+
+@param: 	<Nil>
+@author 	José Leite de Barros Neto
+@since 	29/04/2014
+@Uso: 		SFIEMT
+*/	
+Static Function ExcTit(cTpImp)
+
+	Local 	 aVetSE2 	:= {}		//vetor utilizado na rotina automatica
+
+	Private lMsErroAuto := .F.	//variavel privada para identicação de erro da rotina automatica
+
+	//Vetor a ser utilizado no MsExecAuto()
+	aVetSE2:= {	{"E2_FILIAL"   	,xFilial('SE2')	,Nil},;
+					{"E2_PREFIXO"  	,Padr(cPref	,TamSx3("E2_PREFIXO")[1])	,Nil},;
+					{"E2_NUM"     	,Padr(cNum	,TamSx3("E2_NUM")[1])			,Nil},;
+					{"E2_PARCELA"  	,Padr(cParc	,TamSx3("E2_PARCELA")[1])	,Nil},;
+					{"E2_TIPO"     	,Padr(cTipo	,TamSx3("E2_TIPO")[1])   	,Nil},;
+					{"E2_FORNECE"  	,Padr(cForn	,TamSx3("E2_FORNECE")[1])	,Nil},;
+					{"E2_LOJA"  		,Padr(cLoj 	,TamSx3("E2_LOJA")[1])		,Nil};
+				}
+ 
+ 	//executa a rotina automatica para exclusao de titulo a pagar
+	MsExecAuto( { |x,y,z| FINA050(x,y,z)}, aVetSE2,, 5)  // 3 - Inclusao, 4 - Alteração, 5 - Exclusão
+ 
+ 	//Tratamento de resposta
+	If lMsErroAuto
+  		MsgAlert('Houve um erro na exclusão do titulo referente ao imposto de: ' + cTpImp)
+  		MostraErro()   
+  		lRet := .F. 	
+	Endif
+
+Return( Nil )

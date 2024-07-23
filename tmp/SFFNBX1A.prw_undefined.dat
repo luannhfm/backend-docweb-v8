@@ -1,0 +1,638 @@
+#include "protheus.ch"
+#include "parmtype.ch"
+#INCLUDE "TBICONN.CH"
+
+#DEFINE CR Chr(13) + Chr(10)
+
+/*/{Protheus.doc} SFFNBX1A
+Rotina centralizadora para baixa e inclusão de novos títulos, usado para renegociação e baixa com cartío de credito.
+@type Function
+@author Alan Teles de Oliveira
+@since 29/01/2019
+@version 12.1.17
+@param p_aNovoTit, array, array com informação dos títulos que serão incluídos.
+@param p_nOpcTit, numeric, opção para rotina automática de inclusão podendo ser: 3 - Inclusão, 4 - Alteração, 5 - Exclusão.
+@param p_aBaixar, array, array com informação dos títulos que serão baixados.
+@param p_nOpcBx, numeric, opção para rotina automática de baixa podendo ser: 3 - Baixa de título, 5 - Cancelamento de baixa, 6 - Exclusão de Baixa.
+@param p_cOrigem, characters, nome do fonte que originou o movimento essa informação e crucial para a gravação do rastreamento dos títulos.
+@return logical, verdadeiro se a transação for executada com sucesso.
+@history 01/03/2019, Alan Teles de Oliveira, alterado ordem de execução das rotinas automáticas.
+/*/
+User Function SFFNBX1A(p_aNovoTit, p_nOpcTit, p_aBaixar, p_nOpcBx, p_cOrigem, p_aLiqAnt)
+
+    Local cMsgInc   := 'a inclusão'
+    Local cMsgBx    := ''
+    Local lRet := .T.
+
+    Private lMsErroAuto     := .F.
+    Private lAutoErrNoFile  := .T.
+
+    Default p_nOpcTit   := 3
+    Default p_nOpcBx    := 3
+    Default p_aLiqAnt   := {}
+
+    If p_nOpcTit = 5
+        cMsgInc := 'Realizando o cancelamento dos novos títulos.'
+    ElseIf p_nOpcTit = 3
+        cMsgInc := 'Realizando a inclusão dos novos títulos.'
+    Else
+        cMsgInc := 'Realizando manutenção dos novos títulos.'
+    EndIf
+
+    If p_nOpcBx = 6
+        cMsgBx := 'Realizando o cancelamento da baixa dos títulos originais.'
+    ElseIf p_nOpcBx = 3
+        cMsgBx := 'Realizando a baixa dos títulos originais.'
+    Else
+        cMsgBx := 'Realizando manutenção da baixa dos títulos originais.'
+    EndIf
+
+    Begin Transaction
+    
+    	If Valtype(p_aBaixar) = 'A' .AND. Len(p_aBaixar) > 0 .AND. !fVldBx(p_aBaixar)
+    		lRet := .F.
+    	EndIf
+
+        If p_aNovoTit != Nil .and. Len(p_aNovoTit) > 0 .and. lRet
+            MsgRun(cMsgInc, 'Aguarde', {|| CursorWait(), (lRet := fIncTit(p_aNovoTit, p_nOpcTit), CursorArrow())})
+            _SetOwnerPrvt( '__nRecCRIn', SE1->( Recno() ) )
+        ElseIf p_aNovoTit != Nil .and. Len(p_aNovoTit) > 0 .and. lRet
+            lRet := .F.
+            Aviso('Atenção - SFFNBX1A', 'Não foi passado as informações dos títulos que serão gerados.', {'Ok'}, 03)
+        EndIf
+
+        If p_aBaixar != Nil .and. Len(p_aBaixar) > 0 .and. lRet
+            MsgRun(cMsgBx, 'Aguarde', {|| CursorWait(), (lRet := fBaxaRec(p_aBaixar, p_nOpcBx), CursorArrow())})
+            _SetOwnerPrvt( '__nRecCRBx', SE5->( Recno() ) )
+        ElseIf p_aBaixar != Nil .and. Len(p_aBaixar) > 0 .and. lRet
+            lRet := .F.
+            Aviso('Atenção - SFFNBX1A', 'Não foi passado os títulos que serão baixados.', {'Ok'}, 03)
+        EndIf
+
+        If lRet
+            fRastr(p_aNovoTit, p_aBaixar, p_cOrigem, p_aLiqAnt)
+        Else
+            DisarmTransaction()
+        EndIf
+
+    End Transaction
+
+    If lRet
+        oFIEMT := FIEMT_SFFNBX1A_CTB():New()
+        oFIEMT:Contabiliza(p_aBaixar, , , .F.)
+    EndIf
+
+Return lRet
+
+/*/{Protheus.doc} fVldBx
+Função responsável pela validação dos títulos que serão baixados.
+@type  Function
+@author Walmir Junior
+@since 10/06/2020
+@version 12.1.17
+@param p_aBx, array, array com informação dos títulos que serão baixados.
+@return logical, verdadeiro se está válido.
+/*/
+Static Function fVldBx(p_aBx)
+Local _lRet := .T.
+Local _nFil := aScan(p_aBx[1], {|x| x[1] == 'E1_FILIAL'})
+Local _nPrf := aScan(p_aBx[1], {|x| x[1] == 'E1_PREFIXO'})
+Local _nNum := aScan(p_aBx[1], {|x| x[1] == 'E1_NUM'})
+Local _nPar := aScan(p_aBx[1], {|x| x[1] == 'E1_PARCELA'})
+Local _nx	:= 0
+
+For _nx := 1 To Len(p_aBx)
+	DbSelectArea("SE1")
+	SE1->(DBSetOrder(1))
+	If SE1->(DBSeek(p_aBx[_nx,_nFil,2] + p_aBx[_nx,_nPrf,2] + p_aBx[_nx,_nNum,2] + p_aBx[_nx,_nPar,2]))
+		If SE1->E1_PREFIXO $ "SGE#RMC" .AND. ALLTRIM(SE1->E1_XIDCNAB) == ""
+			Aviso("Atenção - SFFNBX1A", "O título ["+p_aBx[_nx,_nFil,2]+"-"+p_aBx[_nx,_nPrf,2]+"-"+ALLTRIM(p_aBx[_nx,_nNum,2])+"-"+ALLTRIM(p_aBx[_nx,_nPar,2])+"],"+;
+										" não pode sofrer baixa, pois é um título provisório no SGE. Verifique com a unidade!", {'Ok'}, 03)
+			_lRet := .F.
+			Exit
+		EndIf
+	EndIf
+	_nx++							
+Next 
+
+Return _lRet
+
+/*/{Protheus.doc} fIncTit
+Função responsável pela chamada da rotina automática FINA040 para inclusão de novos títulos.
+@type Function
+@author Alan Teles de Oliveira
+@since 29/01/2019
+@version 12.1.17
+@param p_aNovoTit, array, array com informação dos títulos que serão incluídos.
+@param p_nOpc, numeric, opção para rotina automática de inclusão podendo ser: 3 - Inclusão, 4 - Alteração, 5 - Exclusão.
+@return logical, verdadeiro se incluído com sucesso.
+@see http://tdn.totvs.com/display/public/PROT/FIN0088_CREC_FINA040_ExecAuto_Inclusao_de_RA_por_rotina_automatica
+/*/
+Static Function fIncTit(p_aNovoTit, p_nOpc)
+
+    Local cMsgErro  := 'Erro na inclusão dos novos títulos a receber ' + CR
+    Local nI        := 0
+    Local nX        := 0
+    Local lRet      := .T.
+    Local aLogErro  := {}
+
+    For nI := 1 to Len(p_aNovoTit)
+
+        lMsErroAuto     := .F.
+        MSExecAuto({|x, y| Fina040(x, y )}, p_aNovoTit[nI], p_nOpc)
+
+        If lMsErroAuto
+
+            lRet        := .f.
+            aLogErro    := GetAutoGRLog()
+
+            For nX := 1 to Len(aLogErro)
+
+                cMsgErro += aLogErro[nX] + CR
+
+            Next
+
+            Aviso('Atenção - SFFNBX1A', cMsgErro, {'Ok'}, 03)
+
+            Exit
+
+        EndIf
+
+    Next
+
+Return lRet
+
+/*/{Protheus.doc} fBaxaRec
+Função responsável pela chamada da rotina automática FINA070 para baixa dos títulos.
+@type Function
+@author Alan Teles de Oliveira
+@since 29/01/2019
+@version 12.1.17
+@param p_aBaixa, array, array com informação dos títulos que serão baixados.
+@param p_nOpc, numeric, opção para rotina automática de baixa podendo ser: 3 - Baixa de título, 5 - Cancelamento de baixa, 6 - Exclusão de Baixa.
+@return logical, verdadeiro se baixado com sucesso.
+@see http://tdn.totvs.com/pages/releaseview.action?pageId=6070728
+/*/
+Static Function fBaxaRec(p_aBaixa, p_nOpc)
+
+    Local cMsgErro  := 'Erro na execução da baixa do titulo a receber ' + CR
+    Local nI        := 0
+    Local nX        := 0
+    Local lRet      := .T.
+    Local aLogErro  := {}
+    Local _lRat     := .F.
+
+    If IsInCallStack("SFFN462A")
+        _lRat := Iif(POSICIONE("SE1",1,p_aBaixa[2]+p_aBaixa[3]+p_aBaixa[4]+p_aBaixa[5]+p_aBaixa[6], "E1_MULTNAT")=='1',.T.,.F.)
+    EndIf
+
+    For nI := 1 to Len(p_aBaixa)
+
+        lMsErroAuto     := .F.
+        If p_nOpc = 6
+            MSExecAuto({|x, y, z| lRet := Fina070(x, y,,z,,,a)}, p_aBaixa[nI, 1], p_nOpc, p_aBaixa[nI, 2], _lRat)
+        Else
+
+            MSExecAuto({|x, y, a| lRet := Fina070(x, y,,,,,a)}, p_aBaixa[nI], p_nOpc, _lRat)
+        EndIf
+
+        If ValType(lRet) == 'U'
+
+            lRet := .F.
+
+        EndIf
+
+        If .not. lRet .or. lMsErroAuto
+
+            If lMsErroAuto
+
+                aLogErro := GetAutoGRLog()
+
+                For nX := 1 to Len(aLogErro)
+
+                    cMsgErro += aLogErro[nX] + CR
+
+                Next
+
+            Else
+
+                lRet        := .F.
+                cMsgErro    += 'Erro desconhecido ao ' + Iif(p_nOpc = 3, 'INCLUIR', Iif(p_nOpc = 4, 'ALTERAR', 'CANCELAR')) + ' Baixar Contas a Receber'
+
+            EndIf
+
+            Aviso('Atenção - SFFNBX1A', cMsgErro, {'Ok'}, 03)
+
+            Exit
+
+        EndIf
+
+    Next
+
+Return lRet
+
+/*/{Protheus.doc} fRastr
+Prepara os dados da inclusão e da baixa para gravar na tabela de controle de rastreabilidade.
+@type Function
+@author Alan Teles de Oliveira
+@since 29/01/2019
+@version 12.1.17
+@param p_aNovoTit, array, array com informação dos títulos que serão incluídos.
+@param p_aBaixar, array, array com informação dos títulos que serão baixados.
+@param p_cOrigem, characters, nome do fonte que originou o movimento essa informação e crucial para a gravação do rastreamento dos títulos.
+@obs Caso não seja passado o valor de algum array será gravado apenas a informação do array passado no parâmetro.
+/*/
+Static Function fRastr(p_aNovoTit, p_aBaixar, p_cOrigem, p_aLiqAnt)
+
+    Local aArea         := GetArea()
+    Local nX            := 0
+    Local nPosPrefixo   := 0
+    Local nPosTitulo    := 0
+    Local nPosParcela   := 0
+    Local nPosCliente   := 0
+    Local nPosLoja      := 0
+    Local nPosNumLiq    := 0
+    Local nPosVlrBaixa  := 0
+
+    If p_cOrigem != Nil
+
+        dbSelectArea('Z05')
+        Z05->(dbGoTop())
+        Z05->(dbSetOrder(1)) //Z05_FILIAL+Z05_CODIGO+Z05_TITULO+Z05_PREFIX+Z05_PARCEL+Z05_CLIENT+Z05_LOJA
+
+        If p_cOrigem = 'SF06A02A'
+
+            nPosNumLiq  := aScan(p_aBaixar[1, 1], {|x| x[1] == 'E1_XNLIQ'})
+
+            If Z05->(dbSeek(xFilial('Z05') + p_aBaixar[1, 1, nPosNumLiq, 2]))
+
+                While .not. Z05->(Eof()) .and. Z05->Z05_FILIAL = xFilial('Z05') .and. Z05->Z05_CODIGO = p_aBaixar[1, 1, nPosNumLiq, 2]
+
+                    RecLock('Z05', .F.)
+
+                    Z05->Z05_STATUS := 'C'
+
+                    Z05->(MsUnLock())
+
+                    Z05->(dbSkip())
+
+                End
+
+            EndIf
+
+        ElseIf ValType(p_aBaixar) == 'A' .and. Len(p_aBaixar) > 0
+
+            nPosCliente     := aScan(p_aBaixar[1], {|x| x[1] == 'E1_CLIENTE'})
+            nPosLoja        := aScan(p_aBaixar[1], {|x| x[1] == 'E1_LOJA'})
+            nPosNumLiq      := aScan(p_aBaixar[1], {|x| x[1] == 'E1_XNLIQ'})
+            nPosParcela     := aScan(p_aBaixar[1], {|x| x[1] == 'E1_PARCELA'})
+            nPosPrefixo     := aScan(p_aBaixar[1], {|x| x[1] == 'E1_PREFIXO'})
+            nPosTitulo      := aScan(p_aBaixar[1], {|x| x[1] == 'E1_NUM'})
+            nPosVlrBaixa    := aScan(p_aBaixar[1], {|x| x[1] == 'AUTVALREC'})
+
+            If nPosCliente > 0 .and. nPosLoja > 0 .and. nPosParcela > 0 .and. nPosPrefixo > 0 .and. nPosTitulo > 0
+
+                For nX := 1 to Len(p_aBaixar)
+
+                    fRecLock({;
+                        xFilial('Z05'),;                    //Z05_FILIAL
+                    p_aBaixar[nX, nPosNumLiq,   2],;    //Z05_CODIGO
+                    'B',;                               //Z05_TIPO
+                    p_aBaixar[nX, nPosTitulo,   2],;    //Z05_TITULO
+                    p_aBaixar[nX, nPosPrefixo,  2],;    //Z05_PREFIX
+                    p_aBaixar[nX, nPosParcela,  2],;    //Z05_PARCEL
+                    p_aBaixar[nX, nPosCliente,  2],;    //Z05_CLIENT
+                    p_aBaixar[nX, nPosLoja,     2],;    //Z05_LOJA
+                    dDataBase,;                         //Z05_DATA
+                    RetCodUsr(),;                       //Z05_USER
+                    Date(),;                            //Z05_DTINCL
+                    Time(),;                            //Z05_HRINCL
+                    '',;                                //Z05_USEREX
+                    StoD(''),;                          //Z05_DTEXCL
+                    '',;                                //Z05_HREXCL
+                    p_cOrigem,;                         //Z05_ORIG
+                    'A',;                               //Z05_STATUS
+                    p_aBaixar[nX, nPosVlrBaixa,     2],; //Z05_VLBXA
+                    p_aLiqAnt[nX];                       //Z05_CODANT
+                    })
+
+                Next
+
+            EndIf
+
+        EndIf
+
+        If ValType(p_aNovoTit) == 'A' .and. Len(p_aNovoTit) > 0 .and. p_cOrigem != 'SF06A02A'
+
+            nPosCliente := aScan(p_aNovoTit[1], {|x| x[1] == 'E1_CLIENTE'})
+            nPosLoja    := aScan(p_aNovoTit[1], {|x| x[1] == 'E1_LOJA'})
+            nPosNumLiq  := aScan(p_aNovoTit[1], {|x| x[1] == 'E1_XNLIQ'})
+            nPosParcela := aScan(p_aNovoTit[1], {|x| x[1] == 'E1_PARCELA'})
+            nPosPrefixo := aScan(p_aNovoTit[1], {|x| x[1] == 'E1_PREFIXO'})
+            nPosTitulo  := aScan(p_aNovoTit[1], {|x| x[1] == 'E1_NUM'})
+
+            If nPosCliente > 0 .and. nPosLoja > 0 .and. nPosParcela > 0 .and. nPosPrefixo > 0 .and. nPosTitulo > 0
+
+                For nX := 1 to Len(p_aNovoTit)
+
+                    fRecLock({;
+                        xFilial('Z05'),;                    //Z05_FILIAL
+                    p_aNovoTit[nX, nPosNumLiq,   2],;   //Z05_CODIGO
+                    'I',;                               //Z05_TIPO
+                    p_aNovoTit[nX, nPosTitulo,  2],;    //Z05_TITULO
+                    p_aNovoTit[nX, nPosPrefixo, 2],;    //Z05_PREFIX
+                    p_aNovoTit[nX, nPosParcela, 2],;    //Z05_PARCEL
+                    p_aNovoTit[nX, nPosCliente, 2],;    //Z05_CLIENT
+                    p_aNovoTit[nX, nPosLoja,    2],;    //Z05_LOJA
+                    dDataBase,;                         //Z05_DATA
+                    RetCodUsr(),;                       //Z05_USER
+                    Date(),;                            //Z05_DTINCL
+                    Time(),;                            //Z05_HRINCL
+                    '',;                                //Z05_USEREX
+                    StoD(''),;                          //Z05_DTEXCL
+                    '',;                                //Z05_HREXCL
+                    p_cOrigem,;                         //Z05_ORIG
+                    'A',;                               //Z05_STATUS
+                    0,;                                 //Z05_VLBXA
+                    " ";                                //Z05_CODANT
+                    })
+
+                Next
+
+            EndIf
+
+        EndIf
+
+    EndIf
+
+    RestArea(aArea)
+
+Return
+
+
+/*/{Protheus.doc} fRecLock
+Função responsável por gravar os dados no banco de dados.
+@type Function
+@author Alan Teles de Oliveira
+@since 29/01/2019
+@version 12.1.17
+@param p_aDados, array, informações do titulo a ser rastreado.
+@see http://tdn.totvs.com/pages/viewpage.action?pageId=24347041
+/*/
+Static Function fRecLock(p_aDados)
+
+    RecLock('Z05', .T.)
+
+    Z05->Z05_FILIAL := p_aDados[01]
+    Z05->Z05_CODIGO := p_aDados[02]
+    Z05->Z05_TIPO   := p_aDados[03]
+    Z05->Z05_TITULO := p_aDados[04]
+    Z05->Z05_PREFIX := p_aDados[05]
+    Z05->Z05_PARCEL := p_aDados[06]
+    Z05->Z05_CLIENT := p_aDados[07]
+    Z05->Z05_LOJA   := p_aDados[08]
+    Z05->Z05_DATA   := p_aDados[09]
+    Z05->Z05_USER   := p_aDados[10]
+    Z05->Z05_DTINCL := p_aDados[11]
+    Z05->Z05_HRINCL := p_aDados[12]
+    Z05->Z05_USEREX := p_aDados[13]
+    Z05->Z05_DTEXCL := p_aDados[14]
+    Z05->Z05_HREXCL := p_aDados[15]
+    Z05->Z05_ORIG   := p_aDados[16]
+    Z05->Z05_STATUS := p_aDados[17]
+    Z05->Z05_VLBXA  := p_aDados[18]
+    Z05->Z05_CODANT  := p_aDados[19]
+
+    Z05->(MsUnLock())
+ 
+Return
+
+
+/*/{Protheus.doc} FIEMT_SFFNBX1A_CTB
+Classe para contabilização
+@type class
+@author Carlos Ryve Gandini
+@since 05/09/19 às 08:35:55
+/*/
+CLASS FIEMT_SFFNBX1A_CTB From LongClassName
+
+    Method New()
+    Method Contabiliza()
+    Method Estorno()
+    Method SelDiario()
+    Method SeekBaixa(cPrefixo,cNumero,cParcela,cTipo,cCliente,cLoja)
+
+ENDCLASS
+
+/*/{Protheus.doc} FIEMT_SFFNBX1A_CTB::New
+Method Contructor da class
+@type method
+@version 05/09/19 às 08:35:55
+@author Carlos Ryve Gandini
+@since 24/09/2021
+@return object, Objeto instanciado
+/*/
+Method New() Class FIEMT_SFFNBX1A_CTB
+Return Self
+
+/*/{Protheus.doc} FIEMT_SFFNBX1A_CTB::Contabiliza
+Method responsavel pela contabilizacao do processo
+@type method
+@author Carlos Ryve Gandini
+@since 05/09/19 às 08:37:01
+@param p_aBaixar, variant, desc
+@param cPadrao, character, desc
+@param cSit, character, desc
+@param lDigita, logical, Mostra Lcto Contabil
+/*/
+Method Contabiliza(p_aBaixar, cPadrao, cSit, lDigita) Class FIEMT_SFFNBX1A_CTB
+
+    Local aArea    := GetArea()
+    Local aAreaSE5 := SE5->( GetArea() )
+
+    Local cArquivo := ""
+
+    Local lPadrao  := .F.
+
+    Local nHdlPrv  := 0
+    Local nTotal   := 0
+    Local nA       := 0
+    Local nAte     := {}
+    Local nPosCliente     := aScan(p_aBaixar[1], {|x| x[1] == 'E1_CLIENTE'})
+    Local nPosLoja        := aScan(p_aBaixar[1], {|x| x[1] == 'E1_LOJA'})
+    Local nPosTipo        := aScan(p_aBaixar[1], {|x| x[1] == 'E1_TIPO'})
+    Local nPosParcela     := aScan(p_aBaixar[1], {|x| x[1] == 'E1_PARCELA'})
+    Local nPosPrefixo     := aScan(p_aBaixar[1], {|x| x[1] == 'E1_PREFIXO'})
+    Local nPosTitulo      := aScan(p_aBaixar[1], {|x| x[1] == 'E1_NUM'})
+    
+    Default cPadrao  := "Z01"
+    Default lDigita  := .T. //Mostra Lcto Contabil
+    
+    lPadrao  := VerPadrao(cPadrao)
+
+    PARAMTYPE 0 VAR p_aBaixar AS ARRAY
+
+    nAte := Len( p_aBaixar )
+
+    _SetOwnerPrvt( "cLote" , LoteCont( "FIN" ) )
+    _SetOwnerPrvt( "cCodDiario" , "" )
+
+    //#################################################################
+    //### Lancamento Contabil                            ##############
+    //#################################################################
+    If ( lPadrao )
+
+        For nA := 1 To nAte
+            ::SeekBaixa(p_aBaixar[nA][nPosPrefixo][2],;
+                p_aBaixar[nA][nPosTitulo][2],;
+                p_aBaixar[nA][nPosParcela][2],;
+                p_aBaixar[nA][nPosTipo][2],;
+                p_aBaixar[nA][nPosCliente][2],;
+                p_aBaixar[nA][nPosLoja][2],cSit)
+
+            If (cAlias)->( !Eof() )
+
+                nHdlPrv := HeadProva(cLote,FunName(),Substr(cUsuario,7,6),@cArquivo)
+
+                While (cAlias)->( !Eof() )
+
+                    dbSelectArea("SE5")
+                    SE5->( dbGoTo( (cAlias)->RECNO ) )
+
+                    If ( FindFunction( "UsaSeqCor" ) .And. UsaSeqCor() )
+                        ::SelDiario()
+                        aDiario := {{"SE5",SE5->(Recno()), cCodDiario, "E5_NODIA","E5_DIACTB"}}
+                    Else
+                        aDiario := {}
+                    EndIf
+
+                    nTotal += DetProva(nHdlPrv,cPadrao,FunName(),cLote)
+
+                    (cAlias)->( dbSkip() )
+
+                EndDo
+
+                (cAlias)->( dbCloseArea() )
+
+                If ( nHdlPrv > 0 .And.  nTotal > 0 )
+                    cA100Incl(cArquivo,nHdlPrv,3,cLote,lDigita,.F.,,,,,,aDiario)
+                    RodaProva(nHdlPrv,nTotal)
+                EndIF
+
+            EndIf
+
+        Next nA
+
+          nHdlPrv := 0
+          nTotal := 0
+
+
+    EndIf
+
+    RestArea( aAreaSE5 )
+    RestArea( aArea )
+
+Return
+
+/*/{Protheus.doc} FIEMT_SFFNBX1A_CTB::Estorno
+Method responsavel pelo estorno da contabilizacao do processo
+@type method
+@author Carlos Ryve Gandini
+@since 05/09/19 às 08:37:43
+/*/
+Method Estorno() Class FIEMT_SFFNBX1A_CTB
+
+Return
+
+/*
+	Class    : FIEMT_SFFNBX1A_CTB
+	Method   : SelDiario()
+	Autor    : Carlos Ryve Gandini
+	Data/Time: 05/09/19 às 08:51:20
+	Descricao: Method responsavel por selecionar codigo diario 
+	           contabil, quando contabilizao on-line.
+	Sintaxe  : <Vide Parametros Formais>
+*/
+/*/{Protheus.doc} FIEMT_SFFNBX1A_CTB::SelDiario
+Method responsavel por selecionar codigo diario contabil, quando contabilizao on-line.
+@type method
+@author Carlos Ryve Gandini
+@since 05/09/19 às 08:51:20
+@return logical, seleciona código diário contábil
+/*/
+Method SelDiario() Class FIEMT_SFFNBX1A_CTB
+
+    Local lRet := .T.
+
+    cCodDiario	:= CTBAVerDia()
+    lRet := !Empty( cCodDiario )
+
+Return lRet
+
+
+/*
+	Class    : FIEMT_SFFNBX1A_CTB
+	Method   : SeekBaixa()
+	Autor    : Carlos Ryve Gandini
+	Data/Time: 05/09/19 às 08:51:20
+	Descricao: Method responsavel por buscar os titulos baixados
+	Sintaxe  : <Vide Parametros Formais>
+*/
+/*/{Protheus.doc} FIEMT_SFFNBX1A_CTB::SeekBaixa
+Method responsavel por buscar os titulos baixados
+@type method
+@author Carlos Ryve Gandini
+@since 05/09/19 às 08:51:20
+@param cPrefixo, character, Prefixo
+@param cNumero, character, Numero
+@param cParcela, character, Parcela
+@param cTipo, character, Tipo
+@param cCliente, character, Código do cliente
+@param cLoja, character, Loja do cliente
+@param cSit, character, Situação
+/*/
+Method SeekBaixa(cPrefixo,cNumero,cParcela,cTipo,cCliente,cLoja,cSit) Class FIEMT_SFFNBX1A_CTB
+
+_SetOwnerPrvt( "cAlias" , GetNextAlias() )
+
+PARAMTYPE 0 VAR cPrefixo AS CHARACTER
+PARAMTYPE 1 VAR cNumero AS CHARACTER
+PARAMTYPE 3 VAR cTipo AS CHARACTER
+PARAMTYPE 4 VAR cCliente AS CHARACTER
+PARAMTYPE 5 VAR cLoja AS CHARACTER
+PARAMTYPE 6 VAR cSit AS CHARACTER OPTIONAL DEFAULT " "
+
+
+BeginSql Alias cAlias
+    SELECT R_E_C_N_O_ RECNO
+    FROM %TABLE:SE5% SE5
+    WHERE 1=1
+        AND SE5.E5_FILIAL  = %Exp:xFilial("SE5")%
+        AND SE5.E5_PREFIXO = %Exp:cPrefixo%
+        AND SE5.E5_NUMERO  = %Exp:cNumero%
+        AND SE5.E5_PARCELA = %Exp:cParcela%
+        AND SE5.E5_TIPO    = %Exp:cTipo%
+        AND SE5.E5_CLIFOR  = %Exp:cCliente%
+        AND SE5.E5_LOJA    = %Exp:cLoja%
+        AND SE5.E5_SITUACA = %Exp:cSit%
+        AND SE5.%NOTDEL%
+        AND SE5.E5_SEQ =
+                        (
+                        SELECT MAX(T.E5_SEQ)
+                        FROM %TABLE:SE5% T
+                        WHERE 1=1
+                            AND T.E5_FILIAL = SE5.E5_FILIAL
+                            AND T.E5_PREFIXO = SE5.E5_PREFIXO
+                            AND T.E5_NUMERO = SE5.E5_NUMERO
+                            AND T.E5_PARCELA = SE5.E5_PARCELA
+                            AND T.E5_TIPO = SE5.E5_TIPO
+                            AND T.E5_CLIFOR = SE5.E5_CLIFOR
+                            AND T.E5_LOJA = SE5.E5_LOJA
+                            AND T.E5_SITUACA = SE5.E5_SITUACA
+                            AND T.%NOTDEL%
+                        )           
+
+EndSql
+
+Return
+

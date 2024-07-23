@@ -1,0 +1,181 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "FONT.CH"
+#INCLUDE "COLORS.CH"  
+#INCLUDE "PARMTYPE.CH"     
+#INCLUDE "FWMBROWSE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH" 
+
+#DEFINE CRLF chr(13)+chr(10)   
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <SF7325X>
+  #CONTROLE_DN - Rotina de Re-Direciomento para Rotina de Exportacao ao DN
+   Rotina de Exportacao ao DN 
+	Exportações para DN - [ZA - TAB REMESSA AO DN]
+	--------------------
+     1) SA1 - Contas
+     2) AD9 - Contatos
+     3) AD1 - Oportunidades
+     4) ADJ - Produtos Oportunidades
+     5) ADY - Propostas
+     6) ADZ - Produtos Propostas
+     7) CN9 - Contratos
+     8) CNB - Produtos do Contrato //CNE - Produtos Contratos (Medicao)
+     9) SU9 - Ocorrencias
+    10) SB1 - Produtos  
+
+@author Antonio Dantas 
+@since 27/11/2015
+@version<1.00>
+@receive
+<   _cModo (c) - Modo de Execucao [E=Emissao;R=Re-Emissao]
+   _cHistor (c) - Historico complementar da Remessa 
+>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+-------------------------------------------------------------------------------
+*/                                                                       
+User Function SF7325X(_cModo,_cHistor)
+
+Local cEstat := U_SFGN001A(ProcName(0), "SF7325X")
+Local _lRemOK		:= .f.  
+Private _cMASTER	:= "" 
+//--
+DEFAULT _cModo			:= "E"
+DEFAULT _cHistor		:= ""
+//-- Localiza o Layout que Sera utilizado 
+dbSelectArea("ZCJ")
+ZCJ->(dbSetOrder(1))
+ZCJ->(dbSeek(FwxFilial("ZCJ")+ZCK->ZCK_LAYOUT))
+//-- Identifica o ALIAS MASTER
+_cMASTER := ZCK->ZCK_MASTER
+//-- 
+//+------------------------------------------------------------------+
+//| Valida a execucao da Devolucao                                   | 
+//+------------------------------------------------------------------+
+If !(ZCK->ZCK_STATUS $ "PD")		//-- P=Preparacao; D=Devolvida
+	Aviso(FunName()+"/"+ProcName(),"Remessa fora da condição para Emissão ou Re-Emissão!",{"OK"})
+	Return .f.
+Endif 
+do Case 
+	Case UPPER(_cMASTER) == "SA1" 			//-- 1) SA1 - Contas
+		_lRemOK := u_SF7334X(_cModo,_cHistor)
+	
+	Case UPPER(_cMASTER) == "AD9" 			//-- 2) AD9 - Contatos
+		_lRemOK := u_SF7326X(_cModo,_cHistor)
+
+	Case UPPER(_cMASTER) == "AD1"			//-- 3) AD1 - Oportunidades
+		_lRemOK := u_SF7327X(_cModo,_cHistor)
+
+	Case UPPER(_cMASTER) == "ADJ" 			//-- 4) ADJ - Produtos Oportunidades
+		_lRemOK := u_SF7328X(_cModo,_cHistor)
+
+	Case UPPER(_cMASTER) == "ADY" 			//-- 5) ADY - Propostas
+		_lRemOK := u_SF7329X(_cModo,_cHistor)
+
+	Case UPPER(_cMASTER) == "ADZ" 			//-- 6) ADZ - Produtos Propostas
+		_lRemOK := u_SF7330X(_cModo,_cHistor)
+
+	Case UPPER(_cMASTER) == "CN9" 			//-- 7) CN9 - Contratos
+		_lRemOK := u_SF7331X(_cModo,_cHistor)
+	
+	Case UPPER(_cMASTER) == "CNB" 			//-- 08) CNB - Produtos do Contrato 
+		_lRemOK := u_SF7336X(_cModo,_cHistor)
+
+	/*Case UPPER(_cMASTER) == "CNE" 			//-- 8) CNE - Produtos Contratos (Ainda nao temos medicao)
+		_lRemOK := u_SF7332X(_cModo,_cHistor)*/
+
+	Case UPPER(_cMASTER) == "SU9" 			//-- 9) SU9 - Ocorrencias
+		_lRemOK := u_SF7333X(_cModo,_cHistor)
+
+	Case UPPER(_cMASTER) == "SB1" 			//-- 10) SB1 - Produtos 
+		_lRemOK := u_SF7335X(_cModo,_cHistor)
+
+EndCase
+Return _lRemOK 
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fMarkRem>
+ Marca a remessa (Modifica o STATUS) conforme o caso; Operacao passada por
+ parametro
+
+@author<Antonio Dantas>
+@since<13/02/2015>
+@version<1.00>
+@receive
+<    _cOper (c) - Tipo de Operacao Realizada, sendo:
+                  P=Preparacao;
+                  E=Enviada;
+                  D=Devolvida;
+                  R=Reenviada;
+                  V=Validada;
+                  F=Finalizada OK;
+                  C=Cancelada
+   _cComple (c) - Complemento para Historico da Movimentacao.
+   _cCasa   (c) - Identifica a Casa das Informacoes que foram enviadas
+                  sendo; 01MT, 02MT, 03MT... EM BRANCOS TODAS 
+>
+@return< _lReturn (L) - (.t.) - Processo finalizado OK; 
+                        (.f.) - Processo nao Finalizado
+>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+User Function fMarkRem(_cOper,_cComple,_cCasa)
+
+Local cEstat := U_SFGN001A(ProcName(0), "SF7325X")
+Local _lReturn		:= .f. 
+Local _cHistory 	:= ""
+Local _cMasrk		:= "PEDRVFC" 
+Local _aOper 		:={	"PREPARAÇÃO" 	,;
+						"ENVIADA"		,;
+						"DEVOLVIDA"		,;
+						"REENVIADA"		,;
+						"VALIDADA"		,;
+						"FINALIZADA OK"	,;
+						"CANCELADA"		}
+//-- Implementa o Historico
+_cHistory := Dtoc(dDataBase)+" "+Time()+" -> Remessa ["+_aOper[At(Upper(_cOper),_cMasrk)]+"] pelo Operador "+Upper(cUserName)+CRLF
+If !Empty(Alltrim(_cHistory))
+	_cHistory += _cComple+CRLF
+Endif 
+_cHistory += "--------> "+CRLF
+_cHistory += " "+CRLF
+_cHistory += ZCK->ZCK_HISTOR			 
+//-- 
+If (ZCK->(RecLock("ZCK",.f.)))
+	do Case  
+		Case _cOper = "P"   //-- Preparacao;
+			//-- Complementos 
+		Case _cOper = "E"   //-- Enviada;
+			Replace	ZCK->ZCK_DATA	With dDataBase		//-- Data Remessa
+			Replace	ZCK->ZCK_HORA	With Time()			//-- Hr Remessa
+			Replace	ZCK->ZCK_USER	With __cUserID 		//-- Operador
+			Replace	ZCK->ZCK_ARQUIV	With _cNomArqR		//-- Nome Arq Ger
+		Case _cOper = "D"   //-- Devolvida;
+			//-- Complementos 
+		Case _cOper = "R"   //-- Reenviada;
+			//-- Complementos 
+		Case _cOper = "V"   //-- Validada;
+			//-- Complementos 
+		Case _cOper = "F"   //-- Finalizada OK;
+			//-- Complementos 
+		Case _cOper = "C"   //-- Cancelada
+			//-- Complementos 
+	EndCase 
+	Replace	ZCK->ZCK_HISTOR With _cHistory	//-- Historico
+	Replace	ZCK->ZCK_STATUS With _cOper		//-- Status
+	Replace	ZCK->ZCK_CASA   With _cCasa		//-- Qual Casa foi Processada 
+	//-- 
+	ZCK->(MsUnLock())
+	ZCK->(DbCommit())
+	_lReturn := .t. 
+Endif 
+Return _lReturn

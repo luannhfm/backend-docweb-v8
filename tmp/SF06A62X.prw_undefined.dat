@@ -1,0 +1,457 @@
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE "TBICONN.CH"
+#INCLUDE "IDATOOLS.CH"
+
+#DEFINE CR Chr(13) + Chr(10)
+
+/*/{Protheus.doc} SF06A62X
+@description  Rotina automática de envio titulos a receber para API do BB
+
+@author Diego Donatti Moura
+@since 21/08/2020
+@version 12.1.17
+
+/*/
+User Function SF06A62X(p_nProcess, p_lExecAuto, p_lVisuaRet)
+
+    Local cAlias    := GetNextAlias()
+    Local cQuery    := ""
+    Local lRet      := .F.
+    Local oIntegra  := Nil
+
+    Default p_nProcess  := 2
+    DeFault p_lExecAuto := IsBlind()
+    DeFault p_lVisuaRet := .F.
+
+    //Wjr Lembrar remover o .T. para não apresentar mensagens.
+    oIntegra := INTBOLBB():New(SuperGetMV('MV_XMSGBB',, .F.))
+    oIntegra:PostToken()
+    
+    cQuery += " SELECT  EA_FILIAL,EA_PREFIXO,EA_NUM,EA_PARCELA,EA_TIPO,EA_NUMBOR,EA_PORTADO,EA_AGEDEP,EA_NUMCON,EA_FORNECE,EA_LOJA,EA_XSTATUS,EA_XVARCAR,EA.R_E_C_N_O_ AS EA_RECNO,"
+    cQuery += "         A6_FILIAL,A6_COD,A6_AGENCIA,A6_NUMCON,A6_XCONV,A6_XTPCART,A6_XVARCAR,"
+    cQuery += "         E1_FILIAL,E1_NUMBCO,E1_NUMBOR,E1_PREFIXO,E1_NUM,E1_PARCELA,E1_TIPO,E1_CLIENTE,E1_LOJA,E1_EMISSAO,E1_VENCTO,E1_VENCREA,E1_VALOR,E1_BAIXA,E1_IDCNAB,E1_DESCFIN,E1_XENVBOL, E1.E1_XHORAE, E1.E1_PORCJUR, E1.R_E_C_N_O_ AS E1_RECNO,"
+    cQuery += "         E1_XNEWVEN,E1_XNEWVAL,E1_XNEWEMI,EE_XMULTA,E1_MOVIMEN, "
+    cQuery += "         A1_FILIAL,A1_COD,A1_LOJA,A1_BAIRRO,A1_CEP,A1_MUNC,A1_END,A1_NOME,A1_PESSOA,A1_CGC,A1_EST"
+    cQuery += " FROM " + RetSqlName("SEA") + "  EA "
+    cQuery += "    INNER JOIN " + RetSqlName("SA6") + "  A6 ON ( A6_COD      = EA_PORTADO "
+    cQuery += "                                            AND A6_AGENCIA    = EA_AGEDEP "
+    cQuery += "                                            AND A6_NUMCON     = EA_NUMCON "
+    cQuery += "                                            AND A6_FILIAL     = '" + xFilial("SA6") + "'"
+    cQuery += "                                            AND A6.D_E_L_E_T_ = ' ' ) "
+    cQuery += "    INNER JOIN " + RetSqlName("SEE") + "  EE ON ( EE_CODIGO   = EA_PORTADO "
+    cQuery += "                                            AND EE_AGENCIA    = EA_AGEDEP "
+    cQuery += "                                            AND EE_CONTA      = EA_NUMCON "
+    cQuery += "                                            AND EE_SUBCTA     = '20 ' " // SUBCONTA PADRÃO DE RECEBIMENTO FIEMT
+    cQuery += "                                            AND EE_FILIAL     = '" + xFilial("SEE") + "'"
+    cQuery += "                                            AND EE.D_E_L_E_T_ = ' ' ) "    
+    cQuery += "    INNER JOIN " + RetSqlName("SE1") + "  E1 ON ( E1_PREFIXO  = EA_PREFIXO "
+    cQuery += "                                            AND E1_NUM        = EA_NUM "
+    cQuery += "                                            AND E1_PARCELA    = EA_PARCELA "
+    cQuery += "                                            AND E1_TIPO       = EA_TIPO "
+    cQuery += "                                            AND E1_NUMBOR     = EA_NUMBOR "
+    cQuery += "                                            AND E1_FILIAL     = '" + xFilial("SE1") + "'"
+    cQuery += "                                            AND E1.D_E_L_E_T_ = ' ' ) "
+    cQuery += "    INNER JOIN " + RetSqlName("SA1") + "  A1 ON ( A1_COD      = E1_CLIENTE "
+    cQuery += "                                            AND A1_LOJA       = E1_LOJA "
+    cQuery += "                                            AND A1_FILIAL     = '" + xFilial("SA1") + "'"
+    cQuery += "                                            AND A1.D_E_L_E_T_ = ' ' ) "
+    cQuery += " WHERE  EA.D_E_L_E_T_ = ' ' "
+
+    If !p_lExecAuto .And. p_nProcess == 1    // Manual
+
+        cQuery += " AND EA_XSTATUS    IN ('01', '02', '07', '99', '95')"
+        cQuery += " AND EA_PREFIXO    = '" + SE1->E1_PREFIXO + "' "
+        cQuery += " AND EA_NUM        = '" + SE1->E1_NUM + "' "
+        cQuery += " AND EA_PARCELA    = '" + SE1->E1_PARCELA + "' "
+        cQuery += " AND EA_TIPO       = '" + SE1->E1_TIPO + "' "
+
+    ElseIf p_lExecAuto .And. p_nProcess == 1 // Automatico
+
+        cQuery += "AND EA_XSTATUS     = '02'"
+
+    ElseIf p_nProcess == 2 .and. p_lVisuaRet // Somente Consulta no Banco
+
+        cQuery += " AND EA_XSTATUS    NOT IN ('01', '02' ,'07', '99', '95', '96' )"
+        cQuery += " AND EA_PREFIXO    = '" + SE1->E1_PREFIXO + "' "
+        cQuery += " AND EA_NUM        = '" + SE1->E1_NUM + "' "
+        cQuery += " AND EA_PARCELA    = '" + SE1->E1_PARCELA + "' "
+        cQuery += " AND EA_TIPO       = '" + SE1->E1_TIPO + "' "
+
+    Else  //Consulta Retorno
+
+        cQuery += "AND EA_XSTATUS     = '03'"
+
+    EndIf
+
+    cQuery += "  AND  EA.EA_FILIAL = '" + xFilial('SEA') + "' "
+    cQuery += "ORDER BY " + SqlOrder(SE1->(IndexKey()))
+    cQuery := ChangeQuery(cQuery)
+
+    If Select(cAlias) > 0
+        (cAlias)->(DbCloseArea())
+    Else
+        DbUseArea(.T., "TOPCONN", TCGenQry(,,cQuery),cAlias, .F., .T.)
+    EndIf
+
+    TcSetField(cAlias, 'E1_EMISSAO', TamSX3('E1_EMISSAO')[3], TamSX3('E1_EMISSAO')[1], TamSX3('E1_EMISSAO')[2])
+    TcSetField(cAlias, 'E1_VENCTO', TamSX3('E1_VENCTO')[3], TamSX3('E1_VENCTO')[1], TamSX3('E1_VENCTO')[2])
+    TcSetField(cAlias, 'E1_XNEWVEN', TamSX3('E1_XNEWVEN')[3], TamSX3('E1_XNEWVEN')[1], TamSX3('E1_XNEWVEN')[2])
+    TcSetField(cAlias, 'E1_VENCREA', TamSX3('E1_VENCREA')[3], TamSX3('E1_VENCREA')[1], TamSX3('E1_VENCREA')[2])
+    TcSetField(cAlias, 'E1_MOVIMEN', TamSX3('E1_MOVIMEN')[3], TamSX3('E1_MOVIMEN')[1], TamSX3('E1_MOVIMEN')[2])
+    TcSetField(cAlias, 'E1_XNEWEMI', TamSX3('E1_XNEWEMI')[3], TamSX3('E1_XNEWEMI')[1], TamSX3('E1_XNEWEMI')[2])
+    TcSetField(cAlias, 'E1_VALOR', TamSX3('E1_VALOR')[3], TamSX3('E1_VALOR')[1], TamSX3('E1_VALOR')[2])
+    TcSetField(cAlias, 'E1_XNEWVAL', TamSX3('E1_XNEWVAL')[3], TamSX3('E1_XNEWVAL')[1], TamSX3('E1_XNEWVAL')[2])
+    TcSetField(cAlias, 'E1_DESCFIN', TamSX3('E1_DESCFIN')[3], TamSX3('E1_DESCFIN')[1], TamSX3('E1_DESCFIN')[2])
+    TcSetField(cAlias, 'E1_PORCJUR', TamSX3('E1_PORCJUR')[3], TamSX3('E1_PORCJUR')[1], TamSX3('E1_PORCJUR')[2])
+    TcSetField(cAlias, 'E1_BAIXA', TamSX3('E1_BAIXA')[3], TamSX3('E1_BAIXA')[1], TamSX3('E1_BAIXA')[2])
+    TcSetField(cAlias, 'EE_XMULTA', TamSX3('EE_XMULTA')[3], TamSX3('EE_XMULTA')[1], TamSX3('EE_XMULTA')[2])
+    TcSetField(cAlias, 'EA_RECNO', 'N', 17, 0)
+    TcSetField(cAlias, 'E1_RECNO', 'N', 17, 0)
+
+
+    //Adiciona os títulos no array
+    While (cAlias)->(!Eof())
+
+        If SubStr((cAlias)->E1_NUMBCO,1,7) == Alltrim((cAlias)->A6_XCONV)
+
+            If p_nProcess == 1
+
+                // Envia apenas títulos após 1 hora de emitido na execução via schedule
+                If .not. p_lExecAuto .or. ( p_lExecAuto .and. (Empty((cAlias)->E1_XHORAE) .or. ((cAlias)->E1_EMISSAO = dDataBase .and. Val(StrTran(Left(Time(), 5), ':')) >= 100 + Val(StrTran((cAlias)->E1_XHORAE, ':'))) .or. (cAlias)->E1_EMISSAO != dDataBase) )
+                
+                    If oIntegra:PostToken()[1]
+
+                        lRet := CriaBoleto(oIntegra,cAlias)
+
+                        If lRet
+
+                            DbSelectArea('SE1')
+                            SE1->(DbGoTo((cAlias)->E1_RECNO))
+                            If Reclock("SE1",.F.)
+                                SE1->E1_XENVBOL := "4"
+                                MsUnlock()
+                            EndIf
+                            
+                        EndIf
+                        
+                    EndIf
+
+                EndIf
+
+            Else
+                If oIntegra:PostToken()[1]
+                    ConsultaBol(oIntegra,(cAlias)->E1_NUMBCO,(cAlias)->A6_XCONV, p_lVisuaRet, cAlias)
+                EndIf
+            EndIf
+
+        Else
+
+            If IsBlind()
+                Conout("SF06A62X  - >>> Erro Nosso Numero gerado com convenio de outra Filial <<<")
+            Else
+                MsgStop("Convenio diferente de filial logada!!!")
+            EndIf
+
+            DbSelectArea("SEA")
+            SEA->(DbGoTo((cAlias)->EA_RECNO))
+            If RecLock("SEA",.F.)
+                SEA->EA_XSTATUS := "95"
+                SEA->EA_XMENSG  := "Convenio Diferente Filial"
+                SEA->EA_XVARCAR := (cAlias)->A6_XVARCAR
+                SEA->EA_XIDBB   := (cAlias)->E1_NUMBCO
+                SEA->EA_XCODAPI := 'NINF'
+                SEA->EA_XMSGAPI := 'Erro Nosso Numero gerado com convenio de outra Filial'
+                SEA->(MsUnlock())
+            EndIf
+            
+        Endif
+                
+        (cAlias)->(dbSkip())
+    EndDo
+
+Return lRet
+
+
+/*/{Protheus.doc} CriaBoleto
+@description  Rotina automática de envio de titulos a receber da API do BB
+
+@author Diego Donatti Moura
+@since 21/08/2020
+@version 12.1.17
+
+/*/
+Static Function CriaBoleto(oIntegra, cAlias)
+
+    Local aRet       := {}
+    Local oRet       := Nil
+    Local nTamNumBco := TamSX3('E1_NUMBCO')[1]
+    Local cCodAPI	 := ''
+    Local cErrAPI	 := '' 
+    Local nNumLimRec := GetNewPar('MV_XNUMDL', 29)
+    Local cLogErro   := ''
+    Local dDtMulta   
+    
+     IF !empty((cAlias)->E1_XNEWVEN)
+      dDtMulta  := (cAlias)->E1_XNEWVEN + 1
+      Else
+      dDtMulta  := (cAlias)->E1_VENCREA + 1
+     EndIf 
+
+    oBoleto := oIntegra:NewBoleto()
+
+    oBoleto["numeroConvenio"]                       := (cAlias)->A6_XCONV                           // "<float>"
+    oBoleto["numeroCarteira"]                       := (cAlias)->A6_XTPCART                         // "<float>"
+    oBoleto["numeroVariacaoCarteira"]               := AllTrim((cAlias)->A6_XVARCAR)                // "<float>"
+    oBoleto["codigoModalidade"]                     := 1                                            // "<float>"
+    IF !empty((cAlias)->E1_XNEWEMI)
+        oBoleto["dataEmissao"]                      := Day2Str((cAlias)->E1_XNEWEMI) + '.' + Month2Str((cAlias)->E1_XNEWEMI) + '.' + Year2Str((cAlias)->E1_XNEWEMI) // "<string>" - '13.08.2020'
+    ElseIf (dDataBase - (cAlias)->E1_EMISSAO) > 364 .AND. !Empty((cAlias)->E1_MOVIMEN)
+        oBoleto["dataEmissao"]                      := Day2Str((cAlias)->E1_MOVIMEN) + '.' + Month2Str((cAlias)->E1_MOVIMEN) + '.' + Year2Str((cAlias)->E1_MOVIMEN) // "<string>" - '13.08.2020'
+    Else
+        oBoleto["dataEmissao"]                      := Day2Str((cAlias)->E1_EMISSAO) + '.' + Month2Str((cAlias)->E1_EMISSAO) + '.' + Year2Str((cAlias)->E1_EMISSAO) // "<string>" - '13.08.2020'
+    EndIf
+    IF !empty((cAlias)->E1_XNEWVEN)
+        oBoleto["dataVencimento"]                   := Day2Str((cAlias)->E1_XNEWVEN) + '.' + Month2Str((cAlias)->E1_XNEWVEN) + '.' + Year2Str((cAlias)->E1_XNEWVEN) // "<string>" - '18.08.2020'
+      Else
+        oBoleto["dataVencimento"]                   := Day2Str((cAlias)->E1_VENCTO) + '.' + Month2Str((cAlias)->E1_VENCTO) + '.' + Year2Str((cAlias)->E1_VENCTO) // "<string>" - '18.08.2020'
+    EndIf
+    IF !empty((cAlias)->E1_XNEWVAL)
+        oBoleto["valorOriginal"]                    := (cAlias)->E1_XNEWVAL                           // "<float>"    
+    Else
+        oBoleto["valorOriginal"]                    := (cAlias)->E1_VALOR                           // "<float>"
+    EndIF
+    oBoleto["valorAbatimento"]                      := 0.00                                         // "<float>"
+    oBoleto["quantidadeDiasProtesto"]               := 0                                            // "<float>"
+    oBoleto["indicadorNumeroDiasLimiteRecebimento"] := Iif(nNumLimRec > 0, 'S', 'N')                // "<string>"
+    oBoleto["numeroDiasLimiteRecebimento"]          := nNumLimRec                                   // "<float>"
+    oBoleto["codigoAceite"]                         := 'A'                                          // "<string>"
+    oBoleto["codigoTipoTitulo"]                     := 2                                            // "<float>"
+    oBoleto["descricaoTipoTitulo"]                  := 'Duplicata Mercantil'                        // "<string>"
+    oBoleto["indicadorPermissaoRecebimentoParcial"] := 'N'                                          // "<string>"
+    oBoleto["numeroTituloBeneficiario"]             := (cAlias)->E1_IDCNAB                          // "<string>"
+    oBoleto["textoCampoUtilizacaoBeneficiario"]     := ''                                               // "<string>"
+    oBoleto["numeroTituloCliente"]                  := Padl(Alltrim((cAlias)->E1_NUMBCO),nTamNumBco,'0')// "<string>"
+    oBoleto["textoMensagemBloquetoOcorrencia"]      := ''                                           // "<string>"
+
+    If (cAlias)->E1_DESCFIN > 0
+        oBoleto["desconto"]["tipo"]                 := 2                                            // "<float>"
+        oBoleto["desconto"]["dataExpiracao"]        := Day2Str((cAlias)->E1_VENCTO) + '.' + Month2Str((cAlias)->E1_VENCTO) + '.' + Year2Str((cAlias)->E1_VENCTO) // "<string>" - '18.08.2020'
+        oBoleto["desconto"]["porcentagem"]          := (cAlias)->E1_DESCFIN                         // "<float>"
+        oBoleto["desconto"]["valor"]                := 0                                            // "<float>"
+    Else
+        oBoleto["desconto"]["tipo"]                 := 0                                            // "<float>"
+        oBoleto["desconto"]["dataExpiracao"]        := ''                                           // "<string>" - '18.08.2020'
+        oBoleto["desconto"]["porcentagem"]          := 0                                            // "<float>"
+        oBoleto["desconto"]["valor"]                := 0                                            // "<float>"
+    EndIf
+
+    oBoleto["segundoDesconto"]["dataExpiracao"]     := ''                                           // "<string>" - '18.08.2020'
+    oBoleto["segundoDesconto"]["porcentagem"]       := 0                                            // "<float>"
+    oBoleto["segundoDesconto"]["valor"]             := 0                                            // "<float>"
+
+    oBoleto["terceiroDesconto"]["dataExpiracao"]    := ''                                           // "<string>" - '18.08.2020'
+    oBoleto["terceiroDesconto"]["porcentagem"]      := 0                                            // "<float>"
+    oBoleto["terceiroDesconto"]["valor"]            := 0                                            // "<float>"
+
+    If (cAlias)->E1_PORCJUR > 0
+
+        oBoleto["jurosMora"]["tipo"]                    := 2                                            // "<float>"
+        oBoleto["jurosMora"]["porcentagem"]             := Round((cAlias)->E1_PORCJUR * 30, 2)          // "<float>"
+        oBoleto["jurosMora"]["valor"]                   := 0                                            // "<float>"
+
+	Else
+
+        oBoleto["jurosMora"]["tipo"]                    := 0                                            // "<float>"
+        oBoleto["jurosMora"]["porcentagem"]             := 0                                            // "<float>"
+        oBoleto["jurosMora"]["valor"]                   := 0                                            // "<float>"
+
+    EndIf
+
+    If (cAlias)->EE_XMULTA > 0
+    
+        oBoleto["multa"]["tipo"]                        := 2                                            // "<float>"
+        oBoleto["multa"]["data"]                        := Day2Str(dDtMulta) + '.' + Month2Str(dDtMulta) + '.' + Year2Str(dDtMulta)  // "<string>" - '19.08.2020'
+        oBoleto["multa"]["porcentagem"]                 := (cAlias)->EE_XMULTA                          // "<float>"
+        oBoleto["multa"]["valor"]                       := 0                                            // "<float>"
+    
+    Else
+    
+        oBoleto["multa"]["tipo"]                        := 0                                            // "<float>"
+        oBoleto["multa"]["data"]                        := ''                                           // "<string>" - '19.08.2020'
+        oBoleto["multa"]["porcentagem"]                 := 0                                            // "<float>"
+        oBoleto["multa"]["valor"]                       := 0                                            // "<float>"
+    
+    EndIf
+
+    oBoleto["pagador"]["bairro"]                    := LjRmvChEs(Alltrim((cAlias)->A1_BAIRRO))      // "<string>"
+    oBoleto["pagador"]["cep"]                       := Val((cAlias)->A1_CEP)                        // "<number>"
+    oBoleto["pagador"]["cidade"]                    := LjRmvChEs(Alltrim((cAlias)->A1_MUNC))        // "<string>"
+    oBoleto["pagador"]["endereco"]                  := LjRmvChEs(Alltrim((cAlias)->A1_END))         // "<string>"
+    oBoleto["pagador"]["nome"]                      := LjRmvChEs(Alltrim((cAlias)->A1_NOME))        // "<string>"
+    oBoleto["pagador"]["tipoRegistro"]              := Iif((cAlias)->A1_PESSOA=='F',1,2)            // "<float>" 1 - PF ou 2 - PJ
+    oBoleto["pagador"]["numeroRegistro"]            := Val((cAlias)->A1_CGC)                        // "<float>" CPF ou CNPJ
+    oBoleto["pagador"]["uf"]                        := (cAlias)->A1_EST                             // "<string>"
+    oBoleto["pagador"]["telefone"]                  := ""                                           // "<string>"
+
+    oBoleto["avalista"]["tipoRegistro"]             := 0                                            // "<float>"
+    oBoleto["avalista"]["numeroRegistro"]           := 0                                            // "<float>"
+    oBoleto["avalista"]["nomeRegistro"]             := ''                                           // "<string>"
+
+    oBoleto["email"]                                := ""                                           // "<string>"
+    oBoleto["quantidadeDiasNegativacao"]            := 0                                            // "<float>"
+
+    aRet := oIntegra:PostBoleto(oBoleto)
+
+    If aRet[1]
+
+        DbSelectArea("SEA")
+        DBGoTo((cAlias)->EA_RECNO)
+        If RecLock("SEA",.F.)
+            SEA->EA_XSTATUS := "03"
+            SEA->EA_XMENSG  := "Titulo Enviado"
+            SEA->EA_XVARCAR := (cAlias)->A6_XVARCAR
+            SEA->EA_XIDBB   := (cAlias)->E1_NUMBCO
+            SEA->EA_XCODAPI := ""
+            SEA->EA_XMSGAPI := ""
+            SEA->EA_XDTREG  := dDataBase
+            SEA->(MsUnlock())
+        EndIf
+
+    Else
+
+        oRet := aRet[2]:GetJsonObject('errors')
+        
+        If Valtype(oRet) == 'J' .and. Len(oRet) > 0 .and. VaLType(oRet[1]) == 'J'
+        	cCodAPI := cValtoChar(oRet[1]:GetJsonText("code"))
+        	cErrAPI := SubStr(Alltrim(oRet[1]:GetJsonText("message")),1,32)
+        Else
+        	cCodAPI := 'NINF'
+        	cErrAPI := SubStr(FwCutOff(aRet[2]:ToJson(),.T.),1,100)
+        EndIf
+        
+        DbSelectArea("SEA")
+        DBGoTo((cAlias)->EA_RECNO)
+        If RecLock("SEA",.F.)
+            If 'TITULO JA INCLUIDO' $ Upper(cErrAPI)
+                SEA->EA_XSTATUS := "03"
+                SEA->EA_XMENSG  := "Titulo Enviado"  
+                aRet[1]         := .T.
+            Else
+                IF !("indisponivel" $ cErrAPI .or. "null" $ cErrAPI .or. "DB2" $ cErrAPI .or. "Gateway" $ cErrAPI )
+                    SEA->EA_XSTATUS := "99"
+                    SEA->EA_XMENSG  := "Titulo Erro"
+                EndIF
+            EndIf
+            SEA->EA_XVARCAR := (cAlias)->A6_XVARCAR
+            SEA->EA_XIDBB   := (cAlias)->E1_NUMBCO
+            SEA->EA_XCODAPI := cCodAPI
+            SEA->EA_XMSGAPI := cErrAPI
+            SEA->(MsUnlock())
+        EndIf
+
+        cLogErro := 'Houve erro ao enviar Inclusao do Boleto:' + CR
+        cLogErro += '	Filial     -> ' + (cAlias)->E1_FILIAL + CR
+        cLogErro += '	Prefixo    -> ' + (cAlias)->E1_PREFIXO + CR
+        cLogErro += '	Numero     -> ' + (cAlias)->E1_NUM + CR
+        cLogErro += '	Parcela    -> ' + (cAlias)->E1_PARCELA + CR
+        cLogErro += '	Tipo       -> ' + (cAlias)->E1_TIPO + CR
+        cLogErro += ' Nosso Numero -> ' + (cAlias)->E1_NUMBCO + CR                        
+        cLogErro += ' Descrição do Erro: ' + CR
+        cLogErro += cErrAPI + CR
+
+        GravLog(cLogErro, 'SF06A62X', 'ENVIO_INCLUSAO_BOLETO_BANCO_BRASIL', !IsBlind())
+
+    EndIf
+
+Return aRet[1]
+
+
+/*/{Protheus.doc} ConsultaBol
+@description  Rotina automática de consulta de titulos a receber da API do BB
+
+@author Diego Donatti Moura
+@since 21/08/2020
+@version 12.1.17
+
+/*/
+Static Function ConsultaBol(oIntegra, p_cNossoNumTit, p_nNumConvenio, p_lVisuaRet, cAlias)
+
+    Local aRet       := {.F., ''}
+    Local oBoleto    := Nil
+    Local cVarCart   := ""
+    Local nTamNumBco := TamSX3('E1_NUMBCO')[1]
+    Local cLogErro   := ''
+
+    Default p_cNossoNumTit := ''
+    Default p_nNumConvenio := ''
+    Default p_lVisuaRet    := .F.
+
+    //Carregando Retorno
+    aRet := oIntegra:GetBoleto(Padl(Alltrim(p_cNossoNumTit),nTamNumBco,'0'), p_nNumConvenio)
+
+    If aRet[1] .and. .not. p_lVisuaRet
+
+        If aRet[2]:GetJsonText("codigoEstadoTituloCobranca")  == "6"
+
+            //Carregando dados Sacado/Pago
+            aRetSacado   := aRet[2]:GetJsonObject('sacado')
+            aRetdesconto := aRet[2]:GetJsonObject('desconto')
+            aRetjuroMora := aRet[2]:GetJsonObject('juroMora')
+            aRetMulta    := aRet[2]:GetJsonObject('multa')
+
+            DbSelectArea("SEA")
+            DbOrderNickname("IDXAPPBB")
+            If SEA->(DbSeek(xFilial("SEA")+p_cNossoNumTit+cVarCart))
+                If RecLock("SEA",.F.)
+                    SEA->EA_XSTATUS := "04"
+                    SEA->EA_XMENSG  := "Titulo Liquidado"
+                    SEA->EA_XDTMOV  := CtoD(StrTran(aRet[2]:GetJsonText("dataRecebimentoTitulo"), ".", "/" ))
+                    SEA->EA_XVLRPGA := Val(aRetSacado:GetJsonText("valorPagoSacado"))
+                    SEA->EA_XDESCON := Val(aRetdesconto:GetJsonText("valorDescontoUtilizado"))
+                    SEA->EA_XJURMOR := Val(aRetjuroMora:GetJsonText("valorJuroMoraRecebido"))
+                    SEA->EA_XMULTA  := Val(aRetjuroMora:GetJsonText("valorMultaRecebido"))
+                    SEA->(MsUnlock())
+                EndIf
+            EndIf
+
+        EndIf
+
+    ElseIf aRet[1] .and. p_lVisuaRet
+        IdaMsg(aRet[2]:ToJson(), 'Consulta do estado do Boleto no Banco')
+    ElseIF "4023795.1" $ aRet[2]:ToJson() 
+        DbSelectArea("SEA")
+        DbOrderNickname("IDXAPPBB")
+        If SEA->(DbSeek(xFilial("SEA")+p_cNossoNumTit+(cAlias)->EA_XVARCAR  ))
+            IF (dDataBase - (cAlias)->E1_VENCTO  ) > 29 .And. Empty((cAlias)->E1_BAIXA) 
+ 
+                If RecLock("SEA",.F.)
+                    SEA->EA_XSTATUS := "96"
+                    SEA->EA_XMENSG  := "Registro Vencido no Banco"
+                    SEA->(MsUnlock())
+                EndIf
+            
+            ElseIF  !Empty((cAlias)->E1_BAIXA)  
+                If RecLock("SEA",.F.)
+                    SEA->EA_XSTATUS := "07"
+                    SEA->EA_XMENSG  := "Baixado Manualmente"
+                    SEA->(MsUnlock())
+                EndIf
+            EndIF
+        Endif
+    Else
+
+        cLogErro := 'Houve erro ao Consultar Boleto:' + CR
+        cLogErro += '	Filial     -> ' + (cAlias)->E1_FILIAL + CR
+        cLogErro += '	Prefixo    -> ' + (cAlias)->E1_PREFIXO + CR
+        cLogErro += '	Numero     -> ' + (cAlias)->E1_NUM + CR
+        cLogErro += '	Parcela    -> ' + (cAlias)->E1_PARCELA + CR
+        cLogErro += '	Tipo       -> ' + (cAlias)->E1_TIPO + CR
+        cLogErro += ' Nosso Numero -> ' + (cAlias)->E1_NUMBCO + CR                        
+        cLogErro += ' Descrição do Erro: ' + CR
+        cLogErro += aRet[2]:ToJson() + CR
+
+        GravLog(cLogErro, 'SF06A62X', 'ENVIO_CONSULTA_BOLETO_BANCO_BRASIL', !IsBlind())
+
+    EndIf
+
+Return

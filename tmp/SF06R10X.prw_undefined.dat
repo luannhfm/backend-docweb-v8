@@ -1,0 +1,185 @@
+#Include 'Protheus.ch'
+
+/*/{Protheus.doc} SF06R10X
+Relatório de auditoria do arquivo txt, Nota Control.
+@author Walmir Junior
+@since 28/03/2017
+@version 1.0
+@example
+(examples) U_SF06R10X()
+@see (links_or_references)
+/*/
+User Function SF06R10X()
+
+	Local   cMask    := "Arquivos Texto (*.TXT) |*.txt|"
+	Private cCaminho := cGetFile(cMask,"")		
+	
+	If !File(cCaminho)
+		Help(" ",1,"NOARQPAR")
+		Return .F.
+	Else
+		nHdlConf := FOPEN(cCaminho,0+64)
+	EndIf
+
+	If TRepInUse()
+		oReport  := ReportDef()
+		oReport:PrintDialog()
+	EndIf 
+	
+Return
+
+/*/{Protheus.doc} ReportDef
+(long_description)
+@type class
+@author Walmir Junior
+@since 28/03/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ReportDef
+
+	Local oReport
+	Local cNomeRel	:= "SF06R10X"
+	Local cTitRel	:= "Demonstrativo ISS"
+	Local cDescRel	:= "Demonstrativo ISS"
+	
+	oReport := TReport():New( cNomeRel, cTitRel,, { |oReport| ReportPrint(oReport) }, cDescRel )
+	//oReport:SetPortrait()
+	oReport:SetLandScape()
+	oReport:SetTotalInLine(.F.) 
+	oReport:Page()
+	
+	//-> Retorno
+	_oRelat := TRSection():New(oReport, "Titulos - ISS", {"SF1"})
+	_oNum		:= TRCell():New(_oRelat,"Linha"	)
+	_oNum:SetSize(10)
+	_oFil		:= TRCell():New(_oRelat,"F1_FILIAL"		,"SF1")
+	_oFil:SetSize(10)
+	_oDoc		:= TRCell():New(_oRelat,"F1_DOC"		,"SF1")
+	_oDoc:SetSize(10)
+	_oEmis		:= TRCell():New(_oRelat,"F1_EMISSAO"	,"SF1")
+	_oEmis:SetSize(10)
+	_oNome		:= TRCell():New(_oRelat,"A2_NOME"		,"SA2")
+	_oNome:SetSize(40)
+	_oTotal		:= TRCell():New(_oRelat,"D1_TOTAL"		,"SD1")
+	_oTotal:SetSize(30)
+	_oBsISS		:= TRCell():New(_oRelat,"D1_BASEISS"	,"SD1")
+	_oBsISS:SetSize(30)
+	_oAlISS		:= TRCell():New(_oRelat,"D1_ALIQISS"	,"SD1")
+	_oAlISS:SetSize(30)
+	_oVlISS		:= TRCell():New(_oRelat,"D1_VALISS"		,"SD1",,,,,,"RIGHT",,"RIGHT")
+	_oVlISS:SetSize(30)
+	
+	_oRelTo		:= TRSection():New(oReport, "Total - ISS")
+	_oISSX		:= TRCell():New(_oRelTo,"TOTAL"		,"SD1","")
+	_oISSX:SetSize(180)
+	_oISSTo		:= TRCell():New(_oRelTo,"ISS"		,"SD1","TOTAL ISS",,,,,"RIGHT",,"RIGHT")
+	_oISSTo:SetSize(30)
+	
+Return(oReport) 
+
+/*/{Protheus.doc} ReportPrint
+(long_description)
+@type function
+@author Walmir Junior
+@since 28/03/2017
+@version 1.0
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ReportPrint(oReport)
+
+	Local _oSec1    := oReport:Section(1)
+	Local _oRelTo	:= oReport:Section(2)
+	Local _cBuffer  := ""
+	Local _nLin		:= 1
+	Local _cDoc  	:= ""
+	Local _nBsISS	:= 0
+	Local _nTotal	:= 0
+	Local _nAlTot	:= 0
+	Local _cEmiss	:= ""
+	Local _cNomFor	:= ""
+	Local _aBuff	:= {}
+	Local _cFil		:= "        "
+	Local _cInscM	:= ""
+	Local _cNomCom	:= ""
+	Local _nVaISS	:= 0
+	Local _nVlTot	:= 0
+	
+	FT_FUSE(cCaminho)	
+	FT_FGOTOP()	
+	
+	//Pega linha de cabeçalho do arquivo.
+	_cBuffer := FT_FReadLn()
+	_aBuff := StrTokArr(_cBuffer, ";")
+	_cInscM := _aBuff[1]
+	_cNomCom := SubStr(_aBuff[4], 17,Len(_aBuff[4]) - 16)
+	
+	//+------------------------------------------------------------------+
+	//| Consulta o SIGAMAT.EMP para localizar a filial do arquivo.       |
+	//+------------------------------------------------------------------+
+	dbSelectArea("SM0")
+	SM0->(dbSetOrder(1))
+	SM0->(dbGoTop())
+	Do While SM0->(!Eof()) 
+		If AllTrim(SM0->(M0_INSCM)) == _cInscM .And. AllTrim(SM0->(M0_NOMECOM)) == _cNomCom
+			_cFil := AllTrim(SM0->(M0_CODFIL))
+			Exit
+		EndIf
+		SM0->(dbSkip())
+	Enddo 
+	
+	FT_FSKIP()
+	
+	//Trata linhas do arquivo para apresentação no relatório.
+	While !FT_FEOF()
+
+		_cBuffer := FT_FReadLn()
+			
+		_aBuff := StrTokArr(_cBuffer, ";")	
+		/* * * * * * * * * * * * * * */
+		/* Detalhe 01 - Nota Control */		
+		/* * * * * * * * * * * * * * */           
+		_nLin++
+		_cDoc	:= _aBuff[2]
+		_cEmiss	:= SubStr(_aBuff[6],1,2) + "/" + SubStr(_aBuff[6],3,2) + "/" + SubStr(_aBuff[6],5,4) 
+		_cNomFor:= _aBuff[9]
+		_nTotal	:= Val(_aBuff[4])
+		_nBsISS	:= Val(_aBuff[3])
+		_nAlTot	:= Val(_aBuff[5])
+		_nVaISS	:= (_nAlTot * _nBsISS)/100
+		
+		_nVlTot := _nVlTot + _nVaISS
+		
+		_oSec1:Init()
+		_oSec1:Cell("Linha"):SetValue(StrZero(_nLin, 6))			
+		_oSec1:Cell("F1_FILIAL"):SetValue(AllTrim(_cFil))
+		_oSec1:Cell("F1_DOC"):SetValue(AllTrim(_cDoc))
+		_oSec1:Cell("F1_EMISSAO"):SetValue(AllTrim(_cEmiss))			
+		_oSec1:Cell("A2_NOME"):SetValue(AllTrim(_cNomFor))
+		_oSec1:Cell("D1_TOTAL"):SetValue(_nTotal)
+		_oSec1:Cell("D1_BASEISS"):SetValue(_nBsISS)
+		_oSec1:Cell("D1_ALIQISS"):SetValue(_nAlTot)
+		_oSec1:Cell("D1_VALISS"):SetValue(_nVaISS)
+		_oSec1:Printline()	
+		
+		FT_FSKIP()		
+	EndDo
+	_oSec1:Finish()	
+	
+	_oRelTo:Init()
+	_oRelTo:Cell("TOTAL"):SetValue("")
+	_oRelTo:Cell("ISS"):SetValue(Transform(_nVlTot,"@E 999,999.99"))
+	_oRelTo:Printline()
+	_oRelTo:Finish()
+	
+	oReport:EndPage()
+	
+
+Return

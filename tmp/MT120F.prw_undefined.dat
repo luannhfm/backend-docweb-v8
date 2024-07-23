@@ -1,0 +1,83 @@
+#Include "Protheus.ch"
+#Include "Topconn.ch"
+
+/*/{Protheus.doc} MT120F
+	Manipula os dados no pedido de Compras na tabela SC7.
+	LOCALIZAÇÃO : Function A120GRAVA - Função responsável 
+		pela gravação do Pedido de Compras e Autorização de Entrega.
+	EM QUE PONTO : Após a gravação dos itens do pedido de compras, 
+		no final da função A120GRAVA, pode ser usado para manipular 
+		os dados gravados do pedido de compras na tabela SC7, 
+		recebe como parametro a filial e numero do pedido.
+
+@author Franklin de Brito de Oliveira
+@since 24/10/2016
+@Param PARAMIXB, Caracter, String com xFilial("SC7") e Numero do Pedido.
+@Return Nil
+/*/
+User Function MT120F()
+
+Local _cPedKey := ParamIXB
+Local _aArea   := GetArea()
+Local _cQry    := ""
+Local _cAlias  := GetNextAlias()
+Local _cSuper  := GetNewPar( "MV_XSUPER", " ")
+  
+   dbSelectArea("SC7")
+   SC7->(dbSetOrder(1))
+   
+   If SC7->(dbSeek(_cPedKey)) .And. !IsInCallStack("MATA160")
+   		_cQry := "SELECT SCR.CR_FILIAL,	" + CRLF
+		_cQry += "	SCR.CR_TIPO,		" + CRLF
+		_cQry += "	SCR.CR_NUM,			" + CRLF
+		_cQry += "	SCR.CR_USER			" + CRLF
+		_cQry += "FROM " + RetSqlName("SC7") + " SC7			" + CRLF
+		_cQry += "INNER JOIN " + RetSqlName("SAL") + " SAL		" + CRLF
+		_cQry += "ON SAL.D_E_L_E_T_ = ' '						" + CRLF	
+		_cQry += "AND SAL.AL_FILIAL = '" + xFilial("SAL") + "'	" + CRLF
+		_cQry += "AND SAL.AL_COD    = SC7.C7_APROV				" + CRLF
+		_cQry += "INNER JOIN " + RetSqlName("SCR") + " SCR		" + CRLF
+		_cQry += "ON SCR.D_E_L_E_T_ = ' '						" + CRLF
+		_cQry += "AND SCR.CR_FILIAL = SC7.C7_FILIAL				" + CRLF
+		_cQry += "AND SCR.CR_NUM    = SC7.C7_NUM				" + CRLF
+		_cQry += "AND SCR.CR_USER   = SAL.AL_USER				" + CRLF
+		_cQry += "AND SCR.CR_TIPO   = 'PC'						" + CRLF
+		_cQry += "INNER JOIN " + RetSqlName("ZDB") + " ZDB		" + CRLF
+		_cQry += "ON ZDB.D_E_L_E_T_        = ' '				" + CRLF
+		_cQry += "AND ZDB.ZDB_FILIAL       = '" + xFilial("ZDB") + "'	" + CRLF
+		_cQry += "AND ZDB.ZDB_CODIGO       = SAL.AL_XUNIDAP				" + CRLF
+		_cQry += "AND TRIM(ZDB.ZDB_UNIDAP) = SUBSTR(CR_FILIAL, 1, 4)	" + CRLF
+		_cQry += "WHERE SC7.D_E_L_E_T_     = ' '						" + CRLF
+		_cQry += "AND SC7.C7_FILIAL        = '" + SC7->C7_FILIAL +"'	" + CRLF
+		_cQry += "AND SC7.C7_NUM           = '" + SC7->C7_NUM    +"'	" + CRLF
+		
+		If Select((_cAlias)) > 0
+			(_cAlias)->( DbCloseArea() )
+		EndIf
+		
+		_cQry := ChangeQuery(_cQry)
+		
+		TcQuery _cQry Alias (_cAlias) New
+		
+		DbSelectArea("SCR")
+		DbSetOrder(2)
+
+		If SCR->( DbSeek((_cAlias)->CR_FILIAL + (_cAlias)->CR_TIPO + (_cAlias)->CR_NUM) )
+			While .Not. SCR->( EoF() ) .And. ( SCR->(CR_FILIAL + CR_TIPO + CR_NUM) == (_cAlias)->(CR_FILIAL + CR_TIPO + CR_NUM) )
+				If .Not. ( (_cAlias)->CR_USER == SCR->CR_USER ) .And. SCR->CR_APROV != _cSuper
+					If RecLock("SCR", .F.)
+						Replace SCR->CR_OBS With '[MT120F]DEL.XUNIDAP.DIF.FILIAL'
+						SCR->( DbDelete() )
+						SCR->( MsUnLock() )
+					EndIf
+				EndIf
+				
+				Incproc()
+				SCR->( DbSkip() )
+			EndDo
+		EndIf
+	EndIf
+
+	RestArea(_aArea)
+               				         
+Return NiL

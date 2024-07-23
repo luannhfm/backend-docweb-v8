@@ -1,0 +1,549 @@
+#Include "Protheus.ch"
+#Include "ATFA125.CH"
+
+//********************************
+// Controle de multiplas moedas  *
+//********************************
+Static lMultMoed := FindFunction( "AtfMoedas" )
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SF01A07X   ºAutor  ³Walmir Junior      º Data ³  17/04/17   º±±
+±±±±±±±±±±±±±±±±±±±±±±±±±       CÓPIA      ±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ºPrograma  ³AF125Trans ºAutor  ³Microsiga          º Data ³  29/08/10   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³  Solicitação de transferência em lote.                     º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ SIGAATF                                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+User Function SF01A07X( cAlias, nReg, nOpc, cExpFiltro )
+
+Local aArea      := GetArea()
+Local oDlg
+Local nOpt		 := 1
+Local cBase 	 := CriaVar( "NM_CBASE" , .f. )
+Local cItem 	 := CriaVar( "NM_ITEM" , .f. )
+Local dDataTrans := dDataBase
+Local oBaseI
+Local oBaseF
+Local lGspInUseM := If( Type( 'lGspInUse' ) == 'L', lGspInUse, .F.)
+
+Local nCustAtu 	 := 0, nValResid := 0
+Local nHdlPrv	 := 0
+Local cArquivo	 := ""
+Local lCtb      	:= CtbInUse(), cAliasCta, cAliasCus, cAliasIt, cAliasCl
+Local aCtb			// Variavel para contabilizacao entre filiais
+Local aTitFolder := { "Conta contabil" }
+Local aPages	 := {}
+Local oPai
+Local nLin		 := nPanelBem := 0
+Local lCC		 := (lGspInUseM .Or. CtbMovSaldo("CTT"))
+Local lItem		 := (! lGspInUseM .And. CtbMovSaldo("CTD"))
+Local lClVl		 := (! lGspInUseM .And. CtbMovSaldo("CTH"))
+Local lFolder    := .F.
+Local bConta		:= { |cConta| A060DscCta(cConta, lCtb, lGspInUseM,"CT1") }
+Local bCC    		:= { |cCc   | 	A060DscCta(cCc, lCtb, lGspInUseM,"CTT") }
+Local bItem  		:= { |cItem | A060DscCta(cItem, lCtb, lGspInUseM,"CTD")}
+Local bClVl  		:= { |cClvl | 	A060DscCta(cClvl, lCtb, lGspInUseM,"CTH")}
+Local aObjetos		:= { { ,,,,, 	IIF(lGspInUseM, "NI1","CT1"), bConta } }, nTamObjs := 8, nEntidade, nGets
+
+Local aVar     		:= { { "", "", "", "", "" } }		// Somente inicializo
+Local aCpDigit		:= { { "N3_CCONTAB", "N3_CCORREC", "N3_CDEPREC", "N3_CCDEPR", "N3_CDESP", "N3_CCUSTO", "SN1->N1_LOCAL" } }
+Local oLocal, oCCusto
+Local ni
+Local cN1TipoNeg := Alltrim(SuperGetMv("MV_N1TPNEG",.F.,"")) // Tipos de N1_PATRIM que aceitam Valor originais negativos
+Local cN3TipoNeg := Alltrim(SuperGetMv("MV_N3TPNEG",.F.,"")) // Tipos de N3_TIPO que aceitam Valor originais negativos
+Local oDataTrans
+Local cGrupo := Space(Len(SN1->N1_GRUPO))
+Local oGetGrupo
+Local oGetTxPad
+Local bCcdesp := { |cCCusto| aVar[2][3] := cCCusto, .T. } //Atualização dos campos de Centro de Custo.
+Local lCcdp := GetMv("MV_ATFCCDP",.F.,.F.)
+Local oGERANF
+Local _cGERANF := "2"
+Local oCbxClasNF
+Local oHistSol
+Local cTipoAprov := "2" // + STR0109	//"Responsavel geral"
+Local aTipoAprov := { "1=" + STR0108, "2=" + STR0109}	//"Responsavel individual" | "Responsavel geral"
+Local oTipoAprov
+
+// Classificacoes 	1 - Classificacao do bem
+//					2 - Correcao monetaria
+//					3 - Despesa depreciacao
+//					4 - Depreciacao acumulada
+//					5 - Correcao Despesa Depreciacao
+
+Private nTotal 		:= 0 , nTotal2:= 0
+Private lPrim 		:= .T., lPrim2 := .T.
+
+//********************************
+// Controle de multiplas moedas  *
+//********************************
+Private aPicture	:= {}, cPictQtd
+Private cLocAtivo
+
+// VARIAVEIS PARA CONTABILIZACAO CONTA
+
+CTABEM		:= ""
+DESPDEPR	:= ""
+DEPREACUM	:= ""
+CORREDEPR	:= ""
+CORREBEM	:= ""
+
+// Variaveis para contabilizacao Centro de custo, item e classe de valor
+
+Custo 		:= ""
+
+CUSTBEMCTB	:= ""
+CCCORRCTB	:= ""
+CCDESPCTB	:= ""
+CCCDESCTB	:= ""
+CCCDEPCTB	:= ""
+
+SUBCCONCTB	:= ""
+SUBCCORCTB	:= ""
+SUBCDESCTB	:= ""
+SUBCDEPCTB	:= ""
+SUBCCDECTB	:= ""
+
+CLVLCONCTB	:= ""
+CLVLCORCTB	:= ""
+CLVLDESCTB	:= ""
+CLVLDEPCTB	:= ""
+CLVLCDECTB	:= ""
+
+lAuto 		:= nReg = Nil
+cFilDest 	:= cFilAnt
+cFilOrig 	:= cFilAnt
+
+// Posicionamento dos campos da tela para facilitar manutencao
+
+#DEFINE 	P_LABEL			9
+#DEFINE 	P_ORIGEM		75
+#DEFINE 	P_DESTINO		150
+#DEFINE 	P_ESPACO_OBJ    14
+
+//Tipo Depreciacao diferente 02-Mes Subsequente
+If GetMv( "MV_TIPDEPR" ) == "2" .And. dDatabase < ( FirstDay( GetMv( "MV_ULTDEPR" ) ) )
+	Help(" ",1,"AF125TPDEP",,STR0122 + DTOC( SuperGetMv( "MV_ULTDEPR" ) ) ,1,0)	//"Tipo Depreciacao diferente 02-Mes Subsequente"
+	Return
+Endif
+
+For nGets := 1 To Len(aCpDigit[1]) - 2
+	nTamObjs += P_ESPACO_OBJ
+Next
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Se CTB estiver em uso CT1 e CTT respectiva/e ao inves de SI1 e SI3        ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+If lCtb .And. ! lGspInUseM
+	cAliasCta := "CT1"
+	cAliasCus := "CTT"
+	cAliasIt  := "CTD"
+	cAliasCl  := "CTH"
+Else
+	If lGspInUseM
+		cAliasCta := "NI1"
+		cAliasCus := "NI3"
+		cAliasIt  := ""
+		cAliasCl  := ""
+	Else
+		cAliasCta := "SI1"
+		cAliasCus := "SI3"
+		cAliasIt  := "SID"
+		cAliasCl  := ""
+	Endif
+EndIf
+
+// A posicao do Centro de Custo torna-se obrigatoria quando existir Item ou Classe de Valor.
+If lCc .or. lItem .or. lClVl
+	Aadd( aTitFolder, IIF( lGspInUseM, STR0078, CtbSayApro( "CTT" ) ) )	//"Centro de Custo"
+	Aadd( aObjetos, { ,,,,, IIF( lGspInUseM, "NI3", "CTT" ), bCC } )
+	Aadd( aVar, AClone(aVar[1]))
+	Aadd( aCpDigit, { "N3_CUSTBEM", "N3_CCCORR", "N3_CCDESP", "N3_CCCDEP", "N3_CCCDES" } )
+Endif
+
+// A posicao do item torna-se obrigatoria quando existir a Classe de Valor.
+If lItem .or. lClVl
+	Aadd( aTitFolder, CtbSayApro( "CTD" ) )
+	Aadd( aObjetos, { ,,,,, "CTD", bItem } )
+	Aadd( aVar, AClone(aVar[1]))
+	Aadd( aCpDigit, { "N3_SUBCCON", "N3_SUBCCOR", "N3_SUBCDEP", "N3_SUBCCDE", "N3_SUBCDES" } )
+Endif
+
+If lClVl
+	Aadd( aTitFolder, CtbSayApro("CTH"))
+	Aadd( aObjetos, { ,,,,, "CTH", bClVl })
+	Aadd( aVar, AClone(aVar[1]))
+	Aadd( aCpDigit, { "N3_CLVLCON", "N3_CLVLCOR", "N3_CLVLDEP", "N3_CLVLCDE", "N3_CLVLDES" })
+Endif
+
+lFolder   := Len(aTitFolder) > 1
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Pesquisa picture para valores do ativo									³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+cPictQtd  := PesqPict("SN1","N1_QUANTD", 12)
+
+//********************************
+// Controle de multiplas moedas  *
+//********************************
+If lMultMoed
+	AtfMultMoe( ,,{ |x| Aadd(aPicture, PesqPict( "SN3", "N3_VORIG" + Alltrim(Str(x)), 18) ) } )
+Else
+	aPicture := {nil,nil,nil,nil,nil}
+	aPicture[1] := PesqPict("SN3","N3_VORIG1", 18)
+	aPicture[2] := PesqPict("SN3","N3_VORIG2", 18)
+	aPicture[3] := PesqPict("SN3","N3_VORIG3", 18)
+	aPicture[4] := PesqPict("SN3","N3_VORIG4", 18)
+	aPicture[5] := PesqPict("SN3","N3_VORIG5", 18)
+EndIf
+Pergunte("AFA060", .F.)
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Carrega as perguntas selecionadas:                            ³
+//³ mv_par01 - 1 Contabiliza                                      ³
+//³            2 NAO Contabiliza                                  ³
+//³ mv_par02 - 1 Mostra Lancto Cont bil                           ³
+//³            2 Nao Mostra Lancto Cont bil                       ³
+//³ mv_par03 - 1 Aglutina Lancto                                  ³
+//³          - 2 Nao Aglutina Lancto                              ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³ Verifica se o registro n„o est  em uso por outra esta‡„o. ³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+
+dbSelectArea( cAlias )
+
+Aadd(aVar[1], CriaVar("N3_CCUSTO",.F.))
+Aadd(aVar[1], SN1->N1_LOCAL)
+
+//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+//³	 No caso de contas de Capital, nÆo vai a corre‡Æo monet ria.		³
+//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+cPatrim  	:= SN1->N1_PATRIM
+nValor	 	:= Iif( cPatrim # "C" , SN3->N3_VORIG1+SN3->N3_VRCACM1+SN3->N3_AMPLIA1, SN3->N3_VORIG1+SN3->N3_AMPLIA1 )
+
+nQtdeSn  	:= IIF(SN1->N1_QUANTD == 0, 1, SN1->N1_QUANTD)
+nQtdOrig 	:= nQtdeSn
+nQuant	 	:= nQtdeSn
+nCustAtu 	:= nValor
+
+If SN3->N3_TIPO = "05" .Or. (SN1->N1_PATRIM $ cN1TipoNeg) .Or. (SN3->N3_TIPO $ cN3TipoNeg)
+	nValResid:= nValor + Abs( (SN3->N3_VRDACM1 + SN3->N3_VRCDA1) )
+Else
+	nValResid:= nValor - ( SN3->N3_VRDACM1 + SN3->N3_VRCDA1 )
+Endif
+
+nOpt 	 	:= 0
+nLin 		:= 14
+
+DEFINE 	MSDIALOG oDlg FROM  36,1 TO 280 /*600*/ - If(lFolder, 0, 35),540 TITLE STR0123 PIXEL	//"Solicitação de transferência em lote."
+
+@ 004, 004 	TO 040, (oDlg:nRight / 2) - 7 LABEL STR0124 OF oDlg  PIXEL // "Filtrar Origem"
+
+@ nLin - 0,009 	SAY STR0111 + ":"		SIZE 34, 7 OF oDlg PIXEL // "Do Código:"
+@ nLin - 2,045	MSGET oBasei VAR cBasei   	F3 "SN1"	Valid Af060Base(cBasei)   SIZE 60, 10 OF oDlg PIXEL
+@ nLin - 0,115 	SAY STR0146 + ":"		SIZE 34, 7 OF oDlg PIXEL // "Do Item:"
+@ nLin - 2,145	MSGET cItemi   	SIZE 30, 10 OF oDlg PIXEL
+oBasei:bChange := {|| cBasef := cBasei , oBasef:Refresh() }
+
+nLin += 14
+
+@ nLin - 0,009 	SAY STR0120 + ":"		SIZE 34, 7 OF oDlg PIXEL // "Ao Código:"
+@ nLin - 2,045 	MSGET oBasef VAR cBasef   	F3 "SN1"	Valid Af060Base(cBasef)   SIZE 60, 10 OF oDlg PIXEL
+@ nLin - 0,115 	SAY STR0147 + ":"		SIZE 34, 7 OF oDlg PIXEL // "Até Item:"
+@ nLin - 2,145	MSGET cItemf   	SIZE 30, 10 Valid !Empty(cItemF) OF oDlg PIXEL
+
+nLin += 14
+
+@ nLin, 004 	TO 094, (oDlg:nRight / 2) - 7 LABEL STR0125 OF oDlg  PIXEL // "Transferir para"
+
+nLin += 10
+
+@ nLin - 0,009 	SAY STR0126  	SIZE 34, 7 OF oDlg PIXEL // "Filial Destino"
+@ nLin - 1,055  	MSGET cFilDest	Valid AfA060Fil(cFilDest) .And. AtGeraNF(cFilDest,cFilOrig,@_cGERANF);
+When !Empty(xFilial("SN3")) F3 "XM0" SIZE 40, 10 OF oDlg PIXEL
+
+nLin += 14
+/*
+@ nLin - 0,006		SAY STR0078				SIZE 53, 07 OF oPai PIXEL // "Centro Custo"
+
+@ nLin - 2,055	MSGET oCCusto VAR aVar[1][6]	SIZE 69, 10 OF oPai PIXEL  Picture "@!" F3 cAliasCus Valid AF060CCusto( @aVar[1][6], cAliasCus ) .And. Iif(lCcdp,Eval(bCcdesp, aVar[1][6]),.T.)
+@ nLin - 3,160	SAY oCusto  PROMPT Eval(bCc, aVar[1][6]) OF oPai PIXEL FONT oDlg:oFont COLOR CLR_HBLUE
+
+oCCusto:cReadVar := "N3_CCUSTO"
+
+nLin += 14
+
+@ nLin - 0,006	SAY STR0127 SIZE 53, 07 OF oPai PIXEL // "Localização"
+@ nLin - 2,055 	MSGET oLocal VAR aVar[1][7]	SIZE 69, 10 OF oPai PIXEL Picture "@!" F3 CpoRetF3("N1_LOCAL") Valid CheckSx3("N1_LOCAL", aVar[1][7])
+
+oLocal:cReadVar := "N1_LOCAL"
+
+nLin += 16
+*/
+//Walmir Junior - Alteração da Linha
+nLin -= 45
+/*
+@ nLin, 004 TO 173, (oDlg:nRight / 2) - 7 LABEL STR0038 OF oDlg  PIXEL // "Dados da Nota Fiscal"
+@ nLin+8 , 007	SAY STR0128			SIZE 024, 009 OF oDlg PIXEL  //"Num.NF"
+@ nLin+7 , 045	COMBOBOX oGERANF	VAR _cGERANF ITEMS { "1=" + STR0040, "2=" + STR0041 }	SIZE 30,  9 OF oDlg PIXEL WHEN cFilDest != cFilOrig VALID  A125VlTrLt("cGERANF")
+@ nLin+8 , 080	SAY STR0129			SIZE 042, 009 OF oDlg PIXEL  //"Tip Clas NFE"
+@ nLin+7 , 120	COMBOBOX oCbxClasNF	VAR _cClasNF ITEMS { "1=" + STR0063, "2=" + STR0064, "" }	SIZE 46,  9 OF oDlg PIXEL WHEN _cGERANF == "1"
+@ nLin+8 , 175	SAY STR0044			SIZE 032, 009 OF oDlg PIXEL  //"TES Saida"
+@ nLin+7 , 210	MSGET oTESNFS VAR _cTesS		SIZE 015, 009 OF oDlg PIXEL WHEN _cGERANF == "1" VALID A125VlTrLt( "TESNFS" , cFilOrig)
+oTESNFS:BF3 := { || AF125F3Dst( cFilOrig, "SF4", "F4_CODIGO", @_cTesS, @oTESNFS ) }
+@ nLin+21, 007	SAY STR0045			SIZE 024, 009 OF oDlg PIXEL  //"Num.NF"
+@ nLin+20, 045	MSGET _cNota		SIZE 028, 009 OF oDlg PIXEL F3 "SF2" WHEN _cGERANF == "3" VALID  A125VlTrLt("cNota")
+@ nLin+21, 100	SAY STR0046			SIZE 016, 009 OF oDlg PIXEL  //"Serie"
+@ nLin+20, 118	MSGET _cSerie		SIZE 021, 009 OF oDlg PIXEL F3 "01"  WHEN _cGERANF == "1" VALID Vazio(_cSerie) .Or. ExistCpo("SX5","01"+_cSerie)
+@ nLin+21, 175	SAY STR0090			SIZE 042, 009 OF oDlg PIXEL  //"TES Entrada"
+@ nLin+20, 210	MSGET oTESNFE VAR _cTesE		SIZE 015, 009 OF oDlg PIXEL WHEN _cGERANF == "1" VALID A125VlTrLt( "TESNFE" , cFilDest )
+oTESNFE:BF3 := { || AF125F3Dst( cFilDest, "SF4", "F4_CODIGO", @_cTesE, @oTESNFE ) }
+@ nLin+34, 007	SAY STR0035			SIZE 032, 009 OF oDlg PIXEL  //"Até"
+@ nLin+33, 045	MSGET _cCONDPAG		SIZE 019, 009 OF oDlg PIXEL F3 "SE4" WHEN _cGERANF == "1" VALID Vazio(_cCONDPAG) .Or. ExistCpo("SE4",_cCONDPAG)
+
+*/
+@ nLin+33, 160	COMBOBOX oTipoAprov VAR cTipoAprov	ITEMS aTipoAprov	OF oDlg SIZE 80, 40 PIXEL
+@ nLin+34, 105	SAY STR0114	OF oDlg PIXEL 	//"Gera aprovação para"
+
+@ nLin+47, 007	SAY STR0050	SIZE 32, 7 OF oDlg PIXEL FONT oDlg:oFont COLOR CLR_HBLUE  //"Hist. Solic."
+@ nLin+46, 045	GET oHistSol VAR _cHistSol OF oDlg MULTILINE SIZE 177, 25 HSCROLL PIXEL
+
+/*
+nLin += 080
+
+If lFolder
+	
+	oFolder := TFolder():New(	nLin,04,aTitFolder,aPages,oDlg,,,,.T.,.F.,(oDlg:nRight / 2) - 10,nTamObjs + 20,)
+	
+	For ni := 1 to Len(oFolder:aDialogs)
+		DEFINE SBUTTON FROM 5000,5000 TYPE 5 ACTION Allwaystrue() ENABLE OF oFolder:aDialogs[ni]
+	Next
+	
+	oPai := oFolder:aDialogs[1]
+Else
+	oPai := oDlg
+Endif
+
+//dbSelectArea("SN3")
+
+nLin += 23
+
+nPanelBem := nLin
+
+For nEntidade := 1 To Len(aTitFolder)
+	If lFolder
+		nLin 	:= 2
+		nColFim := 310
+	Else
+		nColFim := 320
+		nLin 	:= nPanelBem
+	Endif
+	
+	If nEntidade > 1
+		oPai := oFolder:aDialogs[nEntidade]
+	Endif
+	
+	@ nLin, 004 TO nLin + nTamObjs - 1,070 LABEL STR0068 OF oPai  PIXEL // "Dados Contabeis"
+	
+	@ nLin-3, 072 TO nLin + nTamObjs - 1,(oDlg:nRight / 2) - 14 LABEL STR0029 OF oPai PIXEL // "Destino"
+	@ nLin+1, 160 SAY "(*) " + STR0130 SIZE 53, 07 OF oPai PIXEL // "(*) Destino igual origem"
+	
+	nLin += 8
+	
+	// Identificacao do bem
+	
+	IF aObjetos[nEntidade][6] $ "CT1#NI1"
+		Af060Get(	aVar[nEntidade], aCpDigit[1][1], cAliasCta, @nLin, oPai, bConta,;
+		aObjetos[nEntidade], 1)
+	ElseIf aObjetos[nEntidade][6] $ "CTT#NI3"
+		Af060Get(	aVar[nEntidade], aCpDigit[2][1], cAliasCus, @nLin, oPai, bCc,;
+		aObjetos[nEntidade], 1)
+	ElseIf aObjetos[nEntidade][6] = "CTD"
+		Af060Get(	aVar[nEntidade], aCpDigit[3][1], cAliasIt, @nLin, oPai, bItem,;
+		aObjetos[nEntidade], 1)
+	Else
+		Af060Get(	aVar[nEntidade], aCpDigit[4][1], cAliasCl, @nLin, oPai, bClVl,;
+		aObjetos[nEntidade], 1)
+	Endif
+	
+	// Correcao monetaria
+	
+	IF aObjetos[nEntidade][6] $ "CT1#NI1"
+		Af060Get(	aVar[nEntidade], aCpDigit[1][2], cAliasCta, @nLin, oPai, bConta,;
+		aObjetos[nEntidade], 2)
+	ElseIf aObjetos[nEntidade][6] $ "CTT#NI3"
+		Af060Get(	aVar[nEntidade], aCpDigit[2][2], cAliasCus, @nLin, oPai, bCc,;
+		aObjetos[nEntidade], 2)
+	ElseIf aObjetos[nEntidade][6] = "CTD"
+		Af060Get(	aVar[nEntidade], aCpDigit[3][2], cAliasIt, @nLin, oPai, bItem,;
+		aObjetos[nEntidade], 2)
+	Else
+		Af060Get(	aVar[nEntidade], aCpDigit[4][2], cAliasCl, @nLin, oPai, bClVl,;
+		aObjetos[nEntidade], 2)
+	Endif
+	
+	// Despesa depreciacao
+	
+	IF aObjetos[nEntidade][6] $ "CT1#NI1"
+		Af060Get(	aVar[nEntidade], aCpDigit[1][3], cAliasCta, @nLin, oPai, bConta,;
+		aObjetos[nEntidade], 3)
+	ElseIf aObjetos[nEntidade][6] $ "CTT#NI3"
+		Af060Get(	aVar[nEntidade], aCpDigit[2][3], cAliasCus, @nLin, oPai, bCc,;
+		aObjetos[nEntidade], 3)
+	ElseIf aObjetos[nEntidade][6] = "CTD"
+		Af060Get(	aVar[nEntidade], aCpDigit[3][3], cAliasIt, @nLin, oPai, bItem,;
+		aObjetos[nEntidade], 3)
+	Else
+		Af060Get(	aVar[nEntidade], aCpDigit[4][3], cAliasCl, @nLin, oPai, bClVl,;
+		aObjetos[nEntidade], 3)
+	Endif
+	
+	// Depreciacao acumulada
+	
+	IF aObjetos[nEntidade][6] $ "CT1$NI1"
+		Af060Get(	aVar[nEntidade], aCpDigit[1][4], cAliasCta, @nLin, oPai, bConta,;
+		aObjetos[nEntidade], 4)
+	ElseIf aObjetos[nEntidade][6] $ "CTT#NI3"
+		Af060Get(	aVar[nEntidade], aCpDigit[2][4], cAliasCus, @nLin, oPai, bCc,;
+		aObjetos[nEntidade], 4)
+	ElseIf aObjetos[nEntidade][6] = "CTD"
+		Af060Get(	aVar[nEntidade], aCpDigit[3][4], cAliasIt, @nLin, oPai, bItem,;
+		aObjetos[nEntidade], 4)
+	Else
+		Af060Get(	aVar[nEntidade], aCpDigit[4][4], cAliasCl, @nLin, oPai, bClVl,;
+		aObjetos[nEntidade], 4)
+	Endif
+	
+	// Correcao monetaria depreciacao
+	
+	IF aObjetos[nEntidade][6] $ "CT1#NI1"
+		Af060Get(	aVar[nEntidade], aCpDigit[1][5], cAliasCta, @nLin, oPai, bConta,;
+		aObjetos[nEntidade], 5)
+	ElseIf aObjetos[nEntidade][6] $ "CTT#NI3"
+		Af060Get(	aVar[nEntidade], aCpDigit[2][5], cAliasCus, @nLin, oPai, bCc,;
+		aObjetos[nEntidade], 5)
+	ElseIf aObjetos[nEntidade][6] = "CTD"
+		Af060Get(	aVar[nEntidade], aCpDigit[3][5], cAliasIt, @nLin, oPai, bItem,;
+		aObjetos[nEntidade], 5)
+	Else
+		Af060Get(	aVar[nEntidade], aCpDigit[4][5], cAliasCl, @nLin, oPai, bClVl,;
+		aObjetos[nEntidade], 5)
+	Endif
+Next
+*/
+DEFINE SBUTTON 	FROM /*nPanelBem - */P_ESPACO_OBJ + 85 /*65*/, (oDlg:nRight / 2) - 100 TYPE 17	ENABLE OF oDlg ACTION SN1->(cExpFiltro := BuildExpr( "SN1", oDlg ) )
+//08/06/2017	Walmir Junior - Adição de validação de Filial de destino da mesma Entidade.
+DEFINE SBUTTON 	FROM /*nPanelBem - */P_ESPACO_OBJ + 85 /*65*/, (oDlg:nRight / 2) - 70  TYPE 1  ENABLE OF oDlg ACTION ( ( nOpt := TudOkTrLt(), IIf( nOpt == 1 .AND. fVldA(), Odlg:End(), .F.) ) )
+DEFINE SBUTTON 	FROM /*nPanelBem - */P_ESPACO_OBJ + 85 /*65*/, (oDlg:nRight / 2) - 40  TYPE 2  ENABLE OF oDlg ACTION ( nOpt := 0, oDlg:End() )
+ACTIVATE MSDIALOG oDlg CENTERED
+
+// - INICIO - Walmir Junior 30/06/2017 - Filtro para tela de marcação de registros.
+Private _cQuery	:= ""
+Private _cCrit	:= ""
+
+/*
+_cQuery :=	"Select Distinct (NM_FILIAL || NM_CBASE || NM_ITEM) As SOLIC From " +;
+			RetSQLName("SNM") + " Where D_E_L_E_T_	= ' ' AND NM_CBASE Between '"+cBasei+"' AND '"+cBasef+"' AND NM_SITSOL = '1'"
+
+If Select("TRBNM")>0
+		TRBNM->(dbCloseArea())
+EndIf
+
+//Executa query
+_cQuery := ChangeQuery(_cQuery)
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cQuery)
+dbUseArea( .T., 'TOPCONN', TcGenQry( ,, _cQuery ), "TRBNM", .F., .T. )
+
+//Montar string contento a chave dos registros de ativo já em Solicitação.
+While TRBNM->(!Eof())
+	_cCrit += Iif( Empty(_cCrit), TRBNM->(SOLIC), ", " + TRBNM->(SOLIC))
+	TRBNM->(DBSkip())
+EndDo
+TRBNM->(dbCloseArea())
+*/
+
+If Empty(cExpFiltro)
+	cExpFiltro +=	" N1_QUANTD > 0 .And. N1_STATUS != ' ' .And. N1_STATUS != '2' .And. N1_STATUS != '3'"// +;
+					//" .And. !((N1_FILIAL + N1_CBASE + N1_ITEM) $ '"+_cCrit+"')" //	.And. NM_SITSOL != '1'
+Else
+	cExpFiltro +=	" .And. N1_QUANTD > 0 .And. N1_STATUS != ' ' .And. N1_STATUS != '2' .And. N1_STATUS != '3'" //+;
+	 				//" .And. !((N1_FILIAL + N1_CBASE + N1_ITEM) $ '"+_cCrit+"')"//  .And. NM_SITSOL != '1'
+EndIf
+
+// - FIM - Walmir Junior 30/06/2017 - Filtro para tela de marcação de registros.
+
+cFilAnt := cFilOrig		// Garanto que a filial atual seja a original
+
+RestArea( aArea )
+
+Return { aVar, aCpDigit, nOpt, cTipoAprov }
+/*
+Author: Walmir Junior
+Date:	08/06/2017
+Função para validar se a filial de destino é da mesma entidade.
+*/
+Static Function fVldA()
+Local _lRet := .T.
+
+If SubStr(cfildest,1,2) != SubStr(xFilial(),1,2)
+	_lRet := .F.
+	Aviso("Atenção!","Não permitida a transferência entre diferentes Entidades!",{"Ok"})
+EndIf
+
+Return _lRet
+
+Static Function AtGeraNF(cDest,cOrig,_cGERANF)
+_cGERANF := IIF( cDest != cOrig,"1","2" ) 
+Return .T.
+
+Static Function TudOkTrLt()
+
+Local lRet := .T.
+
+//Verifica o preenchimento de campos obrigatórios.
+If Empty( _cHistSol ) .And. lRet
+	lRet := .F.
+	Help(" ",1,"AF125OBG",,STR0074 + " - '" + STR0050 + "'",1,0)	//"Campo obrigatório não informado" |  "Hist. Solic."
+EndIf
+
+If ( _cGeraNF == "1" .And. Empty( _cSerie ) ) .And. lRet
+	lRet := .F.
+	Help(" ",1,"AF125OBG",,STR0074 + " - '" + STR0046 + "'",1,0)	//"Campo obrigatório não informado" | "Serie"
+EndIf
+
+If ( _cGeraNF == "1" .And. Empty( _cTesE ) ) .And. lRet
+	lRet := .F.
+	Help(" ",1,"AF125OBG",,STR0074 + " - '" + STR0090 + "'",1,0)	//"Campo obrigatório não informado" |"TES Entrada"
+EndIf
+
+If ( _cGeraNF == "1" .And. Empty( _cTesS ) ) .And. lRet
+	lRet := .F.                                                                                                       
+	Help(" ",1,"AF125OBG",,STR0074 + " - '" + STR0044 + "'",1,0)	//"Campo obrigatório não informado" | "TES Saida"
+EndIf
+
+If ( _cGeraNF == "1" .And. Empty( _cCONDPAG ) ) .And. lRet
+	lRet := .F.                                                                                                       
+	Help(" ",1,"AF125OBG",,STR0074 + " - '" + STR0035 + "'",1,0)	//"Campo obrigatório não informado" | "Cond. Pgto"
+EndIf
+
+If ( _cGeraNF == "1" .And. Empty( _cClasNF ) ) .And. lRet
+	lRet := .F.                                                                                                       
+	Help(" ",1,"AF125OBG",,STR0074 + " - '" + STR0089 + "'",1,0)	//"Campo obrigatório não informado" | "Tip Clas NFE"
+EndIf
+
+If ( _cGeraNF == "1" .And. Empty( _cArmaz ) ) .And. lRet
+	lRet := .F.                                                                                                       
+	Help(" ",1,"AF125OBG",,STR0074 + " - '" + STR0164 + "'",1,0)	//"Campo obrigatório não informado" | "Armazem"
+EndIf
+
+Return IIf( lRet, 1, 0 )

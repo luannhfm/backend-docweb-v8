@@ -1,0 +1,140 @@
+#include 'protheus.ch'
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³MT121BRW ºAutor  ³Adriano Luis Brandaoº Data ³  19/07/11   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³Inclui Botao para impressao do Pedido no Browse do Pedido   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ AP - CNI                                                   º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+/*
+Modificações:
+	#001 04/04/2016 - Franklin B. Oliveira :
+	Adição de relatório de autorização de Prestador Pessoa Física.
+
+	07/07/2017 - Franklin B. Oliveira:
+	Adição do Formulário de OFMS.
+*/
+User Function MT120BRW()  
+
+aAdd(aRotina, {"Autorização de Compra","U_MT121PC",0,4})
+//Walmir Junior 04/03/2016 Adição de menu para emissão do Pedido de Utilização de Ata.
+aAdd(aRotina, {"Ped Utilização de Ata","U_SF0210X",0,4})
+//#001
+aAdd(aRotina, {"Aut Prestador Pessoa Física", "U_SF0201F" , 0, 4})
+aAdd(aRotina, {"Formulário de OFMS"			, "U_SF02R02F", 0, 4})
+
+If( nTipoPed==1 )
+	
+	// Comentado por Peder Munksgaard em 29/10/2014
+	//aAdd(aRotina,{"Aguardando Entrega","U_DTCOMAGE", 0, 3, 6, Nil }) //Aguardando Entrega
+	
+	// Incluido por Peder Munksgaard em 29/10/2014. 
+	// Ao clicar na opção ele solicitava seleção da filial devido parametros errados
+	// no array aRotina.
+	aAdd(aRotina,{"Aguardando Entrega","U_DTCOMAGE", 0, 4, 0}) //Aguardando Entrega 
+	                                                                                    
+EndIf
+
+Return()
+
+                             
+//-------------------------------------------------------------------
+/*/{Protheus.doc} MT121PC
+
+Exibe tela para autorizacao de compra
+
+@author Do.It Sistemas
+
+@since	24.06.2014
+@version	P11 R1.5
+@param
+@return
+
+@Obs:
+	SOMENTE SERA EXECUTADA DO BROWSE DE PEDIDOS	COM TABELA SC7 POSICIONADA
+
+---------------------------------------------------------------------
+Programador		Data		Motivo
+---------------------------------------------------------------------
+/*/
+User Function MT121PC()
+
+Local aArea    :=GetArea()
+Local aAreaSC7 :=SC7->(GETAREA())
+
+//Walmir Junior	10/02/2016 Se houver contrato e medição, seguir layout definido pelo CAQC.
+IF /*!Empty(SC7->C7_XFILCN9) .And. */!Empty(SC7->C7_CONTRA) .And. !Empty(SC7->C7_MEDICAO);
+	 .And. U_SF0208X(SC7->C7_XFILCN9+SC7->C7_CONTRA+SC7->C7_CONTREV)
+	Aviso("[MT121PC] Atenção!", "Este Pedido de Compras está integrado ao módulo de Gestão de Contratos,";
+	+" utilize o menu 'Pedido de Utilização de Ata'.",{"Ok"})
+Else
+	U_DTCOMR04('SC7',SC7->(RECNO()),1)
+EndIf
+
+RestArea(aAreaSC7)
+RestArea(aArea)
+
+Return()                     
+
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} DTCOMAGE
+
+Realiza a alteracao de status do pedido para aguardando entrega,
+somente se atender as condicoes de avaliacao.
+
+@author Do.It Sistemas
+
+@since	28.08.2014
+@version	P11 R1.5
+@param
+@return
+
+@Obs:
+	SOMENTE SERA EXECUTADA DO BROWSE DE PEDIDOS	COM TABELA SC7 POSICIONADA
+	DESDE QUE O PEDIDO ESTEJA:
+		+ LIBERADO E PENDENTE
+
+---------------------------------------------------------------------
+Programador		Data		Motivo
+---------------------------------------------------------------------
+/*/
+User Function DTCOMAgE()
+
+	Local lCompPC := SC7->C7_USER == RetCodUsr()
+	Local lPedLib := SC7->( Empty(C7_CONTRA) .And. C7_CONAPRO=='L' .And. C7_QUJE==0 .And. C7_QTDACLA==0 .And. Empty(C7_XSTATUS) .And. Empty(C7_DTEMIPT) ) // CONDICAO PARA O STATUS VERDE
+	Local nOpcMsg := 0
+	// se liberado e eh o comprador responsavel..
+	If( lPedLib .And. lCompPC )
+	
+		nOpcMsg := Aviso( 'Atenção' , "Prezado(a) " + Alltrim(cUserName) + "," + CRLF + CRLF ;
+								 + "Você tem certeza que o pedido de compras " + Alltrim(SC7->C7_NUM) + " já encontra-se " + CRLF ;
+								 + "devidamente assinado e autorizado pelos setores e gestores de direito?" , {'Sim','Não'} , 2 , 'Aguardar Entrega' )
+		
+		// se optou por alterar o status...						 
+		If( nOpcMsg == 1 )
+			Reclock( 'SC7' )
+			SC7->C7_XSTATUS := '3'
+			SC7->( MsUnlock() )
+		EndIf
+	Else
+		If( ! lPedLib )
+			Aviso( 'Atenção' , "Prezado(a) " + Alltrim(cUserName) + "," + CRLF + CRLF ;
+									 +"O pedido de compras " + Alltrim(SC7->C7_NUM) + " não encontra-se liberado." + CRLF ;
+									 +"Por gentileza entre em contato com setor responsável" , {'Fechar'} , 2 , 'Aguardar Entrega' )
+		EndIf
+		If( !lCompPC )
+			Aviso( 'Atenção' , "A alteração de status só poderá ser realizada pelo comprador atualmente responsável pelo pedido.",;
+									{'Fechar'}, 2 , 'Aguardar Entrega' )
+		EndIf
+	EndIf
+	
+Return( Nil )

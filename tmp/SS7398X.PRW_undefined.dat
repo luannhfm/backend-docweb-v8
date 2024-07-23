@@ -1,0 +1,350 @@
+#INCLUDE 'PROTHEUS.CH'
+#INCLUDE "TOTVS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE 'FONT.CH''
+#INCLUDE 'COLORS.CH'
+#INCLUDE "PARMTYPE.CH"
+#INCLUDE "FWMVCDEF.CH"
+#INCLUDE "FWCOMMAND.CH"
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <SS7398X>
+ Permite ao Operador selecionar a proposta Ganhadora apos o encerramento da
+ oportunidade com MOTIVO [3 - Ganha SEM Pedido]. Neste caso o Pedido sera 
+ gerado no modulo de GESTÃO DE CONTRATOS, apos o vinculo da proposta na 
+ Planilha Financeira do Contrato de Venda para a OPORTUNIDADE em questão. 
+
+@author<Antonio Dantas>
+@since<29/04/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+@history 03/04/2020, Franklin Oliveira, Correção na exibição da coluna de valor total da proposta.
+--------------------------------------------------------------------------------
+*/
+User Function SS7398X()
+//+-----------------------------------------------------------------------+
+//|   Variavies de controle do MsNewGetDados                              | 
+//+-----------------------------------------------------------------------+
+Local _nOpcA		:= GD_INSERT + GD_DELETE + GD_UPDATE	//-- Define o modo de edicao da MsNewGetDados (Soma dos Modos)
+local _nCtaA := 0
+Local _cIniCposA	:= ""									//-- Nome dos campos do tipo caracter que utilizarao incremento automatico.
+Local _cLinOkA		:= "AllwaysTrue"						//-- Funcao de usuario na saida da edicao da linha
+Local _cTudoOkA		:= "AllwaysTrue"						//-- Funcao de usuario para validado de toda a grid
+Local _cFieldOkA	:= "AllwaysTrue"						//-- Funcao de usuario para validacao do campo e foco de edicao 
+Local _cDelOkA		:= "AllwaysTrue"						//-- Funcao de usuario para validavao do DEL
+Local _nFreezeA		:= 000									//-- Campos estaticos na GetDados.
+Local _nMaxA		:= 999									//-- Numero Maximo de Elementos na Grid
+Local _cSupDelA		:= NIL                             		//-- Funcao executada quando pressionada as teclas <Ctrl>+<Delete>
+//--
+Local _cTitulo		:= "Indique a Proposta Ganhadora"
+//--
+Private _aAlterA	:= {""}									//-- Array dos campos que podem ser editados MsNewGetDados
+Private _aHeaderA	:= {}									//-- Array com os Elementos da Grid
+Private _aColsA		:= {}									//-- Array (Descricao) Cabecalho dos campos da Grid  
+Private _lTudoOK	:= .f.  
+Private _oOpcoes	:={	"Pesquisar" 	,;
+						"Visualizar"	,;
+						"Encerrar"   	 }					//-- Array (Descricao) das Opcoes de Operacao 
+//+-----------------------------------------------------------------------+
+//|   Variaveis de controle da Operacao                                   |
+//+-----------------------------------------------------------------------+
+Private _nRec			:= AD1->(Recno())
+//+-----------------------------------------------------------------------+
+//|    Variavies de controle do MsNewGetDados dos Itens da Carga          |
+//+-----------------------------------------------------------------------+
+Private _aTELA 		:= {}
+Private _aGETS 		:= {}
+Private _nUsado 	:= 0
+Private _bCpo 		:= {|nField| Field(nField)}
+//--
+Private _aSize 		:= MsAdvSize()
+Private _aInfo 		:= {_aSize[1],_aSize[2],_aSize[3],_aSize[4],3,3}
+Private _aObjects	:= {{100,002,.T.,.T.},{100,095,.T.,.T.},{100,003,.T.,.T.}}
+Private _APosObj 	:= MsObjSize(_aInfo,_aObjects,.T.)
+Private _APosGet 	:= MsObjGetPos((_aSize[3]-_aSize[1]),315,{{004,024,240,270}})
+//+-----------------------------------------------------------------------+
+//|   Declaração de Variaveis Private dos Objetos                         |
+//+-----------------------------------------------------------------------+
+SetPrvt("_oBrwPROP","_oBtnOK","_oBtnVer","_oBtnESC")
+//+-----------------------------------------------------------------------+
+//| Seleciona a Tabela e Garante o Posicionamento no Registro selecionado |
+//+-----------------------------------------------------------------------+
+dbSelectArea("AD1")
+AD1->(dbSetOrder(1))
+AD1->(dbGoTo(_nRec))   
+//+-----------------------------------------------------------------------+
+//| Cria e Inicializa as Variaves PRIVATES que seram Utilizadas pela      | 
+//| Funcao [EnChoice]                                                     |
+//| Inicializa Variaveis c/Conteudo encontrado no Registro Atual          | 
+//+-----------------------------------------------------------------------+
+For _nCtaA := 1 To AD1->(FCount())
+	M->&(Eval(_bCpo,_nCtaA)) := AD1->(FieldGet( _nCtaA))
+Next _nCtaA
+//+-----------------------------------------------------------------------+
+//|  Funcao que Cria a aHeader que sera utilizada pela MsNewGetDados      |
+//+-----------------------------------------------------------------------+
+fCriaHeard()   
+//+-----------------------------------------------------------------------+
+//|  Funcao que Cria a aCols que sera utilizada pela MsNewGetDados        |
+//+-----------------------------------------------------------------------+
+FWMsgRun(, {|| fCriaCols() }, "Verificando Propostas ...", "Aguarde...")
+//+-----------------------------------------------------------------------+
+//| Monta a Interfase (Tela) que sera apresentada ao usuario              | 
+//+-----------------------------------------------------------------------+
+DEFINE MSDIALOG _oDlgPROP TITLE _cTitulo FROM _aSize[7],_aSize[1] TO _aSize[6],_aSize[5] OF oMainWnd PIXEL
+//+-----------------------------------------------------------------------+
+//|  Grid das Matriculas a Serem liberadas                                | 
+//+-----------------------------------------------------------------------+
+_oBrwPROP	:= MsNewGetDados():New(_APosObj[2,1],_APosObj[2,2],_APosObj[2,3],_APosObj[2,4],_nOpcA,_cLinOkA,_cTudoOkA,_cIniCposA,_aAlterA,_nFreezeA,_nMaxA,_cFieldOkA,_cSupDelA,_cDelOkA,_oDlgPROP,_aHeaderA,_aColsA)
+_oBrwPROP:oBrowse:SetFocus()
+//+-----------------------------------------------------------------------+
+//|  Objeto de controle do falso Marca/Desmarca                           |
+//+-----------------------------------------------------------------------+
+_oBrwPROP:oBrowse:bLDblClick := {|| u_fMck7398() }   
+//+-----------------------------------------------------------------------+
+//|  Monta a Botueira da tela                                             |
+//+-----------------------------------------------------------------------+
+_oBtnOK 	:= TButton():New( _APosObj[3,1]	,_APosGet[1,4]-100	,"Confirma"		,_oDlgPROP	,{|| _lTudoOK := u_fGrvADY(), Iif(_lTudoOK, _oDlgPROP:End(),.f.) }	,040,012,,,,.T.,,"",,,,.F. )
+_oBtnVer	:= TButton():New( _APosObj[3,1]	,_APosGet[1,4]-50	,"Visualizar"	,_oDlgPROP	,{|| u_fVerProp()	 }	,040,012,,,,.T.,,"",,,,.F. )
+_oDlgPROP:Activate(,,,.T.)
+Return _lTudoOK
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fCriaHeard>
+ Funcao de contrucao do aHearder que sera utilizado pelo MsNewGetDados.
+ ATENCAO: Considera criada PRIVATE pela funcao que chamnaou o array [_aHeaderA]
+
+@author<Antonio Dantas>
+@since<29/04/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function fCriaHeard()          
+Aadd(_aHeaderA	,{"  " 			,"ADYXOK"		,"@BMP"        	  				,02							,0							,""	,"","C",""	,""	,,,,,	} )  
+Aadd(_aHeaderA 	,{"Filial"		,"ADY_FILIAL"	,TRIM(X3PICTURE("ADY_FILIAL"))	,TamSX3("ADY_FILIAL")[1]	,TamSX3("ADY_FILIAL")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Nr Proposta"	,"ADY_PROPOS"	,TRIM(X3PICTURE("ADY_PROPOS"))	,TamSX3("ADY_PROPOS")[1]	,TamSX3("ADY_PROPOS")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Revisão"		,"ADY_PREVIS"	,TRIM(X3PICTURE("ADY_PREVIS"))	,TamSX3("ADY_PREVIS")[1]	,TamSX3("ADY_PREVIS")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Data"		,"ADY_DATA"		,TRIM(X3PICTURE("ADY_DATA"))	,TamSX3("ADY_DATA")[1]		,TamSX3("ADY_DATA")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Oportunidade","ADY_OPORTU"	,TRIM(X3PICTURE("ADY_OPORTU"))	,TamSX3("ADY_OPORTU")[1]	,TamSX3("ADY_OPORTU")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Revisão"		,"ADY_REVISA"	,TRIM(X3PICTURE("ADY_REVISA"))	,TamSX3("ADY_REVISA")[1]	,TamSX3("ADY_REVISA")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Descrição"	,"ADY_DESOPO"	,TRIM(X3PICTURE("ADY_DESOPO"))	,TamSX3("ADY_DESOPO")[1]	,TamSX3("ADY_DESOPO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Cliente"		,"ADY_CODIGO"	,TRIM(X3PICTURE("ADY_CODIGO"))	,TamSX3("ADY_CODIGO")[1]	,TamSX3("ADY_CODIGO")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Loja"		,"ADY_LOJA"		,TRIM(X3PICTURE("ADY_LOJA"))	,TamSX3("ADY_LOJA")[1]		,TamSX3("ADY_LOJA")[2]		,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Nome"		,"ADY_DESENT"	,TRIM(X3PICTURE("ADY_DESENT"))	,TamSX3("ADY_DESENT")[1]	,TamSX3("ADY_DESENT")[2]	,"" ,"","C",""  ,""})
+Aadd(_aHeaderA 	,{"Vlr Total"	,"VLRTOTAL"		,"@E 999,999,999.99"			,12							,2						,"" ,"","N",""  ,""})
+Return .t.    	
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fCriaCols>
+  Funcao de contrucao do aCols que sera utilizado pelo MsNewGetDados.
+  ATENCAO: Considera criado PRIVATE pela funcao que chamnaou o array.
+
+@author<Antonio Dantas>
+@since<29/04/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/
+Static Function fCriaCols()
+Local _aNewCols		:= {} 
+Local _lFound		:= .f.  
+Local _nVlrTOTAL 	:= 0.00
+//+-----------------------------------------------------------------------+
+//|   Garante que aCols estara vazia, zera os totalizadores               | 
+//+-----------------------------------------------------------------------+
+_aColsA		:= {}
+//-- Localiza as Matriculas 
+dbSelectArea("ADY")
+ADY->(dbSetOrder(2)) 		//-- Oportunidade + Revisao + Proposta No.  
+ADY->(dbSeek(AD1->AD1_FILIAL+AD1->AD1_NROPOR+AD1->AD1_REVISA))
+//-- 
+Do While ADY->(!Eof()) .And. ADY_FILIAL == AD1->AD1_FILIAL .And. ADY_OPORTU == AD1->AD1_NROPOR .And. ADY_REVISA == AD1->AD1_REVISA
+	If !(ADY->ADY_STATUS $ "AD")
+		ADY->(dbskip())     	      
+		Loop
+	Endif 
+	_nVlrTOTAL := 0
+	dbSelectArea("ADZ")
+	ADZ->(dbSetOrder(3))	//ADZ_FILIAL+ADZ_PROPOS+ADZ_REVISA+ADZ_FOLDER+ADZ_ITEM
+	If (ADZ->(dbSeek(ADY->ADY_FILIAL+ADY->ADY_PROPOS+ADY->ADY_PREVIS)))
+		Do While ADZ->(!Eof()) .And. ADZ->ADZ_FILIAL == ADY->ADY_FILIAL .And. ADZ->ADZ_PROPOS == ADY->ADY_PROPOS .And. ADZ->ADZ_REVISA == ADY->ADY_PREVIS
+			_nVlrTOTAL += ADZ->ADZ_TOTAL
+			ADZ->(dbSkip()) 
+		Enddo  
+	Endif	
+	//-- Preenche aCols 
+	aAdd(_aColsA, { "LBNO"				,; 
+					ADY->ADY_FILIAL		,;
+					ADY->ADY_PROPOS		,;
+					ADY->ADY_PREVIS		,;
+					ADY->ADY_DATA			,;
+					ADY->ADY_OPORTU		,;
+					ADY->ADY_REVISA		,;
+					Posicione("AD1",1,FwxFilial("AD1")+ADY->ADY_OPORTU+ADY->ADY_REVISA,"AD1_DESCRI")	,;
+					ADY->ADY_CODIGO		,;
+					ADY->ADY_LOJA			,;
+					Posicione("SA1",1,FwxFilial("SA1")+ADY->ADY_CODIGO+ADY->ADY_LOJA,"A1_NOME")			,;
+					_nVlrTOTAL				,;
+					.f.					} )					
+	ADY->(dbSkip())    
+	_lFound := .T.
+Enddo
+If !_lFound
+	_aColsA := {{"LBNO","","","",CTOD('  /  /  '),"","","","","","",.f.}}
+Endif
+Return _aNewCols
+
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fMck7398>
+  Funcao de controle de Marcação da PROPOSTA excolhida pelo Operador
+
+@author<Antonio Dantas>
+@since<29/04/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/ 
+User Function fMck7398()  
+Local _lReturn		:= .t.
+Local _aNewCols		:= aClone(_oBrwPROP:aCols)
+Local _aNewHead		:= aClone(_oBrwPROP:aHeader)
+Local _nPosM 		:= aScan(_aNewHead,{|x| AllTrim(x[2]) == "ADYXOK"})   
+Local _nPosLIN		:= _oBrwPROP:nAt
+local _nCtaA	:= 0
+//-- 
+
+For _nCtaA := 1 to len(_aNewCols)
+	_cMarca	:=  Iif(_nCtaA != _nPosLIN ,"LBNO","LBOK") 
+	_oBrwPROP:EditCell()
+	_oBrwPROP:aCOLS[_nCtaA,_nPosM]	:= _cMarca
+	_aNewCols[_nCtaA,_nPosM] 		:= _cMarca
+Next _nCtaA
+_aColsA	:= aClone(_aNewCols) 
+_oBrwPROP:aCOLS := aClone(_aNewCols) 
+_oBrwPROP:oBrowse:Refresh()
+_oDlgPROP:Refresh()
+Return _lReturn
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fGrvADY>
+  Grava as Informacções das Propostas.
+
+@author<Antonio Dantas>
+@since<29/04/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/ 
+User Function fGrvADY()  
+Local _lTudoOK		:= .F.
+Local _aSaveArea	:= GetArea()
+Local _aNewCols		:= aClone(_oBrwPROP:aCols)
+Local _aNewHead		:= aClone(_oBrwPROP:aHeader)
+Local _nPosM 		:= aScan(_aNewHead,{|x| AllTrim(x[2]) == "ADYXOK"}) 
+//-- Localizadores dos campos da Chave 
+Local _nPosF 		:= aScan(_aNewHead,{|x| AllTrim(x[2]) == "ADY_FILIAL"})
+Local _nPosO 		:= aScan(_aNewHead,{|x| AllTrim(x[2]) == "ADY_OPORTU"})
+Local _nPosR 		:= aScan(_aNewHead,{|x| AllTrim(x[2]) == "ADY_REVISA"})
+Local _nPosP 		:= aScan(_aNewHead,{|x| AllTrim(x[2]) == "ADY_PROPOS"})                                                                                                                  
+//-- 
+Local _cStatus		:= ""
+Local _cChave 		:= ""
+Local _nCtaA 		:= 0
+//-- 
+_nCtaA	:= 0
+For _nCtaA := 1 to len(_aNewCols)
+	//-- Define a Situação 
+	_cStatus	:= Iif(_aNewCols[_nCtaA,_nPosM] == "LBOK","E","C")
+	If _cStatus == "E" 
+		_lTudoOK	:= .T.
+		exit		
+	Endif 	
+Next _nCtaA
+
+If _lTudoOK
+	_nCtaA	:= 0
+	For _nCtaA := 1 to len(_aNewCols)
+		//-- Define a Situação 
+		_cStatus	:= Iif(_aNewCols[_nCtaA,_nPosM] == "LBOK","E","C")
+		//-- Monta a Chave 
+		_cChave 	:= _aNewCols[_nCtaA,_nPosF]+_aNewCols[_nCtaA,_nPosO]+_aNewCols[_nCtaA,_nPosR]+_aNewCols[_nCtaA,_nPosP]
+		//-- Localiza a Oportunidade  
+		dbSelectArea("ADY")
+		ADY->(dbSetOrder(2))		//-- Oportunidade + Revisao + Proposta No. 
+		//-- Grava (Modifica) o STATUS "Situação"  
+		If (ADY->(dbSeek(_cChave)))
+	 		ADY->(RecLock("ADY",.f.))
+			Replace ADY->ADY_STATUS With _cStatus 
+	 		ADY->(MsUnLock())
+	 		ADY->(dbCommit()) 
+			_lTudoOK	:= .T.		
+		Endif 	
+	Next _nCtaA
+Else
+	Aviso(FunName()+"/"+ProcName(),"Para encerrar a operação selecione ao menus uma proposta como vencedora!",{"OK"})	
+Endif 
+//-- 
+RestArea(_aSaveArea)
+Return _lTudoOK
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVerProp>
+  Permite a visuação da PROPOSTA/ITENS DA PROPOSTA pela rotina PARDRÃO do
+  Protheus.
+  
+@author<Antonio Dantas>
+@since<29/04/2015>
+@version<1.00>
+@receive<Nil>
+@return<Nil>
+@example<Nil>
+@see<Nil>
+--------------------------------------------------------------------------------
+*/ 
+User Function fVerProp()
+Local _aSaveArea	:= GetArea()
+Local _aNewCols		:= aClone(_oBrwPROP:aCols)
+Local _aNewHead		:= aClone(_oBrwPROP:aHeader)
+Local _nPosF 		:= aScan(_aNewHead,{|x| AllTrim(x[2]) == "ADY_FILIAL"})
+Local _nPosO 		:= aScan(_aNewHead,{|x| AllTrim(x[2]) == "ADY_OPORTU"})
+Local _nPosR 		:= aScan(_aNewHead,{|x| AllTrim(x[2]) == "ADY_REVISA"})
+Local _nPosP 		:= aScan(_aNewHead,{|x| AllTrim(x[2]) == "ADY_PROPOS"})  
+Local _nPosLIN		:= _oBrwPROP:nAt
+Local _cChave		:= ""
+//-- Localiza a Oportunidade  
+_cChave 	:= _aNewCols[_nPosLIN,_nPosF]+_aNewCols[_nPosLIN,_nPosO]+_aNewCols[_nPosLIN,_nPosR]+_aNewCols[_nPosLIN,_nPosP]
+dbSelectArea("ADY")
+ADY->(dbSetOrder(2))		//-- Oportunidade + Revisao + Proposta No. 
+ADY->(dbSeek(_cChave))
+//+-----------------------------------------------------------------------+
+//| Chamada a rotina PADRÃO de visualização da PROPOSTA.                  |
+//|   A600Mnt(cAlias,nReg,nOpcx)                                          | 
+//+-----------------------------------------------------------------------+
+A600Mnt("ADY",ADY->(Recno()),5)     
+RestArea(_aSaveArea)
+Return 

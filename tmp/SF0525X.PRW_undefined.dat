@@ -1,0 +1,327 @@
+#INCLUDE "PROTHEUS.CH" 
+
+/*/{Protheus.doc} SF0525X
+(long_description)
+@author j2a.luizjunior
+@since 29/08/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+User Function SF0525X
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0525X")
+	Local   oReport
+	Private cPerg   := "SF0525X"
+	Private cAlAce  := GetNextAlias()
+	
+	CriaSX1(cPerg)
+	If !Pergunte(cPerg,.T.)
+		Return(Nil)
+	EndIf
+
+	oReport := ReportDef()
+	oReport:PrintDialog()	
+
+Return
+
+/*/{Protheus.doc} ReportDef
+(long_description)
+@author j2a.luizjunior
+@since 29/08/2017
+@version 1.0
+@param cPerg, character, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ReportDef(cPerg)
+	
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0525X")
+	Local oReport
+	Local cIDCelula	:= ""	
+	Local cNomeRel	:= "SF0525X"
+	
+	Local cTitRel	:= "Acesso de Socio"
+	Local cDescRel	:= "Acesso de Socio"
+
+	oReport := TReport():New( cNomeRel, cTitRel, cPerg, { |oReport| ReportPrint(oReport) }, cDescRel )
+	
+	oReport:SetPortrait() 
+	oReport:SetTotalInLine(.F.) 
+	oReport:Page()
+	
+	//-> Locacao
+	oLocacao   := TRSection():New(oReport, "Relacao de Locacao" ,{"ZH4"}            )	
+	
+	oDesc      := TRCell():New(oLocacao,"DESCRI"      ,cAlAce," " ,"@!" )
+	oDesc:SetSize(35)
+	oCod       := TRCell():New(oLocacao,"ZH1_NUMERO"  ,"ZH1"                        )
+	oNome      := TRCell():New(oLocacao,"ZH1_NOME"    ,"ZH1"                        ) 
+	oCatego    := TRCell():New(oLocacao,"ZH1_CATEGO"  ,"ZH1"                        )
+	oTipo      := TRCell():New(oLocacao,"ZH2_TIPO"    ,"ZH2"                        )
+	oDtAcess   := TRCell():New(oLocacao,"ZH4_DTACES"  ,"ZH4"                        )
+
+	TRFunction():New(oLocacao:Cell("ZH1_NUMERO"),,"COUNT",/*oBrFor*/,,,,.F.,.T.,.F. )
+
+Return(oReport)
+
+/*/{Protheus.doc} ReportPrint
+(long_description)
+@author j2a.luizjunior
+@since 29/08/2017
+@version 1.0
+@param oReport, objeto, (Descrição do parâmetro)
+@return ${return}, ${return_description}
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function ReportPrint(oReport)
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0525X")		 
+	Local cSql        := ""
+	Local cContrato   := ""
+	Local cRevisa     := ""
+	Local cNome       := ""
+	Local cTipo       := "" 
+	Local cPeriodo    := ""
+	Local cDependente := ""
+	Local cAux        := ""
+	Local oSec1       := oReport:Section(1)
+	Local aImpPF      := {}
+	Local aImpPJ      := {}
+	Local cTpConPF    := GetNewPar("MV_XCONPF") 
+	Local cTpConPJ    := GetNewPar("MV_XCONPJ")
+	 
+	If !Empty(MV_PAR01) .And. !Empty(MV_PAR02) 
+		cSql += " AND ZH4_DTACES BETWEEN '"  + DToS(MV_PAR01) + "' AND '" + DToS(MV_PAR02) + "'"
+	EndIf
+
+	If !Empty(MV_PAR03) .And. !Empty(MV_PAR04) 
+		cSql += " AND ZH4_FILIAL BETWEEN '"  + MV_PAR03 + "' AND '" + MV_PAR04 + "'"
+	EndIf
+
+	cSql := "%"+cSql+"%"
+	
+	BeginSql Alias cAlAce
+		
+		SELECT ZH4_COD, 
+		       ZH4_TIPO,
+		       ZH4_DTACES,
+		       ZH4_HORA		 
+		FROM   %Table:ZH4%
+		WHERE  %NotDel%
+		AND    ZH4_TIPO IN ('1','2')
+		AND    ZH4_ACESSO != '2'		
+		AND    ZH4_FILIAL = %xFilial:ZH4%        			
+	    %Exp:cSql%
+	           
+	EndSql
+	
+	While !(cAlAce)->(Eof())
+		
+		If (cAlAce)->ZH4_TIPO == "1"
+			cNome       := Posicione("ZH1",1, xFilial("ZH1") + (cAlAce)->ZH4_COD,"ZH1_NOME" )
+			cDependente := "Titular"
+			cContrato   := Posicione("ZH1",1, xFilial("ZH1") + (cAlAce)->ZH4_COD,"ZH1_NUMERO")
+			cRevisa     := Posicione("ZH1",1, xFilial("ZH1") + (cAlAce)->ZH4_COD,"ZH1_REVISA")			
+		Else
+ 			cCodTit     := Posicione("ZH2",2, xFilial("ZH2") + (cAlAce)->ZH4_COD,"ZH2_COD")
+ 			cContrato   := Posicione("ZH1",1, xFilial("ZH1") + cCodTit          ,"ZH1_NUMERO")
+			cRevisa     := Posicione("ZH1",1, xFilial("ZH1") + cCodTit          ,"ZH1_REVISA")
+			cNome       := Posicione("ZH2",2, xFilial("ZH2") + (cAlAce)->ZH4_COD,"ZH2_NOME")
+			cTipo       := Posicione("ZH2",2, xFilial("ZH2") + (cAlAce)->ZH4_COD,"ZH2_TIPO")
+			//-> Tipo Dependente
+			Do Case				
+				Case cTipo == "C" 
+					cDependente := "Conjuge"
+				Case cTipo == "F"
+					cDependente := "Filhos"
+				Case cTipo == "O"
+					cDependente := "Outros"
+			EndCase
+		EndIf
+			
+		DbSelectArea("CN9")
+		DbSetOrder(1)
+		If DbSeek(xFilial("CN9") + cContrato + cRevisa)
+		
+			//-> Contrato Pessoa Fisica
+			If cTpConPF == CN9->CN9_TPCTO
+				
+				//-> CATEG PLANO == Comunidade
+				If CN9->CN9_XCATPL == "1"
+					
+					//-> PERIODO PLANO
+					Do Case
+						//-> Mensal
+						Case CN9->CN9_XPERPL == "1"
+							cPeriodo := "Mensal"	
+						//-> Trimestral
+						Case CN9->CN9_XPERPL == "2"
+							cPeriodo := "Trimestral"	
+						//-> Semestral
+						Case CN9->CN9_XPERPL == "3"
+							cPeriodo := "Semestral"	
+						//-> Anual
+						Case CN9->CN9_XPERPL == "4"
+							cPeriodo := "Anual"	
+					EndCase
+					
+					aAdd(aImpPF,{cContrato,"Comunidade",cPeriodo,(cAlAce)->ZH4_TIPO,cDependente,cNome,DToC(SToD((cAlAce)->ZH4_DTACES)),CN9->CN9_XCATPL,CN9->CN9_XPERPL})	
+					
+				Else //-> CATEG PLANO == Industria
+				
+					//-> PERIODO PLANO
+					Do Case
+						//-> Mensal
+						Case CN9->CN9_XPERPL == "1"
+							cPeriodo := "Mensal"	
+						//-> Trimestral
+						Case CN9->CN9_XPERPL == "2"
+							cPeriodo := "Trimestral"	
+						//-> Semestral
+						Case CN9->CN9_XPERPL == "3"
+							cPeriodo := "Semestral"	
+						//-> Anual
+						Case CN9->CN9_XPERPL == "4"
+							cPeriodo := "Anual"	
+					EndCase
+					
+					aAdd(aImpPF,{cContrato,"Industria",cPeriodo,(cAlAce)->ZH4_TIPO,cDependente,cNome,DToC(SToD((cAlAce)->ZH4_DTACES)),CN9->CN9_XCATPL,CN9->CN9_XPERPL})
+				
+				EndIf	
+				
+			ElseIf cTpConPJ == CN9->CN9_TPCTO //-> Contrato Pessoa Juridica
+
+				//-> CATEG PLANO == Comunidade
+				If CN9->CN9_XCATPL == "1"
+					
+					//-> PERIODO PLANO
+					Do Case
+						//-> Mensal
+						Case CN9->CN9_XPERPL == "1"
+							cPeriodo := "Mensal"	
+						//-> Trimestral
+						Case CN9->CN9_XPERPL == "2"
+							cPeriodo := "Trimestral"	
+						//-> Semestral
+						Case CN9->CN9_XPERPL == "3"
+							cPeriodo := "Semestral"	
+						//-> Anual
+						Case CN9->CN9_XPERPL == "4"
+							cPeriodo := "Anual"	
+					EndCase
+					
+					aAdd(aImpPJ,{cContrato,"Comunidade",cPeriodo,(cAlAce)->ZH4_TIPO,cDependente,cNome,DToC(SToD((cAlAce)->ZH4_DTACES)),CN9->CN9_XCATPL,CN9->CN9_XPERPL})
+					
+				Else //-> CATEG PLANO == Industria
+				
+					//-> PERIODO PLANO
+					Do Case
+						//-> Mensal
+						Case CN9->CN9_XPERPL == "1"
+							cPeriodo := "Mensal"	
+						//-> Trimestral
+						Case CN9->CN9_XPERPL == "2"
+							cPeriodo := "Trimestral"	
+						//-> Semestral
+						Case CN9->CN9_XPERPL == "3"
+							cPeriodo := "Semestral"	
+						//-> Anual
+						Case CN9->CN9_XPERPL == "4"
+							cPeriodo := "Anual"	
+					EndCase
+					
+					aAdd(aImpPJ,{cContrato,"Industria",cPeriodo,(cAlAce)->ZH4_TIPO,cDependente,cNome,DToC(SToD((cAlAce)->ZH4_DTACES)),CN9->CN9_XCATPL,CN9->CN9_XPERPL})
+				
+				EndIf	
+			
+			EndIf		
+			
+		EndIf
+		
+		If oReport:Cancel()
+			Return(Nil)
+		EndIf		
+	
+		(cAlAce)->(DbSkip())
+	EndDo
+	
+	For nM := 1 To Len(aImpPF)
+		
+		If !(aImpPF[nM][8] + aImpPF[nM][9] $ cAux)
+			oSec1:Init()	
+			oSec1:Cell("DESCRI"):SetValue("CONTRATO PFF " + aImpPF[nM][2] + " " + aImpPF[nM][3])		
+			cAux += aImpPF[nM][8] + aImpPF[nM][9] + "u"	
+		EndIf
+		
+		oSec1:Init()
+		oSec1:Cell("ZH1_NUMERO"):SetValue(AllTrim(aImpPF[nM][1]                            ))
+		oSec1:Cell("ZH1_NOME")  :SetValue(AllTrim(aImpPF[nM][6]                            ))
+		oSec1:Cell("ZH1_CATEGO"):SetValue(AllTrim(aImpPF[nM][2]                            ))
+		oSec1:Cell("ZH2_TIPO")  :SetValue(AllTrim(aImpPF[nM][5]                            ))
+		oSec1:Cell("ZH4_DTACES"):SetValue(AllTrim(aImpPF[nM][7]                            ))
+
+		oSec1:Printline()	
+	
+	Next nM
+	
+	For nL := 1 To Len(aImpPJ)
+		
+		If !(aImpPJ[nL][8] + aImpPJ[nL][9] $ cAux)
+			oSec1:Init()
+			oSec1:Cell("DESCRI"):SetValue("CONTRATO PJ " + aImpPF[nL][2] + " " + aImpPF[nL][3])	
+			cAux += aImpPF[nL][8] + aImpPF[nL][9] + "u"
+		EndIf
+		
+		oSec1:Init()
+		oSec1:Cell("ZH1_NUMERO"):SetValue(AllTrim(aImpPJ[nL][1]                            ))
+		oSec1:Cell("ZH1_NOME")  :SetValue(AllTrim(aImpPJ[nL][6]                            ))
+		oSec1:Cell("ZH1_CATEGO"):SetValue(AllTrim(aImpPJ[nL][2]                            ))
+		oSec1:Cell("ZH2_TIPO")  :SetValue(AllTrim(aImpPJ[nL][5]                            ))
+		oSec1:Cell("ZH4_DTACES"):SetValue(AllTrim(aImpPJ[nL][7]                            ))
+
+		oSec1:Printline()
+	
+	Next nL
+
+	(cAlAce)->(DbCloseArea())
+	
+	oSec1:Finish()
+		
+Return
+
+/*/{Protheus.doc} CriaSX1
+(long_description)
+@author j2a.luizjunior
+@since 29/08/2017
+@version 1.0
+@example
+(examples)
+@see (links_or_references)
+/*/
+
+Static Function CriaSX1
+
+	Local cEstat := U_SFGN001A(ProcName(0), "SF0525X")
+	Local aHelp := {}
+	
+	//-> Texto do help em português,inglês, espanhol
+	AAdd(aHelp, {{"Data De"                            }  ,{""},{""}})//1
+	AAdd(aHelp, {{"Data Ate"                           }  ,{""},{""}})//2
+	AAdd(aHelp, {{"Filial De"                          }  ,{""},{""}})//3
+	AAdd(aHelp, {{"Filial Ate"                         }  ,{""},{""}})//4
+
+	u_SFPUTSX1(cPerg,"01","Data De"   ,"","","mv_ch01","D",08,00,00,"G","",""   ,"","","mv_par01","","","","","","","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")
+	u_SFPUTSX1(cPerg,"02","Data Ate"  ,"","","mv_ch02","D",08,00,00,"G","",""   ,"","","mv_par02","","","","","","","","","","","","","","","","",aHelp[2,1],aHelp[2,2],aHelp[2,3],"")
+	u_SFPUTSX1(cPerg,"03","De Filial" ,"","","mv_ch03","C",08,00,00,"G","","SM0","","","mv_par03","","","","","","","","","","","","","","","","",aHelp[3,1],aHelp[3,2],aHelp[3,3],"")
+	u_SFPUTSX1(cPerg,"04","Ate Filial","","","mv_ch04","C",08,00,00,"G","","SM0","","","mv_par04","","","","","","","","","","","","","","","","",aHelp[4,1],aHelp[4,2],aHelp[4,3],"")
+	
+Return

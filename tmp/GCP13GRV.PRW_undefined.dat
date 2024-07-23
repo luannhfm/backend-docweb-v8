@@ -1,0 +1,116 @@
+#INCLUDE "PROTHEUS.CH"
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³GCP13GRV   ºAutor  ³Microsiga          º Data ³  21/10/12   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ PE apos gravacao do contrato via edital                    º±±
+±±º          ³                                                            º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ P11 - SISTEMA INDUSTRIA                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+User Function GCP13GRV()
+Local _cArea     := GetArea()
+Local _cAreaSC1  := SC1->(GetArea())
+Local aLogReg    := ParamIXB
+Local _cLanctoCT := Alltrim(GetNewPar("SI_PCOCTSC","900051"))
+Local aCN9Recnos :=  PARAMIXB[1][5][2]                    
+local nCount     := 1
+Local aCN9Area  := GetArea('CN9')
+
+//=============================================================================================
+// Implementação FSW para gerar contrato com o atributo de Registro de preço, caso seja preciso
+//=============================================================================================
+If CO1->(FieldPos("CO1_SRP")) > 0 //se campo existe      
+
+	For nCount := 1 to Len(aCN9Recnos)
+
+	    if !Empty( aCN9Recnos[nCount] )
+	
+			CN9->( dbGoto(aCN9Recnos[nCount]) )   
+                
+			RecLock("CN9", .F.)                                          
+				
+			if AllTrim(CO1->CO1_SRP)   == "S"		
+				CN9->CN9_XREGP      := "1"//campo REGISTRO DE PRECO Ddo Edital, CN9  1:Sim  2:Nao
+			else
+				CN9->CN9_XREGP      := "2"//campo REGISTRO DE PRECO Ddo Edital, CN9  1:Sim  2:Nao
+			endif
+				
+			CN9->(MsUnlock())
+			
+		EndIf
+			
+	Next     
+
+EndIf
+//=============================================================================================
+//=============================================================================================
+
+IF (_nPosCNB := Ascan(aLogReg[1],{|x| x[1] == "CNB"})) > 0
+	_cAreaCNB := CNB->(GetArea())
+	_aRegs := aLogReg[1][_nPosCNB][2]
+	
+	For i := 1 to Len(_aRegs)
+		CNB->(dbGoTo(_aRegs[i]))
+		
+		// Lançamento dos débitos da SC
+		SC1->(dbSetOrder(8))
+		IF SC1->(dbSeek(XFilial("SC1")+CN9->(CN9_CODED+CN9_NUMPR)+CNB->CNB_PRODUT)) .and. PcoExistLc(_cLanctoCT,"01","1")
+			
+			While SC1->(!Eof()) .and. SC1->(C1_FILIAL+C1_CODED+C1_NUMPR+C1_PRODUTO) == XFilial("SC1")+CN9->(CN9_CODED+CN9_NUMPR)+CNB->CNB_PRODUT
+				
+				SZW->(dbSetOrder(1))
+				IF SZW->(MsSeek(xFilial("SZW")+SC1->(C1_NUM+C1_ITEM)))
+					
+					_cFilBkp := cFilAnt
+					While SZW->(!Eof()) .and. SZW->(ZW_FILIAL+ZW_NUMSC+ZW_ITEMSC) == XFilial("SZW")+SC1->(C1_NUM+C1_ITEM)
+						// Altera empresa
+						cFilAnt := SZW->ZW_CODEMP
+						
+						_NPERCEMP := SZW->ZW_PERC
+						
+						PcoIniLan(_cLanctoCT)
+						PcoDetLan(_cLanctoCT,'01','MATA110')
+						PcoFinLan(_cLanctoCT)
+						
+						// Restaura filial
+						cFilAnt := _cFilBkp
+						
+						SZW->(dbSkip())
+					Enddo
+				ELSE
+					PcoIniLan(_cLanctoCT)
+					PcoDetLan(_cLanctoCT,'01','MATA110')
+					PcoFinLan(_cLanctoCT)
+				ENDIF
+				
+				_NPERCEMP := 0
+				
+				SC1->(dbSkip())
+			Enddo
+			
+		ENDIF
+		
+		RecLock("CNB",.F.)
+		CNB->CNB_CONTA := Posicione("SB1",1,xFilial("SB1")+CNB->CNB_PRODUT,"B1_CONTA")  
+		CNB->(MsUnlock())
+		
+		// Movimentos do Contrato
+		PcoIniLan("000354")
+		PcoDetLan("000354","02","CNTA200")
+		PcoFinLan("000354")
+	Next
+	
+	RestArea(_cAreaCNB)
+ENDIF
+
+RestArea(_cArea)
+RestArea(_cAreaSC1)
+RestArea(aCN9Area)
+Return()

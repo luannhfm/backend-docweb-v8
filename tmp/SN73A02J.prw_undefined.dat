@@ -1,0 +1,261 @@
+#Include 'Protheus.ch'
+#Include 'Topconn.ch'
+#Include 'FWMVCDEF.ch'
+
+/*/{Protheus.doc} SN73A02J
+Funcao para inserir viabilidade atraves da proposta comercial.
+
+@type 		function
+@author 	Jose Leite de Barros Neto
+@since 	04/11/2016
+@version 	1.0
+@return 	Nil, Nulo
+/*/
+User Function SN73A02J()
+	
+	Local _aArea 		:= GetArea()
+	Local _oBtnCanc		:= Nil
+	Local _oBtnConf		:= Nil
+	Local _oGet1			:= Nil
+	Local _cGet1 		:= SPACE(8)
+	Local _oSay1			:= Nil
+	Private _cOpor		:= AD1->AD1_NROPOR
+	Private _cOporRv	:= AD1->AD1_REVISA
+	Private _cFilOld 	:= cFilAnt
+	Static _oDlgZCG 	:= Nil
+	
+	If ALTERA
+		DEFINE MSDIALOG _oDlgZCG TITLE "Viabilidade - Informe a Filial Executora" FROM 000, 000  TO 150, 400 COLORS 0, 16777215 									PIXEL
+		    @ 047, 020 BUTTON	_oBtnConf 	PROMPT "Incluir" 				SIZE 037, 012 OF _oDlgZCG ACTION	GeraZCG(_cGet1) 											PIXEL
+		    @ 047, 080 BUTTON	_oBtnCanc 	PROMPT "Cancelar" 				SIZE 037, 012 OF _oDlgZCG ACTION 	_oDlgZCG:End() 												PIXEL
+		    @ 047, 140 BUTTON	_oBtnVisu 	PROMPT "Visualizar"			SIZE 037, 012 OF _oDlgZCG ACTION 	VisuZCG() 												PIXEL
+		    @ 016, 015 SAY 	_oSay1 		PROMPT "Filial Executora:" 	SIZE 044, 009 OF _oDlgZCG 									COLORS 0, 16777215 				PIXEL
+		    @ 016, 064 MSGET 	_oGet1 		VAR _cGet1 						SIZE 073, 010 OF _oDlgZCG VALID 	ChkSm0(_cGet1) 		COLORS 0, 16777215 F3 "SM0" 	PIXEL
+		ACTIVATE MSDIALOG _oDlgZCG CENTERED
+		INCLUI := .F.
+		ALTERA := .T.
+		If ValType(_oDlgZCG) = "O"
+			_oDlgZCG:FreeChildren()
+			FreeObj(_oDlgZCG)
+		EndIf
+	Else
+		MsgAlert("Opção disponível somente na Alteração da Oportunidade, Favor Verificar.")
+	EndIf
+	
+	If cFilAnt <> _cFilOld
+		cFilAnt := _cFilOld
+	EndIf
+	
+	RestArea(_aArea)
+	
+Return
+
+
+/** {Protheus.doc} GeraZCG
+Funcao que inclui viabilidade.
+
+@author: 	Jose Leite de Barros Neto
+@since: 	08/11/2016
+@Uso: 		SFIEMT
+*/
+/*-----------------------------------------------
+Modificações:
+14/02/2017 - Franklin B. Oliveira
+	Após a inclusão da viabilidade, foi adicionado
+	posicionamento do novo registro adicionado.
+-------------------------------------------------*/
+Static Function GeraZCG( p_cUndExec )
+	
+	Local _aButton := {{.F.,Nil},{.F.,Nil},{.F.,Nil},{.T.,Nil},{.T.,Nil},{.T.,Nil},{.T.,"Salvar"},{.T.,"Cancelar"},{.T.,Nil},{.T.,Nil},{.T.,Nil},{.T.,Nil},{.T.,Nil},{.T.,Nil}}
+	
+	If MsgNoYes("Confirma a Inclusão da Viabilidade?")
+		If cFilAnt == '03MT0001'
+			If Empty(p_cUndExec)
+				Alert("Favor preencher a Filial Executora.")
+				Return
+			Else
+				cFilAnt := p_cUndExec
+			EndIF
+		EndIf
+		
+		Begin Transaction
+			DbSelectArea('ZCG')
+			ZCG->(DbSetOrder(1))
+			ZCG->(DbGoTop())
+			If FWExecView('Incluir Viabilidade','SN7301X', MODEL_OPERATION_INSERT, , { || .T. }, , ,_aButton) == 0
+				ZCG->(DbSetOrder(5)) //ZCG_FILIAL+ZCG_XOPOR+ZCG_XREVOP
+				ZCG->(DbGoTop())
+				If ZCG->( DbSeek(xFilial('ZCG') + _cOpor + _cOporRv) )
+					If Reclock('ZCG',.F.)
+						ZCG->ZCG_XOPOR  := _cOpor
+						ZCG->ZCG_XREVOP := _cOporRv
+						ZCG->ZCG_XFILOR := _cFilOld
+						ZCG->(MsUnlock())
+						MsgInfo("Viabilidade Inserida com Sucesso!")
+					EndIf
+				EndIf
+			Else
+				MsgInfo("Inclusão da Viabilidade Cancelada!")
+			EndIf
+			ZCG->(DbCloseArea())
+			_oDlgZCG:End()
+		End Transaction
+		
+		If cFilAnt <> _cFilOld
+			cFilAnt := _cFilOld
+		EndIf
+	EndIf
+	
+Return
+
+
+/** {Protheus.doc} ChkSm0
+Funcao que verifica os dados da filial informada
+
+@author: 	Jose Leite de Barros Neto
+@since: 	08/11/2016
+@Uso: 		SFIEMT
+*/
+Static function ChkSm0( p_cFilial )
+	
+	Local _lReturn	:= .T.
+	Local _cFilName	:= AllTrim(FWFilName(cEmpAnt, p_cFilial))
+	
+	If Empty(_cFilName)
+		Alert("Filial informada não existe, favor verificar!")
+		_lReturn := .F.
+	EndIf
+
+Return _lReturn
+
+
+/** {Protheus.doc} VisuZCG
+Funcao que visualiza as viabilidades da oportunidade
+
+@author: 	Jose Leite de Barros Neto
+@since: 	10/11/2016
+@Uso: 		SFIEMT
+*/
+Static Function VisuZCG()
+	
+	Local _oBtFecha	:= Nil
+	Static _oVDlg	:= Nil
+	
+	If ALTERA
+		 DEFINE MSDIALOG _oVDlg TITLE "Visualizar - Viabilidades Compartilhadas" FROM 000, 000  TO 400, 500 COLORS 0, 16777215 PIXEL
+    		fBroZCG()
+    		@ 180, 096 BUTTON _oBtFecha PROMPT "Fechar" SIZE 037, 012 OF _oVDlg ACTION _oVDlg:End() PIXEL
+  		ACTIVATE MSDIALOG _oVDlg CENTERED
+	EndIf
+	
+	If ValType(_oVDlg) = "O"
+		_oVDlg:FreeChildren()
+		FreeObj(_oVDlg)
+	EndIf
+
+Return
+
+
+/** {Protheus.doc} fBroZCG
+Funcao realiza a carga dos dados na listbox
+
+@author: 	Jose Leite de Barros Neto
+@since: 	10/11/2016
+@Uso: 		SFIEMT
+*/
+/*-----------------------------------------------
+Modificações:
+14/02/2017 - Franklin B. Oliveira
+	Adicionado coluna para a exibição dos dados de
+	prospect.
+-------------------------------------------------*/
+Static Function fBroZCG()
+	
+	Local _cOpor		:= IIF(INCLUI,M->AD1_NROPOR,AD1->AD1_NROPOR)
+	Local _cRvOp		:= IIF(INCLUI,M->AD1_REVISA,AD1->AD1_REVISA)
+	Local _oWBroZCG	:= Nil
+	Local _aWBroZCG	:= {}
+	
+	If Select("TRA") > 0
+		DbSelectarea("TRA")
+		TRA->(DbCloseArea())
+	EndIf
+	
+	_cQuery := "SELECT * "+ CRLF
+	_cQuery += "FROM "+ RetSQLName("ZCG") + " "+ CRLF
+	_cQuery += "WHERE ZCG_XFILOR 	= '"+ cFilAnt +"'	"+ CRLF
+	_cQuery += "AND ZCG_XOPOR 		= '"+ _cOpor +"'	"+ CRLF
+	_cQuery += "AND ZCG_XREVOP 		= '"+ _cRvOp +"'	"+ CRLF
+	_cQuery += "AND D_E_L_E_T_ 		<> '*'"
+	
+	TCQUERY _cQuery NEW ALIAS "TRA"
+	
+	While .Not. TRA->(EOF())
+		DbSelectArea('ZCG')
+		DbSetOrder(1) //ZCG_FILIAL+ZCG_CODIGO
+		If ZCG->(DbSeek( TRA->ZCG_FILIAL + TRA->ZCG_CODIGO ))
+			aAdd(_aWBroZCG,{	ZCG->ZCG_FILIAL,;
+								ZCG->ZCG_CODIGO,;
+								DtoC(ZCG->ZCG_DATA),;
+								Transform(ZCG->ZCG_HORA,"@R 99:99:99"),;
+								ZCG->ZCG_CLIENT,;
+								ZCG->ZCG_LOJA,;
+								Alltrim(ZCG->ZCG_NOME),;
+								ZCG->ZCG_PROSPE,;
+								ZCG->ZCG_LOJPRO,;
+								Alltrim( Posicione("SUS", 1, FwxFilial("SUS") + ZCG->ZCG_PROSPE + ZCG->ZCG_LOJPRO, "US_NOME" )),;
+								ZCG->ZCG_QTDCS,;
+								AllTrim(ZCG->ZCG_CURSO),;
+								AllTrim(ZCG->ZCG_DESCMO),;
+								AllTrim(ZCG->ZCG_XOPOR),;
+								AllTrim(ZCG->ZCG_XREVOP),;
+								AllTrim(ZCG->ZCG_XFILOR)})
+		EndIf
+		ZCG->(DbCloseArea())
+		TRA->(DbSkip())
+	End
+	
+	TRA->(DbCloseArea())
+	
+	If Len(_aWBroZCG) <= 0
+		aAdd(_aWBroZCG,{	"",;
+								"",;
+								"",;
+								"",;
+								"",;
+								"",;
+								"",;
+								"",;
+								"",;
+								"",;
+								0,;
+								"",;
+								"",;
+								"",;
+								"",;
+								""})
+	EndIf
+	
+   @ 015, 004 LISTBOX _oWBroZCG Fields HEADER "Filial","Codigo","Data","Hora","Cliente","Loja","Nome","Prospec","Loja Prosp.","Nome Prosp.",;
+   												"Qtde","Curso","Modalidade","Oport.","Rev. Opor.","Origem" SIZE 237, 154 OF _oVDlg PIXEL ColSizes 50,50
+   _oWBroZCG:SetArray(_aWBroZCG)
+   _oWBroZCG:bLine := {|| {;
+						      _aWBroZCG[_oWBroZCG:nAt,01],;
+						      _aWBroZCG[_oWBroZCG:nAt,02],;
+						      _aWBroZCG[_oWBroZCG:nAt,03],;
+						      _aWBroZCG[_oWBroZCG:nAt,04],;
+						      _aWBroZCG[_oWBroZCG:nAt,05],;
+						      _aWBroZCG[_oWBroZCG:nAt,06],;
+						      _aWBroZCG[_oWBroZCG:nAt,07],;
+						      _aWBroZCG[_oWBroZCG:nAt,08],;
+						      _aWBroZCG[_oWBroZCG:nAt,09],;
+						      _aWBroZCG[_oWBroZCG:nAt,10],;
+						      _aWBroZCG[_oWBroZCG:nAt,11],;
+						      _aWBroZCG[_oWBroZCG:nAt,12],;
+						      _aWBroZCG[_oWBroZCG:nAt,13],;
+						      _aWBroZCG[_oWBroZCG:nAt,14],;
+						      _aWBroZCG[_oWBroZCG:nAt,15],;
+						      _aWBroZCG[_oWBroZCG:nAt,16];
+						    }}
+    
+Return

@@ -1,0 +1,279 @@
+#include "Rwmake.ch"
+#include "Protheus.ch"
+
+/*/{Protheus.doc} <NOME DA FUNCAO>
+Descrição da Customização
+Relatorio de Extrato de pagamentos
+
+@author: Caio Lima
+@since 07/05/2014
+
+@Pendencias
+Verificar **
+** igual pendencias que devem ser definidas.
+***
+Quando for aplicado em producao deve ser verificado 
+	parametro do campo filial
+	Consultas nos parametros
+
+  -------------------------------------------------------------------------
+	Antonio Dantas                                              29/10/2014
+	Para permirtir seleção INDEPENDENTE do Convenio 
+	Considera SOMENTE as PAGAS ou com ORDEM DE PAGAMENTO AGENDADA 
+  --------------------------------------------------------------------------+
+
+/*/
+User Function SN0636X()
+Local oReport		:= Nil 
+Private _cPerg 		:= "SN0636X"
+Private _cALias 	:= GetNextAlias()
+Private _oAluno 	:= Nil 
+Private _oCabExt	:= Nil 	
+Private _oExtrato	:= Nil 
+Private _oTotal 	:= Nil 						// variaveis dos objetos de secao
+Private _cPicture 	:= TM(999999999.99,14,2) 	// "@E 999,999,999.99"
+Private _nTotal 	:= 0 						// Varivel totalizadora
+Private _cDescTot 	:= "" 						// Variavel com a descricao do totalizador
+If FindFunction("TRepInUse") // .And. TRepInUse()
+	AjustaSX1(_cPerg)	//Valida as perguntas, atualizando sempre conforme a do código
+	If Pergunte(_cPerg,.T.) = .F.
+		Return()
+	EndIf
+	//-- Interface de impressao
+	oReport := ReportDef()
+	oReport:PrintDialog()
+EndIf
+Return  
+
+//ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+// funcao Definicoes dos objetos treport
+//ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+Static Function ReportDef()
+Local oReport
+Local _cDescri := "306 - Extrato de pagamentos - Assistência PRONATEC"
+Pergunte(_cPerg, .F.)
+oReport := TReport():New(_cPerg,_cDescri,_cPerg,{|oReport| PrintReport(oReport)},_cDescri)
+oReport:SetLeftMargin(2)
+oReport:SetPortrait() // Retrato
+oReport:oPage:SetPaperSize(9) // papel A4
+oReport:SetEnvironment(2) // local
+//--
+_oAluno := TRSection():New( oReport, "Aluno", { _cALias } )
+TRCell():New(_oAluno,"ZP7_XMATRI"  ,_cALias)
+TRCell():New(_oAluno,"ZP7_XNOME"   ,_cALias) 
+TRCell():New(_oAluno,"ZP7_XCPF"   	,_cALias,,"@R 999.999.999-99") 
+//--
+_oCabExt := TRSection():New( oReport, "Cabecalho Pagamentos", { _cALias } )
+_oCabExt:SetLeftMargin(3)
+TRCell():New(_oCabExt, "ZP7_FILIAL"  ,_cALias , , , 20, , {|| FWFilName( cEmpAnt, (_cALias)->ZP7_FILIAL) } )
+TRCell():New(_oCabExt, "ZP7_XEVENT"  ,_cALias )  
+TRCell():New(_oCabExt, "ZP7_XDESEV"  ,_cALias )
+TRCell():New(_oCabExt, "ZP7_XCURSO"  ,_cALias )
+TRCell():New(_oCabExt, "ZP7_XDESCS"  ,_cALias )
+//--
+_oExtrato := TRSection():New( oReport, "Extrato de pagamentos", { _cALias } )
+_oExtrato:SetLeftMargin(4)
+TRCell():New(_oExtrato, "ZP7XPERIO"		,_cALias	, "Per/Seq/Sessão - Descrição"	, /*PICTURE*/	,60	,, {|| (_cALias)->ZP7_XPERIO+"/"+(_cALias)->ZP7_XSEG+"/"+(_cALias)->ZP7_XSESSA+" - "+Substr((_cALias)->ZP4_XDESCR,1,20) } )	//DATA
+TRCell():New(_oExtrato, "ZP7XCOVE"		,_cALias	, "Convenio - Descrição"		, /*PICTURE*/	,30	,, {|| (_cALias)->ZP7_XCONVE+" - "+Substr((_cALias)->ZP7_XDESCO,1,20) } )	//DATA
+TRCell():New(_oExtrato, "ZPA_XDATA"    	,_cALias )
+TRCell():New(_oExtrato, "ZP7_XDTPG"   	,_cALias 	, , , 08)
+TRCell():New(_oExtrato, "ZP7_XVALOR"  	,_cALias )
+TRCell():New(_oExtrato, "ZP7_XSTATU"  	,_cALias )
+TRCell():New(_oExtrato, "ZP7_XOCORR"  	,_cALias 	, , , 50, , , , .T.)
+//--
+_oTotal := TRSection():New( oReport, "Extrato de pagamentos", { _cALias } )
+_oTotal:SetLeftMargin(4)
+TRCell():New(_oTotal, "ZP7_XPERIO"    ,_cALias , , , 10, , {|| "" } )  
+TRCell():New(_oTotal, "ZP4_XDESCR"    ,_cALias , , , 20, , {|| "" } )  
+TRCell():New(_oTotal, "ZP7_XCONVE"    ,_cALias , , ,   , , {|| "" } )  
+TRCell():New(_oTotal, "ZP7_XDESCO"    ,_cALias , , ,   , , {|| "" } )  
+TRCell():New(_oTotal, "ZPA_XDATA"     ,_cALias , , , 08, , {|| "" } )  
+TRCell():New(_oTotal, "ZP7_XDTPG"     ,_cALias , , , 08, , {|| _cDescTot } , "RIGHT" )
+TRCell():New(_oTotal, "ZP7_XVALOR"    ,_cALias , , ,   , , {|| _nTotal } )
+TRCell():New(_oTotal, "ZP7_XSTATU"    ,_cALias , , ,   , , {|| "" } )
+TRCell():New(_oTotal, "ZP7_XOCORR"    ,_cALias , , , 50, , {|| "" } , , .T.)
+//--
+_oTotal:SetHeaderSection(.F.)
+_oTotal:SetHeaderBreak(.F.)
+_oTotal:SetHeaderPage(.F.)
+_oTotal:SetLinesBefore(0)
+Return(oReport)   
+
+
+//ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+//³funcao que realiza o filtro e imprimi os dados na tela³
+//ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+Static Function PrintReport(oReport)
+Local _cAluno 	:= ""
+Local _cAgrup 	:= ""
+Local _lInit 	:= .F. 		// Variavel que controla a inicializacao da secao de detalhes.
+Local _nTotPg	:= 0 		// Total Pago
+Local _nTotNPg	:= 0 		// Total a Pagar
+Local _nTotGPg	:= 0 		// Total Geral Pago
+Local _nTotGNPg	:= 0 		// Total Geral A Pagar 
+Local _nTotAPg 	:= 0 		// Total Pago/Aluno
+Local _nTotANPg	:= 0 		// Total A Pagar/Aluno
+MsgRun( "Selecionando registros...", "Aguarde" ,  {|| GeraQuery() } )
+oReport:SetMeter(0)
+While !(_cALias)->(Eof())  
+	oReport:IncMeter() // incrementa regua
+	if oReport:Cancel() // trata possivel cancelamento do relatorio.
+		oReport:PrintText("CANCELADO PELO USUÁRIO")
+		exit
+	Endif
+	If _cAluno <> (_cALias)->ZP7_XMATRI
+		_cAluno := (_cALias)->ZP7_XMATRI
+		_oAluno:Init()
+		_oAluno:PrintLine()
+		_oAluno:Finish()
+		_lInit := .T.
+	EndIf
+	If _cAgrup <> (_cALias)->ZP7_FILIAL+ (_cALias)->ZP7_XEVENT+(_cALias)->ZP7_XCURSO
+		_cAgrup := (_cALias)->ZP7_FILIAL+(_cALias)->ZP7_XEVENT+(_cALias)->ZP7_XCURSO
+		_oCabExt:Init()
+		_oCabExt:PrintLine()
+		_oCabExt:Finish()
+		_lInit := .T.
+	EndIf
+	If _lInit
+		_lInit := .F.
+		_oExtrato:Init()
+	EndIf
+	_oExtrato:PrintLine()
+	// Totaliza Valores
+	If (_cALias)->ZP7_XSTATU == "P"
+		_nTotPg 	+= (_cALias)->ZP7_XVALOR  	// Total por agrupamento
+		_nTotAPg 	+= (_cALias)->ZP7_XVALOR 	// Total por aluno
+		_nTotGPg 	+= (_cALias)->ZP7_XVALOR 	// total geral
+	Else
+		_nTotNPg 	+= (_cALias)->ZP7_XVALOR  	// Total por agrupamento
+		_nTotANPg 	+= (_cALias)->ZP7_XVALOR 	// Total por aluno
+		_nTotGNPg 	+= (_cALias)->ZP7_XVALOR 	// total geral
+	EndIf
+	(_cALias)->(dbSkip())
+	// Trativa para os agrupamentos
+	If _cAgrup <> (_cALias)->ZP7_FILIAL+(_cALias)->ZP7_XEVENT+(_cALias)->ZP7_XCURSO .OR. _cAluno <> (_cALias)->ZP7_XMATRI
+		_oExtrato:Finish()
+		oReport:SkipLine()
+		// Imprimi totalizadores por agrupamento
+		_cDescTot := "Total Pago"
+		_nTotal := _nTotPg
+		_oTotal:Init()
+		_oTotal:PrintLine()
+		_oTotal:Finish()
+		//-- 
+		_cDescTot := "Total A Pagar"
+		_nTotal := _nTotNPg
+		_oTotal:Init()
+		_oTotal:PrintLine()
+		_oTotal:Finish()
+		//-- 
+		_nTotPg  := 0
+		_nTotNPg := 0
+		
+		If _cAluno <> (_cALias)->ZP7_XMATRI
+			oReport:SkipLine()
+			// Imprimi totalizadores Por aluno
+			_cDescTot := "Total Pago/Aluno"
+			_nTotal := _nTotAPg
+			_oTotal:Init()
+			_oTotal:PrintLine()
+			_oTotal:Finish()
+			
+			_cDescTot := "Total A Pagar/Aluno"
+			_nTotal := _nTotANPg
+			_oTotal:Init()
+			_oTotal:PrintLine()
+			_oTotal:Finish()
+			
+			_nTotAPg := 0
+			_nTotANPg := 0
+		EndIf
+	EndIf
+EndDo
+If _nTotGPg > 0 .OR. _nTotGNPg > 0
+	oReport:SkipLine()
+	// Imprimi totalizadores geral
+	_cDescTot := "Total Geral PAGO"
+	_nTotal := _nTotGPg
+	_oTotal:Init()
+	_oTotal:PrintLine()
+	_oTotal:Finish()
+	
+	_cDescTot := "Total Geral A PAGAR"
+	_nTotal := _nTotGNPg
+	_oTotal:Init()
+	_oTotal:PrintLine()
+	_oTotal:Finish()
+EndIf
+
+(_cALias)->(dbClosearea())
+Return   
+
+
+//ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+// funcao que realiza o sql do relatorio
+//ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+Static Function GeraQuery()
+Local _cSql := ""
+_cSql += " SELECT ZP7.*, ZP4_XCOD, ZP4_XDESCR, ZPA_XDATA "+CRLF
+_cSql += " FROM "+RetSQLName("ZP7")+" ZP7  "+CRLF
+_cSql += " INNER JOIN "+RetSQLName("ZP4")+" ZP4 ON ZP4.D_E_L_E_T_ <> '*' AND ZP4_FILIAL=ZP7_FILIAL AND ZP4_XCOD = ZP7_XPERIO "+CRLF
+_cSql += " Left  JOIN "+RetSQLName("ZPA")+" ZPA ON ZPA.D_E_L_E_T_ <> '*' AND ZPA_FILIAL=ZP7_FILIAL AND ZPA_XCOD = ZP7_XREMES and"+CRLF
+_cSql += " ZPA.ZPA_XCONVE = ZP7.ZP7_XCONVE and ZPA.ZPA_XTIPO = 'PG' and ZPA_XPERID = ZP7_XPERIO and ZPA_XSEG = ZP7_XSEG and ZPA_XSESSA = ZP7_XSESSA "+CRLF
+_cSql += " WHERE ZP7.D_E_L_E_T_ <> '*'  "+CRLF
+_cSql += " AND ZP7_FILIAL BETWEEN '"+MV_PAR01+"' AND '"+MV_PAR02+"' "+CRLF
+If !Empty(Alltrim(MV_PAR09))
+	_cSql += " and ZP7_XSTATU in "+FormatIn(MV_PAR09,";")+" "+ CRLF
+Endif 	
+If !Empty(Alltrim(MV_PAR05))
+	_cSql += " and ((ZP7_XMATRI = '"+PadR(Alltrim(MV_PAR05),TAMSX3("ZP7_XMATRI")[1])+"' or "+"ZP7_XMATRI = 'r"+PadR(Alltrim(MV_PAR05),TAMSX3("ZP7_XMATRI")[1]-1)+"')) "+ CRLF	
+Else
+	If !Empty(Alltrim(MV_PAR06))
+		_cSql += " AND ZP7_XCPF = '"+PadR(Alltrim(MV_PAR06),TAMSX3("ZP7_XCPF")[1])+"' "+CRLF
+	Else
+		_cSql += " AND ZP7_XNOME  BETWEEN '"+MV_PAR03+"' AND '"+MV_PAR04+"' "+CRLF
+	EndIf
+EndIf
+_cSql += " and ( ZP7_XDTPG = '"+Space(TAMSX3("ZP7_XDTPG")[1])+"' or ZP7_XDTPG BETWEEN '"+DToS(MV_PAR07)+"' AND '"+DToS(MV_PAR08)+"') "+CRLF
+_cSql += " ORDER BY ZP7_XPERIO, ZP7_XSEG, ZP7_XSESSA, ZP7_XNOME, ZP7_XALUNO, ZP7_XMATRI, ZP7_XCPF, ZP7_FILIAL, ZP7_XEVENT ,ZP7_XCURSO"+CRLF
+MemoWrite("C:\temp\"+FunName()+"_"+ProcName()+".TXT",_cSql)
+If Select(_cALias) > 0
+	(_cALias)->(dbClosearea())
+Endif
+DbUseArea(.T., "TOPCONN", TCGenQry(,,(_cSql)), _cALias, .F., .F.)  
+//-- Coverte o campo (STOD)
+TCSETFIELD(_cALias,"ZP7_XDTPG","D",8,0)      
+TCSETFIELD(_cALias,"ZPA_XDATA","D",8,0)      
+Return
+
+
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³sx1inv    ºAutor  ³caio renan          º Data ³  05/23/09   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³AJUSTA AS PERGUNTAS                                         º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+Static Function AjustaSX1(cPerg)
+Local aHelp01 := {}
+Local aHelp03 := {}
+Local aHelp04 := {}
+Local aHelp05 := {}
+Local aHelp06 := {}
+
+//--------------------------------------------------------------------
+u_SFPUTSX1(cPerg, "01","Filial de?"       			,"","","mv_ch1","C",TamSX3("ZP7_FILIAL")[01],00,00,"G","",""   ,"","","mv_par01","","","","","","","","","","","","","","","","",,"","","") 
+u_SFPUTSX1(cPerg, "02","Filial ate?"      			,"","","mv_ch2","C",TamSX3("ZP7_FILIAL")[01],00,00,"G","",""   ,"","","mv_par02","","","","","","","","","","","","","","","","",,"","","") 
+u_SFPUTSX1(cPerg, "03","Nome aluno de?"   			,"","","mv_ch3","C",50,00,00,"G","",""   ,"","","mv_par03","","","","","","","","","","","","","","","","",,"","","") 
+u_SFPUTSX1(cPerg, "04","Nome aluno ate?"  			,"","","mv_ch4","C",50,00,00,"G","",""   ,"","","mv_par04","","","","","","","","","","","","","","","","",,"","","") 
+u_SFPUTSX1(cPerg, "05","Matricula?"       			,"","","mv_ch5","C",15,00,00,"R","",""   ,"","","mv_par05","","","","","","","","","","","","","","","","",,"","","")
+u_SFPUTSX1(cPerg, "06","CPF?"             			,"","","mv_ch6","C",14,00,00,"R","",""   ,"","","mv_par06","","","","","","","","","","","","","","","","",,"","","")
+u_SFPUTSX1(cPerg, "07","Dt Pgto de?"      			,"","","mv_ch7","D",08,00,00,"G","",""   ,"","","mv_par07","","","","","","","","","","","","","","","","",,"","","")
+u_SFPUTSX1(cPerg, "08","Dt Pgto ate?"     			,"","","mv_ch8","D",08,00,00,"G","",""   ,"","","mv_par08","","","","","","","","","","","","","","","","",,"","","")
+u_SFPUTSX1(cPerg, "09","Com Seguinte(s) Status ?"	,"","","mv_ch9","C",99,00,00,"G","u_MrkStat()"		,""	 	,"","","mv_par03","","","","","","","","","","","","","","","","",,"","","")
+Return

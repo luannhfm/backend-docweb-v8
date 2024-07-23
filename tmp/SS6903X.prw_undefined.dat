@@ -1,0 +1,296 @@
+#Include 'TOTVS.CH'
+#Include 'RWMAKE.CH'
+#Include 'TOPCONN.CH'
+#Include 'FWMVCDEF.CH'
+#Include 'FWCOMMAND.CH'
+#Include 'Protheus.ch'
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <SS6903X> Cadastro de Família de Produtos (GCT)
+	Objetivo: Criar o vínculo Produto vs Minutas 
+@author Jonas Nascimento 
+@since 09/09/2015
+@version<1.00>
+@return
+@example
+@see
+--------------------------------------------------------------------------------
+*/
+User Function SS6903X()
+	Local oBrowse		:= FWMBrowse():New()
+	Private aRotina	:= MenuDef()
+	oBrowse:SetAlias("ZG1")
+	oBrowse:SetDescription("Cadastro de Familias de Produtos")
+	
+	oBrowse:Activate() 
+	
+Return Nil
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <MenuDef> Controller do MVC
+ 
+@author Jonas Nascimento 
+@since 09/09/2015
+@version<1.00>
+@return
+@example
+@see
+--------------------------------------------------------------------------------
+*/
+Static Function MenuDef()
+	Local aRotina := {}
+	
+	ADD OPTION aRotina TITLE "Pesquisar"	ACTION	"PESQBRW"			OPERATION 1 ACCESS 0
+	ADD OPTION aRotina TITLE "Visualizar"	ACTION	"VIEWDEF.SS6903X"	OPERATION 2 ACCESS 0
+	ADD OPTION aRotina TITLE "Incluir"		ACTION	"VIEWDEF.SS6903X"	OPERATION 3 ACCESS 0
+	ADD OPTION aRotina TITLE "Alterar"		ACTION	"VIEWDEF.SS6903X"	OPERATION 4 ACCESS 0
+	ADD OPTION aRotina TITLE "Excluir"		ACTION	"VIEWDEF.SS6903X"	OPERATION 5 ACCESS 0
+	
+Return aRotina
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <ModelDef> Model do MVC
+ 
+@author Jonas Nascimento 
+@since 09/09/2015
+@version<1.00>
+@return
+@example
+@see
+--------------------------------------------------------------------------------
+*/
+Static Function ModelDef()
+	Local oStruZG1	:= FWFormStruct(1, "ZG1")
+	Local oStruZG2	:= FWFormStruct(1, "ZG2")
+	Local oModel	:= MPFormModel():New("SS6903XX")
+	
+	oModel:AddFields("ZG1MASTER", , oStruZG1)
+	oModel:AddGrid("ZG2DETAIL", "ZG1MASTER", oStruZG2)
+	
+	oModel:SetPrimaryKey({"ZG1_FILIAL","ZG1_CODFAM"})
+	oModel:SetRelation("ZG2DETAIL", {{"ZG2_FILIAL","xFilial('ZG2')"},{"ZG2_CODFAM","ZG1_CODFAM"}}, ZG2->(IndexKey(1)))
+	
+	oModel:GetModel("ZG2DETAIL"):SetOptional(.T.)
+	
+	oModel:SetDescription("Minutas da Família")
+	oModel:GetModel("ZG1MASTER"):SetDescription("Família")
+	oModel:GetModel("ZG2DETAIL"):SetDescription("Itens de Família (minutas)")
+	
+	//Não permitir linha duplicada [ZG2_CODMIN]
+	oModel:GetModel('ZG2DETAIL'):SetUniqueLine({'ZG2_CODMIN'})
+	
+Return oModel
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <ViewDef> View do MVC
+ 
+@author Jonas Nascimento 
+@since 09/09/2015
+@version<1.00>
+@return
+@example
+@see
+--------------------------------------------------------------------------------
+*/
+Static Function ViewDef()
+	Local oModel		:= FWLoadModel("SS6903X")
+	Local oView			:= FWFormView():New()
+	Local oStruZG1		:= FWFormStruct(2, "ZG1")
+	Local oStruZG2		:= FWFormStruct(2, "ZG2")
+	
+	oView:SetModel(oModel)
+	
+	oView:AddField("VIEW_ZG1", oStruZG1, "ZG1MASTER")
+	oView:AddGrid("VIEW_ZG2", oStruZG2, "ZG2DETAIL")
+	
+	oView:CreateHorizontalBox("SUPERIOR", 30)
+	oView:CreateHorizontalBox("INFERIOR", 70)
+	
+	oView:SetOwnerView("VIEW_ZG1", "SUPERIOR")
+	oView:SetOwnerView("VIEW_ZG2", "INFERIOR")
+	
+	oView:EnableTitleView("VIEW_ZG1")
+	oView:EnableTitleView("VIEW_ZG2")
+	
+Return oView
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fAutoInc> Auto incremento do campo ZG2_CODITE
+ 
+@author Jonas Nascimento 
+@since 09/09/2015
+@version<1.00>
+@return
+@example
+@see
+--------------------------------------------------------------------------------
+*/
+User Function fAutoInc()
+	Local oModel	:= FWModelActive()
+	Local oModelZG2	:= oModel:GetModel('ZG2DETAIL')
+	Local _cRet		:= ""
+	Local _aCols	:= oModelZG2:aCols
+	
+	If Len(_aCols) > 0
+		_cRet := StrZero(Len(_aCols), 03)
+	Else
+		_cRet := '001'
+	EndIf
+	
+	While aScan(_aCols, {|x| AllTrim(x[1]) == _cRet } ) > 0
+		_cRet := Soma1(_cRet)
+	EndDo
+	
+Return _cRet
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fRetZG3> Retorna Descrição da minuta
+ 
+@author Jonas Nascimento 
+@since 09/09/2015
+@version<1.00>
+@return
+@example
+@see
+--------------------------------------------------------------------------------
+*/
+User Function fRetZG3()
+	Local _cDescri	:= ""
+	
+	dbSelectArea("ZG3")
+	ZG3->(dbSetOrder(1))
+	If ZG3->(dbSeek(xFilial("ZG3")+ZG2->ZG2_CODMIN))
+		_cDescri := ZG3->ZG3_DESCRI
+	EndIf
+	
+Return _cDescri
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <fVldZG3> Verifica se a minuta Existe e se está Ativa.
+	Utilizada na validação dos campos;
+	 ZG2_CODMIN - Familia de Produto - ZG2 [SS6903X]
+	 CN1_XMINUT - Tipo de Contrato - CN1 [CNTA020]
+	
+@author Jonas Nascimento 
+@since 09/09/2015
+@version<1.00>
+@return
+@example
+@see
+--------------------------------------------------------------------------------
+*/
+/*/{Protheus.doc} fVldZG3
+Verifica se a minuta Existe e se está Ativa.
+	Utilizada na validação dos campos;
+	 ZG2_CODMIN - Familia de Produto - ZG2 [SS6903X]
+	 CN1_XMINUT - Tipo de Contrato - CN1 [CNTA020]
+@author Jonas Nascimento 
+@since 09/09/2015
+@version 1.0
+@return _lRet, .T.=Minuta ativa;.F.= Minuta iniativa ou não existe
+@param cVal, characters, Código da minuta a ser validada
+@param cEspCtr, characters, Espécie do contrato: 1=Compra;2=Venda
+@type User function
+@history 28/09/2020, Franklin de Brito de Oliveira, Criado tratamento para espécie do contrato via chamada da função.
+/*/
+User Function fVldZG3(cVal, cEspCtr)
+	Local _lRet			:= .T. 
+	Local _TpContrat	:= ""
+	Default cEspCtr := '2'
+	_TpContrat := cEspCtr
+	If _TpContrat == '2'
+		If !Empty(cVal)
+			dbSelectArea("ZG3")
+			ZG3->(dbSetOrder(2))
+			If !ZG3->(dbSeek(xFilial("ZG3")+AllTrim(cVal)+'1'))	//M->ZG2_CODMIN
+				_lRet := .F.
+				Help( NIL,;
+					NIL,;
+					FunName()+"/"+ProcName(),;
+					NIL,;
+					"Minuta não cadastrada ou não está ativa!",;
+					1,;
+					0,;
+					NIL,;
+					NIL,;
+					NIL,;
+					NIL,;
+					NIL,;
+					{"Selecione uma minuta ativa, ative a minuta selecionada ou cadastre uma nova minuta."};
+				)
+			EndIf
+		Else
+			_lRet := .F.
+			Help( NIL,;
+					NIL,;
+					FunName()+"/"+ProcName(),;
+					NIL,;
+					"Código de minuta não informada!",;
+					1,;
+					0,;
+					NIL,;
+					NIL,;
+					NIL,;
+					NIL,;
+					NIL,;
+					{"Informe o código de minuta associado ao tipo de contrato."};
+				)
+		EndIf
+	EndIf
+
+Return _lRet
+
+/*
+--------------------------------------------------------------------------------
+{Protheus.doc} <SS6903XX> Pontos de Entrada de SS6903X
+ 
+@author Jonas Nascimento 
+@since 09/09/2015
+@version<1.00>
+@return
+@example
+@see
+--------------------------------------------------------------------------------
+*/
+User Function SS6903XX()
+	Local _aPARAMIXB	:= PARAMIXB
+	Local _xRet			:= Nil
+	
+	Do Case
+		Case _aPARAMIXB[2] == "MODELPRE"				//Antes da alteracao de qualquer campo
+			_xRet := .T.
+		Case _aPARAMIXB[2] == "MODELPOS"				//Na validacao total do modelo
+			_xRet := .T.
+		Case _aPARAMIXB[2] == "FORMPRE"					//Antes da alteracao de qualquer campo de formulário
+			_xRet := .T.
+		Case _aPARAMIXB[2] == "FORMPOS"					//Na validação total do formulário
+			_xRet := .T.
+		Case _aPARAMIXB[2] == "FORMLINEPRE"				//Antes da alteração da linha do formulário FWFORMGRID
+			_xRet := .T.
+		Case _aPARAMIXB[2] == "FORMLINEPOS"				//Na validação total da linha do formulario FWFORMGRID
+			_xRet := Nil
+		Case _aPARAMIXB[2] == "MODELCOMMITTTS"			//Após a gravação total do modelo e dentro da transacao
+			_xRet := Nil
+		Case _aPARAMIXB[2] == "MODELCOMMITNTTS"			//Após a gravação total do modelo e fora da gravação
+			_xRet := Nil
+		Case _aPARAMIXB[2] == "FORMCOMMITTTSPRE"		//Antes da gravação da tabela do formulário
+			_xRet := .T.
+		Case _aPARAMIXB[2] == "FORMCOMMITTTSPOS"		//Após a gravação da tabela do formulário
+			_xRet := Nil
+		Case _aPARAMIXB[2] == "FORMCANCEL"				//No cancelamento do botão
+			_xRet := .T.
+		Case _aPARAMIXB[2] == "MODELVLDACTIVE"			//Na ativação do modelo
+			_xRet := .T.
+		Case _aPARAMIXB[2] == "BUTTONBAR"				//Para inclusão de botões na ControlBar
+			_xRet := {}
+		Case _aPARAMIXB[2] == "MODELCANCEL"				//Na ação do botão Cancelar
+			_xRet := .T.
+	EndcAse
+	
+Return _xRet

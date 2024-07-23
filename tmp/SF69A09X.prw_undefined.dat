@@ -1,0 +1,326 @@
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "PARMTYPE.CH"
+
+#DEFINE  ENTER  Chr(13) + Chr(10)
+
+/*
+	Method   : FIEMT_MEDICAO
+	Autor    : Carlos Ryve Gandini
+	Data/Time: 17/04/20 às 03:06:23
+	Descricao: Classe responsavel pela geracao das medicoes do SMAIS
+	Sintaxe  : <Vide Parametros Formais>
+*/
+CLASS FIEMT_MEDICAO From LongClassName
+	
+	DATA cMarca 
+	
+	METHOD New() 
+	METHOD Gera_Medicao( oBrwCNA, oBrwCNB, oBrwZG7, nTipo, oSay, lBasEsta )
+	METHOD Finaliza_Medicao()
+
+ENDCLASS
+
+/*
+	Method   : New
+	Autor    : Carlos Ryve Gandini
+	Data/Time: 17/04/20 às 03:08:31
+	Descricao: Method Contructor da classe
+	Sintaxe  : <Vide Parametros Formais>
+*/
+Method New(cMark) Class FIEMT_MEDICAO
+	PARAMTYPE 0 VAR cMark AS CHARACTER OPTIONAL DEFAULT GetMark ( ,"CNB", "CNB_XOK" ) 
+	::cMarca := cMark
+Return self
+
+/*
+	Method   : Gera_Medicao
+	Autor    : Carlos Ryve Gandini
+	Data/Time: 17/04/20 às 03:09:16
+	Descricao: Method responsavel pela geracao da medicao
+	Sintaxe  : <Vide Parametros Formais>
+*/
+Method Gera_Medicao( oBrwCNA, oBrwCNB, oBrwZG7, nTipo, oSay, lBasEsta ) Class FIEMT_MEDICAO
+  
+	Local aAreaCNA := CNA->( GetArea() )
+	Local aAreaCNB := CNB->( GetArea() )
+	Local aAreaZG7 := ZG7->( GetArea() )
+	
+	Local cUpd := ""
+	Local cWhr := ""
+	Local lRet := .T.
+	Local lOne := .F.
+
+	Local nTmCNA := oBrwCNA:LogicLen()
+	Local nAtCNA := oBrwCNA:nAT
+	Local cAliasCNA	:= oBrwCNA:Alias()
+
+	Local nAtCNB := oBrwCNB:oBrowse:nAT
+	Local cAliasCNB	:= oBrwCNB:Alias()
+
+	Local nAtZG7 := oBrwZG7:oBrowse:nAT
+	Local cAliasZG7	:= oBrwZG7:Alias()
+
+	Local cMark  := ::cMarca
+
+	Local nA := 0
+	Local nB := 0
+	Local nC := 0
+
+	Local aCab     	:= {}		//Cabecalho
+	Local aItem    	:= {}		//Itens
+	Local cQuery   	:= ""
+	Local cNumGCT   := ""
+	Local cFilGCT		:= ""
+	Local nPerMed		:= 0
+	Local cTxLog   	:= "" 
+	Local cFileLog	:= ""
+	Local cArqTrb  	:= GetNextAlias()
+
+	Local cCompet	 := subs(DtoS(Date()),5,2)+"/"+Subs(DtoS(Date()),1,4)	//Mes/Ano (mm/aaaa)
+	Local cParcel  := Space(TamSX3("CNF_PARCEL")[1])
+	Local cFilCTR	 := Iif(lBasEsta,GetMv("MV_XSMFIBS",.F.,"02MT0001"),cFilAnt)         
+	Local cTES     := '501'
+	
+	Local aItemZG7 := {}
+
+	Private lMsErroAuto := .F.
+
+	PARAMTYPE 0 VAR oBrwCNA AS OBJECT	
+	PARAMTYPE 1 VAR oBrwCNB AS OBJECT
+	PARAMTYPE 2 VAR oBrwZG7 AS OBJECT
+	
+		Begin Transaction
+		
+		nA := 0
+		While (cAliasCNA)->( !Eof() )
+			nA++
+			
+			If ValType(oSay) == "O"
+			
+				oSay:cCaption := "Processando Contrato ["+(cAliasCNA)->CNA_CONTRA+"]"
+				ProcessMessages()
+
+			Endif
+
+			oBrwCNA:GoTo( nA )
+			Eval(oBrwCNA:bChange)
+  	
+			lCNA := .T.
+			aCab := {}
+			aItem := {}
+  	
+			nB := 1
+			While (cAliasCNB)->( !Eof() .And. (cAliasCNA)->(CNA_FILIAL+CNA_CONTRA+CNA_REVISA) == (cAliasCNB)->(CNB_FILIAL+CNB_CONTRA+CNB_REVISA) )
+				
+				oBrwCNB:oBrowse:GoTo( (cAliasCNB)->( recno() ) )
+				Eval(oBrwCNB:oBrowse:bChange)
+				nB++
+				
+				If ValType(oSay) == "O"
+				
+					oSay:cCaption := "Contrato ["+(cAliasCNA)->CNA_CONTRA+"], Lendo Item-Produto ["+(cAliasCNB)->(CNB_ITEM+"-"+CNB_PRODUT)+"]"
+					ProcessMessages()
+
+				Endif
+
+				 If oBrwCNB:IsMark( cMark )
+
+						If lCNA
+						
+							lCNA := .F.
+							cNumGCT := CriaVar("CND_NUMMED")
+								
+							aCab := {}
+							aItem := {}
+							
+							aAdd(aCab,{"CND_CONTRA"	,(cAliasCNA)->CNA_CONTRA	,NIL})
+							aAdd(aCab,{"CND_REVISA"	,(cAliasCNA)->CNA_REVISA	,NIL})
+							aAdd(aCab,{"CND_NUMERO"	,(cAliasCNA)->CNA_NUMERO	,NIL})
+							aAdd(aCab,{"CND_NUMMED"	,cNumGCT					,NIL})
+							aAdd(aCab,{"CND_COMPET" ,cCompet          ,NIL})
+							aAdd(aCab,{"CND_CLIENT" ,(cAliasCNA)->CNA_CLIENT  ,NIL})
+							aAdd(aCab,{"CND_LOJACL" ,(cAliasCNA)->CNA_LOJACL  ,NIL})
+							aAdd(aCab,{"CND_MOEDA"  ,1                ,NIL})
+							aAdd(aCab,{"CND_OBS"    ,"Medição gerada automaticamente a partir da integracao SMAIS",NIL}) 
+							//aAdd(aCab,{"CND_SERVIC" ,cValToChar(nTipo)              ,NIL})
+							aAdd(aCab,{"CND_SERVIC" ,"1"              ,NIL})
+							aAdd(aCab,{"CND_FILCTR" , Iif(lBasEsta,GetMv("MV_XSMFIBS",.F.,"02MT0001"),cFilCTR),NIL})					
+			  	  	
+							If !Empty(CND->(FieldPos("CND_PARCEL")))
+								aAdd(aCab,{"CND_PARCEL",cParcel,NIL})
+							EndIf
+				 		
+				 		EndIf
+				 	
+				 		While (cAliasZG7)->( !Eof() )
+				 			
+				 			If Empty( (cAliasZG7)->ZG7_RECCNB ) .Or. aScan( aItemZG7, {|o| o[1] == (cAliasZG7)->RECZG7 } )
+				 				(cAliasZG7)->( dbSkip() )    
+				 				Loop
+				 			EndIf	
+				 			
+				 			oBrwZG7:oBrowse:GoTo( (cAliasZG7)->( recno() ) )
+          	
+				 			If oBrwZG7:IsMark( cMark ) .And.  (cAliasZG7)->ZG7_RECCNB == (cAliasCNB)->RECCNB
+				 				
+								If ValType(oSay) == "O"
+								
+									oSay:cCaption := "Integrando Exame SMAIS ["+(cAliasZG7)->ZG7_CODEXA+"]"
+									ProcessMessages()
+          	
+								Endif
+          	
+				 				nPProd := 0
+				 				aScan( aItem, { |a| nPProd := aScan( a, { |b|  AllTrim(b[1]) == "CNE_PRODUT" } ) } )
+				 				
+				 				/*
+				 					Autor       : Carlos Ryve Gandini
+				 					Data/Time   : 04/05/20 às 10:55:13
+				 					Detalhe     : Verificar se podera ser somado todos os valores em uma unica cobranca
+				 					              enquanto a regra nao eh definida esta sendo gerado uma medicao para 
+				 					              cada exame executado.
+				 				*/
+				 				//If nPProd == 0
+				 				
+				 					aAdd(aItem,{})
+				 					aAdd(aItem[Len(aItem)] ,{"CNE_ITEM"	  ,(cAliasCNB)->CNB_ITEM	  ,NIL})
+				 					aAdd(aItem[Len(aItem)] ,{"CNE_PRODUT" ,(cAliasCNB)->CNB_PRODUT	,NIL})
+				 					aAdd(aItem[Len(aItem)] ,{"CNE_QUANT"	,(cAliasZG7)->ZG7_VLCOBR/(cAliasCNB)->CNB_VLUNIT,NIL})
+				 					aAdd(aItem[Len(aItem)] ,{"CNE_VLUNIT" ,(cAliasCNB)->CNB_VLUNIT	,NIL})
+									aAdd(aItem[Len(aItem)] ,{"CNE_VLTOT"  ,(cAliasZG7)->ZG7_VLCOBR  ,NIL})
+							    aAdd(aItem[Len(aItem)] ,{"CNE_PEDTIT" ,cValToChar(nTipo)        ,NIL})
+									aAdd(aItem[Len(aItem)] ,{"CNE_TS"     ,cTES             ,NIL})
+									
+									aTmp := {}
+									aAdd( aTmp    , (cAliasZG7)->(RECZG7) )
+									aAdd( aTmp    , FWTimeStamp(1,,)       )
+									aAdd( aTmp    , (cAliasCNA)->RECCNA    )
+									aAdd( aTmp    , (cAliasCNB)->RECCNB    )
+									aAdd( aTmp    , (cAliasCNB)->CNB_PRODUT)
+									
+									aAdd( aItemZG7, aTmp ) 
+				 				
+				 				//Else
+				 				//	
+				 				//	aItem[nPos][aScan(aItem,{|x| x[1]=="CNE_QUANT"})] += 1
+				 				//	aItem[nPos][aScan(aItem,{|x| x[1]=="CNE_VLUNIT"})] += ZG7->ZG7_VLCOBR								
+				 				//	
+				 				//EndIf
+  	      	
+				 			EndIf
+				 			
+  	     			(cAliasZG7)->( dbSkip() )     
+  	     		
+  	     		EndDo
+  	     
+				 EndIf
+				
+				(cAliasCNB)->( dbSkip() )
+			
+			EndDo	
+			
+			If Len(aCab) > 0 .And. Len( aItem ) > 0
+  	  
+				If Type("lMsErroAuto") # "L"
+					PRIVATE lMsErroAuto := .F.
+				Else
+					lMsErroAuto := .F.
+				EndIf
+				      
+				ConOut("CHAMA FUNÇÃO CNTA120 PARA GERAR MEDIÇÃO: ")
+				//-- Gera a medicao
+
+				If ValType(oSay) == "O"
+				
+					oSay:cCaption := "Gerando Medição...Aguarde!"
+					ProcessMessages()
+
+				Endif
+				
+				
+				MsExecAuto({|a,b,c|,CNTA120(a,b,c)},aCab,aItem,3)		
+  	  
+				//-- Encerra a medicao
+				If !lMsErroAuto
+					
+					If GetMv("MV_XSM120E",.F.,.F.)
+						If ValType(oSay) == "O"
+						
+							oSay:cCaption := "Encerrando Medição...Aguarde!"
+							ProcessMessages()
+          	
+						Endif
+          	
+						MsExecAuto({|a,b,c|,CNTA120(a,b,c)},aCab,aItem,6)
+          	
+						If lMsErroAuto     
+							
+							lRet := .F.
+							ConOut("ERRO NO ENCERRAMENTO DA MEDIÇÃO!")
+							Aviso("Atenção","Não foi possivel encerrar a medição.",{"Sair"},2,,,"FWSKIN_ERROR_ICO")
+							MostraErro()	
+							Exit 
+						
+						Else
+							lOne := .T.
+						EndIf
+					Else
+						lOne := .T.
+					EndIf
+						
+				Else      
+					
+					lRet := .F.
+					ConOut("NÃO INCLUI MEDIÇÃO PARA ALGUNS ITENS!")
+					Aviso("Atenção","Não foi possivel incluir a medição para alguns Itens.",{"Sair"},2,,,"FWSKIN_INFO_ICO")
+					MostraErro()
+					Exit
+
+				EndIf
+			
+			EndIf
+  	
+		//Next nA
+		(cAliasCNA)->( dbSkip() )
+		EndDo
+	
+//FWSKIN_ERROR_ICO.PNG
+//FWSKIN_INFO_ICO.PNG
+//FWSKIN_SUCCES_ICO.PNG
+
+		If lOne .And. lRet .And. !lMsErroAuto
+		
+			For nA :=  1 To Len(aItemZG7)
+			
+				ZG7->( dbGoTo(aItemZG7[nA][1]) )
+				
+				RecLock("ZG7",.F.)
+					ZG7_INTEGR := aItemZG7[nA][2]
+				MsUnlock()
+				
+			Next nA
+			
+			Aviso("Parabéns!","Processo concluído com sucesso!!!",{"Sair"},2,,,"FWSKIN_SUCCES_ICO")
+
+		Else
+			
+			Aviso("ATENÇÃO!","Houve um erro no processo..Dados não integrados",{"Sair"},2,,,"FWSKIN_ERROR_ICO")    
+		
+		EndIf
+		
+		oBrwCNA:GoTo( nATCNA )
+		Eval(oBrwCNA:bChange)
+
+		If !lRet
+			DisarmTransaction()
+		EndIf
+
+		End Transaction
+
+		RestArea( aAreaZG7 )	  
+		RestArea( aAreaCNB )	  
+		RestArea( aAreaCNA )	  
+
+Return lRet

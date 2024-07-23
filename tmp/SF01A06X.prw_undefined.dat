@@ -1,0 +1,337 @@
+#Include "Protheus.ch"
+#Include "ATFA125.CH"
+
+//BAIXA EM LOTE FIM
+//--------------------------------------------------------------------------------
+
+//TRANSFERENCIA EM LOTE INICIO
+//---------------------------------------------------------------------------------
+/*
+ÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜÜ
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+±±ÉÍÍÍÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍËÍÍÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍ»±±
+±±ºPrograma  ³SF01A06X	 ºAutor  ³Walmir Junior      º Data ³  13/04/17   º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÊÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºDesc.     ³ Solicitação de transferência em lote.                      º±±
+±±º          ³ Acionada através do botão Solic. transf. lote.             º±±
+±±ÌÍÍÍÍÍÍÍÍÍÍØÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¹±±
+±±ºUso       ³ SIGAATF                                                    º±±
+±±ÈÍÍÍÍÍÍÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼±±
+±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
+ßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßßß
+*/
+User Function SF01A06X( cAlias, nReg, nOpc )
+
+Local oDlg, oDlg1, oQtda, ocBasei, ocBasef
+Local lInverte	 := .F.
+Local nSavOrd1	 := IndexOrd()
+Local nOpt		 := 0
+Local nOpca      := 0
+Local cExpFiltro := ".T."
+Local cTipoAprov := ""
+Local cVarSX6    := ""
+Local lContinua  := .T.
+Local aCampos    := {}
+Local lTraLocal  := .F.
+
+Local bFirst		:= { || SN1->( MsSeek( xFilial("SN1") + cBaseI + cItemI, .T. ) ) }
+Local bFor 		:= { || SN1->N1_OK == cMarca .And. (SN1->N1_QUANTD > 0 ) }
+Local bWhile 		:= { ||	!( SN1->(EOF())) .And.;
+	SN1->N1_FILIAL == xFilial("SN1") .And.;
+	SN1->N1_CBASE  <= cBaseF .And.;
+	SN1->N1_ITEM   <= cItemF }
+
+Private cBasei 		:= CriaVar( "NM_CBASE", .F. )
+Private cItemI 		:= CriaVar( "NM_ITEM", .F. )
+Private cBasef 		:= cBasei
+Private cItemF 		:= Replicate( "Z", Len(cItemI) )
+Private cLocAtivo   := CriaVar( "N1_LOCAL" )
+PRIVATE cMarca	    := GetMark()
+Private _cGERANF	:= "2"
+Private _cClasNF	:= ""
+Private _cTesS		:= CriaVar( "NM_TESNFS", .F. )
+Private _cTesE		:= CriaVar( "NM_TESNFE", .F. )
+Private _cNota		:= CriaVar( "NM_NOTA", .F.)
+Private _cSerie		:= CriaVar( "NM_SERIE", .F.)
+Private _cCONDPAG	:= CriaVar( "NM_CONDPG", .F.)
+Private _cHistSol	:= Space(80)
+Private _cFileInd := ""
+
+cFilDest 	:= cFilAnt
+cFilOrig 	:= cFilAnt
+
+//Cria MsDialog para usuário digitar dados da transferência
+//e guarda o retorno da função, que é um Array, em variáveis.
+aRet 	   := U_SF01A07X( "SN3", , nOpc, @cExpFiltro )
+aVar	   := aRet[1]
+aCpDigit   := aRet[2]
+nOpt	   := aRet[3]
+cTipoAprov := aRet[4]
+
+// Verifica se houve apenas a troca de locais 
+lTraLocal := AF125TraLoc(aVar,cFilDest,cFilOrig)
+
+//Se usuário cancelou, restaura Alias e encerra.
+
+
+If nOpt == 1
+	nQtdBens := 0
+
+	//Cria Array com campos para tela de seleção
+	AADD( aCampos, { "N1_OK", "", "  ", "" } )
+
+	dbSelectArea( "SX3" )
+	SX3->(DBSetOrder(1))
+	SX3->( dbGoTop (  ) )
+	SX3->(dbSeek("SN1"))
+
+	Do While SX3->( !EOF() ) .And. ( X3_ARQUIVO == "SN1" )
+	
+		If ( X3USO( X3_USADO) .And. cNivel >= X3_NIVEL .And. SX3->X3_CONTEXT # "V") .Or.;
+				( X3_PROPRI == "U" .And. X3_CONTEXT != "V" .And. X3_TIPO <> 'M' ) .Or.;
+				Alltrim( X3_CAMPO ) $ "N1_CBASE#N1_ITEM"
+		
+			aAdd( aCampos, { X3_CAMPO, "", X3Titulo(), X3_PICTURE } )
+		Endif
+	
+		SX3->( dbSkip() )
+	EndDo
+	
+	_cFileInd := fIndTSNM("CRIA")
+	//Filtro gerado em AF125Trans
+	If !Empty( cExpFiltro )
+		
+		cExpFiltro += " .AND. !fIndTSNM('SEEK', _cFileInd, N1_FILIAL + N1_CBASE + N1_ITEM)"
+		
+		SN1->(dbSetFilter( { || &cExpFiltro }, cExpFiltro ) )
+	EndIf
+
+	//ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+	//³ Faz o calculo automatico de dimensoes de objetos     ³
+	//ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+	aSize := MSADVSIZE()
+
+	DEFINE MSDIALOG oDlg1 	FROM  aSize[7],0 To aSize[6],aSize[5] TITLE STR0006 OF oMainWnd PIXEL // "Solic. Transf. Lote"
+	oDlg1:lMaximized := .T.
+
+	oPanel := TPanel():New(0,0,'',oDlg1,, .T., .T.,, ,70,70,.T.,.T. )
+	oPanel:Align := CONTROL_ALIGN_TOP
+
+	@ 05 , 5   SAY STR0111 + ":" 	SIZE 34, 7 OF oPanel PIXEL // "Do Codigo:"
+	@ 05 , 40  SAY ocBasei 	VAR cBasei + " - " + cItemi SIZE 80, 10 OF oPanel PIXEL
+	@ 05 , 127 SAY STR0120 + ":" 	SIZE 34, 7 OF oPanel PIXEL // "Ao Codigo:"
+	@ 05 , 185 SAY ocBasef 	VAR cBasef + " - " + cItemf SIZE 80, 10 OF oPanel PIXEL
+
+	@ 20, 5	   SAY STR0121 	SIZE 80, 10 OF oPanel PIXEL //"Total de bens a transferir"
+	@ 20, 90   SAY oQtda 	VAR nQtdBens  SIZE 53, 10 OF oPanel PIXEL
+
+	oMark := MsSelect():New( "SN1", "N1_OK", , aCampos, @lInverte, @cMarca, { 45, oDlg1:nLeft, oDlg1:nBottom, oDlg1:nRight }, 'Atf060Fil(1)', 'Atf060Fil(2)' )
+	oMark:oBrowse:bAllMark := { || aF125Marca("SN1", cMarca, .T. , oQtda, bFirst, bWhile, , , _cGeraNF,lTraLocal ) }
+	oMark:bMark := {| | Af060display( cMarca, lInverte, oQtda, , cFilDest, cFilOrig, oMark ) }
+	oMark:bAval := { || aF125Marca("SN1", cMarca, .T., oQtda, bFirst, bWhile, .F., , _cGeraNF,lTraLocal ) }
+	oMark:oBrowse:Align := CONTROL_ALIGN_ALLCLIENT
+
+	ACTIVATE MSDIALOG oDlg1 ON INIT EnchoiceBar(oDlg1,{|| nOpca := 1,oDlg1:End()},{|| nOpca := 0,ODlg1:End()})
+
+	If nOpca == 1
+		If Left(cTipoAprov,1) != "1" // Resp. Geral
+			cVarSX6 := GetMV( "MV_ATFRESP" )
+		Endif
+	
+		If !SuperGetMV( 'MV_ATFWFM' ,, .F. )
+			lContinua := .T.
+		ElseIf !Empty(cVarSX6)
+			PswOrder(1)
+			// Se encontrou o usuario no cadastro de usuarios e o e-mail estiver preenchido
+			If PswSeek(cVarSX6) .And. !Empty(Alltrim(PswRet()[1,14]))
+				aEmailSol := { { Alltrim(PswRet()[1,14]), cVarSX6, .T. } }
+				lContinua := .T.
+			Else
+				lContinua := .F.
+				Help(" ",1,"AF125RESP",, STR0057 ,1,0)//"Ausência do endereço de e-mail no cadastro do responsável pelo Ativo."
+			EndIf
+		ElseIf Left(cTipoAprov,1) == "2" // Resp. Geral
+			lContinua := .F.
+			Help(" ",1,"AF125RESP",,STR0060,1,0)	//"Responsavel padrão dos Ativos não preenchido."
+		Else
+			lContinua := .T.
+		Endif
+	
+		If lContinua
+			Processa({|lEnd|  U_SF01A11X(cAlias, aVar, aCpDigit, dDataBAse,cFilDest,cFilOrig, cExpFiltro, .T., cTipoAprov)})
+		Endif
+	
+	EndIf
+EndIf
+
+SN1->(dbClearFilter())
+
+fIndTSNM("DELETA", _cFileInd)
+
+Return
+
+
+/*/{Protheus.doc} fIndTSNM
+Funcao para criacao de um indice temporario E seek E deleção
+@author j2a.caiolima
+@since 29/08/2017
+@version 1.0
+/*/
+Static Function fIndTSNM(_cTipo, _cArquivo, _cChave)
+	Local _xRet
+	
+	Do Case
+		Case _cTipo = "CRIA"
+			cArquivo := CriaTrab(,.F.)
+			cChave := "NM_FILIAL + NM_CBASE + NM_ITEM"
+			cFiltr := "NM_SITSOL = '1'"
+			
+			IndRegua("SNM", cArquivo, cChave, , cFiltr)
+			
+			dbSelectArea("SNM")
+			nIndex := RetIndex("SNM")
+			#IFNDEF TOP
+				dbSetIndex(cArquivo+OrdBagExt())
+			#ENDIF
+			
+			dbSetOrder(nIndex + 1)
+			
+			_xRet := cArquivo
+			
+		Case _cTipo = "SEEK"
+			_xRet := SNM->( dbSeek(_cChave) )
+		
+		Case _cTipo = "DELETA"
+			dbSelectArea("SNM")
+			RetIndex("SNM")
+			FErase(_cArquivo+OrdBagExt())
+	EndCase
+	
+Return(_xRet)
+
+Static Function AF125TraLoc(aVar,cFilDest,cFilOrig)
+Local lRet    := .T.
+Local nX      := 0
+Local nY      := 0
+Local lOutEnt := .F.
+
+If xFilial("SN1",cFilOrig) != xFilial("SN1",cFilDest)
+	lRet := .F.
+EndIf
+
+If lRet
+	For nX := 1 to Len(aVar)
+		For nY := 1 to Len(aVar[nX])
+			// Verifica se apenas o local (aVar[1][7]) foi alterado
+			If Alltrim(aVar[nX][nY]) != '*'
+				If  (nX == 1 .And. nY == 7) .Or. ( nX == 1 .And. nY == 6 .And. Empty(aVar[nX][nY]) )
+					lOutEnt := .F.
+				Else
+					lOutEnt := .T.
+					Exit
+				EndIf
+			EndIf
+		Next nY
+		IF lOutEnt
+			lRet := .F.
+			Exit
+		EndIf
+	Next nX
+EndIf
+
+Return lRet
+
+Static Function Af125Marca( cAlias, cMarca, lInverte, oQtda, bFirst, bWhile, lTodos, lFiltro, cGeraNF ,lTraLocal)
+
+Local aArea := (cAlias)->(GetArea())
+Local lRet  := .T.
+
+Default lInverte := .F.
+Default lTodos	 := .T.
+Default lFiltro	 := .F.
+Default lTraLocal:= .F.
+
+dbSelectArea( "SNM" )
+SNM->( dbSetOrder(2) )
+SNM->( dbGoTop() )
+
+dbSelectArea("SB1")
+SB1->(dbSetOrder(1))
+SB1->(dbGoTop())
+
+If lTodos
+	Eval( bFirst )
+Endif
+
+While !lTodos .Or. Eval( bWhile )
+	
+	SNM->( dbSeek( xFilial( "SNM" ) + SN1->N1_CBASE + SN1->N1_ITEM ), , .T. )
+	
+	lRet := .T.
+	
+	If cGeraNF == "1"
+		If !SB1->(dbSeek( xFilial("SB1") + SN1->N1_PRODUTO ) )
+			lRet := .F.
+			If !lTodos
+			    Help(" ",1,"AF125PROD",,STR0143,1,0)//"Não existe produto relacioanado a esse bem para gerar documento fiscal."
+			Else
+				If SN1->N1_OK == cMarca
+					RecLock("SN1")
+					SN1->N1_OK := ""
+					nQtdBens--
+					nQtdBens := IIf ( nQtdBens <= 0, 0, nQtdBens )
+					oQtda:Refresh()
+					MsUnlock()
+				EndIf
+			EndIf
+		EndIf
+	EndIf
+	
+	If lRet
+		If ( SN1->N1_QUANTD > 0 )  		//Verifica se tem quantidade disponível para a solicitação
+			If ( SN1->N1_STATUS == "1" ) .Or. lTraLocal	//Verifica se item está bloqueado
+				If ( SNM->NM_SITSOL != "1" )	//Verifica se existe solicitação pendente para o item
+					RecLock( "SN1" )
+					If lInverte
+						If SN1->N1_OK == cMarca
+							SN1->N1_OK := ""
+							nQtdBens--
+							nQtdBens := IIf ( nQtdBens <= 0, 0, nQtdBens )
+						Else
+							SN1->N1_OK := cMarca
+							nQtdBens++
+						EndIf
+						oQtda:Refresh()
+					Else
+						SN1->N1_OK := cMarca
+						nQtdBens++
+					EndIf
+					MsUnLock()
+				Else	//Executa se item com solicitação pendente NM_SITSOL == "1"
+					If !lTodos
+						Help(" ",1,"AF125SOL",,STR0071,1,0)//"Ativo com solicitação pendente."
+					EndIf
+				EndIf
+			Else	//Executa se item bloqueado N1_STATUS = "2"
+				If !lTodos
+				    Help(" ",1,"AF125STA",,STR0131,1,0)//"Este bem não pode ser selecionado, pois está bloqueado!"
+				EndIf
+			EndIf
+		Else	//Executa se item zerado N1_QUANTD = 0
+			If !lTodos
+				Help(" ",1,"AF125BX",,STR0118,1,0)//"Este bem não pode ser selecionado, pois está baixado!"
+			Endif
+		Endif
+	EndIf
+	
+	If !lTodos
+		Exit
+	Endif
+	
+	SN1->(dbSkip())
+	
+EndDo
+
+RestArea( aArea )
+
+Return

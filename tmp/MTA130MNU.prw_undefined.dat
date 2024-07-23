@@ -1,0 +1,117 @@
+#Include 'Protheus.Ch'
+
+/*-------------------------------------------------
+@Author	Do.It Sistemas - P.T
+@Since 	04/09/2014
+@Version P11
+@Param  	Não Possui
+@Return 	Não Possui
+@Obs
+	P.E - Chama a verificação antes da Gera Cotação
+---------------------------------------------------
+Programador     	Data			Motivo
+-------------------------------------------------*/
+User Function MTA130MNU()
+
+   Local _aArea, _nPos
+
+   If Alltrim(Upper(Funname())) == 'MATA130'
+      
+      _aArea := SC1->(GetArea())
+      
+      //Bloco para comparação exata da rotina
+      _nPos := aScan(aRotina,{|x| Upper(AllTrim(x[2])) == Upper('A130Gera')})
+
+      //Será executada antes de Gerar Cotação
+      aRotina[_nPos,2]:= 'U_FSMRKBRW'
+      
+      RestArea(_aArea)
+      
+   Endif
+   
+Return NiL
+
+/*-------------------------------------------------
+@Author	Do.It Sistemas - P.T
+@Since 	04/09/2014
+@Version P11
+@Param  	Não Possui
+@Return 	Não Possui
+@Obs
+	Função - Verificação de todos os itens marcados
+---------------------------------------------------
+Programador     	Data			Motivo
+-------------------------------------------------*/
+User Function FSMRKBRW()
+
+Local lG := .T.
+Local lM := .F.
+Local lD := .F.
+Local cX := ""
+
+DbSelectArea("SC1")
+Eval(bfiltrabrw) //Mantem o filtro da tela
+DbSetOrder(1)
+DbGotop()
+
+//Procura por marcação
+While ! Eof()
+	If Trim(C1_OK) == Trim(cMarca) .And. Empty(cX)
+		//Pega a primeira marcação como chave
+		cX := C1_FILIAL+C1_NUM
+		Exit
+	Endif
+	DbSkip()
+End
+
+DbGotop()
+
+//Verifica se algum registro foi marcado
+If Empty(cX)
+	Aviso('Geração da Cotação','É necessário que seja escolhido ao menos um item para prosseguir!',{'Ok'},1)
+	lG := .F.
+Else
+	//Marca os que falta e desmarca os diferentes
+	While ! Eof()  
+		If Empty(cX)          
+			If SimpleLock("SC1",.F.)
+				C1_OK := "  "
+				MsUnlock()
+			Endif	
+      ElseIf C1_FILIAL+C1_NUM == cX
+			If Trim(C1_OK) != Trim(cMarca)
+				If SimpleLock("SC1",.F.)
+					C1_OK := cMarca					
+					MsUnlock()
+				Endif
+				lM := .T.
+			Endif
+		ElseIf Trim(C1_OK) == Trim(cMarca)
+			cX := ""
+			lD := .T.
+			DbGoTop() 
+			Loop
+		Endif
+		DbSkip()
+	End
+Endif
+
+DbCommit()
+
+If lD	//Verifica se mais de um item foi marcado
+	Aviso('Geração da Cotação','Escolha apenas uma única Solicitação!',{'Ok'},1)
+	lG := .F.
+ElseIf lM	//Verifica se todos os itens da mesma solicitação foram marcados
+	Aviso('Geração da Cotação','Todos os itens desta solicitação devem estar marcados!';
+			+CRLF+CRLF+'Clique em OK para que eles sejam marcados automaticamente!',{'Ok'})
+	lG := .F.
+Endif
+
+DbGoTop()
+
+//Chamada da Função Padrão -> Gera Cotação
+If lG
+	A130Gera()
+Endif
+
+Return NiL

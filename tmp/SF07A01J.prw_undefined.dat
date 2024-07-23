@@ -1,0 +1,210 @@
+#Include 'Protheus.ch'
+#Include 'Topconn.ch'
+
+/*/{Protheus.doc} SF07A01J
+Funcao para gravar na Tabela ZZV Dados da Folha
+Solicitante: Jose Cardoso
+Integração Sollus X Protheus
+
+@author 	Jose Leite de Barros Neto
+@since 	03/07/2014
+@version 	1.0
+
+@return 	Nil, Nulo
+
+/*/
+User Function SF07A01J()
+	
+	Local _cCodigo	:= GetMv("MV_XGERCCR")
+	
+	Private cPerg	:= 'SF07A01J'
+	Private _nCont	:= 0
+	
+	AjustaSx1(cPerg)
+	
+	If !Pergunte(cPerg,.T.)
+		Return( Nil )
+	EndIf
+	
+	If mv_par03 <> _cCodigo
+		Alert("Usuário não autorizado!")
+		Return( Nil )
+	EndIf
+		
+	If MsgYesNo("Confirma a Exlusão dos dados e Geração de novos?","Atenção")
+		
+		GeraZZV()
+		
+		If _nCont > 0
+			MsgInfo("Foram gerados "+cValToChar(_nCont)+" Registros!","INFO")
+		EndIf
+		
+	EndIf
+
+Return( Nil )
+
+/** {Protheus.doc} GeraZZV
+Funcao que gera a tabela ZZV com os dados da folha
+
+@author: 	Jose Leite de Barros Neto
+@since: 	08/10/2014
+@Uso: 		SFIEMT
+*/
+Static Function GeraZZV()
+	
+	Local _cFilial		:= ""
+	Local _cCentroC 	:= ""
+	Local _cCodFunc		:= ""
+	Local _cCargo		:= ""
+	Local _cPonderador	:= ""
+	Local _nQuant		:= 1
+	Local _cNome			:= ""
+	Local _cMatr			:= ""
+	
+	//Deleta Dados - ZZV
+	DbSelectArea("ZZV")
+	ZZV->(DbSetOrder(1))
+	ZZV->(DbGoTop())
+	While .Not. ZZV->( EOF() )
+		If Reclock("ZZV",.F.)
+			ZZV->(dbDelete())
+			ZZV->(msunlock())
+		EndIf
+		ZZV->(DbSkip())
+	End
+	
+	ZZV->(DbCloseArea())
+	
+	_cQuery := ""
+	
+	If mv_par02 == 1
+		
+		_cQuery += " SELECT RC_FILIAL FILIAL, RC_CC CC, RC_MAT MAT, RA_NOMECMP NOME, RA_CODFUNC CODFUNC, RC_DATA DATA, SUM(RC_VALOR) VALOR	"
+		_cQuery += "		FROM "+ RETSQLNAME("SRC") + " RC "
+		_cQuery += "		INNER JOIN "+ RETSQLNAME("SRA") + " RA ON RA_FILIAL = RC.RC_FILIAL AND RA.RA_MAT = RC.RC_MAT	"
+		_cQuery += "	WHERE 	RC_FILIAL <> '05MT0001'											"
+		_cQuery += "			AND (RC_PD = '100' OR RC_PD = '103' OR RC_PD = '111' OR RC_PD = '113' OR RC_PD = '122' OR RC_PD = '190') "
+		_cQuery += "			AND SUBSTR(RC_DATA,1,6) =  '"+mv_par01+"'								"
+		_cQuery += "			AND RA.D_E_L_E_T_ <> '*'														"
+		_cQuery += "			AND RC.D_E_L_E_T_ <> '*'														"
+		_cQuery += "	GROUP BY RC_FILIAL, RC_CC, RC_MAT, RA_NOMECMP, RA_CODFUNC, RC_DATA		"
+		_cQuery += "	ORDER BY RA_NOMECMP																	"
+		
+	Else
+		
+		_cQuery += "	SELECT  RD_FILIAL FILIAL, RD_CC CC, RD_MAT MAT, RA_NOMECMP NOME, RA_CODFUNC CODFUNC, RD_DATARQ DATA, SUM(RD_VALOR) VALOR "
+		_cQuery += "		FROM "+ RETSQLNAME("SRD") + " RD "
+		_cQuery += "		INNER JOIN "+ RETSQLNAME("SRA") + " RA ON RA_FILIAL = RD.RD_FILIAL AND RA.RA_MAT = RD.RD_MAT "
+		_cQuery += "	WHERE 	RD_FILIAL <> '05MT0001'										"
+		_cQuery += "	  		AND (RD_PD = '100' OR RD_PD = '103' OR RD_PD = '111' OR RD_PD = '113' OR RD_PD = '122' OR RD_PD = '190')	"
+		_cQuery += "	  		AND RD_DATARQ LIKE '"+mv_par01+"%'										"
+		_cQuery += "	  		AND RA.D_E_L_E_T_ <> '*'													"
+		_cQuery += "	  		AND RD.D_E_L_E_T_ <> '*'													"
+		_cQuery += "	GROUP BY RD_FILIAL,RD_CC,RD_MAT,RA_NOMECMP, RA_CODFUNC, RD_DATARQ		"
+		_cQuery += "	ORDER BY RA_NOMECMP																"
+		
+	EndIf
+	
+	_cQuery := ChangeQuery( _cQuery )
+	
+	TCQUERY _cQuery NEW ALIAS "TRA"
+	
+	DbSelectArea("TRA")
+	DbGoTop()
+	
+	While .Not. TRA->( EOF() )
+		
+		//Filial
+		_cFilial := TRA->FILIAL
+		
+		//Nome
+		_cNome := AllTrim(TRA->NOME)
+		
+		//Matricula
+		_cMatr := AllTrim(TRA->MAT)
+		
+		//Centro de Custo
+		_cCentroC 		:= AllTrim(TRA->CC)
+		
+		If SubStr(_cCentroC,1,6) == "130104"
+			_cCentroC := "7"+_cCentroC
+		Else
+			If SubStr(TRA->FILIAL,1,2) == "01"
+				_cCentroC := "5"+_cCentroC
+			ElseIf SubStr(TRA->FILIAL,1,2) == "02"
+				_cCentroC := "2"+_cCentroC
+			ElseIf SubStr(TRA->FILIAL,1,2) == "03"
+				_cCentroC := "3"+_cCentroC
+			ElseIf SubStr(TRA->FILIAL,1,2) == "04"
+				_cCentroC := "4"+_cCentroC
+			EndIf
+		EndIf
+		
+		//Cargo
+		_cCodFunc		:= AllTrim(TRA->CODFUNC)
+		_cCargo		:= AllTrim(Posicione("SRJ",1,xFilial("SRJ")+_cCodFunc,"RJ_DESC"))
+		
+		//Ponderador
+		Do Case
+			
+		Case TRA->VALOR <= 2000
+			_cPonderador 	:= "1"
+		Case TRA->VALOR > 2000 .AND. TRA->VALOR <= 3000
+			_cPonderador 	:= "2"
+		Case TRA->VALOR > 3000 .AND. TRA->VALOR <= 4000
+			_cPonderador 	:= "3"
+		Case TRA->VALOR > 4000 .AND. TRA->VALOR <= 7000
+			_cPonderador 	:= "4"
+		Case TRA->VALOR > 7000
+			_cPonderador 	:= "5"
+			
+		EndCase
+		
+		//Grava Dados - ZZV
+		DbSelectArea("ZZV")
+		ZZV->(DbSetOrder(1))
+		ZZV->(DbGoTop())
+		If .Not. DbSeek( _cFilial + mv_par01 + _cMatr)
+			If Reclock("ZZV",.T.)
+				ZZV->ZZV_FILIAL	:= _cFilial
+				ZZV->ZZV_DTIMP	:= mv_par01
+				ZZV->ZZV_CUSTO	:= _cCentroC
+				ZZV->ZZV_CARGO	:= _cCargo
+				ZZV->ZZV_PONDER	:= _cPonderador
+				ZZV->ZZV_QUANT	:= _nQuant
+				ZZV->ZZV_NOME	:= _cNome
+				ZZV->ZZV_MAT		:= _cMatr
+				ZZV->ZZV_CODFUN	:= _cCodFunc
+				ZZV->(msunlock())
+			EndIf
+		Endif
+		ZZV->(DbCloseArea())
+		
+		_nCont++
+		TRA->( DbSkip() )
+	End
+	
+	TRA->(DbCloseArea())
+	
+Return( Nil )
+
+/** {Protheus.doc} AjustaSx1
+Pergunta do Relatorio
+
+@author: 	Jose Leite de Barros Neto
+@since: 	08/10/2014
+@Uso: 		SFIEMT
+*/
+Static Function AjustaSx1(cPerg)
+	
+	Local aHelp := {}
+	
+	AAdd(aHelp, {{"Informe o Ano Mes Folha. Ex.: 201406"		}, {""}, {""}})
+	AAdd(aHelp, {{"Informe se Folha Aberta ou Fechada"		}, {""}, {""}})
+	AAdd(aHelp, {{"Informe o Codigo CCR"							}, {""}, {""}})
+	
+	u_SFPUTSX1(cPerg,"01","Ano Mes:	","","","mv_ch1","C",06,00,00,"G","",""	,"","","mv_par01",""			,"","","",""				,"","","","","","","","","","","",aHelp[1,1],aHelp[1,2],aHelp[1,3],"")
+	u_SFPUTSX1(cPerg,"02","Folha:	","","","mv_ch2","C",01,00,00,"C","",""	,"","","mv_par02","Aberta"	,"","","","Fechada"	,"","","","","","","","","","","",aHelp[2,1],aHelp[2,2],aHelp[2,3],"")
+	u_SFPUTSX1(cPerg,"03","Código:	","","","mv_ch3","C",06,00,00,"C","",""	,"","","mv_par03",""			,"","","",""				,"","","","","","","","","","","",aHelp[3,1],aHelp[3,2],aHelp[3,3],"")
+	
+Return( Nil )

@@ -1,0 +1,365 @@
+#include "totvs.ch"
+#include "restful.ch"
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} Relatório de Reclassificação
+Declaracao do GET de Relatório de Reclassificação
+@type function
+@author Walmir Junior
+@since 17/03/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+WSRESTFUL reclassificacao DESCRIPTION 'endpoint Reclassificação - VENUS ' FORMAT "application/json,text/html"
+    WSDATA Page              AS INTEGER OPTIONAL
+    WSDATA aQueryString      AS ARRAY    OPTIONAL
+    
+    WSMETHOD GET DESCRIPTION "Sincronização de dados via GET";
+        	WsSyntax "/GET/{method}"
+	    
+END WSRESTFUL
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} GET Relatório de Reclassificação
+Metodo GET
+@type function
+@author Walmir Junior
+@since 17/03/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+WSMETHOD GET WSSERVICE reclassificacao
+Local _lRet 	:= .T.
+Local _cAlias	:= GetNextAlias()
+Local _cQuery	:= ""
+Local _cFilter	:= Self:aQueryString[1,2]
+Local _aFilters := getFilters(_cFilter, "and")
+
+Local _nPosData := AScan(_aFilters, {|x| AllTrim(x[1]) == "data"})
+Local _nPosDtFn := AScan(_aFilters, {|x| AllTrim(x[1]) == "data_fim"})
+Local _nPosTipo := AScan(_aFilters, {|x| AllTrim(x[1]) == "tipo"})
+Local _nPosFilO := AScan(_aFilters, {|x| AllTrim(x[1]) == "filial_original"})
+Local _nPosSitu := AScan(_aFilters, {|x| AllTrim(x[1]) == "situacao"})
+
+Local _nPosCC	:= AScan(_aFilters, {|x| AllTrim(x[1]) == "centro_custo"})
+Local _nPosLote := AScan(_aFilters, {|x| AllTrim(x[1]) == "lote"})
+
+Local _nPosEntd := AScan(_aFilters, {|x| AllTrim(x[1]) == "entidade"})
+
+If Select(_cAlias) > 0
+	(_cAlias)->(DbCloseArea())
+EndIf
+
+If _nPosTipo > 0 .AND. _aFilters[_nPosTipo,2] == 'F'
+
+	_cQuery := " 	SELECT " + CRLF
+	_cQuery += " 		ZAR_FILIAL AS CT2_FILIAL, " + CRLF
+	_cQuery += " 		ZAR_FILORI AS CT2_FILORI, " + CRLF
+	_cQuery += " 		ZAR_DTHAPR AS CT2_DATA, " + CRLF
+	_cQuery += " 		ZAR_TIPO, " + CRLF
+	_cQuery += " 		ZAR_DTHAPR, " + CRLF
+	_cQuery += " 		CENTRO_ORIGEM, " + CRLF
+	_cQuery += " 		(SELECT RTRIM(LTRIM(CTT_DESC01)) FROM " + RetSqlName("CTT") + " WHERE D_E_L_E_T_ = ' ' AND CTT_FILIAL = ZAR_FILIAL AND CTT_CUSTO = CENTRO_ORIGEM ) AS CENTRO_ORIGEM_DESC, " + CRLF
+	_cQuery += " 		ITEM_ORIGEM, " + CRLF
+	_cQuery += " 		(SELECT RTRIM(LTRIM(CTD_DESC01)) FROM " + RetSqlName("CTD") + " WHERE D_E_L_E_T_ = ' ' AND CTD_FILIAL = ZAR_FILIAL AND CTD_ITEM = ITEM_ORIGEM) AS ITEM_ORIGEM_DESC, " + CRLF
+	_cQuery += " 		CONTA_ORIGEM, " + CRLF
+	_cQuery += " 		(SELECT RTRIM(LTRIM(CT1_DESC01)) FROM " + RetSqlName("CT1") + " WHERE D_E_L_E_T_ = ' ' AND CT1_FILIAL = ZAR_FILIAL AND CT1_CONTA = CONTA_ORIGEM) AS CONTA_ORIGEM_DESC,  " + CRLF
+	_cQuery += " 		CENTRO_DESTINO,  " + CRLF
+	_cQuery += " 		(SELECT RTRIM(LTRIM(CTT_DESC01)) FROM " + RetSqlName("CTT") + " WHERE D_E_L_E_T_ = ' ' AND   " + CRLF
+	_cQuery += " 								(CTT_FILIAL = CASE  WHEN ZAR_TIPO = 'E' AND ZAR_FILIAL = '02MT    ' THEN '03MT    '   " + CRLF
+	_cQuery += " 													WHEN ZAR_TIPO = 'E' AND ZAR_FILIAL = '03MT    ' THEN '02MT    '   " + CRLF
+	_cQuery += " 													ELSE ZAR_FILIAL END) AND CTT_CUSTO = CENTRO_DESTINO) AS CENTRO_DESTINO_DESC,  " + CRLF
+	_cQuery += " 		ITEM_DESTINO,  " + CRLF
+	_cQuery += " 		(SELECT RTRIM(LTRIM(CTD_DESC01)) FROM " + RetSqlName("CTD") + " WHERE D_E_L_E_T_ = ' ' AND   " + CRLF
+	_cQuery += " 								(CTD_FILIAL = CASE  WHEN ZAR_TIPO = 'E' AND ZAR_FILIAL = '02MT    ' THEN '03MT    '   " + CRLF
+	_cQuery += " 													WHEN ZAR_TIPO = 'E' AND ZAR_FILIAL = '03MT    ' THEN '02MT    '   " + CRLF
+	_cQuery += " 													ELSE ZAR_FILIAL END) AND CTD_ITEM = ITEM_DESTINO) AS ITEM_DESTINO_DESC,  " + CRLF
+	_cQuery += " 		CONTA_DESTINO,  " + CRLF
+	_cQuery += " 		(SELECT RTRIM(LTRIM(CT1_DESC01)) FROM " + RetSqlName("CT1") + " WHERE D_E_L_E_T_ = ' ' AND   " + CRLF
+	_cQuery += " 								(CT1_FILIAL = CASE  WHEN ZAR_TIPO = 'E' AND ZAR_FILIAL = '02MT    ' THEN '03MT    '   " + CRLF
+	_cQuery += " 													WHEN ZAR_TIPO = 'E' AND ZAR_FILIAL = '03MT    ' THEN '02MT    '   " + CRLF
+	_cQuery += " 													ELSE ZAR_FILIAL END) AND CT1_CONTA = CONTA_DESTINO) AS CONTA_DESTINO_DESC, " + CRLF 
+	_cQuery += " 		ZAR_CTDORI, " + CRLF
+	_cQuery += " 		ZAR_CTCORI, " + CRLF
+	_cQuery += " 		ZAR_CCDORI, " + CRLF
+	_cQuery += " 		ZAR_CCCORI, " + CRLF
+	_cQuery += " 		ZAR_ITDORI, " + CRLF
+	_cQuery += " 		ZAR_ITCORI, " + CRLF
+	_cQuery += " 		ZAR_CTDDES, " + CRLF
+	_cQuery += " 		ZAR_CTCDES, " + CRLF
+	_cQuery += " 		ZAR_CCDDES, " + CRLF
+	_cQuery += " 		ZAR_CCCDES, " + CRLF
+	_cQuery += " 		ZAR_ITDDES, " + CRLF
+	_cQuery += " 		ZAR_ITCDES, " + CRLF
+	_cQuery += " 		ZAR_VLRORI AS CT2_VALOR, " + CRLF
+	_cQuery += " 		ZAR_VLRORI, " + CRLF
+	_cQuery += " 		ZAR_VLREST, " + CRLF
+	_cQuery += " 		CT2_HIST, " + CRLF
+	_cQuery += " 		ZAR_JUSTIF " + CRLF
+	_cQuery += " 	FROM  " + CRLF
+	_cQuery += " 	(SELECT  " + CRLF
+	_cQuery += " 		ZAR_FILIAL,  " + CRLF
+	_cQuery += " 		ZAR_FILORI,  " + CRLF
+	_cQuery += " 		ZAR_DTHAPR,  " + CRLF
+	_cQuery += " 		ZAR_TIPO,  " + CRLF
+	_cQuery += " 		CASE WHEN ZAR_CCDORI = ' ' THEN ZAR_CCCORI ELSE ZAR_CCDORI END AS CENTRO_ORIGEM,  " + CRLF
+	_cQuery += " 		CASE WHEN ZAR_ITDORI = ' ' THEN ZAR_ITCORI ELSE ZAR_ITDORI END AS ITEM_ORIGEM,  " + CRLF
+	_cQuery += " 		CASE WHEN ZAR_CTDORI = ' ' THEN ZAR_CTCORI ELSE ZAR_CTDORI END AS CONTA_ORIGEM, " + CRLF
+	_cQuery += " 		CASE WHEN ZAR_CCDDES = ' ' THEN ZAR_CCCDES ELSE ZAR_CCDDES END AS CENTRO_DESTINO,  " + CRLF
+	_cQuery += " 		CASE WHEN ZAR_ITDDES = ' ' THEN ZAR_ITCDES ELSE ZAR_ITDDES END AS ITEM_DESTINO,  " + CRLF
+	_cQuery += " 		CASE WHEN ZAR_CTDDES = ' ' THEN ZAR_CTCDES ELSE ZAR_CTDDES END AS CONTA_DESTINO,  " + CRLF
+	_cQuery += " 		ZAR_CTDORI,  " + CRLF
+	_cQuery += " 		ZAR_CTCORI,  " + CRLF
+	_cQuery += " 		ZAR_CCDORI,  " + CRLF
+	_cQuery += " 		ZAR_CCCORI,  " + CRLF
+	_cQuery += " 		ZAR_ITDORI,  " + CRLF
+	_cQuery += " 		ZAR_ITCORI,  " + CRLF
+	_cQuery += " 		ZAR_CTDDES,  " + CRLF
+	_cQuery += " 		ZAR_CTCDES,  " + CRLF
+	_cQuery += " 		ZAR_CCDDES,  " + CRLF
+	_cQuery += " 		ZAR_CCCDES,  " + CRLF
+	_cQuery += " 		ZAR_ITDDES,  " + CRLF
+	_cQuery += " 		ZAR_ITCDES,  " + CRLF
+	_cQuery += " 		ZAR_VLREST,  " + CRLF
+	_cQuery += " 		ZAR_VLRORI,  " + CRLF
+	_cQuery += " 		' ' AS CT2_HIST,  " + CRLF
+	_cQuery += " 		ZAR_JUSTIF  " + CRLF
+	_cQuery += " 	FROM  " + CRLF
+	_cQuery += " 		" + RetSqlName("ZAR") + " ZAR " + CRLF
+
+Else
+
+	_cQuery := " SELECT " + CRLF
+	_cQuery += "     CT2_FILIAL, " + CRLF
+	_cQuery += "     CT2_FILORI, " + CRLF
+	_cQuery += "     CT2_DATA, " + CRLF
+	_cQuery += "     ZAR_TIPO, " + CRLF
+	_cQuery += "     ZAR_DTHAPR, " + CRLF
+	_cQuery += "     CENTRO_ORIGEM, " + CRLF
+	_cQuery += "     (SELECT RTRIM(LTRIM(CTT_DESC01)) FROM " + RetSqlName("CTT") + " WHERE D_E_L_E_T_ = ' ' AND CTT_FILIAL = CT2_FILIAL AND CTT_CUSTO = CENTRO_ORIGEM ) AS CENTRO_ORIGEM_DESC, " + CRLF
+	_cQuery += "     ITEM_ORIGEM, " + CRLF
+	_cQuery += "     (SELECT RTRIM(LTRIM(CTD_DESC01)) FROM " + RetSqlName("CTD") + " WHERE D_E_L_E_T_ = ' ' AND CTD_FILIAL = CT2_FILIAL AND CTD_ITEM = ITEM_ORIGEM) AS ITEM_ORIGEM_DESC, " + CRLF
+	_cQuery += "     CONTA_ORIGEM," + CRLF
+	_cQuery += "     (SELECT RTRIM(LTRIM(CT1_DESC01)) FROM " + RetSqlName("CT1") + " WHERE D_E_L_E_T_ = ' ' AND CT1_FILIAL = CT2_FILIAL AND CT1_CONTA = CONTA_ORIGEM) AS CONTA_ORIGEM_DESC, " + CRLF
+	_cQuery += "     CENTRO_DESTINO, " + CRLF
+	_cQuery += "     (SELECT RTRIM(LTRIM(CTT_DESC01)) FROM " + RetSqlName("CTT") + " WHERE D_E_L_E_T_ = ' ' AND  " + CRLF
+	_cQuery += "                             (CTT_FILIAL = CASE  WHEN ZAR_TIPO = 'E' AND CT2_FILIAL = '02MT    ' THEN '03MT    '  " + CRLF
+	_cQuery += "                                                 WHEN ZAR_TIPO = 'E' AND CT2_FILIAL = '03MT    ' THEN '02MT    '  " + CRLF
+	_cQuery += "                                                 ELSE CT2_FILIAL END) AND CTT_CUSTO = CENTRO_DESTINO) AS CENTRO_DESTINO_DESC, " + CRLF
+	_cQuery += "     ITEM_DESTINO, " + CRLF
+	_cQuery += "     (SELECT RTRIM(LTRIM(CTD_DESC01)) FROM " + RetSqlName("CTD") + " WHERE D_E_L_E_T_ = ' ' AND  " + CRLF
+	_cQuery += "                             (CTD_FILIAL = CASE  WHEN ZAR_TIPO = 'E' AND CT2_FILIAL = '02MT    ' THEN '03MT    '  " + CRLF
+	_cQuery += "                                                 WHEN ZAR_TIPO = 'E' AND CT2_FILIAL = '03MT    ' THEN '02MT    '  " + CRLF
+	_cQuery += "                                                 ELSE CT2_FILIAL END) AND CTD_ITEM = ITEM_DESTINO) AS ITEM_DESTINO_DESC, " + CRLF
+	_cQuery += "     CONTA_DESTINO, " + CRLF
+	_cQuery += "     (SELECT RTRIM(LTRIM(CT1_DESC01)) FROM " + RetSqlName("CT1") + " WHERE D_E_L_E_T_ = ' ' AND  " + CRLF
+	_cQuery += "                             (CT1_FILIAL = CASE  WHEN ZAR_TIPO = 'E' AND CT2_FILIAL = '02MT    ' THEN '03MT    '  " + CRLF
+	_cQuery += "                                                 WHEN ZAR_TIPO = 'E' AND CT2_FILIAL = '03MT    ' THEN '02MT    '  " + CRLF
+	_cQuery += "                                                 ELSE CT2_FILIAL END) AND CT1_CONTA = CONTA_DESTINO) AS CONTA_DESTINO_DESC, " + CRLF
+	_cQuery += "     ZAR_CTDORI, " + CRLF
+	_cQuery += "     ZAR_CTCORI, " + CRLF
+	_cQuery += "     ZAR_CCDORI, " + CRLF
+	_cQuery += "     ZAR_CCCORI, " + CRLF
+	_cQuery += "     ZAR_ITDORI, " + CRLF
+	_cQuery += "     ZAR_ITCORI, " + CRLF
+	_cQuery += "     ZAR_CTDDES, " + CRLF
+	_cQuery += "     ZAR_CTCDES, " + CRLF
+	_cQuery += "     ZAR_CCDDES, " + CRLF
+	_cQuery += "     ZAR_CCCDES, " + CRLF
+	_cQuery += "     ZAR_ITDDES, " + CRLF
+	_cQuery += "     ZAR_ITCDES, " + CRLF
+	_cQuery += "     CT2_VALOR, " + CRLF
+	_cQuery += "     ZAR_VLRORI, " + CRLF
+	_cQuery += "     ZAR_VLREST, " + CRLF
+	_cQuery += "     CT2_HIST, " + CRLF
+	_cQuery += "     ZAR_JUSTIF " + CRLF
+	_cQuery += " FROM " + CRLF
+	_cQuery += " (SELECT " + CRLF
+	_cQuery += "     CT2_FILIAL, " + CRLF
+	_cQuery += "     CT2_FILORI, " + CRLF
+	_cQuery += "     CT2_DATA, " + CRLF
+	_cQuery += "     ZAR_TIPO, " + CRLF
+	_cQuery += "     ZAR_DTHAPR, " + CRLF
+	_cQuery += "     CASE WHEN ZAR_CCDORI = ' ' THEN ZAR_CCCORI ELSE ZAR_CCDORI END AS CENTRO_ORIGEM, " + CRLF
+	_cQuery += "     CASE WHEN ZAR_ITDORI = ' ' THEN ZAR_ITCORI ELSE ZAR_ITDORI END AS ITEM_ORIGEM, " + CRLF
+	_cQuery += "     CASE WHEN ZAR_CTDORI = ' ' THEN ZAR_CTCORI ELSE ZAR_CTDORI END AS CONTA_ORIGEM," + CRLF
+	_cQuery += "     CASE WHEN ZAR_CCDDES = ' ' THEN ZAR_CCCDES ELSE ZAR_CCDDES END AS CENTRO_DESTINO, " + CRLF
+	_cQuery += "     CASE WHEN ZAR_ITDDES = ' ' THEN ZAR_ITCDES ELSE ZAR_ITDDES END AS ITEM_DESTINO, " + CRLF
+	_cQuery += "     CASE WHEN ZAR_CTDDES = ' ' THEN ZAR_CTCDES ELSE ZAR_CTDDES END AS CONTA_DESTINO, " + CRLF
+	_cQuery += "     ZAR_CTDORI, " + CRLF
+	_cQuery += "     ZAR_CTCORI, " + CRLF
+	_cQuery += "     ZAR_CCDORI, " + CRLF
+	_cQuery += "     ZAR_CCCORI, " + CRLF
+	_cQuery += "     ZAR_ITDORI, " + CRLF
+	_cQuery += "     ZAR_ITCORI, " + CRLF
+	_cQuery += "     ZAR_CTDDES, " + CRLF
+	_cQuery += "     ZAR_CTCDES, " + CRLF
+	_cQuery += "     ZAR_CCDDES, " + CRLF
+	_cQuery += "     ZAR_CCCDES, " + CRLF
+	_cQuery += "     ZAR_ITDDES, " + CRLF
+	_cQuery += "     ZAR_ITCDES, " + CRLF
+	_cQuery += "     CT2_VALOR, " + CRLF
+	_cQuery += "     ZAR_VLRORI, " + CRLF
+	_cQuery += "     ZAR_VLREST, " + CRLF
+	_cQuery += "     CT2_HIST, " + CRLF
+	_cQuery += "     ZAR_JUSTIF " + CRLF
+	_cQuery += " FROM " + CRLF
+	_cQuery += "     " + RetSqlName("ZAR") + " ZAR INNER JOIN " + CRLF
+	_cQuery += "     " + RetSqlName("CT2") + " CT2 ON CT2.D_E_L_E_T_ = ' ' AND CT2.CT2_FILIAL = ZAR.ZAR_FILIAL AND CT2.CT2_FILORI = ZAR.ZAR_FILORI AND " + CRLF
+	_cQuery += "     RTRIM(LTRIM(  CT2.CT2_FILIAL||CT2.CT2_DATA||CT2.CT2_LOTE||CT2.CT2_SBLOTE||CT2.CT2_DOC||CT2.CT2_LINHA||CT2.CT2_TPSALD||CT2.CT2_EMPORI||CT2.CT2_FILORI||CT2.CT2_MOEDLC  )) = RTRIM(LTRIM(ZAR.ZAR_CHVCT2))" + CRLF
+	
+EndIf
+
+_cQuery += " WHERE " + CRLF
+_cQuery += "     ZAR.D_E_L_E_T_ = ' ' " + CRLF
+
+if !Empty(_nPosSitu)
+	_cQuery += " AND ZAR.ZAR_SITUAC = '" + _aFilters[_nPosSitu,2] + "' " + CRLF
+
+	if _aFilters[_nPosSitu,2] == 'A' .Or. _aFilters[_nPosSitu,2] == 'R'
+		if !Empty(_nPosData) .And. !Empty(_nPosDtFn)
+			_cQuery += " AND SUBSTR(ZAR.ZAR_DTHAPR,1,8) BETWEEN '" + _aFilters[_nPosData,2] + "' AND '" + _aFilters[_nPosDtFn,2] + "' " + CRLF
+		endIf
+	elseIf _aFilters[_nPosSitu,2] == 'P'
+		if !Empty(_nPosData) .And. !Empty(_nPosDtFn)
+			_cQuery += " AND SUBSTR(ZAR.ZAR_DTHREG,1,8) BETWEEN '" + _aFilters[_nPosData,2] + "' AND '" + _aFilters[_nPosDtFn,2] + "' " + CRLF
+		endIf
+	endIf
+
+endIf
+
+if !Empty(_nPosTipo)
+	_cQuery += " AND ZAR.ZAR_TIPO = '" + _aFilters[_nPosTipo,2] + "' " + CRLF
+endIf
+
+if !Empty(_nPosFilO)
+	_cQuery += " AND ZAR.ZAR_FILORI = '" + _aFilters[_nPosFilO,2] + "' " + CRLF
+endIf
+
+
+if !Empty(_nPosEntd)
+	_cQuery += " AND ZAR.ZAR_FILIAL = '" + _aFilters[_nPosEntd,2] + "' " + CRLF
+endIf
+
+
+if !Empty(_nPosCC)
+	_cQuery += " AND ( ZAR.ZAR_CCDORI = '" + _aFilters[_nPosCC,2] + "' OR " + CRLF
+	_cQuery += " ZAR.ZAR_CCCORI = '" + _aFilters[_nPosCC,2] + "' ) " + CRLF
+endIf
+
+if !Empty(_nPosLote)
+	_cQuery += " AND ZAR.ZAR_DOCAPR = '" + _aFilters[_nPosLote,2] + "' " + CRLF
+endIf
+
+//_cQuery += ") ORDER BY 2,3,6,7,8 " + CRLF
+_cQuery += ") ORDER BY 6,8,10,2,12,14,16 " + CRLF
+ 
+_cQuery := ChangeQuery(_cQuery)
+
+
+dbUseArea(.T., "TOPCONN", TcGenQry(,,_cQuery), _cAlias, .F., .T.)
+
+DbSelectArea(_cALias)
+(_cALias)->(DbGoTop())
+
+::SetContentType( 'application/json' )
+
+If !(_cALias)->(Eof())
+
+	cJSONRet := '{ "relacao" : ['
+		
+	while !(_cALias)->(Eof())
+		cJSONRet +=	' {	"fil_data":"'		+ '' + '",'//::aQueryString
+		cJSONRet +=	'"fil_tipo":"'			+ '' + '",'
+		cJSONRet +=	'"tipo":"'				+ AllTrim((_cALias)->ZAR_TIPO)				+ '",'
+		cJSONRet +=	'"filial":"'			+ AllTrim((_cALias)->CT2_FILIAL)			+ '",'
+		cJSONRet +=	'"data_lanc_origem":"'	+ AllTrim((_cALias)->CT2_DATA)				+ '",'
+		cJSONRet +=	'"filial_original":"'	+ AllTrim((_cALias)->CT2_FILORI)			+ '",'
+		cJSONRet +=	'"centro_origem":"'		+ AllTrim((_cALias)->CENTRO_ORIGEM)			+ '",'
+		cJSONRet +=	'"item_origem":"'		+ AllTrim((_cALias)->ITEM_ORIGEM)			+ '",'
+		cJSONRet +=	'"conta_origem":"'		+ AllTrim((_cALias)->CONTA_ORIGEM)			+ '",'
+
+		cJSONRet +=	'"centro_origem_desc":"'+ AllTrim((_cALias)->CENTRO_ORIGEM_DESC)	+ '",'
+		cJSONRet +=	'"item_origem_desc":"'	+ AllTrim((_cALias)->ITEM_ORIGEM_DESC)		+ '",'
+		cJSONRet +=	'"conta_origem_desc":"'	+ AllTrim((_cALias)->CONTA_ORIGEM_DESC)		+ '",'
+		
+		cJSONRet +=	'"hist_origem":"'		+ AllTrim((_cALias)->CT2_HIST)				+ '",'
+		cJSONRet +=	'"data":"'				+ AllTrim((_cALias)->ZAR_DTHAPR)			+ '",'
+		cJSONRet +=	'"centro_destino":"' 	+ AllTrim((_cALias)->CENTRO_DESTINO)		+ '",'
+		cJSONRet +=	'"item_destino":"'		+ AllTrim((_cALias)->ITEM_DESTINO)			+ '",'
+		cJSONRet +=	'"conta_destino":"'		+ AllTrim((_cALias)->CONTA_DESTINO)			+ '",'
+		
+		cJSONRet +=	'"centro_destino_desc":"'	+ AllTrim((_cALias)->CENTRO_DESTINO_DESC)	+ '",'
+		cJSONRet +=	'"item_destino_desc":"'		+ AllTrim((_cALias)->ITEM_DESTINO_DESC)		+ '",'
+		cJSONRet +=	'"conta_destino_desc":"'	+ AllTrim((_cALias)->CONTA_DESTINO_DESC)	+ '",'
+		
+		//cJSONRet +=	'"justificativa":"'			+ NoAcento(AnsiToOem(AllTrim((_cALias)->ZAR_JUSTIF)))	+ '",'
+		cJSONRet +=	'"valor" : '				+ AllTrim(Str((_cALias)->ZAR_VLREST))					+ ' }'
+				
+		(_cALias)->(DBSkip())
+
+		cJSONRet +=	Iif(!(_cALias)->(Eof()),',','') + CRLF
+
+		//User diversos setResponse
+		::SetResponse(EncodeUTF8(cJSONRet))
+		//Limpa a variável para evitar multiplicação de registros indevida
+		cJSONRet := ""
+		
+	endDo
+		
+	cJSONRet += '] }'
+
+	::SetResponse(EncodeUTF8(cJSONRet))
+Else
+	//Ou retorna o erro encontrado durante o processamento
+
+	cJSONRet := '{ "relacao" : [] }'
+	::SetResponse(EncodeUTF8(cJSONRet))
+	//SetRestFault("oEst:GetCode()","oEst:GetMessage()")
+	lRet := .T.
+EndIf
+
+(_cALias)->(dbClosearea())
+
+Return _lRet
+
+//-------------------------------------------------------------------
+/*/{Protheus.doc} getFilters
+Obter os filtros passados no aQueryString
+@type function
+@author Walmir Junior
+@since 17/03/2021
+@version 1.0
+/*/
+//-------------------------------------------------------------------
+Static Function getFilters(_pFilter, pSepara)
+Local _aRet 	:= {}
+Local _aFil		:= {}
+Local _aAux		:= {}
+Local _cFilter	:= AllTrim(subStr(_pFilter, 2, Len(_pFilter)))
+Local _nPosCtr	:= 1
+Local _nQtd		:= 0
+Local _nx		:= 0
+
+_cFilter	:= AllTrim(subStr(_cFilter, 1, Len(_cFilter)-1))
+_aFil 		:= StrTokArr2( _cFilter , pSepara )
+
+
+for _nx := 1 to Len(_aFil)
+
+	_aAux 		:= {}
+	_nPosCtr	:= 1
+	_nQtd		:= 0
+	
+	_aFil[_nx]	:= Alltrim(_aFil[_nx])
+	aAdd(_aAux, SubStr(_aFil[_nx],1,at(' ', _aFil[_nx],1)-1))
+
+	_nPosCtr	:= at("'",_aFil[_nx],(_nPosCtr + _nQtd + 1)) + 1
+	_nQtd		:= at("'",_aFil[_nx],_nPosCtr) - _nPosCtr
+	aAdd(_aAux,SubStr(_aFil[_nx],_nPosCtr, _nQtd))	
+	
+	aAdd(_aRet, _aAux)
+
+next _nx
+
+Return _aRet

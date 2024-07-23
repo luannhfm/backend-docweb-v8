@@ -1,0 +1,512 @@
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "MSOLE.CH"
+
+#define COL_SELECAO 01
+#define COL_TITULO 02
+#define COL_TIPO 03
+#define COL_PREFIXO 04
+#define COL_PARCELA 05
+#define COL_VENCIMENTO 06
+#define COL_VALOR 07
+#define COL_DECRECIMO 08
+#define COL_SALDO 09
+#define COL_JUROS 10
+#define COL_MULTA 11
+#define COL_JUROS_E_MULTA 12
+#define COL_DIAS_DE_ATRASO 13
+#define COL_PERCENT_DE_DESCONTO 14
+#define COL_VALOR_DESCONTO_SOBRE_JUROS 15
+#define COL_VALOR_A_RECEBER 16
+#define COL_PERCE_DESCONTO_SOBRE_TITULO 17
+#define COL_VALOR_DESCONTO_SOBRE_TITULO 18
+#define COL_CHAVE_BUSCA_TITULO 19
+#define COL_CHAVE_BUSCA_CLIENTE 20
+#define COL_PERCENTUAL_DE_JUROS 21
+#define COL_RECNO 22
+#define COL_DATA_BAIXA_PARCIAL 23
+#define COL_DATA_VENCIMENTO 24
+#define COL_VALOR_DECRECIMO 25
+#define COL_SALDO_DECRESCIMO 26
+
+/*/{Protheus.doc} DTFINR03
+Impressão do Termo de Divida Integração MS-Word
+@type function
+@author Do.it sistemas
+@since 07/17/2014
+@param cKey, character, chave de busca no financeiro
+@param aDados, array, dados para impressão do contrato
+/*/
+User Function DTFINR03(cKey,aDados)
+
+	Local   aArea       := GetArea()
+	Local   cCliente	:= Space(10)
+	Local   cLoja    	:= Space(4)
+	Local   cPerg       := "DTFINREN"
+	Local   aGerDad	    := {}
+	Local   cQryRen	    := ""
+	local nI := 0
+	Local   _nVlrVal    := 0 
+	Local   _nVlrDec    := 0
+	Local   _nVlrSal    := 0
+	Local   _nVlrMul    := 0
+	Local   _nVlrJur    := 0
+	Local   _nVlrDesc   := 0
+	Local   _nTCalRes   := 0
+	Local   _nTCalDes   := 0 	
+	Default aDados      := {}	
+	Private _cRenDot	:= GetNewPar("DT_RENDOT",GetSrvProfString("StartPath","")+"DOT\")
+	Private _cRenDoc	:= GetNewPar("DT_RENDOC","C:\TERMO_RENEGOCIACAO\")
+	Private _cNomeDoc	:= ""	
+	Private _cNomEmp	:= SM0->M0_NOMECOM
+	Private _cCGCEmp	:= SM0->M0_CGC
+	Private _cEndEmp	:= SM0->M0_ENDENT
+	Private _cCidEmp	:= SM0->M0_CIDENT
+	Private _cBaiEmp	:= SM0->M0_BAIRENT
+	Private _cCepEmp	:= SM0->M0_CEPENT
+	Private _cUFEmp	    := SM0->M0_ESTENT
+	Private _cNomGer	:= ""
+	Private _cCGCGer	:= ""
+	Private _cCliente	:= ""
+	Private _cCGC		:= ""
+	Private _cCliEnd	:= ""
+	Private _cCliCep	:= ""
+	Private _cBairro	:= ""
+	Private _cMunic	    := ""
+	Private _cEstado	:= ""  
+	Private _cTabOld	:= " TITULO   PARCELA  VENCIMENTO   VALOR   DECRESCIMO   SALDO   MUL/JUR    DESCONTO     A RECEBER"+ CRLF
+	Private _cTabNew	:= " TITULO   PARCELA       VALOR  VENCIMENTO"+ CRLF
+	Private _nVlrNew 	:= 0
+	Private _nVlrOld 	:= 0
+	Private _nVlrTN 	:= 0
+	Private _nVlrTO 	:= 0
+	Private _nVlrDesTit := 0
+	Private lBxExec     := .F.
+	Private _nqtdparcela:= 0
+	Private _dEmissao   := ""
+	Private _cContrato  := ""
+	Private _cServico   := ""
+	Private aParcelas	:= {}
+	
+	If Substr(SE1->E1_FILIAL,1,4) == '01MT'
+		_cRenDot += "ACORDO01.DOT"
+	ElseIf Substr(SE1->E1_FILIAL,1,4) == '02MT'
+		_cRenDot += "ACORDO02.DOT"
+	ElseIf Substr(SE1->E1_FILIAL,1,4) == '03MT'
+		_cRenDot += "ACORDO03.DOT"
+	ElseIf Substr(SE1->E1_FILIAL,1,4) == '04MT'
+		_cRenDot += "ACORDO04.DOT"
+	ElseIf Substr(SE1->E1_FILIAL,1,4) == '05MT'
+		_cRenDot += "ACORDO05.DOT"
+	EndIf
+	
+	_cTabOld += "-----------------------------------------------------------------------------------------------------------"+CRLF
+	_cTabNew += "-----------------------------------------"+CRLF
+	
+	aGerDad  := FSGerFil( FWFilial() )
+	_cNomGer := aGerDad[ 1 ] // Nome do Gerente
+	_cCGCGer := aGerDad[ 2 ] // CPF do Gerente
+	
+	DbSelectArea("SE1")
+	DbSetOrder(1)
+	
+	If FieldPos("E1_XCHVREN") == 0
+		MsgStop("Campo 'E1_XCHVREN' não existente")
+		Return
+	ElseIf ! File(_cRenDot)
+		MsgStop(_cRenDot+CRLF+"Não disponivel no servidor, vide parametro: DT_RENDOT")
+		Return
+	Endif
+	
+	If Empty(cKey)
+		If E1_TIPO = "REN" .And. E1_PREFIXO = "REN" .And. Empty(E1_XCHVREN)	
+			MV_PAR01 := E1_NUM
+		ElseIf ! Empty(E1_XCHVREN)
+			MV_PAR01 := SubStr(E1_XCHVREN, Len(E1_FILIAL + E1_PREFIXO)+1, Len(E1_NUM))
+		Else
+			u_SFPUTSX1(cPerg, '01','Número Titulo Gerado','Número Titulo Gerado','Número Titulo Gerado','mv_ch1','C',TamSX3("E1_NUM")[1],0,0,'G','','','','','mv_par01')
+			If ! Pergunte(cPerg,.T.)
+				Return
+			Endif
+		Endif
+	ElseIf DbSeek(cKey)
+		MV_PAR01 := E1_NUM
+	Else
+		Return	
+	Endif
+	
+	//Monta Query
+	cQryRen := " SELECT E1_FILIAL, E1_PREFIXO, E1_NUM, E1_TIPO, E1_PARCELA, E1_VALOR, E1_MULTA, E1_JUROS, E1_DESCONT, E1_CLIENTE, E1_LOJA, E1_VENCREA, E1_SDDECRE,E1_XCHVREN, E1_SALDO, E1_EMISSAO"
+	cQryRen += " FROM " + RetSqlName("SE1")
+	cQryRen += " WHERE D_E_L_E_T_ = ' ' AND E1_FILIAL = '"+ SE1->E1_FILIAL +"' "
+	cQryRen += " AND (E1_PREFIXO = 'REN' AND E1_NUM = '"+MV_PAR01+"' OR E1_XCHVREN = '"+FWxFilial("SE1")+"REN"+MV_PAR01+"REN')"
+	cQryRen += " AND E1_CLIENTE = '"+ SE1->E1_CLIENTE +"' "
+	cQryRen += " AND E1_LOJA = '"+ SE1->E1_LOJA +"' "
+	cQryRen += " ORDER BY E1_FILIAL, E1_PREFIXO, E1_NUM, E1_TIPO, E1_PARCELA"
+	cQryRen := ChangeQuery(cQryRen)
+	dbUseArea( .T., "TOPCONN", TcGenQry(,,cQryRen), "TRBREN", .T., .T. )
+	
+	While TRBREN->(!Eof())
+		
+		If (MV_PAR01 <> SUBSTR(TRBREN->E1_XCHVREN,12,9))
+			_cTabNew	+= TRBREN->E1_NUM + " "+;
+			PadR(TRBREN->E1_PARCELA,9," ") +;
+			Transform(TRBREN->E1_VALOR, "@E 999,999.99") + Space(2) +;
+			DtoC(StoD(TRBREN->E1_VENCREA)) + CRLF
+			_nqtdparcela ++
+			_dEmissao 	 := TRBREN->E1_EMISSAO
+			_nVlrNew += TRBREN->E1_VALOR
+		EndIf
+		
+		cCliente := TRBREN->E1_CLIENTE
+		cLoja    := TRBREN->E1_LOJA
+		
+		TRBREN->(dbSkip())
+	EndDo
+
+	TRBREN->(dbCloseArea())
+
+	If Len(aDados) <= 0 
+		aDados := GetRows()
+	EndIf 
+	
+	For nI := 1 To Len(aDados)
+	
+		If aDados[nI, COL_SELECAO]
+
+			IF !(alltrim(aDados[nI, COL_TITULO]) $ _cContrato) 
+				If !Empty(_cContrato)
+					_cContrato += " / "
+				EndIf	
+				_cContrato += alltrim(aDados[nI, COL_TITULO])
+			EndIf
+			_cServico := IIF(aDados[nI, COL_PREFIXO] $ "SGE|RMC" .and. Empty(_cServico),"de Prestação de Serviços Educacionais  ","")
+			
+			If lBxExec
+				nCalDesconto  := aDados[nI, COL_VALOR_DESCONTO_SOBRE_JUROS]
+			Else
+				nCalDesconto  := aDados[nI, COL_VALOR_DESCONTO_SOBRE_JUROS]
+			EndIf	
+			
+			nCalAReceber  := aDados[nI, COL_VALOR_A_RECEBER]
+
+			If IsInCallStack("U_SF06A43X")
+				nCalDesconto := aDados[nI, COL_VALOR_DESCONTO_SOBRE_JUROS]
+				nCalAReceber := nCalAReceber - nCalDesconto
+			EndIf
+
+			_cTabOld += PadR(PadL(AllTrim(aDados[nI, COL_TITULO]), 9, " "), 12, " ")						//Titulo
+			_cTabOld += PadR(PadL(AllTrim(aDados[nI, COL_PARCELA]), 3, " "), 6, " ") 						//Parcela
+			_cTabOld += DTOC(aDados[nI, COL_VENCIMENTO]) + Space(1)											//Vencimento
+			_cTabOld += Transform(aDados[nI, COL_VALOR], "@E 99,999.99") + Space(1)							//Valor
+			_cTabOld += Transform(aDados[nI, COL_DECRECIMO], "@E 9,999.99") + Space(1)						//Decrescimo
+			_cTabOld += Transform((aDados[nI, COL_SALDO]), "@E 99,999.99") + Space(1)						//Saldo
+			_cTabOld += Transform(aDados[nI, COL_MULTA] + aDados[nI, COL_JUROS], "@E 9,999.99") + Space(3)	//Mul/Jur
+			_cTabOld += Transform(nCalDesconto , "@E 9,999.99") + Space(4)  								//desconto
+			_cTabOld += Transform(nCalAReceber , "@E 999,999.99") + CRLF       								// a receber
+
+			_nVlrOld    += ((aDados[nI, COL_SALDO] + aDados[nI, COL_MULTA] + aDados[nI, COL_JUROS]) - aDados[nI, COL_VALOR_DESCONTO_SOBRE_JUROS])
+			_nVlrVal    += (aDados[nI, COL_VALOR])
+			_nVlrDec    += (aDados[nI, COL_DECRECIMO])
+			_nVlrSal    += (aDados[nI, COL_SALDO])
+			_nVlrMul    += (aDados[nI, COL_MULTA])
+			_nVlrJur    += (aDados[nI, COL_JUROS])
+			_nVlrDesc   += (aDados[nI, COL_VALOR_DESCONTO_SOBRE_JUROS])
+			_nTCalRes   += nCalAReceber
+			_nTCalDes   += nCalDesconto
+			
+		EndIf
+			
+	Next nI
+	
+	_nVlrTO := _nVlrOld
+	_cTabOld += " " + CRLF
+	_cTabOld += "TOTAL:" + Space(23)+ Transform(_nVlrVal, "@E 99,999.99") + " "
+	_cTabOld += Transform(_nVlrDec, "@E 9,999.99")                        + " "
+	_cTabOld += Transform(_nVlrSal, "@E 99,999.99")                       + " "
+	_cTabOld += Transform((_nVlrMul + _nVlrJur), "@E 9,999.99")           + ""
+	_cTabOld += Space(03)+ Transform(_nTCalDes,  "@E 9,999.99")  + ""
+	_cTabOld += Space(04)+ Transform(_nTCalRes,  "@E 999,999.99") + " "
+
+	_nVlrTN  := _nVlrNew
+	_cTabNew += " " + CRLF
+	_cTabNew += "TOTAL:" + Space(03)+ Transform(_nVlrTN, "@E 999,999.99") + CRLF
+	
+	SA1->(dbSetOrder(1))
+	
+	If SA1->(dbSeek(xFilial("SA1")+cCliente+cLoja))
+		_cTipo    := SA1->A1_PESSOA
+		_cCliente := SA1->A1_NOME
+		_cCGC     := SA1->A1_CGC
+		_cCliEnd  := SA1->A1_ENDCOB
+		_cCliCep  := SA1->A1_CEP
+		_cBairro  := SA1->A1_BAIRRO
+		_cMunic	  := SA1->A1_MUN
+		_cEstado  := SA1->A1_EST
+		_cNomeDoc := "Termo_" + RTrim(_cCGC) + '_' + MV_PAR01 + ".doc"
+		
+		FWMakeDir(_cRenDoc,.F.) //Cria diretorio para gravacao do arquivo local
+		
+		_lOk := .T.
+		If File(_cRenDoc + _cNomeDoc)
+			If FErase(_cRenDoc + _cNomeDoc) <> 0
+				MsgAlert("Erro ao tentar sobreescrever arquivo " + _cRenDoc + _cNomeDoc)
+				_lOk := .f.
+			EndIf			
+		EndIf
+		
+		If _lOk
+			MsgRun("Gerando Termo de Dívida, Aguarde...", "Renegociação", {|| ImpWord()})
+		EndIf
+		
+			
+	EndIf               
+	
+	RestArea(aArea)
+	
+Return(Nil)
+
+/*/{Protheus.doc} ImpWord
+Preenche as docvariables no modelo word
+@type function
+@author j2a.luizjunior
+@since 17/10/2016
+/*/
+Static Function ImpWord()
+
+	Local hWord, cFileName, cFile, cExt
+	SplitPath(_cRenDot,,,@cFile,@cExt)                         
+	// Arquivo com a pasta temp local (usuário)
+	cFileName := GetTempPath()+cFile+cExt
+	// Copia do servidor para a pasta local
+	If ! SmCopy(_cRenDot, cFileName )
+		MsgStop("Erro ao copiar arquivo para o terminal") 
+		Return
+	EndIf		
+	//Link Ms-Word
+	hWord	:= OLE_CreateLink()
+	//Parametros
+	OLE_SetProperty(hWord, oleWdVisible  ,.F. )
+	OLE_SetProperty(hWord, oleWdPrintBack,.F. )
+	// Abre o Arquivo Ms-Word
+	OLE_NewFile(hWord, cFileName)
+	//Ajusta Variaveis Ms-Word
+	OLE_SetDocumentVar(hWord, 'cNomGer'		, _cNomGer)
+	OLE_SetDocumentVar(hWord, 'cCGCGer'		, _cCGCGer)
+	OLE_SetDocumentVar(hWord, 'cNomEmp'		, _cNomEmp)
+	OLE_SetDocumentVar(hWord, 'cCGCEmp'		, Transform(_cCGCEmp,"@R 99.999.999/9999-99"))
+	OLE_SetDocumentVar(hWord, 'cEndEmp'		, _cEndEmp)
+	OLE_SetDocumentVar(hWord, 'cCliente'	, _cCliente)
+	OLE_SetDocumentVar(hWord, 'cCGC'		, Transform(_cCGC, StrTran(PicPes(_cTipo),'%C','') )) //--retirado %C do final da picture
+	OLE_SetDocumentVar(hWord, 'cCliEnd'		, _cCliEnd)
+	OLE_SetDocumentVar(hWord, 'cCliCep'		, _cCliCep)
+	OLE_SetDocumentVar(hWord, 'cBairro'		, _cBairro)
+	OLE_SetDocumentVar(hWord, 'cMunicipio'	, _cMunic)
+	OLE_SetDocumentVar(hWord, 'cEstado'		, _cEstado)
+	OLE_SetDocumentVar(hWord, 'cTotal'		, "R$ "+Alltrim(Transform(_nVlrTN, "@E 999,999,999.99" ))+" ("+(Extenso(_nVlrTN,,1,,)+")"))
+	OLE_SetDocumentVar(hWord, 'cParcelas'	, (Extenso(_nqtdparcela  ,.T.,,Alltrim(Transform(_nqtdparcela, "@E 999" )),)))
+	OLE_SetDocumentVar(hWord, 'cServico'	, _cServico)
+	OLE_SetDocumentVar(hWord, 'cContrato'	, _cContrato)	  
+	OLE_SetDocumentVar(hWord, 'cTabOld'		, _cTabOld)
+	OLE_SetDocumentVar(hWord, 'cTabNew'		, _cTabNew)
+	OLE_SetDocumentVar(hWord, 'cLocal'		, ALLTRIM(SM0->M0_CIDCOB))
+	OLE_SetDocumentVar(hWord, 'cDataemissao', dtoc(stod(_dEmissao)))
+	OLE_SetDocumentVar(hWord, 'cEstado'		, _cEstado)
+	OLE_SetDocumentVar(hWord, 'cInfoRP'		, PadR(CUSERNAME,80," ")+DTOC(DDATABASE))
+	OLE_UpdateFields(hWord)
+	//Salva Doc
+	OLE_SaveAsFile(hWord, _cRenDoc + _cNomeDoc)
+	//Fecha Ms-Word
+	OLE_CloseFile( hWord )
+	OLE_CloseLink( hWord ) 
+	//Apaga Temporario
+	FErase(cFilename)
+	
+	//Abre arquivo doc                                  
+	If File(_cRenDoc + _cNomeDoc)
+		ShellExecute("open", _cRenDoc + _cNomeDoc,"","",1)
+	Else
+		MsgStop("Erro Gerando Arquivo:" + CRLF + _cRenDoc + _cNomeDoc)	
+	EndIf
+		
+Return(Nil)
+
+/*/{Protheus.doc} FSGerFil
+Retorna os dados do gerente da filial
+@type function
+@author j2a.luizjunior
+@since 17/10/2016
+@version 1.0
+@param cFilCod, character, (Descrição do parâmetro)
+@param cEmpres, character, (Descrição do parâmetro)
+@param cUnidad, character, (Descrição do parâmetro)
+@return array, dados do gerente da filial
+/*/
+Static Function FSGerFil(cFilCod,cEmpres,cUnidad)
+
+	Local aGerInf,cEmpUni,cDados
+	Default cEmpres := FWCodEmp('SX5')
+	Default cUnidad := FWUnitBusiness('SX5')
+	Default cFilCod := FWFilial()
+	
+	cEmpUni := PadR( cEmpres + cUnidad , FWSizeFilial() )
+	SX5->( dbSetOrder(1) )
+	If( SX5->( dbSeek( cEmpUni + 'Z5' + cFilCod ) ) )
+		cDados  := SX5->X5_DESCRI
+		cDados  := StrTran(cDados,",","|")
+		cDados  := StrTran(cDados,";","|")
+		aGerInf := Separa(cDados+"|",'|',.T.)
+	Else
+		aGerInf := {'GERENTE DA FILIAL', 'CPF DO GERENTE'}
+	EndIf
+
+Return( aGerInf )
+
+/** {Protheus.doc} GetRows
+Funcao que Obtem Titulos em atraso em carteira do cliente
+@type function
+@author Jose Leite de Barros Neto
+@since 01/02/2016
+@Uso SFIEMT
+*/
+Static Function GetRows()
+
+	Local cQry	:= ""
+	Local cKey	:= ""
+	Local cKeyC	:= ""
+	Local nVal	:= 0
+	Local cQryIn:= ( MVABATIM + '|' + MVPROVIS + '|' + MVRECANT + '|' + MV_CRNEG )
+	Local aRow 	:= {}
+	Local aBxRen:= {}	
+	
+	cQry := CRLF+"SELECT * "
+	cQry += CRLF+"FROM " + RetSqlName("SE1") + " "
+	cQry += CRLF+"WHERE E1_FILIAL = '" + SE1->E1_FILIAL + "' AND "
+	cQry += CRLF+"E1_CLIENTE 	  = '" + SE1->E1_CLIENTE + "' AND "
+	cQry += CRLF+"E1_LOJA 		  = '" + SE1->E1_LOJA + "' AND "
+	cQry += CRLF+"E1_XCHVREN LIKE '%"+MV_PAR01+"%' AND "
+	cQry += CRLF+"E1_TIPO NOT IN "+FormatIn( cQryIn ,'|')+" AND "	
+	cQry += CRLF+"D_E_L_E_T_ = ' ' "
+	
+	cQry += CRLF+"ORDER BY E1_FILIAL, E1_PREFIXO, E1_NUM, E1_PARCELA"
+	
+	dbUseArea(.T.,"TOPCONN",TcGenQry(,,cQry),"SE1TMP",.T.,.F.)	
+	
+	While SE1TMP->(!Eof())
+		
+		//-------------------------------
+		//-- Retorna o valores de baixa
+		//-------------------------------
+		aBxRen := VlrBxRen(SE1TMP->E1_FILIAL, SE1TMP->E1_CLIENTE, SE1TMP->E1_LOJA, SE1TMP->E1_TIPO, SE1TMP->E1_PREFIXO, SE1TMP->E1_NUM, SE1TMP->E1_PARCELA , SE1TMP->E1_BAIXA)
+		
+		//-- Valor do Saldo no momento da negociação.
+		nVal := ( aBxRen[1] - aBxRen[2] - aBxRen[3]	) + aBxRen[4]
+	
+		cKey	:= SE1TMP->(E1_FILIAL + E1_PREFIXO + E1_NUM + E1_PARCELA + E1_TIPO)
+		cKeyC	:= FWxFilial("SA1") + SE1TMP->(E1_CLIENTE + E1_LOJA)
+		
+		lBxExec := .T. 
+		
+		aAdd(aRow, {;
+						.T.,;							            //[01] Selecao
+						SE1TMP->E1_NUM,;				            //[02] Titulo
+						SE1TMP->E1_TIPO,;				            //[03] Tipo
+						SE1TMP->E1_PREFIXO,;			            //[04] Prefixo
+						SE1TMP->E1_PARCELA,;			            //[05] Parcela
+						StoD(SE1TMP->E1_VENCTO),;		        	//[06] Vencimento
+						SE1TMP->E1_VALOR,;                    		//[07] Valor
+						SE1TMP->E1_DECRESC,;                  		//[08] Decrescimo
+						nVal,;							            //[09] Saldo
+						aBxRen[2],;						            //[10] Juros
+						aBxRen[3],;						            //[11] Multa
+						aBxRen[2]+aBxRen[3],;			            //[12] Juros + Multa
+						dDataBase - StoD(SE1TMP->E1_VENCTO),; 		//[13] Dias Atraso
+						aBxRen[2]+aBxRen[3],;				        //[14] % de Desconto
+						aBxRen[4],;						            //[15] Valor de Desconto
+						aBxRen[1],;								    //[16] A Receber
+						0,;                                   		//[17] COL_PERCE_DESCONTO_SOBRE_TITULO
+						0,;                          				//[18] COL_VALOR_DESCONTO_SOBRE_TITULO
+						cKey,;							            //[19] Chave de busca financeiro
+						cKeyC,;							            //[20] Chave de busca cliente
+						SE1TMP->E1_PORCJUR,;			            //[21] Percentual de juros
+						SE1TMP->R_E_C_N_O_ ,;		              	//[22] R_E_C_N_O_
+						StoD(SE1TMP->E1_BAIXA),;      	      		//[23] Data Baixa Parcial
+						StoD(SE1TMP->E1_VENCTO),;					//[24] COL_DATA_VENCIMENTO
+						aBxRen[5],;									//[25] COL_VALOR_DECRECIMO
+						0,;		          							//[26] COL_SALDO_DECRESCIMO
+						0;											//[27] 
+					})
+	
+		SE1TMP->(DbSkip())
+	EndDo
+	
+	SE1TMP->(DbCloseArea())
+
+Return(aRow)
+
+/*/{Protheus.doc} VlrBxRen
+Retorna o valor baixado na renegociação.
+Array[1] = Valor Baixado
+Array[2] = Valor do Juro
+Array[3] = Valor da Multa
+Array[4] = Valor do Desconto 
+@type function
+@author Allan da Silva Faria
+@since 18/03/2016
+@version 1.0
+@param _cFilial, character, Codigo Filial
+@param _cCliente, character, Codigo do Cliente
+@param _cLoja, character, Loja do Cliente
+@param _cTipo, character, Tipo do Titulo
+@param _cPrefixo, character, Prefixo do Título
+@param _cTitulo, character, Numero do Título
+@param _cParcela, character, Parcela do Título
+@param _dDtBaixa, date, Data da Renegociação
+@return Array, Array com os valores de baixa, juros,multas e descontos
+/*/
+Static Function VlrBxRen(_cFilial,_cCliente,_cLoja,_cTipo,_cPrefixo,_cTitulo,_cParcela,_dDtBaixa)
+
+	Local _aRet := {0,0,0,0,0}
+	
+	BeginSQL Alias "TMPBX"
+	
+	column E5_VALOR 	AS Numeric(9,2)
+	column E5_VLJUROS 	AS Numeric(9,2)
+	column E5_VLMULTA	AS Numeric(9,2)
+	column E5_VLDESCO 	AS Numeric(9,2)
+	column E5_VLDECRE 	AS Numeric(9,2)
+	
+	SELECT 
+		E5_VALOR 	AS VALOR,
+		E5_VLJUROS 	AS JURO,
+		E5_VLMULTA	AS MULTA,
+		E5_VLDESCO	AS DESCONTO,
+		E5_VLDECRE	AS DECRESC
+	FROM %table:SE5%
+	WHERE %notDel%
+		AND E5_FILIAL = %exp:_cFilial% 
+		AND E5_CLIFOR = %exp:_cCliente%
+		AND E5_LOJA   = %exp:_cLoja%
+		AND E5_TIPO   = %exp:_cTipo%
+		AND E5_PREFIXO= %exp:_cPrefixo%
+		AND E5_NUMERO = %exp:_cTitulo%
+		AND E5_PARCELA= %exp:_cParcela%
+		AND E5_DATA	  = %exp:_dDtBaixa%
+		AND E5_MOTBX  = 'REN'
+		AND E5_RECPAG = 'R'
+		AND E5_TIPODOC= 'BA'
+		AND E5_SITUACA <> 'C'
+	EndSql
+		
+		dbSelectArea("TMPBX")
+		TMPBX->(dbGoTop())
+	
+		If ( TMPBX->(!EOF()) .AND. TMPBX->(!BOF()) )
+			_aRet[1]:= TMPBX->VALOR
+			_aRet[2]:= TMPBX->JURO
+			_aRet[3]:= TMPBX->MULTA
+			_aRet[4]:= TMPBX->DESCONTO
+			_aRet[5]:= TMPBX->DECRESC
+		EndIf
+	
+	TMPBX->(dbCloseArea())
+Return(_aRet)
